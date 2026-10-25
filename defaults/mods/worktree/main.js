@@ -70,18 +70,39 @@ async function git(cwd, args, on) {
 }
 
 // The submodule repos git keeps for a checkout (nested ones too, checked out
-// or not): { name, dir }. `config` is the args that read its .gitmodules.
-async function modules(gitDir, config, on, out = []) {
-  const keys = await git(gitDir, ["--git-dir", gitDir, "config", ...config, "--name-only", "--get-regexp", "^submodule\\..*\\.path$"], on);
+// or not): { name, dir, pinned }. `config` is the args that read its
+// .gitmodules; `pinned` is the commit its parent records ("" if none).
+async function modules(gitDir, config, on, out = [], parent = "") {
+  const keys = await git(gitDir, ["--git-dir", gitDir, "config", ...config, "-z", "--get-regexp", "^submodule\\..*\\.path$"], on);
   if (!keys.ok) return out; // no .gitmodules, or no submodules in it
-  for (const key of keys.out.split("\n").filter(Boolean)) {
-    const name = key.slice("submodule.".length, -".path".length);
+  // -z: "key\nvalue" records ended by NUL, so names and paths may hold spaces.
+  for (const record of keys.out.split("\0").filter(Boolean)) {
+    const at = record.indexOf("\n");
+    const name = record.slice("submodule.".length, at - ".path".length);
     const dir = `${gitDir}/modules/${name}`;
     if (!(await git(gitDir, ["--git-dir", dir, "rev-parse", "--git-dir"], on)).ok) continue; // never checked out
-    out.push({ name, dir });
-    if ((await git(gitDir, ["--git-dir", dir, "cat-file", "-e", "HEAD:.gitmodules"], on)).ok) await modules(dir, ["--blob", "HEAD:.gitmodules"], on, out);
+    const pinned = await git(gitDir, ["--git-dir", gitDir, "rev-parse", `HEAD:${record.slice(at + 1)}`], on);
+    // Names are only unique within their parent: nested ones carry its name.
+    out.push({ name: parent + name, dir, pinned: pinned.ok ? pinned.out : "" });
+    if ((await git(gitDir, ["--git-dir", dir, "cat-file", "-e", "HEAD:.gitmodules"], on)).ok) await modules(dir, ["--blob", "HEAD:.gitmodules"], on, out, `${parent + name}/`);
   }
   return out;
+}
+
+// The worktree's submodules, and the names of those with commits that exist
+// nowhere else: not on a remote, and not the commit the parent pins (git
+// fetches that by hash, so it is often on no remote branch here).
+async function submodules(top, on) {
+  const gitDir = await git(top, ["rev-parse", "--absolute-git-dir"], on);
+  if (!gitDir.ok) throw new Error(gitDir.err || "git rev-parse failed.");
+  const mods = await modules(gitDir.out, ["--file", `${top}/.gitmodules`], on);
+  const unpushed = [];
+  for (const m of mods) {
+    const local = await git(gitDir.out, ["--git-dir", m.dir, "rev-list", "-n1", "--all", "--not", "--remotes", ...(m.pinned ? [m.pinned] : [])], on);
+    if (!local.ok) throw new Error(local.err || `Couldn't check submodule ${m.name}.`);
+    if (local.out) unpushed.push(m.name);
+  }
+  return { mods, unpushed };
 }
 
 // The repo a folder belongs to: its main checkout and name, and whether
@@ -116,6 +137,7 @@ export default class Worktree extends View {
     this.error = "";
     this.repo = undefined; // undefined: looking, null: not in git
     this.dirty = false;
+    this.unpushed = [];
     this.handle = cx.focus_handle();
     if (props()?.action === "remove") this.handle.focus();
     cx.spawn(async (cx) => {
@@ -128,11 +150,14 @@ export default class Worktree extends View {
           this.userHome = result.stdout.trim().replace(/\\/g, "/");
         }
         this.folder = props()?.folder || place(this.space()) || this.userHome;
-        this.repo = await repoOf(this.folder, this.on);
-        if (this.repo && props().action === "remove") {
-          this.dirty = (await git(this.repo.top, ["status", "--porcelain"], this.on)).out !== "";
+        // The repo is set last: Enter does nothing until the warnings it consents to are known.
+        const repo = await repoOf(this.folder, this.on);
+        if (repo && props().action === "remove") {
+          this.dirty = (await git(repo.top, ["status", "--porcelain"], this.on)).out !== "";
+          this.unpushed = (await submodules(repo.top, this.on)).unpushed;
         }
-        if (this.repo && this.opening) this.list = await checkouts(this.repo, this.on);
+        if (repo && this.opening) this.list = await checkouts(repo, this.on);
+        this.repo = repo;
         cx.notify();
         if (props().branch) await this.work(cx);
       } catch (error) { this.repo = null; this.error = String(error); cx.notify(); }
@@ -195,20 +220,14 @@ export default class Worktree extends View {
     const s = this.space();
     const status = await git(this.repo.top, ["status", "--porcelain"], this.on);
     if (!status.ok) return status.err || "git status failed.";
-    if (status.out && !this.dirty) {
-      this.dirty = true;
-      return "It changed since this opened. Enter again removes it anyway.";
-    }
     // git refuses a worktree with submodules unless forced, because their
-    // history is kept with it. Force only when none has unpushed commits.
-    const gitDir = await git(this.repo.top, ["rev-parse", "--absolute-git-dir"], this.on);
-    if (!gitDir.ok) return gitDir.err || "git rev-parse failed.";
-    const mods = await modules(gitDir.out, ["--file", `${this.repo.top}/.gitmodules`], this.on);
-    for (const m of mods) {
-      const local = await git(gitDir.out, ["--git-dir", m.dir, "rev-list", "-n1", "--all", "--not", "--remotes"], this.on);
-      if (!local.ok) return local.err || `Couldn't check submodule ${m.name}.`;
-      if (local.out) return `Submodule ${m.name} has commits that aren't pushed anywhere. Push them first: removing deletes them.`;
-    }
+    // history goes with it. The popup already showed what's at risk; only
+    // risk that appeared since it opened gets one more warning.
+    const { mods, unpushed } = await submodules(this.repo.top, this.on);
+    const changed = (status.out && !this.dirty) || unpushed.some((name) => !this.unpushed.includes(name));
+    this.dirty ||= status.out !== "";
+    this.unpushed = [...new Set([...this.unpushed, ...unpushed])];
+    if (changed) return "It changed since this opened. Enter again removes it anyway.";
     // Terminals first: a shell sitting in the folder keeps it busy on Windows.
     run("space.close", { id: s.id, confirmed: true });
     const force = this.dirty || mods.length > 0;
@@ -323,6 +342,7 @@ export default class Worktree extends View {
       .child(div().font_semibold().text_color(t.foreground).child(title))
       .child(div().text_color(t.muted).child(detail))
       .when(remove && this.dirty, (el) => el.child(div().text_color(t.blocked).child("It has uncommitted changes: they will be lost.")))
+      .when(remove && this.unpushed.length > 0, (el) => el.child(div().text_color(t.blocked).child(`Submodule ${this.unpushed.join(", ")} has commits that aren't pushed anywhere: they will be lost.`)))
       .when(!remove && !blocked, (el) =>
         el.child(
           Input.new(this.input)
