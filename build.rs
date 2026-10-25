@@ -1,44 +1,43 @@
 //! Embeds the default mods (defaults/mods/**), the program icons
 //! (defaults/icons/*) and the frame's mods (defaults/frame/**) so Herdr can
 //! install them.
+//!
+//! Worktrees may share one target dir, and with it this script and its output.
+//! So nothing here names this checkout: paths are relative to the package and
+//! the generated code includes files through the compiling crate's
+//! `CARGO_MANIFEST_DIR`.
 
 use std::path::Path;
 
-fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+fn walk(dir: &Path, base: &Path, root: &Path, out: &mut Vec<String>) {
     let mut entries: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).collect();
     entries.sort();
     for p in entries {
         if p.is_dir() {
-            walk(&p, root, out);
+            walk(&p, base, root, out);
         } else {
-            println!("cargo:rerun-if-changed={}", p.display());
+            let path = p.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+            println!("cargo:rerun-if-changed={path}");
             let rel = p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
-            out.push(format!("    ({rel:?}, include_bytes!({:?})),", p.canonicalize().unwrap()));
+            out.push(format!("    ({rel:?}, include_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/{path}\"))),"));
         }
     }
 }
 
+fn embed(base: &Path, folder: &str, name: &str, file: &str) {
+    println!("cargo:rerun-if-changed={folder}");
+    let mut lines = Vec::new();
+    let root = base.join(folder);
+    walk(&root, base, &root, &mut lines);
+    let code = format!("pub const {name}: &[(&str, &[u8])] = &[\n{}\n];\n", lines.join("\n"));
+    std::fs::write(Path::new(&std::env::var("OUT_DIR").unwrap()).join(file), code).unwrap();
+}
+
 fn main() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("defaults/mods");
-    println!("cargo:rerun-if-changed={}", root.display());
-    let mut lines = Vec::new();
-    walk(&root, &root, &mut lines);
-    let code = format!("pub const DEFAULT_MODS: &[(&str, &[u8])] = &[\n{}\n];\n", lines.join("\n"));
-    std::fs::write(Path::new(&std::env::var("OUT_DIR").unwrap()).join("default_mods.rs"), code).unwrap();
-
-    let icons = Path::new(env!("CARGO_MANIFEST_DIR")).join("defaults/icons");
-    println!("cargo:rerun-if-changed={}", icons.display());
-    let mut lines = Vec::new();
-    walk(&icons, &icons, &mut lines);
-    let code = format!("pub const DEFAULT_ICONS: &[(&str, &[u8])] = &[\n{}\n];\n", lines.join("\n"));
-    std::fs::write(Path::new(&std::env::var("OUT_DIR").unwrap()).join("default_icons.rs"), code).unwrap();
-
-    let frame = Path::new(env!("CARGO_MANIFEST_DIR")).join("defaults/frame");
-    println!("cargo:rerun-if-changed={}", frame.display());
-    let mut lines = Vec::new();
-    walk(&frame, &frame, &mut lines);
-    let code = format!("pub const FRAME_MODS: &[(&str, &[u8])] = &[\n{}\n];\n", lines.join("\n"));
-    std::fs::write(Path::new(&std::env::var("OUT_DIR").unwrap()).join("frame_mods.rs"), code).unwrap();
+    let base = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    embed(&base, "defaults/mods", "DEFAULT_MODS", "default_mods.rs");
+    embed(&base, "defaults/icons", "DEFAULT_ICONS", "default_icons.rs");
+    embed(&base, "defaults/frame", "FRAME_MODS", "frame_mods.rs");
 
     // Windows takes the window, taskbar and Start menu icon from the program file.
     #[cfg(windows)]
