@@ -304,9 +304,11 @@ export default class Agents extends View {
       const pin = div()
         .id(`pin-${a.address}`)
         .flex_none()
+        .p(2)
+        .rounded(4)
         .text_color(t.dim)
         .cursor_pointer()
-        .hover((s) => s.text_color(t.foreground))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
         .tooltip(isPinned ? "Unpin" : "Pin to the top")
         .on_click((_e, cx) => {
           cx.stop_propagation();
