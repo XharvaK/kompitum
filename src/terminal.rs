@@ -411,7 +411,10 @@ impl TerminalView {
         if self.send_image(cx) {
             return;
         }
-        let bytes = Keystroke::parse("ctrl-v").ok().and_then(|k| key_bytes(&mut self.grid.borrow_mut().vt, &k));
+        let bytes = Keystroke::parse("ctrl-v").ok().and_then(|keystroke| {
+            let event = KeyDownEvent { keystroke, is_held: false, prefer_character_input: false };
+            key_bytes(&mut self.grid.borrow_mut().vt, &event)
+        });
         if let Some(bytes) = bytes {
             self.send(&bytes);
         }
@@ -444,7 +447,7 @@ impl TerminalView {
         if !k.key.starts_with("shift") && !k.key.starts_with("control") && !k.key.starts_with("alt") {
             self.grid.borrow_mut().vt.clear_selection();
         }
-        let bytes = key_bytes(&mut self.grid.borrow_mut().vt, k);
+        let bytes = key_bytes(&mut self.grid.borrow_mut().vt, ev);
         if let Some(bytes) = bytes {
             self.send(&bytes);
             cx.stop_propagation();
@@ -674,7 +677,14 @@ fn is_icon(text: &str) -> bool {
 
 /// What a key press sends to the program: the key described to libghostty,
 /// which encodes it once, in the mode the program asked for (as Ghostty does).
-fn key_bytes(vt: &mut vt::Vt, k: &Keystroke) -> Option<Vec<u8>> {
+fn key_bytes(vt: &mut vt::Vt, ev: &KeyDownEvent) -> Option<Vec<u8>> {
+    // GPUI sets this preference on replayed shortcut prefixes too; only
+    // Windows' native composition previews defer to the text input handler.
+    #[cfg(windows)]
+    if ev.prefer_character_input && gpui_windows::is_native_character_input(ev) {
+        return None;
+    }
+    let k = &ev.keystroke;
     let m = k.modifiers;
     if k.key == "enter" && vt.win32.on && (m.shift || m.control || m.alt) {
         return Some(crate::win32_keys::enter(m.shift, m.control, m.alt));
@@ -1005,10 +1015,9 @@ fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, w
     grid.borrow_mut().cursor_at = frame.cursor_cell.map(|(x, y)| Bounds::new(at(x as usize, y as usize), cell));
 }
 
-/// The OS input methods (Pinyin, Japanese, Korean, dead keys) type here. Keys
-/// still go to `key_bytes` first; GPUI hands a key to the input method instead
-/// only while one composes, or while one is the active input source. The
-/// program gets the finished text as it is.
+/// OS text input (AltGr, Pinyin, Japanese, Korean, dead keys) types here.
+/// Native Windows composition previews reach this handler; other keys go through
+/// `key_bytes`. The program gets the finished text as it is.
 impl EntityInputHandler for TerminalView {
     fn text_for_range(&mut self, range: std::ops::Range<usize>, adjusted: &mut Option<std::ops::Range<usize>>, _w: &mut Window, _cx: &mut Context<Self>) -> Option<String> {
         let marked = self.grid.borrow().marked.clone().unwrap_or_default();
@@ -1234,7 +1243,7 @@ mod tests {
 
     use super::key_bytes;
     use crate::vt::Vt;
-    use gpui::{Keystroke, Modifiers};
+    use gpui::{KeyDownEvent, Keystroke, Modifiers};
 
     #[test]
     fn touchpad_moves_add_up_to_whole_lines() {
@@ -1260,15 +1269,46 @@ mod tests {
 
     /// A key as the OS hands it over: "shift-;" with what it typed (":"), as
     /// GPUI reports it on Linux and macOS.
-    fn press(spec: &str, typed: Option<&str>) -> Keystroke {
+    fn press(spec: &str, typed: Option<&str>) -> KeyDownEvent {
         let mut parts: Vec<&str> = spec.split('-').collect();
         let key = parts.pop().unwrap_or_default();
         let key = if key.is_empty() { "-" } else { key };
         let has = |m: &str| parts.contains(&m);
-        Keystroke {
-            modifiers: Modifiers { control: has("ctrl"), alt: has("alt"), shift: has("shift"), platform: has("cmd"), function: false },
-            key: key.into(),
-            key_char: typed.map(str::to_owned),
+        KeyDownEvent {
+            keystroke: Keystroke {
+                modifiers: Modifiers { control: has("ctrl"), alt: has("alt"), shift: has("shift"), platform: has("cmd"), function: false },
+                key: key.into(),
+                key_char: typed.map(str::to_owned),
+            },
+            is_held: false,
+            prefer_character_input: false,
+        }
+    }
+
+    #[test]
+    fn replayed_shortcut_prefixes_keep_terminal_encoding() {
+        let modes: [(&[u8], &[u8], &[u8]); 6] = [
+            (b"", b"\x0b", b"a"),
+            (b"\x1b[>1u", b"\x1b[107;5u", b"a"),
+            (b"\x1b[>9u", b"\x1b[107;5u", b"\x1b[97u"),
+            (b"\x1b[?9001h", b"\x0b", b"a"),
+            (b"\x1b[?9001h\x1b[>1u", b"\x1b[107;5u", b"a"),
+            (b"\x1b[?9001h\x1b[>9u", b"\x1b[107;5u", b"\x1b[97u"),
+        ];
+        for (setup, control_k, letter_a) in modes {
+            let mut vt = Vt::new(20, 3);
+            vt.write(setup);
+            // replay_pending_input clones the original keystroke and sets
+            // prefer_character_input, even for non-character shortcuts.
+            for (spec, text, expected) in [
+                ("ctrl-k", None, control_k),
+                ("ctrl-k", Some("k"), control_k),
+                ("a", Some("a"), letter_a),
+            ] {
+                let mut replay = press(spec, text);
+                replay.prefer_character_input = true;
+                assert_eq!(key_bytes(&mut vt, &replay).as_deref(), Some(expected), "{spec}");
+            }
         }
     }
 
