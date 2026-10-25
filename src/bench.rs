@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 pub static WINDOW: AtomicU64 = AtomicU64::new(0);
 pub static TERMINAL: AtomicU64 = AtomicU64::new(0);
 pub static GRID: AtomicU64 = AtomicU64::new(0);
+/// Terminal rows whose drawing was built again (the rest were kept).
+pub static ROWS: AtomicU64 = AtomicU64::new(0);
 /// Microseconds spent in the window's own render.
 pub static WINDOW_US: AtomicU64 = AtomicU64::new(0);
 
@@ -72,7 +74,7 @@ pub fn start() {
             last = now;
             let _ = writeln!(
                 f,
-                r#"{{"t":{t},"scripts":{},"script_ms":{},"materialize":{},"materialize_ms":{},"window":{},"terminal":{},"grid":{},"window_ms":{},"frame_ms":{}}}"#,
+                r#"{{"t":{t},"scripts":{},"script_ms":{},"materialize":{},"materialize_ms":{},"window":{},"terminal":{},"grid":{},"rows":{},"window_ms":{},"frame_ms":{}}}"#,
                 d[0],
                 d[1] as f64 / 1000.0,
                 d[2],
@@ -80,6 +82,7 @@ pub fn start() {
                 WINDOW.swap(0, Relaxed),
                 TERMINAL.swap(0, Relaxed),
                 GRID.swap(0, Relaxed),
+                ROWS.swap(0, Relaxed),
                 WINDOW_US.swap(0, Relaxed) as f64 / 1000.0,
                 FRAME_US.swap(0, Relaxed) as f64 / 1000.0
             );

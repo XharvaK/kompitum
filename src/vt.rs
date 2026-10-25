@@ -2,7 +2,9 @@
 //! read back as frames to draw, and asked to encode keys and mouse input.
 
 use ghostty_sys::*;
+use std::collections::HashMap;
 use std::ffi::c_void;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -95,7 +97,10 @@ pub struct Cursor {
 }
 
 pub struct Frame {
-    pub rows: Vec<Vec<Cell>>,
+    /// A row that didn't change since the last frame is the same `Rc`.
+    pub rows: Vec<Rc<Vec<Cell>>>,
+    /// Every row changed (output scrolled, a resize, new colors): none is kept.
+    pub all: bool,
     pub cursor: Option<Cursor>,
     /// The cursor's cell even when the program hides it (agents draw their
     /// own): where input methods put their candidate window.
@@ -190,6 +195,11 @@ pub struct Vt {
     /// The cursor, the kitty images and the colors as last drawn: changes to
     /// them don't mark the render state dirty.
     drawn: (CursorKey, u64, u64),
+    /// The rows read last frame by libghostty's row id, with their selection:
+    /// one that isn't dirty is the same row and isn't read again.
+    seen: HashMap<[u64; 2], (Rc<Vec<Cell>>, Option<(u16, u16)>)>,
+    /// The width and colors they were read with: a change reads every row.
+    seen_with: (u16, u64),
     /// Whether the program wants win32 key events (Ghostty doesn't track it).
     pub win32: crate::win32_keys::Win32Input,
 }
@@ -321,6 +331,8 @@ impl Vt {
                 drag,
                 release,
                 drawn: Default::default(),
+                seen: HashMap::new(),
+                seen_with: (0, 0),
                 win32: Default::default(),
             };
             vt.apply_theme();
@@ -333,6 +345,8 @@ impl Vt {
         if self.theme != theme {
             self.theme = theme;
             self.apply_theme();
+            // Rows carry the theme's own colors too (the selection's).
+            self.seen.clear();
         }
     }
 
@@ -764,21 +778,48 @@ impl Vt {
             let fg_default = Rgb::from(colors.foreground);
             let bg_default = Rgb::from(colors.background);
 
+            // Rows libghostty keeps clean are taken as read last frame (see
+            // "Row Identity" in its render.h); a resize or new colors (which
+            // don't mark rows dirty) read them all.
+            let with = (self.cols, self.drawable().2);
+            let mut dirty: GhosttyRenderStateDirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
+            ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &mut dirty as *mut _ as *mut c_void);
+            let all = dirty == GHOSTTY_RENDER_STATE_DIRTY_FULL || with != self.seen_with;
+            let mut seen = HashMap::with_capacity(self.rows as usize);
             let mut rows = Vec::with_capacity(self.rows as usize);
             ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &mut self.rows_it as *mut _ as *mut c_void);
             while ghostty_render_state_row_iterator_next(self.rows_it) {
                 let mut sel = GhosttyRenderStateRowSelection { size: std::mem::size_of::<GhosttyRenderStateRowSelection>(), ..Default::default() };
                 let selected = ghostty_render_state_row_get(self.rows_it, GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION, &mut sel as *mut _ as *mut c_void)
                     == GHOSTTY_SUCCESS;
-                ghostty_render_state_row_get(self.rows_it, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &mut self.cells as *mut _ as *mut c_void);
-                let mut row = Vec::with_capacity(self.cols as usize);
-                let mut x: u16 = 0;
-                while ghostty_render_state_row_cells_next(self.cells) {
-                    row.push(self.read_cell(fg_default, selected && x >= sel.start_x && x <= sel.end_x));
-                    x += 1;
+                let selection = selected.then_some((sel.start_x, sel.end_x));
+                let mut id = GhosttyRenderStateRowId::default();
+                let known = ghostty_render_state_row_get(self.rows_it, GHOSTTY_RENDER_STATE_ROW_DATA_ID, &mut id as *mut _ as *mut c_void) == GHOSTTY_SUCCESS;
+                // Everything changed: no row is kept (but each is remembered).
+                let mut row_dirty = true;
+                if !all {
+                    ghostty_render_state_row_get(self.rows_it, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY, &mut row_dirty as *mut _ as *mut c_void);
+                }
+                let same = (known && !row_dirty).then(|| self.seen.get(&id.bits)).flatten().filter(|(_, s)| *s == selection);
+                let row = match same {
+                    Some((row, _)) => row.clone(),
+                    None => {
+                        ghostty_render_state_row_get(self.rows_it, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &mut self.cells as *mut _ as *mut c_void);
+                        let mut row = Vec::with_capacity(self.cols as usize);
+                        let mut x: u16 = 0;
+                        while ghostty_render_state_row_cells_next(self.cells) {
+                            row.push(self.read_cell(fg_default, selected && x >= sel.start_x && x <= sel.end_x));
+                            x += 1;
+                        }
+                        Rc::new(row)
+                    }
+                };
+                if known {
+                    seen.insert(id.bits, (row.clone(), selection));
                 }
                 rows.push(row);
             }
+            (self.seen, self.seen_with) = (seen, with);
 
             let mut cur = GhosttyRenderStateCursor { size: std::mem::size_of::<GhosttyRenderStateCursor>(), ..Default::default() };
             ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_CURSOR, &mut cur as *mut _ as *mut c_void);
@@ -797,7 +838,7 @@ impl Vt {
             self.drawn = self.drawable();
             ghostty_render_state_clean(state);
             let cursor_cell = cur.viewport_has_value.then_some((cur.viewport_x, cur.viewport_y));
-            Frame { rows, cursor, cursor_cell, bg: bg_default }
+            Frame { rows, all, cursor, cursor_cell, bg: bg_default }
         }
     }
 
@@ -988,6 +1029,23 @@ mod tests {
     }
 
     #[test]
+    fn a_frame_reads_again_only_the_rows_that_changed() {
+        let mut vt = Vt::new(20, 4);
+        // The cursor ends on the last row: the row it leaves counts as changed.
+        vt.write(b"one\r\ntwo\r\nthree\r\n");
+        let before = vt.frame();
+        vt.write(b"\x1b[2;1Hchanged");
+        let after = vt.frame();
+        let same = |y: usize| Rc::ptr_eq(&before.rows[y], &after.rows[y]);
+        assert!(same(0) && same(2), "untouched rows aren't read again");
+        assert!(!same(1));
+        assert!(after.rows[1].iter().map(|c| c.text.as_str()).collect::<String>().starts_with("changed"));
+        vt.write(b"\x1b]4;1;rgb:12/34/56\x1b\\");
+        let recolored = vt.frame();
+        assert!(!Rc::ptr_eq(&after.rows[0], &recolored.rows[0]), "a palette change reads every row");
+    }
+
+    #[test]
     fn text_that_would_vanish_turns_readable() {
         let (ink, white, dark_red) = (Rgb(0x25, 0x27, 0x2c), Rgb(0xff, 0xff, 0xff), Rgb(0x46, 0x1e, 0x20));
         assert_eq!(readable(ink, white), ink);
@@ -1005,6 +1063,21 @@ mod tests {
         assert_eq!(vt.encode_key(GHOSTTY_KEY_ARROW_UP, 0, 0, None, None), b"\x1b[A");
         vt.write(b"\x1b[?1h"); // application cursor keys
         assert_eq!(vt.encode_key(GHOSTTY_KEY_ARROW_UP, 0, 0, None, None), b"\x1bOA");
+    }
+
+    #[test]
+    fn a_selection_shown_while_dragging_matches_the_rows_it_covers() {
+        let mut vt = Vt::new(20, 6);
+        vt.write(b"aaaa\r\nbbbb\r\ncccc\r\ndddd\r\neeee\r\n");
+        let highlighted = |f: &Frame| f.rows.iter().map(|r| r.iter().any(|c| c.bg == Some(theme().selection_bg))).collect::<Vec<_>>();
+        vt.frame();
+        vt.select(Select::Press, 0, 0, 1.0, 5.0, 10.0, 20.0);
+        for row in 1..5 {
+            vt.select(Select::Drag, 2, row, 25.0, row as f32 * 20.0 + 5.0, 10.0, 20.0);
+            vt.frame();
+        }
+        vt.select(Select::Drag, 2, 1, 25.0, 25.0, 10.0, 20.0);
+        assert_eq!(highlighted(&vt.frame()), [true, true, false, false, false, false], "back up to row 1");
     }
 
     #[test]

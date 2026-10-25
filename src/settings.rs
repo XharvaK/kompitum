@@ -664,8 +664,17 @@ pub fn load_home_fonts(cx: &mut gpui::App) -> bool {
     if let Err(e) = cx.text_system().add_fonts(new) {
         tracing::warn!("fonts in {} not loaded: {e:#}", home.display());
     }
+    FONTS_ADDED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     note_fonts(cx.text_system().all_font_names());
     true
+}
+
+static FONTS_ADDED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many times fonts were added while running: text shaped before may now
+/// fall back to other glyphs.
+pub fn fonts_added() -> u64 {
+    FONTS_ADDED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The terminal font, or the bundled default when this machine lacks it:

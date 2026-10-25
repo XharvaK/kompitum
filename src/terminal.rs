@@ -55,6 +55,10 @@ struct Grid {
     /// The cursor's cell in window coordinates, from the last paint: where the
     /// input method puts its candidate window.
     cursor_at: Option<Bounds<Pixels>>,
+    /// Each row's drawing by position, kept while the row is the same (`Rc`).
+    painted: Vec<(Rc<Vec<vt::Cell>>, Vec<RowOp>)>,
+    /// The font size, cell size, font and fonts loaded the drawings were built with.
+    painted_with: (u32, Size<Pixels>, String, u64),
 }
 
 pub struct TerminalView {
@@ -134,6 +138,8 @@ impl TerminalView {
                 link_spans: Vec::new(),
                 marked: None,
                 cursor_at: None,
+                painted: Vec::new(),
+                painted_with: (0, Size::default(), String::new(), 0),
             })),
             focus: cx.focus_handle(),
             was_focused: false,
@@ -801,6 +807,107 @@ pub fn cell_size(window: &Window) -> Size<Pixels> {
     size(w, px((f32::from(h) * 1.15 * scale).ceil() / scale))
 }
 
+/// One piece of a row's drawing, in cells from the row's start.
+enum RowOp {
+    Bg { from: usize, to: usize, color: Hsla },
+    Sprite { x: usize, text: String, color: Hsla },
+    Icon { x: usize, offset: Point<Pixels>, font: FontId, glyph: GlyphId, size: Pixels, color: Hsla },
+    Text { x: usize, line: ShapedLine },
+}
+
+/// A row's drawing: its backgrounds, merged into runs of one color, then its
+/// text in runs of one style (wide characters, sprites and icons on their own).
+fn row_ops(row: &[vt::Cell], cell: Size<Pixels>, window: &mut Window) -> Vec<RowOp> {
+    crate::bench::count(&crate::bench::ROWS);
+    let mut ops = Vec::new();
+    let mut x = 0;
+    while x < row.len() {
+        let Some(bg) = row[x].bg else {
+            x += 1;
+            continue;
+        };
+        let start = x;
+        while x < row.len() && row[x].bg == Some(bg) {
+            x += 1;
+        }
+        ops.push(RowOp::Bg { from: start, to: x, color: hsla(bg) });
+    }
+    let mut x = 0;
+    while x < row.len() {
+        let c = &row[x];
+        if c.text.is_empty() && !c.underline && !c.strike {
+            x += 1;
+            continue;
+        }
+        let start = x;
+        let mut color = hsla(c.fg);
+        if c.faint {
+            color.a = 0.6;
+        }
+        if crate::sprites::is_sprite(&c.text) {
+            ops.push(RowOp::Sprite { x, text: c.text.clone(), color });
+            x += 1;
+            continue;
+        }
+        if let Some(icon) = c.text.chars().next().filter(|_| is_icon(&c.text)).and_then(icon_glyph) {
+            // Fitted to the cell by its real outline, as Ghostty does:
+            // centered, as tall as fits, two cells wide when a space
+            // follows (prompts, statuslines, file trees).
+            let room = if row.get(x + 1).is_none_or(|d| d.text.trim().is_empty()) { 2.0 } else { 1.0 };
+            let (w, h) = (f32::from(cell.width) * room, f32::from(cell.height));
+            let (gw, gh) = ((icon.x1 - icon.x0).max(1.0), (icon.y1 - icon.y0).max(1.0));
+            // Up to ~1.5 cells of two, so it doesn't touch the next word.
+            let scale = (w * if room > 1.0 { 0.75 } else { 0.9 } / gw).min(h * 0.72 / gh);
+            // Centered in its own cell; a wider icon starts at the cell
+            // and spills into the space after it.
+            let cw = f32::from(cell.width);
+            let left = ((cw - gw * scale) / 2.0).max(0.0) - icon.x0 * scale;
+            let baseline = (h - gh * scale) / 2.0 + icon.y1 * scale;
+            let font = window.text_system().resolve_font(&font(crate::settings::SYMBOLS_FONT));
+            let size = px(scale * icon.units_per_em);
+            ops.push(RowOp::Icon { x, offset: point(px(left), px(baseline)), font, glyph: GlyphId(icon.id), size, color });
+            x += 1;
+            continue;
+        }
+        let mut text = String::new();
+        if c.wide {
+            text.push_str(&c.text);
+            x += 1;
+        } else {
+            while x < row.len() {
+                let d = &row[x];
+                let same = !d.wide
+                    && d.fg == c.fg
+                    && d.bold == c.bold
+                    && d.italic == c.italic
+                    && d.faint == c.faint
+                    && d.underline == c.underline
+                    && d.strike == c.strike;
+                if !same || (d.text.is_empty() && !d.underline && !d.strike) || crate::sprites::is_sprite(&d.text) || is_icon(&d.text) {
+                    break;
+                }
+                text.push_str(if d.text.is_empty() { " " } else { &d.text });
+                x += 1;
+            }
+        }
+        if text.trim().is_empty() && !c.underline && !c.strike {
+            continue;
+        }
+        let run = TextRun {
+            len: text.len(),
+            font: cell_font(c.bold, c.italic),
+            color,
+            background_color: None,
+            underline: c.underline.then(|| UnderlineStyle { thickness: px(1.0), color: Some(color), wavy: false }),
+            strikethrough: c.strike.then(|| StrikethroughStyle { thickness: px(1.0), color: Some(color) }),
+        };
+        let force = (!c.wide).then_some(cell.width);
+        let line = window.text_system().shape_line(text.into(), px(crate::settings::font_size()), &[run], force);
+        ops.push(RowOp::Text { x: start, line });
+    }
+    ops
+}
+
 fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, window: &mut Window, cx: &mut App) {
     crate::bench::count(&crate::bench::GRID);
     let mut g = grid.borrow_mut();
@@ -853,105 +960,52 @@ fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, w
     };
     paint_images(true, window);
 
+    // Each row's drawing is built once and painted again while the row is the
+    // same (`Vt::frame` keeps a row libghostty didn't change): an agent's spinner
+    // line rebuilds one row, not the whole screen.
+    let with = (crate::settings::font_size().to_bits(), cell, crate::settings::terminal_font(), crate::settings::fonts_added());
+    // When every row changed (output scrolling), nothing is kept: the next
+    // frame would find none of them the same.
+    let mut painted = std::mem::take(&mut grid.borrow_mut().painted);
+    if grid.borrow().painted_with != with || frame.all {
+        painted.clear();
+    }
+    painted.truncate(frame.rows.len());
     for (y, row) in frame.rows.iter().enumerate() {
-        // Backgrounds, merged into runs of one color.
-        let mut x = 0;
-        while x < row.len() {
-            let Some(bg) = row[x].bg else {
-                x += 1;
-                continue;
-            };
-            let start = x;
-            while x < row.len() && row[x].bg == Some(bg) {
-                x += 1;
+        let fresh;
+        let ops = if frame.all {
+            fresh = row_ops(row, cell, window);
+            &fresh
+        } else {
+            if painted.get(y).is_none_or(|(r, _)| !Rc::ptr_eq(r, row)) {
+                let ops = row_ops(row, cell, window);
+                if y < painted.len() {
+                    painted[y] = (row.clone(), ops);
+                } else {
+                    painted.push((row.clone(), ops));
+                }
             }
-            let b = Bounds::new(at(start, y), size(cell.width * (x - start) as f32, cell.height));
-            window.paint_quad(fill(snap_box(b), hsla(bg)));
+            &painted[y].1
+        };
+        for op in ops {
+            match op {
+                RowOp::Bg { from, to, color } => {
+                    let b = Bounds::new(at(*from, y), size(cell.width * (to - from) as f32, cell.height));
+                    window.paint_quad(fill(snap_box(b), *color));
+                }
+                RowOp::Sprite { x, text, color } => crate::sprites::paint(text, Bounds::new(at(*x, y), cell), *color, window),
+                RowOp::Icon { x, offset, font, glyph, size, color } => {
+                    let _ = window.paint_glyph(at(*x, y) + *offset, *font, *glyph, *size, *color);
+                }
+                RowOp::Text { x, line } => {
+                    let _ = line.paint(at(*x, y), cell.height, TextAlign::Left, None, window, cx);
+                }
+            }
         }
-
-        // Text, in runs of one style; wide characters on their own.
-        let mut x = 0;
-        while x < row.len() {
-            let c = &row[x];
-            if c.text.is_empty() && !c.underline && !c.strike {
-                x += 1;
-                continue;
-            }
-            let start = x;
-            if crate::sprites::is_sprite(&c.text) {
-                let mut color = hsla(c.fg);
-                if c.faint {
-                    color.a = 0.6;
-                }
-                crate::sprites::paint(&c.text, Bounds::new(at(x, y), cell), color, window);
-                x += 1;
-                continue;
-            }
-            if let Some(icon) = c.text.chars().next().filter(|_| is_icon(&c.text)).and_then(icon_glyph) {
-                // Fitted to the cell by its real outline, as Ghostty does:
-                // centered, as tall as fits, two cells wide when a space
-                // follows (prompts, statuslines, file trees).
-                let room = if row.get(x + 1).is_none_or(|d| d.text.trim().is_empty()) { 2.0 } else { 1.0 };
-                let (w, h) = (f32::from(cell.width) * room, f32::from(cell.height));
-                let mut color = hsla(c.fg);
-                if c.faint {
-                    color.a = 0.6;
-                }
-                let (gw, gh) = ((icon.x1 - icon.x0).max(1.0), (icon.y1 - icon.y0).max(1.0));
-                // Up to ~1.5 cells of two, so it doesn't touch the next word.
-                let scale = (w * if room > 1.0 { 0.75 } else { 0.9 } / gw).min(h * 0.72 / gh);
-                let o = at(x, y);
-                // Centered in its own cell; a wider icon starts at the cell
-                // and spills into the space after it.
-                let cw = f32::from(cell.width);
-                let left = f32::from(o.x) + ((cw - gw * scale) / 2.0).max(0.0) - icon.x0 * scale;
-                let baseline = f32::from(o.y) + (h - gh * scale) / 2.0 + icon.y1 * scale;
-                let font_id = window.text_system().resolve_font(&font(crate::settings::SYMBOLS_FONT));
-                let size = px(scale * icon.units_per_em);
-                let _ = window.paint_glyph(point(px(left), px(baseline)), font_id, GlyphId(icon.id), size, color);
-                x += 1;
-                continue;
-            }
-            let mut text = String::new();
-            if c.wide {
-                text.push_str(&c.text);
-                x += 1;
-            } else {
-                while x < row.len() {
-                    let d = &row[x];
-                    let same = !d.wide
-                        && d.fg == c.fg
-                        && d.bold == c.bold
-                        && d.italic == c.italic
-                        && d.faint == c.faint
-                        && d.underline == c.underline
-                        && d.strike == c.strike;
-                    if !same || (d.text.is_empty() && !d.underline && !d.strike) || crate::sprites::is_sprite(&d.text) || is_icon(&d.text) {
-                        break;
-                    }
-                    text.push_str(if d.text.is_empty() { " " } else { &d.text });
-                    x += 1;
-                }
-            }
-            if text.trim().is_empty() && !c.underline && !c.strike {
-                continue;
-            }
-            let mut color = hsla(c.fg);
-            if c.faint {
-                color.a = 0.6;
-            }
-            let run = TextRun {
-                len: text.len(),
-                font: cell_font(c.bold, c.italic),
-                color,
-                background_color: None,
-                underline: c.underline.then(|| UnderlineStyle { thickness: px(1.0), color: Some(color), wavy: false }),
-                strikethrough: c.strike.then(|| StrikethroughStyle { thickness: px(1.0), color: Some(color) }),
-            };
-            let force = (!c.wide).then_some(cell.width);
-            let line = window.text_system().shape_line(text.into(), px(crate::settings::font_size()), &[run], force);
-            let _ = line.paint(at(start, y), cell.height, TextAlign::Left, None, window, cx);
-        }
+    }
+    {
+        let mut g = grid.borrow_mut();
+        (g.painted, g.painted_with) = (painted, with);
     }
 
     for &(y, x0, x1) in &link_spans {
