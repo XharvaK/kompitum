@@ -147,10 +147,6 @@ fn write_atomic(path: &std::path::Path, text: &str) -> bool {
     ok
 }
 
-/// This release's "What's new" (defaults/frame/whatsnew): shown once to
-/// people who had Herdr before. A new page gets a new key.
-const WHATS_NEW: &str = "agents-sidebar";
-
 /// The mods a layout file names that aren't in mods/ (frame mods are always there).
 fn missing_mods(name: &str) -> Vec<String> {
     fn walk(v: &Value, out: &mut Vec<String>) {
@@ -376,6 +372,7 @@ pub struct AppWindow {
     /// What's waiting, in words (`update_label`).
     update_ready: Option<String>,
     update_dismissed: Option<String>,
+    update_success: bool,
     update_status: String,
     focus: FocusHandle,
     _tasks: Vec<Task<()>>,
@@ -454,6 +451,7 @@ impl AppWindow {
             polls: 0,
             update_ready: None,
             update_dismissed: None,
+            update_success: false,
             update_status: String::new(),
             focus: cx.focus_handle(),
             _tasks: Vec::new(),
@@ -640,12 +638,14 @@ impl AppWindow {
         {
             mods::set_shared("space.colors".into(), c);
         }
-        if mods::shared("frame.welcomed").is_none() {
-            // Someone new gets the welcome, never this release's "What's new".
-            mods::set_shared("frame.whatsnew".into(), json!(WHATS_NEW));
+        let first_install = mods::shared("frame.welcomed").is_none();
+        crate::update_notes::started(first_install);
+        if first_install {
             cx.defer_in(window, |this, window, cx| this.open_welcome(window, cx));
-        } else if mods::shared("frame.whatsnew").as_ref().and_then(Value::as_str) != Some(WHATS_NEW) {
+        } else if !crate::update_notes::spotlights().is_empty() {
             cx.defer_in(window, |this, window, cx| this.open_whats_new(window, cx));
+        } else {
+            w.update_success = crate::update_notes::changed();
         }
         crate::telemetry::window_open();
         w
@@ -674,7 +674,12 @@ impl AppWindow {
 
     /// After an update: what it brought (`defaults/frame/whatsnew`), once.
     fn open_whats_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let spec = json!({ "mod": "frame-whatsnew", "kind": "window", "width": 720, "height": 640, "props": { "key": WHATS_NEW } });
+        let notes = crate::update_notes::spotlights();
+        if notes.is_empty() {
+            self.run("app.settings", json!({ "section": "updates" }), window, cx);
+            return;
+        }
+        let spec = json!({ "mod": "frame-whatsnew", "kind": "window", "width": 720, "height": 640, "props": { "notes": notes } });
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 
@@ -2976,7 +2981,7 @@ impl AppWindow {
             }
             "app.check_updates" => crate::update::check_now(),
             "app.update_core" => {
-                if crate::update::core().ready.is_none() {
+                if crate::update::core().ready.is_none() && crate::update::core().error.is_none() {
                     return self.fail("herdr-core is up to date");
                 }
                 crate::update::update_core();
@@ -3910,6 +3915,14 @@ impl AppWindow {
                 }
             }
         }
+        if let Some(error) = crate::update::core().error {
+            out.push(div().absolute().right(settings::z(16.0)).bottom(settings::z(toast_y))
+                .max_w(settings::z(540.0)).p(settings::z(12.0)).rounded_lg().bg(c("popover"))
+                .border_1().border_color(c("border")).text_size(settings::z(13.0)).text_color(c("foreground"))
+                .id("core-update-error").cursor_pointer()
+                .on_click(cx.listener(|this, _, w, cx| this.run("app.settings", json!({ "section": "updates" }), w, cx)))
+                .child(format!("herdr-core update failed: {error} · Open Updates")).into_any_element());
+        }
         out.extend(pill);
         out
     }
@@ -3932,7 +3945,12 @@ impl AppWindow {
     }
 
     fn render_update_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let label = self.update_ready.as_ref().filter(|v| self.update_dismissed.as_ref() != Some(*v))?.clone();
+        let app_version = crate::update::ready();
+        let app_ready = app_version.is_some();
+        let success = self.update_ready.is_none() && self.update_success;
+        let label = self.update_ready.clone().or_else(|| success.then(|| format!("Updated to {}", env!("CARGO_PKG_VERSION"))))?;
+        let dismissal = app_version.map(|v| format!("app:{v}")).unwrap_or_else(|| label.clone());
+        if self.update_dismissed.as_ref() == Some(&dismissal) { return None; }
         let pill = div()
             .absolute()
             .right(settings::z(16.0))
@@ -3951,7 +3969,7 @@ impl AppWindow {
             .occlude()
             .text_size(settings::z(13.0))
             .child(div().text_color(c("foreground")).child(label.clone()))
-            .child(
+            .when(app_ready, |pill| pill.child(
                 div()
                     .id("update-restart")
                     .h(settings::z(24.0))
@@ -3964,9 +3982,15 @@ impl AppWindow {
                     .text_color(c("accent_foreground"))
                     .font_weight(FontWeight::SEMIBOLD)
                     .hover(|s| s.opacity(0.9))
-                    .child("Update")
-                    .on_click(cx.listener(|this, _, w, cx| this.run("app.settings", json!({ "section": "updates" }), w, cx))),
-            )
+                    .child("Restart")
+                    .on_click(cx.listener(|this, _, w, cx| this.run("app.update", json!({}), w, cx))),
+            ))
+            .child(div().id("update-notes").px(settings::z(6.0)).cursor_pointer().text_color(c("accent"))
+                .child(if app_ready || success { "What changed" } else { "Open Updates" })
+                .on_click(cx.listener(move |this, _, w, cx| {
+                    if success { this.update_success = false; }
+                    this.run("app.settings", json!({ "section": "updates" }), w, cx);
+                })))
             .child(
                 div()
                     .id("update-dismiss")
@@ -3980,7 +4004,7 @@ impl AppWindow {
                     .hover(|s| s.bg(c("raised")).text_color(c("foreground")))
                     .child("×")
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.update_dismissed = Some(label.clone());
+                        this.update_dismissed = Some(dismissal.clone());
                         cx.notify();
                     })),
             );

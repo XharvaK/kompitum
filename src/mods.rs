@@ -777,6 +777,10 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         .function("appHome", |_| Ok(app_dir().to_string_lossy().into_owned().into()))
         .function("fonts", |_| Ok(to_host(&json!(*FONTS.lock().unwrap()))))
         .function("updates", |_| Ok(to_host(&crate::update::status())))
+        .function("presentUpdateNotes", |a| {
+            crate::update_notes::presented(&strings(a.get(0)));
+            Ok(HostValue::Null)
+        })
         .function("telemetry", |_| Ok(to_host(&crate::telemetry::status())))
         .function("feedbackPreview", move |a| {
             let images = a.get(2).and_then(|v| match v { HostValue::Number(n) => Some(*n as usize), _ => None }).unwrap_or(0);

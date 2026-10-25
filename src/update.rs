@@ -116,7 +116,7 @@ pub fn set_core(version: Option<String>, managed: Option<String>) {
 }
 
 fn checks_app() -> Option<PathBuf> {
-    root().filter(|_| option_env!("HERDR_APP_RELEASE").is_some())
+    root().filter(|_| option_env!("HERDR_APP_RELEASE").is_some() || std::env::var_os("HERDR_RELEASES_URL").is_some())
 }
 
 /// A release build checks the core; a source build only when pointed at a test release server.
@@ -128,6 +128,7 @@ fn checks_core() -> bool {
 pub fn status() -> serde_json::Value {
     serde_json::json!({
         "app": { "version": env!("CARGO_PKG_VERSION"), "ready": ready(), "updates": checks_app().is_some() },
+        "notes": crate::update_notes::notes(ready().as_deref()),
         "core": core(),
         "checked": *CHECKED.lock().unwrap(),
         "checks": RUNNING.load(Ordering::Relaxed),
@@ -244,6 +245,10 @@ fn check(root: &Path) -> Result<Option<String>, String> {
     if !newer(version, env!("CARGO_PKG_VERSION")) {
         return Ok(None);
     }
+    // Notes are optional: a missing feed must never hold up the update.
+    if let Ok(text) = curl_text(&format!("{}/app/{version}/changelog.md", releases())) {
+        crate::update_notes::cache(&text);
+    }
     let staged = beside(root, ".new");
     if version_of(&staged).as_deref() == Some(version) {
         return Ok(Some(version.to_owned()));
@@ -306,7 +311,7 @@ pub fn system(name: &str) -> PathBuf {
     }
 }
 
-fn sha256(bytes: &[u8]) -> String {
+pub(crate) fn sha256(bytes: &[u8]) -> String {
     use sha2::Digest;
     sha2::Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -347,7 +352,7 @@ fn version_of(app: &Path) -> Option<String> {
 }
 
 /// `a` is a later version than `b` (semver; `0.2.0-rc.1` comes before `0.2.0`).
-fn newer(a: &str, b: &str) -> bool {
+pub(crate) fn newer(a: &str, b: &str) -> bool {
     fn parts(v: &str) -> (Vec<u64>, Option<&str>) {
         let (core, pre) = v.trim_start_matches('v').split_once('-').map_or((v.trim_start_matches('v'), None), |(c, p)| (c, Some(p)));
         (core.split('.').map(|n| n.parse().unwrap_or(0)).collect(), pre)
@@ -450,10 +455,20 @@ pub fn after_update() {
     std::thread::spawn(|| {
         let have = crate::core_bin::version(&crate::core_bin::path()).unwrap_or_default();
         let pins = !newer("0.1.5", have.trim_start_matches("hc "));
-        // Only the log hears how it went; the app reconnects when the core restarts.
-        match crate::core_bin::update_to(pins.then(crate::hc::core_min)) {
-            Ok(now) => tracing::info!("herdr-core is {now}"),
-            Err(e) => tracing::warn!("herdr-core update: {e}"),
+        CORE.lock().unwrap().updating = true;
+        let result = crate::core_bin::update_to(pins.then(crate::hc::core_min));
+        let mut core = CORE.lock().unwrap();
+        core.updating = false;
+        match result {
+            Ok(now) => {
+                tracing::info!("herdr-core is {now}");
+                core.version = Some(now.trim_start_matches("hc ").to_owned());
+                core.error = None;
+            }
+            Err(e) => {
+                tracing::warn!("herdr-core update: {e}");
+                core.error = Some(e);
+            }
         }
     });
 }

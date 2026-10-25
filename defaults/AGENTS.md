@@ -565,10 +565,21 @@ What's about the user, never a look:
   precedence as fonts.
 - `appearance`: `"light"` or `"dark"` always; absent, the system's. A layout
   with a light and a dark theme shows the matching one.
-- Updates: an installed app downloads them by itself and offers a restart;
-  a build from source never updates. Keep signed macOS bundles unchanged:
-  don't edit their Info.plist or re-sign them. Finder launches load the login
-  shell's PATH, with the usual install folders as a fallback.
+- Updates: an installed app downloads them by itself and offers Restart and
+  What changed. Settings → Updates shows every release since the previous
+  version (or through the waiting update), newest expanded; expand older
+  headlines to read them. Reading never clears the waiting-update dot.
+  Rare spotlight releases open What’s new after restart, once; otherwise a
+  quiet Updated pill lasts for that launch. A build from source never updates.
+  Curated notes come from the bundled root `CHANGELOG.md`; remote notes and
+  media are optional. `update-notes.json` records the last successful app
+  version and presented spotlights; `update-notes-cache.md` caches remote
+  notes; `update-notes-media/` caches HTTPS images (including GIF clips),
+  referenced in the changelog as `![label](https://...)`. Mods use `updates().notes` and `presentUpdateNotes([version])` only
+  for spotlight entries actually shown expanded, not collapsed headlines.
+  Keep signed macOS bundles unchanged: don't edit their Info.plist or
+  re-sign them. Finder launches load the login shell's PATH, with the usual
+  install folders as a fallback.
 - `telemetry`: `false` stops anonymous usage data and deletes what wasn't
   sent (on when absent; Settings → Privacy shows each report word for
   word, and `telemetry()` in mods). Once a day the app sends counts:

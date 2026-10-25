@@ -278,11 +278,15 @@ export function fonts(): string[];
  *  (`app.check_updates` starts a look). */
 export function updates(): {
   app: { version: string; ready: string | null; updates: boolean };
+  notes: { version: string; date: string; lines: string[]; spotlight: boolean; media: string[] }[];
   core: { version: string | null; managed: string | null; ready: string | null; updating: boolean; error: string | null };
   checked: number | null;
   checks: boolean;
   checking: boolean;
 };
+
+/** Record only spotlight versions actually shown expanded, never collapsed headlines. */
+export function presentUpdateNotes(versions: string[]): null;
 
 /** Anonymous usage data (one report per day, never terminal content). `enabled`: collecting now;
  *  `setting`: settings.json's `telemetry`; `off_because`: an env var that turns it off for this run

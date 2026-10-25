@@ -125,7 +125,7 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
         shared.borrow_mut().shared.insert(a.string(0)?.into(), from_host(a.value(1)?));
         Ok(HostValue::Null)
     });
-    for name in ["run", "playSound", "setAgentOrder", "openOverlay", "closeOverlay", "notify"] {
+    for name in ["run", "playSound", "setAgentOrder", "openOverlay", "closeOverlay", "notify", "presentUpdateNotes"] {
         let calls = calls.clone();
         module = module.function(name, move |a| {
             calls
@@ -283,6 +283,27 @@ fn settings_sections_and_updates(cx: &mut TestAppContext) {
         }
     }
     eprintln!("19 settings cases, each twice: {:?}", start.elapsed());
+}
+
+#[gpui::test]
+fn release_notes_expand_only_the_newest_by_default(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let notes = json!([
+        {"version":"1.8.0","date":"2026-10-26","lines":["Newest headline", "Newest details"],"spotlight":true,"media":[]},
+        {"version":"1.7.0","date":"2026-10-25","lines":["Older headline", "Older details"],"spotlight":true,"media":[]}
+    ]);
+    let mut update = updates("ready", "current");
+    update["notes"] = notes.clone();
+    let mut p = props();
+    p["section"] = json!("updates");
+    let tree = describe(cx, &staged, "frame/settings", true, p, update.clone(), None).unwrap();
+    assert!(tree.contains("Newest details") && tree.contains("Older headline"));
+    assert!(!tree.contains("Older details"));
+    let mut p = props();
+    p["notes"] = notes;
+    let tree = describe(cx, &staged, "frame/whatsnew", true, p, update, None).unwrap();
+    assert!(tree.contains("Newest details") && tree.contains("Older details"));
 }
 
 #[gpui::test]
