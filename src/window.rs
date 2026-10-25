@@ -360,6 +360,7 @@ pub struct AppWindow {
     drag_from: Option<Point<Pixels>>,
     titlebar_applied: Option<(crate::layout::Titlebar, Option<[f32; 2]>)>,
     focused_pane: Option<String>,
+    synced_model_pane: Option<String>,
     window_active: bool,
     /// The system's appearance; a layout with a light and a dark theme follows it.
     system_dark: bool,
@@ -438,6 +439,7 @@ impl AppWindow {
             drag_from: None,
             titlebar_applied: None,
             focused_pane: None,
+            synced_model_pane: None,
             window_active: true,
             system_dark: is_dark(window.appearance()),
             file_events: crate::files::watch(&mods::app_dir()),
@@ -1210,6 +1212,7 @@ impl AppWindow {
     /// What's on screen now, for done-vs-seen.
     fn visible_addresses(&self) -> Vec<String> {
         let mut out = if self.shows_tab() { self.model.visible_addresses() } else { Vec::new() };
+        out.extend(self.chrome.visible_blocks().into_iter().filter_map(|n| n.terminal().map(str::to_owned)));
         if self.shows_agent() {
             out.extend(self.shown_agent());
         }
@@ -1220,8 +1223,8 @@ impl AppWindow {
     fn focus_agent(&mut self, addr: &str) {
         if let Some(p) = self.model.pane_of(addr) {
             self.model.focus_pane(&p);
-            self.focused_pane = None;
         }
+        self.focused_pane = None;
         self.agent = Some(addr.to_owned());
     }
 
@@ -1303,13 +1306,24 @@ impl AppWindow {
         self.publish_shown_copies();
 
         // Keyboard to the focused pane when it changes (never steal it from an open dialog).
-        let focused = self.model.focused_pane();
+        let model_pane = self.model.focused_pane();
+        let block = terminal_block(&self.chrome, self.focused_pane.as_deref());
+        let focused = if block.is_some() && model_pane == self.synced_model_pane {
+            self.focused_pane.clone()
+        } else {
+            model_pane.clone()
+        };
+        self.synced_model_pane = model_pane;
         let pane_changed = focused != self.focused_pane;
         self.focused_pane = focused.clone();
         let no_dialog = !self.overlays.iter().any(|o| o.kind.modal_keys());
-        if let Some(block) = self.agent_block() {
+        if terminal_block(&self.chrome, focused.as_deref()).is_some() {
+            if pane_changed && no_dialog && let Some(f) = focused.as_deref().and_then(|p| self.pane_focus(p)) {
+                f.focus(window, cx);
+            }
+        } else if let Some(block) = self.agent_block() {
             let shown = self.shown_agent();
-            if shown != self.agent_focused {
+            if shown != self.agent_focused || pane_changed {
                 self.agent_focused = shown.clone();
                 if no_dialog && let Some(t) = shown.and_then(|a| self.agent_view(&block, &a)) {
                     t.focus.focus(window, cx);
@@ -1339,7 +1353,9 @@ impl AppWindow {
     /// else the window, where the app's keys work.
     fn restore_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dialog = self.overlays.iter().rev().find(|o| o.kind.modal_keys()).map(|o| o.focus.clone());
-        let shown = if let Some(block) = self.agent_block() {
+        let shown = if terminal_block(&self.chrome, self.focused_pane.as_deref()).is_some() {
+            self.focused_pane.as_deref().and_then(|p| self.pane_focus(p))
+        } else if let Some(block) = self.agent_block() {
             self.shown_agent().and_then(|a| self.agent_view(&block, &a)).map(|t| t.focus.clone())
         } else if self.shows_tab() {
             self.model.focused_pane().and_then(|p| self.pane_focus(&p))
@@ -1411,7 +1427,8 @@ impl AppWindow {
                 model::space_json(m, p, i, branch.as_deref(), &home)
             })
             .collect();
-        let focused_pane = m.focused_pane();
+        let block = terminal_block(&self.chrome, self.focused_pane.as_deref());
+        let focused_pane = if block.is_some() { None } else { m.focused_pane() };
         let mut agents = Vec::new();
         let mut panes = Vec::new();
         for pr in &m.spaces {
@@ -1448,6 +1465,11 @@ impl AppWindow {
         }
         let focused = m.active_space().and_then(|p| {
             let ctx = p.active_tab()?;
+            if let Some(block) = block {
+                let address = block.terminal()?;
+                return Some(json!({ "space": p.id, "tab": ctx.id, "pane": null, "terminal": address,
+                    "shown": null, "agent": self.shown_agent(), "cwd": self.cwds.get(address) }));
+            }
             let pane = ctx.focused_pane()?;
             let cwd = (if self.shows_agent() { self.shown_agent() } else { m.address_of(&pane) }).and_then(|a| self.cwds.get(&a).cloned());
             Some(json!({ "space": p.id, "tab": ctx.id, "terminal": m.address_of(&pane), "shown": self.swapped.get(&pane),
@@ -2404,6 +2426,9 @@ impl AppWindow {
             tracing::warn!("unknown command {name:?}");
             return json!({ "error": format!("unknown command {name:?}: see `herdr-app commands`; a mod's are <mod>.<command> and need the mod loaded") });
         };
+        if terminal_block(&self.chrome, self.focused_pane.as_deref()).is_some() && needs_model_pane(name, &args) {
+            return json!({ "error": "a terminal layout block is focused, not a pane; focus a pane or pass an explicit pane id" });
+        }
         if person && name.ends_with(".rename") && args.get("name").is_none_or(Value::is_null) {
             self.ask_name(name, args, window, cx);
             return json!({ "asked": "name" });
@@ -2610,6 +2635,20 @@ impl AppWindow {
                 }
             }
             "pane.focus" => {
+                if Self::arg(a, "pane").is_none()
+                    && let Some(terminal) = Self::arg(a, "terminal")
+                    && let Some(block) = self.chrome.visible_blocks().into_iter().find(|n| n.terminal() == Some(terminal))
+                {
+                    let id = block.id.clone();
+                    self.focused_pane = Some(id.clone());
+                    self.synced_model_pane = self.model.focused_pane();
+                    if !self.overlays.iter().any(|o| o.kind.modal_keys()) && let Some(f) = self.pane_focus(&id) {
+                        f.focus(window, cx);
+                    }
+                    self.publish(cx);
+                    cx.notify();
+                    return;
+                }
                 let pane = Self::owned(a, "pane").or_else(|| Self::arg(a, "terminal").and_then(|t| self.model.pane_of(t)));
                 let Some(p) = pane.filter(|p| self.model.tab_of(p).is_some()) else { return self.fail("no such pane") };
                 self.model.focus_pane(&p);
@@ -2666,7 +2705,7 @@ impl AppWindow {
                     Some("menu") => "",
                     other => return self.fail(format!("terminal.right_click to is \"program\" or \"menu\", not {other:?}")),
                 };
-                let t = Self::owned(a, "terminal").or_else(|| self.model.focused_pane().and_then(|p| self.model.address_of(&p)));
+                let t = Self::owned(a, "terminal").or_else(|| self.focused_pane.as_deref().and_then(|p| self.pane_term(p)).map(|t| t.address.clone())).or_else(|| self.model.focused_pane().and_then(|p| self.model.address_of(&p)));
                 let Some(t) = t.filter(|t| self.live.contains_key(t)) else { return self.fail("no such running terminal") };
                 // Off the UI thread: a terminal on a slow machine answers late.
                 let core = self.core.clone();
@@ -3519,10 +3558,13 @@ impl AppWindow {
                     div()
                         .size_full()
                         .on_any_mouse_down(cx.listener(move |this, _, _, cx| {
-                            // A terminal in an overlay (a window) is no pane: it keeps its own focus.
-                            if this.focused_pane.as_deref() != Some(id.as_str()) && this.model.tab_of(&id).is_some() {
+                            // Overlay terminals keep their own focus; chrome blocks share the pane focus API.
+                            if this.focused_pane.as_deref() != Some(id.as_str())
+                                && (this.model.tab_of(&id).is_some() || terminal_block(&this.chrome, Some(&id)).is_some())
+                            {
                                 this.model.focus_pane(&id);
                                 this.focused_pane = Some(id.clone());
+                                this.synced_model_pane = this.model.focused_pane();
                                 this.publish(cx);
                                 this.save();
                                 cx.notify();
@@ -3991,6 +4033,20 @@ fn folder_info(cwd: &str, home: &str, on: Option<&str>) -> (model::FolderInfo, b
     (model::FolderInfo { top: top.clone(), branch }, true)
 }
 
+fn terminal_block<'a>(chrome: &'a Node, focused: Option<&str>) -> Option<&'a Node> {
+    let id = focused?;
+    chrome.visible_blocks().into_iter().find(|n| n.id == id && n.terminal().is_some())
+}
+
+fn needs_model_pane(name: &str, args: &Value) -> bool {
+    match name {
+        "pane.split" | "pane.close" | "pane.zoom" | "terminal.show" => AppWindow::arg(args, "pane").is_none(),
+        "pane.go" | "pane.swap" => true,
+        "terminal.open" | "terminal.keep" => matches!(AppWindow::arg(args, "place"), Some("right" | "down")),
+        _ => false,
+    }
+}
+
 fn home() -> String {
     mods::home().to_string_lossy().into_owned()
 }
@@ -4180,10 +4236,11 @@ impl Render for AppWindow {
             .map(|(id, _)| id.clone());
         if let Some(id) = clicked
             && self.focused_pane.as_deref() != Some(id.as_str())
-            && self.model.tab_of(&id).is_some()
+            && (self.model.tab_of(&id).is_some() || terminal_block(&self.chrome, Some(&id)).is_some())
         {
             self.model.focus_pane(&id);
             self.focused_pane = Some(id);
+            self.synced_model_pane = self.model.focused_pane();
             self.publish(cx);
         }
         self.tick_floats(window);
@@ -4320,6 +4377,45 @@ mod tests {
         let partial = super::terminal_menu_spec("personal-menu", &json!({"width": 0.4}), "pane", json!({}));
         assert_eq!(partial["width"], 0.4);
         assert_eq!(partial["height"], 260.0);
+    }
+
+    #[test]
+    fn composition_focus_only_uses_visible_terminal_blocks() {
+        let chrome: super::Node = serde_json::from_value(serde_json::json!({
+            "id": "composition", "type": "row", "children": [
+                { "id": "left", "type": "block", "content": {"terminal": "t1"} },
+                { "id": "right", "type": "block", "content": {"terminal": "other/t2"} },
+                { "id": "hidden", "type": "block", "hidden": true, "content": {"terminal": "t3"} },
+                { "id": "tabs", "type": "block", "content": {"tab": "active"} }
+            ]
+        })).unwrap();
+        assert_eq!(super::terminal_block(&chrome, Some("left")).and_then(|n| n.terminal()), Some("t1"));
+        assert_eq!(super::terminal_block(&chrome, Some("right")).and_then(|n| n.terminal()), Some("other/t2"));
+        for id in [None, Some("hidden"), Some("tabs"), Some("source-pane"), Some("overlay:term")] {
+            assert!(super::terminal_block(&chrome, id).is_none());
+        }
+    }
+
+    #[test]
+    fn composition_commands_never_default_to_a_source_pane() {
+        use serde_json::json;
+        for name in ["pane.split", "pane.close", "pane.zoom", "pane.go", "pane.swap", "terminal.show"] {
+            assert!(super::needs_model_pane(name, &json!({})), "{name}");
+            assert!(super::needs_model_pane(name, &json!({"pane": null})), "{name}");
+        }
+        for name in ["pane.split", "pane.close", "pane.zoom", "terminal.show"] {
+            assert!(!super::needs_model_pane(name, &json!({"pane": "explicit-pane"})), "{name}");
+        }
+        for name in ["terminal.open", "terminal.keep"] {
+            for place in ["right", "down"] {
+                assert!(super::needs_model_pane(name, &json!({"place": place})), "{name} {place}");
+            }
+            assert!(!super::needs_model_pane(name, &json!({})), "{name}");
+            assert!(!super::needs_model_pane(name, &json!({"place": "tab"})), "{name}");
+        }
+        for name in ["pane.focus", "terminal.copy", "terminal.paste", "terminal.paste_image", "terminal.right_click"] {
+            assert!(!super::needs_model_pane(name, &json!({})), "{name}");
+        }
     }
 
     #[test]

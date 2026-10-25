@@ -208,10 +208,15 @@ export function setAgentOrder(addresses: string[]): null;
  *  `program` (see Program). Live. */
 export function terminals(): any[];
 
-/** What has focus: the space, tab, pane and its terminal, and `agent`: the agent an
- *  `{ "agent": "focused" }` block shows (any terminal address, sub-agents too). Live. */
-/** `shown`: the terminal terminal.show put in the pane in place of its own, if any. */
-export function focused(): { space: string; tab: string; pane: string; terminal: string; shown: string | null; agent: string | null; cwd: string | null } | null;
+/** Actual terminal/pane focus. `space` and `tab` are the current window context.
+ *  Clicking a visible layout terminal block, or pane.focus {terminal}, focuses that block:
+ *  `terminal` and `cwd` describe it; `pane` and `shown` are null, not its source pane.
+ *  Implicit pane split/close/zoom/go/swap and terminal.show fail in that case, as do
+ *  terminal.open/keep with place right/down. An explicit pane id targets a model pane.
+ *  pane.focus {terminal} prefers the first visible layout terminal block, then a model pane.
+ *  `shown`: terminal.show replacement, if any. `agent`: the agent an agent block shows.
+ *  `terminal` is null for mod panes. Live. */
+export function focused(): { space: string; tab: string; pane: string | null; terminal: string | null; shown: string | null; agent: string | null; cwd: string | null } | null;
 
 /** The shown layout (layouts/<name>.json). Its name is shared("layout").
  *  Root `terminal_menu?: string` chooses a terminal right-click menu mod (default: "menu").

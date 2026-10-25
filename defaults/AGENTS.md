@@ -417,6 +417,12 @@ you use the same list. `herdr-app commands` prints every one with its arguments
 - Panes: `pane.split {direction: "right" | "down", pane?, argv? | mod?, props?}` (a new
   terminal, or a mod pane), `pane.close {pane?}`,
   `pane.zoom {pane?}`, `pane.focus {pane | terminal}`, `pane.go {direction}`, `pane.swap {direction}`.
+  `pane.focus {terminal}` prefers the first visible layout terminal block showing that
+  address, then its model pane. Clicking a terminal block focuses it too.
+  While a layout terminal block is focused, implicit split/close/zoom/go/swap and
+  `terminal.show` fail, as do `terminal.open`/`terminal.keep` with place right/down.
+  They never act on the terminal's source pane. An explicit `pane` still targets that
+  model pane; composition edits belong to the mod (edit its layout instead).
 - Terminals: `terminal.open {argv?, folder?, place?}`, `terminal.kill {terminal}`,
   `terminal.keep {terminal, place?}`, `terminal.park {terminal}`,
   `terminal.show {terminal?, pane?}`, `terminal.copy`, `terminal.paste` (an image
@@ -672,6 +678,12 @@ All of it is in `herdr.d.ts`. In short:
   appearance now), `keys()`, `commands()` (every app
   command, its arguments and what it does), `layouts()` (the layout names).
   `focused().agent` is the agent an agent block shows.
+  `focused().space`/`tab` describe the current window context. With a layout terminal
+  block focused, `pane` and `shown` are null; `terminal` and `cwd` describe that block,
+  not its source pane. Check `focused()?.pane` before offering pane controls.
+  `panes()` still lists only model panes; none is focused while a terminal block is.
+  For composition navigation: `run("pane.focus", {terminal: nextAddress})`.
+  Terminal copy/paste and implicit right-click routing follow the focused block.
 - Floating: `placement()` (null unless this copy floats).
 - Act: `run(command, args)`.
 - Overlays: `openOverlay({ mod, props, kind: "dialog" | "popup" | "window", width, height, at, frame })`

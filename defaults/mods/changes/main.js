@@ -4,8 +4,9 @@ import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, setting
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
-  const pane = panes().find(p => p.pane === f?.pane);
-  return { cwd: pane?.cwd || f?.cwd || space?.folder, on: space?.machine ?? null };
+  const pane = f?.pane ? panes().find(p => p.pane === f.pane) : null;
+  const on = f?.pane === null ? (f.terminal?.includes("/") ? f.terminal.split("/")[0] : null) : space?.machine ?? null;
+  return { cwd: pane?.cwd || f?.cwd || space?.folder, on };
 }
 const key = () => JSON.stringify(location());
 const countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
