@@ -74,7 +74,7 @@ pub fn shell() -> String {
 /// sidebar, tab bar).
 const LAYOUTS: &[(&str, &str)] = &[
     ("main", include_str!("../defaults/layouts/main.json")),
-    ("t-rex", include_str!("../defaults/layouts/t-rex.json")),
+    ("terminals", include_str!("../defaults/layouts/terminals.json")),
     ("win98", include_str!("../defaults/layouts/win98.json")),
 ];
 
@@ -4450,9 +4450,9 @@ mod tests {
         let main = super::default_layout("main");
         assert!(main.find("main").is_some() && main.find("sidebar").is_some());
         assert!(main.walk().iter().any(|n| matches!(n.content(), Some(super::Content::Context { .. }))));
-        let trex = super::default_layout("t-rex");
-        assert!(trex.find("tabs").is_some());
-        assert!(matches!(trex.find("main").and_then(|n| n.content()), Some(super::Content::Context { .. })));
+        let terminals = super::default_layout("terminals");
+        assert!(terminals.find("tabs").is_some());
+        assert!(matches!(terminals.find("main").and_then(|n| n.content()), Some(super::Content::Context { .. })));
     }
 
     #[test]

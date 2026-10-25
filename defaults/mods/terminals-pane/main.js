@@ -1,4 +1,4 @@
-// t-rex's pane header, after Rex: the program's glyph (or the agent's logo), the
+// The Terminals layout's pane header, after Rex: the program's glyph (or the agent's logo), the
 // program's title and its folder; split, zoom and close on the right, quiet
 // until hovered. Props from the app: { pane, terminal }. Click: focus it.
 
@@ -13,7 +13,7 @@ function folder(cwd) {
   return cwd === h ? "~" : cwd.startsWith(h + "/") ? "~" + cwd.slice(h.length) : cwd;
 }
 
-export default class TrexPane extends View {
+export default class TerminalsPane extends View {
   me() {
     return panes().find((p) => p.pane === props()?.pane);
   }
@@ -43,7 +43,7 @@ export default class TrexPane extends View {
     const title = p.title || "shell";
     const dir = where && !title.includes(where) && !/^[~/]/.test(title) ? where : "";
     return h_flex()
-      .id(`trex-head-${pane}`)
+      .id(`tm-head-${pane}`)
       .size_full()
       .pl(12)
       .pr(8)

@@ -62,7 +62,7 @@ commands. They're rewritten on every start to match this version.
 
 | File | What it decides | Applied |
 |---|---|---|
-| `layouts/<name>.json` | the window and its whole look: blocks, theme, fonts, backgrounds, pane frames; one file per layout (`main`, `t-rex`, `win98`, any you add) | live |
+| `layouts/<name>.json` | the window and its whole look: blocks, theme, fonts, backgrounds, pane frames; one file per layout (`main`, `terminals`, `win98`, any you add) | live |
 | `keys.json` | what every key does | live |
 | `settings.json` | the person: zoom, sounds, fonts for every layout | live |
 | `mods/<name>/` | panels: small JavaScript programs | live (hot reload) |
@@ -150,15 +150,15 @@ that starts a terminal or any installed agent, `new-menu`; panes as cards
 with a header; Files and Changes panels on the right, `files` and
 `changes`, opened from the tab bar and remembered per space (which ones:
 shared `"workspace.panels"`, set by the welcome); a status bar,
-`workspace-status`), and as examples `t-rex` (tabs in the title bar,
-panes as cards, a space picker) and `win98`
+`workspace-status`), and as examples `terminals` ("Terminals": tabs in
+the title bar, panes as cards, a space picker) and `win98`
 ("Herdr 98": a whole desktop in one mod, `win98`). Add a layout by
 writing a new file.
 
 **Herdr's own layouts and mods are read-only.** They are replaced whole
 on every start. Use settings.json for look (fonts, sizes, theme, colors,
 sounds), where the layout leaves them unset. Herdr (main) has no look of
-its own, so your settings decide it; Herdr 98 and T-Rex bring their own
+its own, so your settings decide it; Herdr 98 and Terminals bring their own
 look. The theme picker overrides any layout. To change a shipped layout's
 look beyond that, or its structure/code, clone it and edit the clone:
 
@@ -283,7 +283,7 @@ layout's look and a block can differ:
 - `font` / `font_size`: the terminals' (px at zoom 1); `ui_font`: the mods'
   (their text sizes are their own, in px, and follow zoom). Optional: without
   them a layout uses settings.json's, else Herdr's (JetBrains Mono 14, Geist).
-  Herdr (main) leaves these unset; T-Rex sets text size 15, and Herdr 98
+  Herdr (main) leaves these unset; Terminals sets text size 15, and Herdr 98
   brings its own fonts.
   JetBrains Mono, Geist Mono and Geist ship with Herdr; any installed font
   works (a terminal font the machine lacks falls back to JetBrains Mono).
@@ -369,20 +369,46 @@ The default window:
 Sidebar on the right: swap the two children of `root`. No sidebar: set
 `"hidden": true` on `sidebar` (the user can toggle it: `ctrl-shift-b`).
 
+### Layouts other people made
+
+People share layouts at herdr.dev/layouts. Each is a folder laid out like
+this home: `layouts/<name>.json`, the `mods/<name>/` it needs, a
+`RECIPE.md` (what it is, how it was built, what it assumes) and a
+`preview.png`. Asked to add one (`herdr.dev/layouts/<owner>/<name>`, or a
+folder on GitHub):
+
+1. Read the recipe and every file before writing anything. Before adding,
+   tell the person if a mod reaches the network, runs programs (`exec`,
+   `hc`) or reads files outside its own folder.
+2. Copy the layout file to `layouts/` and each mod folder to `mods/`. Leave
+   the recipe and preview out. Never overwrite: if a name is taken (yours
+   or Herdr's), rename the new one: its file or folder, the `mod` names in
+   the layout, and the mod's own `mods/<name>/` paths.
+3. Fit it to this setup only where its assumptions don't hold (a missing
+   program, a name clash) or the person asks.
+4. `herdr-app check` each mod, then `layout.switch {name}`. The person's
+   own layout stays as it was; `ctrl-shift-l` switches back, and deleting
+   the files removes it.
+
+To share one: put that folder in a public GitHub repo (one folder per
+layout if there are several), write its `RECIPE.md` from the real files,
+save a screenshot as `preview.png` and add the repo topic `herdr-layout`.
+It shows up at herdr.dev/layouts within the hour.
+
 ## Keys: `keys.json`
 
 ```json
 {
   "global":   { "ctrl-shift-t": "tab.new", "ctrl-shift-o": "pane.split:right", "alt-1": "space.select:1" },
   "terminal": { "ctrl-shift-c": "terminal.copy", "ctrl-left": "send:\u001bb", "ctrl-1": "terminal" },
-  "layout:t-rex": { "ctrl-shift-pagedown": "space.next", "ctrl-shift-pageup": "space.prev" },
+  "layout:terminals": { "ctrl-shift-pagedown": "space.next", "ctrl-shift-pageup": "space.prev" },
   "mod:editor": { "ctrl-s": "editor.save" }
 }
 ```
 
 - Sections: `global`, `layout:<name>` (while `layouts/<name>.json` shows),
   `terminal` (a terminal has focus), `mod:<name>`. The more specific section
-  wins: `layout:t-rex` over `global`, `terminal` over both.
+  wins: `layout:terminals` over `global`, `terminal` over both.
 - An action is a command (`name`, or `name:value`: the value fills the
   command's first argument), `send:<text>` (types into the terminal),
   `<mod>.<command>` (delivered to that mod's `nextCommand()`), or `terminal`
@@ -557,7 +583,7 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
   (tinted with the text color).
 - The defaults are mods too, read them as examples: `spaces`, `agents`,
   `tabs` (the tab bar), `menu`, `prompt`, `confirm`, `help`, `toast`,
-  t-rex's `picker`, `peek`, and `pane` (an
+  Terminals' `picker`, `peek`, and `pane` (an
   example pane header, not used by the default layouts), and `worktree`
   (git worktrees as spaces: the space menu's and the + menu's New worktree,
   Open worktree (the repo's checkouts, filtered; one already shown is gone

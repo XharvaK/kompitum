@@ -729,7 +729,7 @@ mod tests {
             theme: "my-theme".into(),
             ..Observation::default()
         };
-        day.observe(o, &["main", "t-rex"]);
+        day.observe(o, &["main", "terminals"]);
         day.core = Some("hc /home/me/build".into());
         let text = day.report("0123456789abcdef0123456789abcdef").to_string();
         for leak in ["secret", "private", "/home", "my-theme", "frame-"] {

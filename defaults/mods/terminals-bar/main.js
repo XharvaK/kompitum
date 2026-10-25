@@ -1,4 +1,4 @@
-// t-rex's top bar, after Rex (Superlogical). Left: the space switcher, a
+// The Terminals layout's top bar, after Rex (Superlogical). Left: the space switcher, a
 // chip with the shown space's name that opens the picker. Middle: the
 // space's tabs as tabs in one rounded tray, each with a tile of what
 // runs in it (the agent's logo, else a green prompt), a status dot, its name
@@ -81,7 +81,7 @@ function windowButton(id, icon, command) {
       .cursor_pointer()
       .hover((s) => s.bg(C.edge).text_color(C.text))
       .on_click(() => run(command))
-      .child(svg(`mods/trex-bar/${icon}.svg`).size(14)),
+      .child(svg(`mods/terminals-bar/${icon}.svg`).size(14)),
   );
 }
 
@@ -95,10 +95,10 @@ function iconButton(id, icon, onClick) {
     .cursor_pointer()
     .hover((s) => s.bg(C.chip).text_color(C.text))
     .on_click(onClick)
-    .child(svg(`mods/trex-bar/${icon}.svg`).size(17));
+    .child(svg(`mods/terminals-bar/${icon}.svg`).size(17));
 }
 
-export default class TrexBar extends View {
+export default class TerminalsBar extends View {
   render() {
     const t = theme();
     const space = spaces().find((p) => p.active);
@@ -110,7 +110,7 @@ export default class TrexBar extends View {
       const p = lead(all, c.id);
       const where = folder(p?.cwd);
       return own(h_flex())
-        .id(`trex-${c.id}`)
+        .id(`tm-${c.id}`)
         .flex_shrink(1)
         .w(260)
         .min_w(0)
@@ -148,7 +148,7 @@ export default class TrexBar extends View {
       .when(w.platform === "macos" && w.titlebar === "none" && !w.fullscreen, (el) => el.pl(72))
       .child(
         own(h_flex())
-          .id("trex-space")
+          .id("tm-space")
           .flex_none()
           .h(30)
           .pl(10)
@@ -162,7 +162,7 @@ export default class TrexBar extends View {
           .text_color(C.dim)
           .hover((s) => s.text_color(C.text))
           .on_click(() => openOverlay({ mod: "picker", kind: "popup", at: "top", offset: 40, width: 640, height: 0.8 }))
-          .child(svg("mods/trex-bar/stack.svg").size(15))
+          .child(svg("mods/terminals-bar/stack.svg").size(15))
           .child(div().max_w(160).truncate().text_color(C.text).child(space.name)),
       )
       .child(
@@ -177,8 +177,8 @@ export default class TrexBar extends View {
           .children(space.tabs.map(tab)),
       )
       .child(div().flex_1())
-      .child(iconButton("trex-keys", "command", () => run("app.palette")))
-      .child(iconButton("trex-new", "plus", () => run("tab.new", { space: space.id })))
+      .child(iconButton("tm-keys", "command", () => run("app.palette")))
+      .child(iconButton("tm-new", "plus", () => run("tab.new", { space: space.id })))
       .when(Boolean(w.buttons), (el) =>
         el.child(
           h_flex()
@@ -186,9 +186,9 @@ export default class TrexBar extends View {
             .pl(6)
             .pr(4)
             .gap(8)
-            .child(windowButton("trex-min", "win-min", "window.minimize"))
-            .child(windowButton("trex-max", w.maximized ? "win-restore" : "win-max", "window.maximize"))
-            .child(windowButton("trex-close", "win-close", "window.close")),
+            .child(windowButton("tm-min", "win-min", "window.minimize"))
+            .child(windowButton("tm-max", w.maximized ? "win-restore" : "win-max", "window.maximize"))
+            .child(windowButton("tm-close", "win-close", "window.close")),
         ),
       );
   }

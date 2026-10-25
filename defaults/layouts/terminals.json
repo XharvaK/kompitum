@@ -27,7 +27,7 @@
       "type": "block",
       "size": { "px": 38 },
       "window_drag": true,
-      "content": { "mod": "trex-bar" }
+      "content": { "mod": "terminals-bar" }
     },
     {
       "id": "main",
@@ -35,7 +35,7 @@
       "content": {
         "tab": "active",
         "pane": {
-          "header": { "content": { "mod": "trex-pane" }, "height": 38 },
+          "header": { "content": { "mod": "terminals-pane" }, "height": 38 },
           "background": "#17191c",
           "border": { "width": 1, "color": "#24272b" },
           "focus": { "width": 1, "color": "#33363b" },

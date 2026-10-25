@@ -4,7 +4,7 @@
 //! {
 //!   "global":   { "ctrl-shift-t": "tab.new", "ctrl-1": "tab.select:1" },
 //!   "terminal": { "ctrl-left": "send:\u001bb", "ctrl-shift-t": "terminal" },
-//!   "layout:t-rex": { "ctrl-]": "space.next" },
+//!   "layout:terminals": { "ctrl-]": "space.next" },
 //!   "mod:editor": { "ctrl-s": "editor.save" }
 //! }
 //! ```

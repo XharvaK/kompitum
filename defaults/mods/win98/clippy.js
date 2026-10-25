@@ -16,7 +16,7 @@ const TIPS = [
   "Waiting on an agent? Mines is on\nthe desktop. I won't tell anyone.",
   "Double-click a window's title bar to\nmaximize it. Double-click again to restore.",
   "Start > Run... opens any command line\nin a new window, like it's 1998.",
-  "Shut Down > Restart in DOS mode\ntakes you to the t-rex layout.",
+  "Shut Down > Restart in DOS mode\ntakes you to the Terminals layout.",
   "Log Off takes you back to Herdr's\nnormal layout. I'll miss you.",
 ];
 

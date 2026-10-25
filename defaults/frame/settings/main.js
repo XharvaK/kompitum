@@ -19,7 +19,7 @@ const SECTIONS = [
   { id: "privacy", title: "Privacy", icon: "shield" },
 ];
 
-const LOOKS = { main: "Herdr", "t-rex": "T-Rex", win98: "Herdr 98" };
+const LOOKS = { main: "Herdr", terminals: "Terminals", win98: "Herdr 98" };
 const APPEARANCES = [
   [null, "System"],
   ["light", "Light"],
@@ -238,7 +238,7 @@ export default class Settings extends View {
             .child(row().h(11).gap(2).p(2).border_b(1).border_color(t.border).child(div().w(20).rounded(2).bg(t.accent)).child(div().w(16).rounded(2).bg(t.raised)).child(div().w(16).rounded(2).bg(t.raised)))
             .child(row().flex_1().p(4).gap(3).child(term()).child(term())),
         );
-    if (name === "t-rex") {
+    if (name === "terminals") {
       const card = () => col().flex_1().rounded(4).border_1().border_color("#2c2f34").bg("#17191c").child(row().h(7).px(3).items_center().border_b(1).border_color("#25282c").child(line(14, "#5d6168")));
       return frame(col())
         .bg("#131619")

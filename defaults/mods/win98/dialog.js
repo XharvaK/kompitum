@@ -240,7 +240,7 @@ export default class Dialog {
     } else if (c === 2) {
       openOverlay({ mod: "win98", kind: "dialog", frame: "none", modal: true, width: 1, height: 1, props: { role: "dialog", kind: "screen", mode: "restart" } });
     } else {
-      run("layout.switch", { name: "t-rex" });
+      run("layout.switch", { name: "terminals" });
     }
   }
 
