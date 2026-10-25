@@ -7,6 +7,7 @@
 use crate::hc::Core;
 mod floats;
 mod movable;
+mod pane_drag;
 mod titlebar;
 
 use crate::layout::{Axis, Background as Paint, Content, Fit, HeaderContent, Kind, Line, Node, PaneFrame, Size as Span};
@@ -301,6 +302,10 @@ pub struct AppWindow {
     /// looked at in place of its parent. Not saved; the pane keeps its own.
     swapped: HashMap<String, String>,
     float_drag: Option<floats::FloatDrag>,
+    pane_drag: Option<pane_drag::PaneDrag>,
+    pane_grip_hover: Option<String>,
+    /// Each pane's top row the grip sits centered in: its top header, else a strip.
+    pane_grip_rows: RefCell<HashMap<String, f32>>,
     /// A window (`kind: "window"` overlay) being pressed or dragged.
     win_drag: Option<movable::WinDrag>,
     float_anims: HashMap<String, floats::FloatAnim>,
@@ -395,6 +400,9 @@ impl AppWindow {
             agent_focused: None,
             swapped: HashMap::new(),
             float_drag: None,
+            pane_drag: None,
+            pane_grip_hover: None,
+            pane_grip_rows: RefCell::default(),
             win_drag: None,
             float_anims: HashMap::new(),
             float_reveal: HashMap::new(),
@@ -863,6 +871,7 @@ impl AppWindow {
         };
         self.save();
         self.float_drag = None;
+        self.pane_drag = None;
         self.float_anims.clear();
         self.float_reveal.clear();
         self.float_hover.clear();
@@ -1439,7 +1448,7 @@ impl AppWindow {
                     let zoomed = ctx.zoomed.as_deref() == Some(p.id.as_str());
                     // A mod pane: what it shows, no terminal.
                     if let Some(Content::Mod { name, .. }) = p.content() {
-                        panes.push(json!({ "pane": p.id, "terminal": null, "mod": name, "tab": ctx.id, "title": name, "focused": focused, "zoomed": zoomed }));
+                        panes.push(json!({ "pane": p.id, "terminal": null, "mod": name, "tab": ctx.id, "title": name, "focused": focused, "zoomed": zoomed, "movable": self.pane_movable(&p.id) }));
                         continue;
                     }
                     let Some(addr) = p.terminal() else { continue };
@@ -1451,7 +1460,7 @@ impl AppWindow {
                         "pane": p.id, "terminal": addr, "tab": ctx.id, "title": title.clone().unwrap_or_default(),
                         "cwd": self.cwds.get(addr), "branch": m.folder_info.get(addr).and_then(|f| f.branch.clone()),
                         "status": m.status(addr), "app": a.and_then(|a| a.app.clone()), "program": self.program(addr),
-                        "focused": focused, "zoomed": zoomed,
+                        "focused": focused, "zoomed": zoomed, "movable": self.pane_movable(&p.id),
                     }));
                     let Some(status) = m.status(addr) else { continue };
                     agents.push(json!({
@@ -3493,7 +3502,8 @@ impl AppWindow {
         el = shadow(el, f.shadow.as_deref());
         let body = div().flex_1().min_h_0().flex().child(inner);
         let Some(h) = &f.header else { return el.child(body).into_any_element() };
-        let head = div().flex_none().h(settings::z(h.height.unwrap_or(HEADER_HEIGHT))).w_full().flex().child(self.render_slot(&format!("{}#frame", n.id), cx));
+        let head = div().flex_none().h(settings::z(h.height.unwrap_or(HEADER_HEIGHT))).w_full().flex()
+            .child(self.render_slot(&format!("{}#frame", n.id), cx));
         if h.hover() {
             let head = head.absolute().left_0().right_0().opacity(0.).group_hover(group, |s| s.opacity(1.));
             let head = if h.bottom() { head.bottom_0() } else { head.top_0() };
@@ -3568,7 +3578,8 @@ impl AppWindow {
                 }
             }
         };
-        el.children(self.render_floats(n, cx)).into_any_element()
+        let row = frame.and_then(|f| f.header.as_ref()).filter(|h| !h.bottom() && !h.hover()).map(|h| h.height.unwrap_or(HEADER_HEIGHT));
+        el.children(self.render_floats(n, cx)).children(self.pane_grip(&n.id, row, cx)).into_any_element()
     }
 
     fn render_block(&self, n: &Node, content: &Content, focused: &HashSet<String>, cx: &mut Context<Self>) -> AnyElement {
@@ -4275,6 +4286,7 @@ impl Render for AppWindow {
         let overlays = self.render_overlays(window.viewport_size(), cx);
         let tracker = self.float_tracker(cx);
         let win_tracker = self.window_tracker(cx);
+        let pane_drag = self.pane_drag_layer(cx);
         div()
             .id("herdr")
             .track_focus(&self.focus)
@@ -4292,6 +4304,12 @@ impl Render for AppWindow {
                     if t.view.read(cx).hovered() {
                         t.view.update(cx, |_, cx| cx.notify());
                     }
+                }
+            }))
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                if ev.keystroke.key == "escape" && this.pane_drag.is_some() {
+                    this.cancel_pane_drag(cx);
+                    cx.stop_propagation();
                 }
             }))
             .capture_any_mouse_down(cx.listener(|this, ev: &MouseDownEvent, _, _| this.pointer = ev.position))
@@ -4319,6 +4337,7 @@ impl Render for AppWindow {
             .children(overlays)
             .children(tracker)
             .children(win_tracker)
+            .child(pane_drag)
             .child(crate::bench::frame_end())
     }
 }

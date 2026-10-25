@@ -286,6 +286,39 @@ impl Model {
         true
     }
 
+    /// Rearranges existing panes in one tab without changing their terminal addresses.
+    /// No edge swaps their places; an edge places the source beside the target.
+    pub fn move_pane(&mut self, source: &str, target: &str, edge: Option<crate::layout::Edge>) -> bool {
+        if source == target {
+            return false;
+        }
+        let Some(tab) = self.tab_of(source) else { return false };
+        if !tab.root.find(source).is_some_and(Node::is_pane) || !tab.root.find(target).is_some_and(Node::is_pane) {
+            return false;
+        }
+        let mut root = tab.root.clone();
+        if let Some(edge) = edge {
+            use crate::layout::Edge;
+            let mut pane = root.remove(source).unwrap();
+            pane.size = None;
+            let axis = if matches!(edge, Edge::Left | Edge::Right) { Axis::Row } else { Axis::Column };
+            let machine = self.space_of(source).and_then(|s| s.machine.clone());
+            let container = self.fresh_id_on("s", machine.as_deref());
+            if !root.split(target, axis, pane, container) {
+                return false;
+            }
+            if matches!(edge, Edge::Left | Edge::Top) {
+                root.swap(source, target);
+            }
+        } else if !root.swap(source, target) {
+            return false;
+        }
+        let tab = self.tab_of_mut(source).unwrap();
+        tab.root = root;
+        tab.focus(source);
+        true
+    }
+
     /// Removes a pane. Returns what else closed: the tab, and the space if it was its last.
     pub fn remove_pane(&mut self, pane_id: &str) -> (bool, bool) {
         let Some(c) = self.tab_of_mut(pane_id) else { return (false, false) };
@@ -678,6 +711,58 @@ mod tests {
         assert_eq!(m.address_of("x2"), None);
         assert_eq!(m.remove_pane("x1"), (false, false));
         assert_eq!(m.tab("c1").unwrap().root.panes().len(), 1);
+    }
+
+    #[test]
+    fn pane_moves_preserve_terminals_and_focus_for_swap_and_every_edge() {
+        use crate::layout::Edge;
+        for edge in [None, Some(Edge::Left), Some(Edge::Right), Some(Edge::Top), Some(Edge::Bottom)] {
+            let mut m = model_with_one();
+            m.split("x1", Axis::Row, "x2", "t2");
+            m.split("x2", Axis::Column, "x3", "t3");
+            assert!(m.move_pane("x1", "x3", edge));
+            assert_eq!(m.focused_pane().as_deref(), Some("x1"));
+            for (pane, address) in [("x1", "t1"), ("x2", "t2"), ("x3", "t3")] {
+                assert_eq!(m.address_of(pane).as_deref(), Some(address));
+            }
+            let root = &m.active_tab().unwrap().root;
+            assert_eq!(root.panes().len(), 3);
+            if let Some(edge) = edge {
+                let parent = root.parent_of("x1").unwrap();
+                let expected_axis = if matches!(edge, Edge::Left | Edge::Right) { Axis::Row } else { Axis::Column };
+                assert_eq!(parent.axis(), Some(expected_axis));
+                let ids: Vec<_> = parent.children().iter().map(|n| n.id.as_str()).collect();
+                let source = ids.iter().position(|id| *id == "x1").unwrap();
+                let target = ids.iter().position(|id| *id == "x3").unwrap();
+                assert_eq!(source < target, matches!(edge, Edge::Left | Edge::Top));
+                assert_eq!(source.abs_diff(target), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn cross_axis_pane_moves_split_equally_not_with_the_old_slot_size() {
+        use crate::layout::{Edge, Size};
+        for old_size in [Some(Size::Weight { weight: 0.5 }), Some(Size::Px { px: 200. })] {
+            let mut m = model_with_one();
+            m.split("x1", Axis::Row, "x2", "t2");
+            m.tab_of_mut("x2").unwrap().root.find_mut("x2").unwrap().size = old_size;
+            assert!(m.move_pane("x2", "x1", Some(Edge::Bottom)));
+            let parent = m.active_tab().unwrap().root.parent_of("x2").unwrap();
+            assert_eq!(parent.children()[0].size, None);
+            assert_eq!(parent.children()[1].size, None);
+        }
+    }
+
+    #[test]
+    fn invalid_pane_moves_leave_the_model_alone() {
+        let mut m = model_with_one();
+        m.add_tab("p1", Tab::new("c2", "docs", "x2", "t2"));
+        let before = format!("{:?}", m.spaces);
+        for (source, target) in [("x1", "x1"), ("x1", "missing"), ("missing", "x1"), ("x1", "x2"), ("c1", "x1")] {
+            assert!(!m.move_pane(source, target, None));
+            assert_eq!(format!("{:?}", m.spaces), before);
+        }
     }
 
     #[test]

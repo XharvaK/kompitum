@@ -213,7 +213,15 @@ Properties any node can have:
   focused pane is inside).
 - `padding`: space inside the node's edge, px: `16` or `[vertical, horizontal]`.
 - row/column: `gap` (px between children), `divider` (`{ "width": 1, "color": "border" }`),
-  `resizable` (default true: drag the boundary).
+  `resizable` (default true: drag the boundary). This applies to that row/column only.
+- `movable` (default true): panes can be dragged by the app's top-center grip within a split tab.
+  Unlike `resizable`, it inherits: the nearest explicit ancestor wins, through the
+  tab tree and then the layout's tab block and its ancestors. Root `"movable": false`
+  opts the layout out. Composition terminal blocks aren't tab panes and never drag.
+  Center drop swaps panes; an edge drop places beside it. Escape or dropping outside
+  another pane cancels. Zoomed tabs and one-pane tabs don't drag. The grip appears
+  on top-edge hover, regardless of the header's position or presence. Only the grip
+  starts dragging; header mods don't need drag handlers. `panes()` exposes `movable`.
 - `floating`: blocks over this node (below).
 - `window_drag: true`: dragging the node moves the window, a double-click
   maximizes it. A mod's own control inside opts out by stopping the press:

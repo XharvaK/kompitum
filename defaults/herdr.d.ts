@@ -193,6 +193,8 @@ export interface PaneInfo {
   program: Program;
   focused: boolean;
   zoomed: boolean;
+  /** The app's top-center grip can rearrange this pane. False when zoomed or alone. */
+  movable: boolean;
 }
 
 /** Every pane in every tab. A pane header mod finds its own with
