@@ -38,6 +38,25 @@ while True:
     time.sleep(0.05)
 """
 
+# Like an agent's screen while it works: a screenful once, then its status line
+# redrawn in place 10 times a second, and a new line now and then.
+TUI = r"""
+import sys, time, itertools
+w = sys.stdout.write
+w("\033]7501;state=working:app=pi\033\\")
+for i in range(40):
+    w(f"\033[3{i % 7 + 1}m{i:3}\033[0m the agent read the diff, ran the tests and wrote a careful patch\r\n")
+spin = itertools.cycle("\u280b\u2819\u2839\u2838\u283c\u2834\u2826\u2827\u2807\u280f")
+n = 0
+while True:
+    n += 1
+    if n % 20 == 0:
+        w(f"\r\033[2K{n:5} another line of output\r\n")
+    w(f"\r\033[2K\033[36m{next(spin)}\033[0m working {n // 10}s  esc to interrupt")
+    sys.stdout.flush()
+    time.sleep(0.1)
+"""
+
 # Agents that only report: idle, or working without a word of output (the
 # spinners are all that moves), or working with a title that animates.
 REPORTS = r"""
@@ -68,7 +87,12 @@ def env():
 
 def do(bin, command, args=None):
     cmd = [bin, "do", command] + ([json.dumps(args)] if args else [])
-    out = subprocess.run(cmd, env=env(), capture_output=True, text=True)
+    # A fresh window takes a moment to read its layout and refuses until then.
+    for _ in range(50):
+        out = subprocess.run(cmd, env=env(), capture_output=True, text=True)
+        if out.returncode == 0 or "unavailable" not in out.stdout + out.stderr:
+            break
+        time.sleep(0.2)
     if out.returncode != 0:
         sys.exit(f"bench: {command} failed: {out.stdout}{out.stderr}")
     return json.loads(out.stdout or "{}")
@@ -132,7 +156,7 @@ def frames_since(offset):
         lines = f.readlines()[offset:]
     rows = [json.loads(l) for l in lines if l.strip()]
     n = max(len(rows), 1)
-    return {k: round(sum(r.get(k, 0) for r in rows) / n, 1) for k in ("window", "terminal", "grid", "window_ms", "frame_ms", "scripts", "script_ms", "materialize", "materialize_ms")}
+    return {k: round(sum(r.get(k, 0) for r in rows) / n, 1) for k in ("window", "terminal", "grid", "rows", "window_ms", "frame_ms", "scripts", "script_ms", "materialize", "materialize_ms")}
 
 
 def frame_lines():
@@ -143,7 +167,12 @@ def frame_lines():
         return 0
 
 
+ONLY = None  # --only: measure this scenario alone (the others are still set up)
+
+
 def measure(name, app, seconds, sample):
+    if ONLY and name != ONLY:
+        return {"scenario": name, "skipped": True}
     core, holders = core_pids()
     procs = {"app": [app], "core": [core] if core else [], "holder": holders}
     time.sleep(3)  # let the scenario settle
@@ -180,7 +209,7 @@ def measure(name, app, seconds, sample):
         print(f"{name:16} {row['minstr']:7.1f} Minstr/s {row['mw']:6.1f} mW {row['wakeups']:6.1f} wakeups/s  (app+core+holder)  "
               f"app: user {row['app_user_ms']} ms/s, kernel {row['app_system_ms']} ms/s", flush=True)
     print(f"{name:16} app {row['app_cpu']:5.1f}%  core {row['core_cpu']:5.1f}%  holder {row['holder_cpu']:5.1f}%  "
-          f"draws/s window {row['window']:5.1f} terminal {row['terminal']:5.1f} grid {row['grid']:5.1f}  "
+          f"draws/s window {row['window']:5.1f} terminal {row['terminal']:5.1f} grid {row['grid']:5.1f} rows {row['rows']:6.1f}  "
           f"render {row['window_ms']:5.1f} frame {row['frame_ms']:5.1f} ms/s  "
           f"mods: js {row['scripts']:4.1f}/s {row['script_ms']:5.1f} ms/s, native {row['materialize']:4.1f}/s {row['materialize_ms']:5.1f} ms/s  "
           f"{row['app_mb']} MB",
@@ -196,7 +225,10 @@ def main():
     ap.add_argument("--zoom", type=float, default=1.0)
     ap.add_argument("--set", choices=["all", "spinners"], default="all",
                     help="spinners: many spaces of idle agents, one agent working on screen")
+    ap.add_argument("--only", help="measure only this scenario, e.g. spinners+stream")
     a = ap.parse_args()
+    global ONLY
+    ONLY = a.only
     bin = os.path.abspath(a.bin)
 
     end_terminals()
@@ -211,6 +243,8 @@ def main():
         f.write(AGENT)
     with open(f"{ROOT}/reports.py", "w") as f:
         f.write(REPORTS)
+    with open(f"{ROOT}/tui.py", "w") as f:
+        f.write(TUI)
     agent = ["python3", f"{ROOT}/agent.py"]
     reports = lambda state: ["python3", f"{ROOT}/reports.py", state]
 
@@ -236,6 +270,8 @@ def main():
             rows.append(measure("all-idle", app.pid, a.seconds, a.sample))
             do(bin, "tab.new", {"name": "quiet", "argv": reports("quiet")})
             rows.append(measure("spinners", app.pid, a.seconds, a.sample))
+            do(bin, "tab.new", {"name": "tui", "argv": ["python3", f"{ROOT}/tui.py"]})
+            rows.append(measure("spinners+tui", app.pid, a.seconds, a.sample))
             do(bin, "tab.new", {"name": "stream", "argv": agent})
             rows.append(measure("spinners+stream", app.pid, a.seconds, a.sample))
             do(bin, "tab.new", {"name": "title", "argv": reports("title")})
