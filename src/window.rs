@@ -2846,8 +2846,7 @@ impl AppWindow {
             "mod.open" => {
                 let name = Self::arg(a, "name").unwrap_or_default();
                 let Some(f) = self.folders.get(name) else { return self.fail(format!("no mod folder {name:?}")) };
-                let meta: Value = std::fs::read_to_string(f.dir.join("mod.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
-                let mut spec = meta.get("overlay").cloned().filter(Value::is_object).unwrap_or_else(|| json!({}));
+                let mut spec = mod_overlay(&f.dir);
                 spec["mod"] = json!(name);
                 self.open_overlay(mods::new_overlay_id(), spec, window, cx);
             }
@@ -2996,7 +2995,15 @@ impl AppWindow {
         if let Some(p) = at {
             self.pointer = p;
         }
-        let spec = json!({ "mod": "menu", "kind": "popup", "width": 220, "height": 260, "props": { "tab": tab, "target": target } });
+        let requested = self.chrome.terminal_menu.as_deref().unwrap_or("menu");
+        let name = if self.folders.contains_key(requested) {
+            requested
+        } else {
+            tracing::warn!(mod_name = requested, "terminal menu mod not found; using menu");
+            "menu"
+        };
+        let defaults = self.folders.get(name).map(|f| mod_overlay(&f.dir)).unwrap_or_else(|| json!({}));
+        let spec = terminal_menu_spec(name, &defaults, tab, target);
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 
@@ -3988,6 +3995,18 @@ fn home() -> String {
     mods::home().to_string_lossy().into_owned()
 }
 
+fn mod_overlay(dir: &std::path::Path) -> Value {
+    let meta: Value = std::fs::read_to_string(dir.join("mod.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+    meta.get("overlay").cloned().filter(Value::is_object).unwrap_or_else(|| json!({}))
+}
+
+fn terminal_menu_spec(name: &str, defaults: &Value, tab: &str, target: Value) -> Value {
+    json!({ "mod": name, "kind": "popup",
+        "width": defaults.get("width").and_then(Value::as_f64).unwrap_or(220.0),
+        "height": defaults.get("height").and_then(Value::as_f64).unwrap_or(260.0),
+        "props": { "tab": tab, "target": target } })
+}
+
 fn num_in(v: &Value, k: &str) -> f32 {
     v.get(k).and_then(Value::as_f64).unwrap_or(0.0) as f32
 }
@@ -4273,6 +4292,34 @@ mod tests {
                 assert_eq!(bounds.origin, point(px(100.0), px(200.0)));
             }
         }
+    }
+
+    #[test]
+    fn terminal_menu_is_a_root_layout_choice_that_roundtrips() {
+        let mut root = super::default_layout("main");
+        assert_eq!(root.terminal_menu, None);
+        assert!(serde_json::to_value(&root).unwrap().get("terminal_menu").is_none());
+        root.terminal_menu = Some("personal-menu".into());
+        let restored: super::Node = serde_json::from_value(serde_json::to_value(&root).unwrap()).unwrap();
+        assert_eq!(restored.terminal_menu.as_deref(), Some("personal-menu"));
+    }
+
+    #[test]
+    fn terminal_menu_preserves_clicked_target_and_uses_mod_dimensions() {
+        use serde_json::json;
+        let target = json!({ "pane": "p2", "terminal": "t8" });
+        let stock = super::terminal_menu_spec("menu", &json!({}), "pane", target.clone());
+        assert_eq!(stock["width"], 220.0);
+        assert_eq!(stock["height"], 260.0);
+        let custom = super::terminal_menu_spec("personal-menu", &json!({"kind": "dialog", "width": 310, "height": 120}), "pane", target.clone());
+        assert_eq!(custom["mod"], "personal-menu");
+        assert_eq!(custom["kind"], "popup");
+        assert_eq!(custom["width"], 310.0);
+        assert_eq!(custom["height"], 120.0);
+        assert_eq!(custom["props"], json!({"tab": "pane", "target": target}));
+        let partial = super::terminal_menu_spec("personal-menu", &json!({"width": 0.4}), "pane", json!({}));
+        assert_eq!(partial["width"], 0.4);
+        assert_eq!(partial["height"], 260.0);
     }
 
     #[test]
