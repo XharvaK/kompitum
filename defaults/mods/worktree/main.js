@@ -69,6 +69,21 @@ async function git(cwd, args, on) {
   return { ok: r.code === 0, out: (r.stdout ?? "").trim(), err: (r.stderr ?? r.stdout ?? "").trim() };
 }
 
+// The submodule repos git keeps for a checkout (nested ones too, checked out
+// or not): { name, dir }. `config` is the args that read its .gitmodules.
+async function modules(gitDir, config, on, out = []) {
+  const keys = await git(gitDir, ["--git-dir", gitDir, "config", ...config, "--name-only", "--get-regexp", "^submodule\\..*\\.path$"], on);
+  if (!keys.ok) return out; // no .gitmodules, or no submodules in it
+  for (const key of keys.out.split("\n").filter(Boolean)) {
+    const name = key.slice("submodule.".length, -".path".length);
+    const dir = `${gitDir}/modules/${name}`;
+    if (!(await git(gitDir, ["--git-dir", dir, "rev-parse", "--git-dir"], on)).ok) continue; // never checked out
+    out.push({ name, dir });
+    if ((await git(gitDir, ["--git-dir", dir, "cat-file", "-e", "HEAD:.gitmodules"], on)).ok) await modules(dir, ["--blob", "HEAD:.gitmodules"], on, out);
+  }
+  return out;
+}
+
 // The repo a folder belongs to: its main checkout and name, and whether
 // the folder is itself a linked worktree. null outside git.
 async function repoOf(folder, on) {
@@ -178,9 +193,26 @@ export default class Worktree extends View {
 
   async remove() {
     const s = this.space();
+    const status = await git(this.repo.top, ["status", "--porcelain"], this.on);
+    if (!status.ok) return status.err || "git status failed.";
+    if (status.out && !this.dirty) {
+      this.dirty = true;
+      return "It changed since this opened. Enter again removes it anyway.";
+    }
+    // git refuses a worktree with submodules unless forced, because their
+    // history is kept with it. Force only when none has unpushed commits.
+    const gitDir = await git(this.repo.top, ["rev-parse", "--absolute-git-dir"], this.on);
+    if (!gitDir.ok) return gitDir.err || "git rev-parse failed.";
+    const mods = await modules(gitDir.out, ["--file", `${this.repo.top}/.gitmodules`], this.on);
+    for (const m of mods) {
+      const local = await git(gitDir.out, ["--git-dir", m.dir, "rev-list", "-n1", "--all", "--not", "--remotes"], this.on);
+      if (!local.ok) return local.err || `Couldn't check submodule ${m.name}.`;
+      if (local.out) return `Submodule ${m.name} has commits that aren't pushed anywhere. Push them first: removing deletes them.`;
+    }
     // Terminals first: a shell sitting in the folder keeps it busy on Windows.
     run("space.close", { id: s.id, confirmed: true });
-    const r = await git(this.repo.main, ["worktree", "remove", ...(this.dirty ? ["--force"] : []), this.repo.top], this.on);
+    const force = this.dirty || mods.length > 0;
+    const r = await git(this.repo.main, ["worktree", "remove", ...(force ? ["--force"] : []), this.repo.top], this.on);
     return r.ok ? "" : r.err || "git worktree remove failed.";
   }
 
