@@ -28,7 +28,7 @@ pub struct Capabilities {
     read_roots: Vec<PathBuf>,
     write_roots: Vec<PathBuf>,
     execute: ExecuteGrant,
-    network_hosts: Vec<String>,
+    network: NetworkGrant,
     http_requests: Vec<HttpRequestGrant>,
     storage: bool,
     clipboard_read: bool,
@@ -131,6 +131,18 @@ pub enum ExecuteGrant {
     Unrestricted,
 }
 
+/// Which network hosts a script may contact over HTTP, WebSocket, or TCP.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum NetworkGrant {
+    /// Network access is unavailable unless a scoped HTTP grant allows it.
+    #[default]
+    Denied,
+    /// Only these hosts may be contacted, on any port.
+    Allowed(Vec<String>),
+    /// Any host may be contacted.
+    Unrestricted,
+}
+
 impl Capabilities {
     pub fn new() -> Self {
         Self::default()
@@ -151,12 +163,13 @@ impl Capabilities {
         self
     }
 
-    pub fn network_hosts(mut self, hosts: impl IntoIterator<Item = String>) -> Self {
-        self.network_hosts = hosts
-            .into_iter()
-            .map(|host| host.to_ascii_lowercase())
-            .collect();
+    pub fn network(mut self, grant: NetworkGrant) -> Self {
+        self.network = grant;
         self
+    }
+
+    pub fn network_hosts(self, hosts: impl IntoIterator<Item = String>) -> Self {
+        self.network(NetworkGrant::Allowed(hosts.into_iter().collect()))
     }
 
     pub fn http_requests(mut self, requests: impl IntoIterator<Item = HttpRequestGrant>) -> Self {
@@ -224,13 +237,16 @@ impl Capabilities {
     }
 
     pub fn may_reach(&self, host: &str) -> bool {
-        self.network_hosts
-            .iter()
-            .any(|allowed| allowed.eq_ignore_ascii_case(host))
+        match &self.network {
+            NetworkGrant::Denied => false,
+            NetworkGrant::Unrestricted => true,
+            NetworkGrant::Allowed(hosts) => hosts
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(host)),
+        }
     }
 
-    /// Whether an HTTP request is permitted by either a legacy unrestricted
-    /// host grant or a scoped HTTP grant.
+    /// Whether an HTTP request is permitted by a network or scoped HTTP grant.
     pub fn may_request(
         &self,
         scheme: &str,
@@ -533,6 +549,23 @@ mod tests {
     impl Drop for Root {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn unrestricted_network_allows_any_host_and_http_request() {
+        let denied = Capabilities::new();
+        let unrestricted = Capabilities::new().network(NetworkGrant::Unrestricted);
+        for host in ["127.0.0.1", "::1", "api.example.com"] {
+            assert!(!denied.may_reach(host));
+            assert!(unrestricted.may_reach(host));
+            for (scheme, port, method, path) in [
+                ("http", Some(8123), "GET", "/health"),
+                ("https", None, "POST", "/api/items"),
+            ] {
+                assert!(!denied.may_request(scheme, host, port, method, path));
+                assert!(unrestricted.may_request(scheme, host, port, method, path));
+            }
         }
     }
 

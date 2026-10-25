@@ -3,7 +3,7 @@
 
 use crate::layout::Node;
 use gpui::App;
-use gpui_shell::{Capabilities, ExecuteGrant, HostError, HostModule, HostObject, HostValue};
+use gpui_shell::{Capabilities, ExecuteGrant, HostError, HostModule, HostObject, HostValue, NetworkGrant};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -941,6 +941,7 @@ fn capabilities() -> Capabilities {
         .read_roots([home()])
         .write_roots([app_dir()])
         .execute(ExecuteGrant::Unrestricted)
+        .network(NetworkGrant::Unrestricted)
         .storage(true)
         .clipboard_read(true)
         .clipboard_write(true)
