@@ -135,7 +135,10 @@ machine first, then machines by name; `space.move` stays inside its machine's bl
 - **Sub-agents** are terminals an agent started with `hc run`: the core
   records the starter as `parent` (see `terminals()`). They belong to their
   parent's tab without a pane; the `agents` and `team` mods show them,
-  `peek` opens one, `terminal.keep` gives one a pane.
+  `terminal.peek` opens one, `terminal.keep` gives one a pane.
+  Ctrl-click (Cmd-click on macOS) a live terminal address in terminal text to
+  peek at it. Bare addresses refer to the machine of the terminal showing them;
+  use `machine/address` for another machine. Names and non-live addresses aren't links.
 - **Agent navigation order** belongs to the mods. A mod displaying agents calls
   `setAgentOrder(list.map(a => a.address))` on render so `agent.next` /
   `agent.prev` follow its list.
@@ -452,6 +455,7 @@ you use the same list. `herdr-app commands` prints every one with its arguments
   model pane; composition edits belong to the mod (edit its layout instead).
 - Terminals: `terminal.open {argv?, folder?, place?}`, `terminal.kill {terminal}`,
   `terminal.keep {terminal, place?}`, `terminal.park {terminal}`,
+  `terminal.peek {terminal}` (peek over the tab, with keep-as-tab and close),
   `terminal.show {terminal?, pane?}`, `terminal.copy`, `terminal.paste` (an image
   alone, into a terminal on another machine: copied there, its path pasted; a
   local program reads the clipboard itself), `terminal.paste_image` (Ctrl+V: the

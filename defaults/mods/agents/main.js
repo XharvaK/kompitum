@@ -147,19 +147,7 @@ export default class Agents extends View {
   }
 
   peek(addr) {
-    if (this.peekId) closeOverlay(this.peekId);
-    this.peekId = openOverlay({
-      kind: "dialog",
-      width: 0.8,
-      height: 0.8,
-      layout: {
-        type: "column",
-        children: [
-          { type: "block", size: { px: 34 }, content: { mod: "peek", props: { terminal: addr } } },
-          { type: "block", content: { terminal: addr } },
-        ],
-      },
-    });
+    run("terminal.peek", { terminal: addr });
   }
 
   // Live sub-agents of `addr`, depth first, each with the tree lines in front of it.

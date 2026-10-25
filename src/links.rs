@@ -42,6 +42,30 @@ pub fn find(text: &str, at: usize) -> Option<Range<usize>> {
     None
 }
 
+/// The address-shaped word under the pointer, excluding surrounding punctuation.
+pub fn word(text: &str, at: usize) -> Option<Range<usize>> {
+    let allowed = |c: char| c.is_alphanumeric() || matches!(c, '-' | '_' | '/' | '.');
+    if !text.get(at..)?.chars().next().is_some_and(allowed) {
+        return None;
+    }
+    let start = text[..at].char_indices().rev().find(|(_, c)| !allowed(*c)).map_or(0, |(i, c)| i + c.len_utf8());
+    let end = text[at..].char_indices().find(|(_, c)| !allowed(*c)).map_or(text.len(), |(i, _)| at + i);
+    let trimmed = text[start..end].trim_matches('.');
+    let start = start + text[start..end].len() - text[start..end].trim_start_matches('.').len();
+    let end = start + trimmed.len();
+    (start <= at && at < end).then_some(start..end)
+}
+
+/// Bare addresses refer to the hovered terminal's machine, never its names.
+pub fn terminal_address<'a>(word: &str, source: &str, live: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let address = if word.contains('/') {
+        word.to_owned()
+    } else {
+        crate::mirror::qualify(word, source.split_once('/').map(|(machine, _)| machine))
+    };
+    live.into_iter().any(|a| a == address).then_some(address)
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Target {
     Url(String),
@@ -227,6 +251,58 @@ mod tests {
         assert_eq!(find(text, 16).map(|r| &text[r]), Some("https://a.com"));
         assert_eq!(find(text, 17), None);
         assert_eq!(find(text, 25).map(|r| &text[r]), Some("/tmp/x.txt."));
+    }
+
+    #[test]
+    fn extracts_address_words_at_the_pointer() {
+        for (text, expected) in [
+            ("<t1hg>", "t1hg"),
+            ("[\"macbook/t2w\"]", "macbook/t2w"),
+            ("terminal=t1hg,", "t1hg"),
+            ("'my-machine_2/t2w'.", "my-machine_2/t2w"),
+            ("before t1hg after", "t1hg"),
+            ("é t1hg", "t1hg"),
+            ("<build.box/t1>.", "build.box/t1"),
+            ("1.2.3.4/t1", "1.2.3.4/t1"),
+            ("...t1hg.", "t1hg"),
+        ] {
+            let at = text.find(expected).unwrap();
+            for (i, _) in expected.char_indices() {
+                assert_eq!(word(text, at + i).map(|r| &text[r]), Some(expected), "{text}");
+            }
+        }
+        for (text, at) in [("<t1>", 0), ("t1 ", 2), ("", 0), ("t1", 2), ("é", 1)] {
+            assert_eq!(word(text, at), None);
+        }
+    }
+
+    #[test]
+    fn matches_only_live_addresses_relative_to_the_source_machine() {
+        let live = ["t1", "t2", "macbook/t1", "macbook/t2w", "my-machine_2/t3", "build.box/t1", "box/t1"];
+        for (word, source, expected) in [
+            ("t1", "t2", Some("t1")),
+            ("t1", "macbook/t2w", Some("macbook/t1")),
+            ("t1", "build.box/t2", Some("build.box/t1")),
+            ("t2", "macbook/t1", None),
+            ("macbook/t2w", "t1", Some("macbook/t2w")),
+            ("my-machine_2/t3", "macbook/t1", Some("my-machine_2/t3")),
+            ("t99", "t1", None),
+            ("Build", "t1", None),
+            ("t", "t1", None),
+            ("other/t1", "t1", None),
+            ("macbook/t1/extra", "t1", None),
+        ] {
+            assert_eq!(terminal_address(word, source, live), expected.map(str::to_owned), "{word} in {source}");
+        }
+    }
+
+    #[test]
+    fn dotted_machines_never_match_a_different_suffix_machine() {
+        let text = "<build.box/t1>.";
+        let range = word(text, text.find("t1").unwrap()).unwrap();
+        assert_eq!(&text[range.clone()], "build.box/t1");
+        assert_eq!(terminal_address(&text[range.clone()], "t2", ["box/t1"]), None);
+        assert_eq!(terminal_address(&text[range], "t2", ["box/t1", "build.box/t1"]), Some("build.box/t1".into()));
     }
 
     #[test]

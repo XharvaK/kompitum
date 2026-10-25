@@ -502,6 +502,14 @@ pub fn publish_panes(v: Value) -> bool {
 pub fn publish_terminals(v: Value) -> bool {
     publish(|s| (std::mem::replace(&mut s.terminals, v.clone()), v))
 }
+pub fn terminal_address(word: &str, source: &str) -> Option<String> {
+    SNAPSHOT.with(|s| {
+        let s = s.borrow();
+        let live = s.terminals.as_array()?;
+        crate::links::terminal_address(word, source, live.iter().filter_map(|t| t["address"].as_str()))
+    })
+}
+
 pub fn publish_floats(v: Value) -> bool {
     publish(|s| (std::mem::replace(&mut s.floats, v.clone()), v))
 }

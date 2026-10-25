@@ -26,7 +26,14 @@ pub fn hsla(c: Rgb) -> Hsla {
     Rgba { r: c.0 as f32 / 255.0, g: c.1 as f32 / 255.0, b: c.2 as f32 / 255.0, a: 1.0 }.into()
 }
 
+#[derive(Clone, Debug, PartialEq)]
+enum LinkTarget {
+    External(links::Target),
+    Terminal(String),
+}
+
 pub enum TerminalEvent {
+    Peek(String),
     TitleChanged,
     /// The program ended.
     Ended,
@@ -72,7 +79,7 @@ pub struct TerminalView {
     /// The terminal's folder, for links to relative paths.
     pub cwd: Option<PathBuf>,
     /// The link under the pointer while the link modifier is held.
-    link: Option<links::Target>,
+    link: Option<LinkTarget>,
     /// The press opened a link: its release isn't the program's.
     link_click: bool,
     /// Right-clicks go to the program when it takes the mouse (Shift: the menu).
@@ -538,12 +545,26 @@ impl TerminalView {
     }
 
     /// The link at a window position, and where it shows.
-    fn link_at(&self, pos: Point<Pixels>) -> Option<(links::Target, vt::Spans)> {
+    fn link_at(&self, pos: Point<Pixels>) -> Option<(LinkTarget, vt::Spans)> {
         let g = self.grid.borrow();
         let (x, y) = local(&g, pos);
         let (col, row) = (x / f32::from(g.cell.width), y / f32::from(g.cell.height));
-        let hit = g.vt.link_at(col as u16, row as u16)?;
-        Some((links::resolve(&hit.target, self.cwd.as_deref())?, hit.spans))
+        let mut target = None;
+        let hit = g.vt.link_at(col as u16, row as u16, |text, at| {
+            if let Some(range) = links::find(text, at)
+                && let Some(link) = links::resolve(&text[range.clone()], self.cwd.as_deref())
+            {
+                target = Some(LinkTarget::External(link));
+                return Some(range);
+            }
+            let range = links::word(text, at)?;
+            let address = crate::mods::terminal_address(&text[range.clone()], &self.address)?;
+            target = Some(LinkTarget::Terminal(address));
+            Some(range)
+        })?;
+        // OSC 8 links bypass text detection.
+        let target = target.or_else(|| links::resolve(&hit.target, self.cwd.as_deref()).map(LinkTarget::External))?;
+        Some((target, hit.spans))
     }
 
     /// Selecting with the mouse (when the program doesn't take it).
@@ -1178,7 +1199,10 @@ impl Render for TerminalView {
                 if link_mods(&ev.modifiers)
                     && let Some((target, _)) = this.link_at(ev.position)
                 {
-                    links::open(&target);
+                    match target {
+                        LinkTarget::External(target) => links::open(&target),
+                        LinkTarget::Terminal(address) => cx.emit(TerminalEvent::Peek(address)),
+                    }
                     this.link_click = true;
                     return;
                 }

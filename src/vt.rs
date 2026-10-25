@@ -548,7 +548,7 @@ impl Vt {
     /// The link at a viewport cell: a link the program marked (OSC 8), or a
     /// URL or path in the text. Follows lines the terminal wrapped, also into
     /// rows scrolled out of view.
-    pub fn link_at(&self, col: u16, row: u16) -> Option<LinkHit> {
+    pub fn link_at(&self, col: u16, row: u16, find: impl FnOnce(&str, usize) -> Option<std::ops::Range<usize>>) -> Option<LinkHit> {
         if col >= self.cols || row >= self.rows {
             return None;
         }
@@ -629,7 +629,7 @@ impl Vt {
                 (uri, spots[start..end].iter().collect())
             }
             None => {
-                let range = crate::links::find(&text, spots[at].byte)?;
+                let range = find(&text, spots[at].byte)?;
                 (text[range.clone()].to_owned(), spots.iter().filter(|s| range.contains(&s.byte)).collect())
             }
         };
@@ -1155,11 +1155,11 @@ mod tests {
     fn links_follow_wrapped_lines() {
         let mut vt = Vt::new(20, 4);
         vt.write(b"go https://example.com/a/long/path ok");
-        let hit = vt.link_at(5, 1).unwrap();
+        let hit = vt.link_at(5, 1, crate::links::find).unwrap();
         assert_eq!(hit.target, "https://example.com/a/long/path");
         assert_eq!(hit.spans, vec![(0, 3, 19), (1, 0, 13)]);
-        assert_eq!(vt.link_at(1, 0), None);
-        assert_eq!(vt.link_at(16, 1), None);
+        assert_eq!(vt.link_at(1, 0, crate::links::find), None);
+        assert_eq!(vt.link_at(16, 1, crate::links::find), None);
     }
 
     #[test]
@@ -1167,7 +1167,7 @@ mod tests {
         let mut vt = Vt::new(10, 2);
         vt.write(b"https://example.com/abcdefgh");
         // Three rows of link on a two-row screen: the first scrolled away.
-        let hit = vt.link_at(2, 0).unwrap();
+        let hit = vt.link_at(2, 0, crate::links::find).unwrap();
         assert_eq!(hit.target, "https://example.com/abcdefgh");
         assert_eq!(hit.spans, vec![(0, 0, 9), (1, 0, 7)]);
     }
@@ -1176,10 +1176,10 @@ mod tests {
     fn marked_links_open_their_uri() {
         let mut vt = Vt::new(30, 2);
         vt.write(b"see \x1b]8;;https://herdr.dev\x1b\\the docs\x1b]8;;\x1b\\ now");
-        let hit = vt.link_at(6, 0).unwrap();
+        let hit = vt.link_at(6, 0, crate::links::find).unwrap();
         assert_eq!(hit.target, "https://herdr.dev");
         assert_eq!(hit.spans, vec![(0, 4, 11)]);
-        assert_eq!(vt.link_at(13, 0), None);
+        assert_eq!(vt.link_at(13, 0, crate::links::find), None);
     }
 
     #[test]

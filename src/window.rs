@@ -1270,6 +1270,7 @@ impl AppWindow {
             self.tell_term(&view, &address, cx);
             let (block, addr) = (id.clone(), address.clone());
             let sub = cx.subscribe_in(&view, window, move |this, _, ev: &TerminalEvent, window, cx| match ev {
+                TerminalEvent::Peek(address) => this.peek_terminal(address, window, cx),
                 TerminalEvent::TitleChanged => this.publish(cx),
                 TerminalEvent::Ended => this.terminal_ended(&block, window, cx),
                 TerminalEvent::ContextMenu(at) => {
@@ -2725,6 +2726,13 @@ impl AppWindow {
                 }
                 self.kill(&[t.to_owned()]);
             }
+            "terminal.peek" => {
+                let t = Self::arg(a, "terminal").unwrap_or_default();
+                if !self.live.contains_key(t) {
+                    return self.fail(format!("no running terminal {t:?}"));
+                }
+                self.peek_terminal(t, window, cx);
+            }
             "terminal.show" => {
                 let pane = Self::owned(a, "pane").or_else(|| self.model.focused_pane());
                 let target = Self::arg(a, "terminal").filter(|t| self.live.contains_key(*t)).map(str::to_owned);
@@ -3152,6 +3160,22 @@ impl AppWindow {
             self.publish_shown_copies();
         }
         cx.notify();
+    }
+
+    fn peek_terminal(&mut self, address: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_overlay("terminal-peek", window, cx);
+        self.open_overlay("terminal-peek".into(), json!({
+            "kind": "dialog",
+            "width": 0.8,
+            "height": 0.8,
+            "layout": {
+                "type": "column",
+                "children": [
+                    { "type": "block", "size": { "px": 34 }, "content": { "mod": "peek", "props": { "terminal": address } } },
+                    { "type": "block", "content": { "terminal": address } }
+                ]
+            }
+        }), window, cx);
     }
 
     /// Which copies are on screen, for `<mod>.<command>` (`mods::send_command`).
