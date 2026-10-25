@@ -305,6 +305,7 @@ export default class Agents extends View {
         .id(`pin-${a.address}`)
         .flex_none()
         .text_color(t.dim)
+        .cursor_pointer()
         .hover((s) => s.text_color(t.foreground))
         .tooltip(isPinned ? "Unpin" : "Pin to the top")
         .on_click((_e, cx) => {
@@ -328,6 +329,7 @@ export default class Agents extends View {
         .items_center()
         .gap(9)
         .when(a.focused, (el) => el.bg(t.selected))
+        .cursor_pointer()
         .hover((s) => s.bg(t.hover))
         .on_hover((on, cx) => {
           if (on) this.hovered = a.address;
