@@ -103,12 +103,20 @@ After every mod change:
 ```sh
 herdr-app check ~/.config/herdr-app/mods/<name>
 herdr-app status
+herdr-app shot /tmp/mod.png   # then look at the picture
 ```
 
 `check` loads the mod and renders it once. It exits nonzero with the exact
 error. Never call a mod done without a passing check. Then confirm it is
-shown correctly in the running window; don't claim a visual check you
-haven't made. This version has no `herdr-app shot` command.
+shown correctly in the running window with `shot`; don't claim a visual
+check you haven't made.
+
+`herdr-app shot [file.png]` saves the window's last frame and prints its
+absolute path (default: `herdr-shot.png` in your current folder). It is the
+app's own rendering at full pixel size: terminals, images, overlays and
+floats included, even when the window is covered or minimized. No screen
+capture or permissions. It needs a running window that has drawn a frame;
+`HERDR_APP_HOME` selects the window, as for `status`.
 
 ## Problems and safety
 
@@ -118,5 +126,4 @@ The person reviews and sends it; it does not silently send feedback.
 Never experiment with pointer/key automation on the person's real display.
 When developing the app on Linux, its `scripts/sandbox` provides an isolated
 home, core and display: `up`, `do`, `status`, `shot`, then `down` when done.
-The sandbox's screenshot helper is not a command in the installed app CLI.
 Never stop a server or session you didn't start.

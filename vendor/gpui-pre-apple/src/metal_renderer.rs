@@ -6,7 +6,7 @@ use gpui::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, PaintSurface, Path, Point,
     PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
 };
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(any(test, feature = "bench-support", feature = "test-support", feature = "render-to-image"))]
 use image::RgbaImage;
 use objc2::runtime::AnyObject;
 
@@ -566,7 +566,7 @@ impl MetalRenderer {
     ///
     /// Note: This requires a layer-backed renderer. For headless rendering,
     /// use `render_scene_to_image()` instead.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "render-to-image"))]
     pub fn render_to_image(&mut self, scene: &Scene) -> Result<RgbaImage> {
         let layer = self
             .layer
@@ -577,24 +577,15 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        let drawable = layer
-            .next_drawable()
-            .ok_or_else(|| anyhow::anyhow!("Failed to get drawable for render_to_image"))?;
-
-        let command_buffer = self.render_frame(scene, drawable.texture(), viewport_size)?;
-
-        // Commit and wait for completion without presenting
-        command_buffer.commit();
-        command_buffer.wait_until_completed();
-
-        read_texture_to_image(drawable.texture())
+        // HERDR: never acquire a drawable: it can block while covered/minimized.
+        self.render_scene_to_image(scene, viewport_size)
     }
 
     /// Renders a scene to an image without requiring a window or CAMetalLayer.
     ///
     /// This is the primary method for headless rendering. It creates an offscreen
     /// texture, renders the scene to it, and returns the pixel data as an RGBA image.
-    #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+    #[cfg(any(test, feature = "bench-support", feature = "test-support", feature = "render-to-image"))]
     pub fn render_scene_to_image(
         &mut self,
         scene: &Scene,
@@ -642,6 +633,8 @@ impl MetalRenderer {
             // Commit and wait for completion
             command_buffer.commit();
             command_buffer.wait_until_completed();
+            anyhow::ensure!(command_buffer.status() == metal::MTLCommandBufferStatus::Completed,
+                "GPU did not complete screenshot rendering: {:?}", command_buffer.status());
 
             read_texture_to_image(&target_texture)
         })
@@ -1283,7 +1276,7 @@ fn new_command_encoder_for_texture<'a>(
     command_encoder
 }
 
-#[cfg(any(test, feature = "bench-support", feature = "test-support"))]
+#[cfg(any(test, feature = "bench-support", feature = "test-support", feature = "render-to-image"))]
 fn read_texture_to_image(texture: &metal::TextureRef) -> Result<RgbaImage> {
     let width = texture.width() as u32;
     let height = texture.height() as u32;

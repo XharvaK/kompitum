@@ -43,9 +43,10 @@ fn serve(stream: UnixStream, tx: async_channel::Sender<Request>) {
     }
     let reply = match serde_json::from_str::<Value>(&line) {
         Ok(cmd) => {
+            let timeout = Duration::from_secs(if cmd.get("shot").is_some() { 30 } else { 5 });
             let (reply_tx, reply_rx) = std::sync::mpsc::channel();
             let _ = tx.send_blocking(Request::Control { cmd, reply: reply_tx });
-            reply_rx.recv_timeout(Duration::from_secs(5)).unwrap_or_else(|_| json!({ "error": "the window did not answer" }))
+            reply_rx.recv_timeout(timeout).unwrap_or_else(|_| json!({ "error": "the window did not answer" }))
         }
         Err(e) => json!({ "error": format!("bad request: {e}") }),
     };
@@ -71,6 +72,17 @@ fn raise_running_at(path: &std::path::Path) -> bool {
 /// The client side; returns the process exit code.
 pub fn client(args: &[String]) -> i32 {
     let cmd = match args {
+        [verb, rest @ ..] if verb == "shot" && rest.len() <= 1 => {
+            let path = PathBuf::from(rest.first().map(String::as_str).unwrap_or("herdr-shot.png"));
+            let path = match std::path::absolute(path) {
+                Ok(path) => path,
+                Err(e) => return fail(&format!("cannot resolve screenshot path: {e}")),
+            };
+            if path.extension().is_none_or(|ext| !ext.eq_ignore_ascii_case("png")) {
+                return fail("screenshot path must end in .png");
+            }
+            json!({ "shot": path })
+        },
         [verb] if verb == "status" => json!({ "status": true }),
         [verb] if verb == "ls" => json!({ "ls": true }),
         [verb] if verb == "commands" => json!({ "commands": true }),
@@ -79,7 +91,7 @@ pub fn client(args: &[String]) -> i32 {
             Ok(a) => json!({ "do": command, "args": a }),
             Err(e) => return fail(&e),
         },
-        _ => return fail("usage: herdr-app ls | herdr-app commands | herdr-app status | herdr-app do <command> [--arg value ... | json]"),
+        _ => return fail("usage: herdr-app ls | herdr-app commands | herdr-app status | herdr-app shot [file.png] | herdr-app do <command> [--arg value ... | json]"),
     };
     let mut stream = match UnixStream::connect(socket()) {
         Ok(s) => s,
@@ -91,12 +103,23 @@ pub fn client(args: &[String]) -> i32 {
         }
         Err(e) => return fail(&format!("no Herdr window at {}: {e}", socket().display())),
     };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(35)));
     let mut line = String::new();
     if stream.write_all(format!("{cmd}\n").as_bytes()).is_err() || BufReader::new(&stream).read_line(&mut line).is_err() {
         return fail("the window hung up");
     }
     let reply: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
-    println!("{}", serde_json::to_string_pretty(&reply).unwrap_or_default());
+    if args.first().is_some_and(|v| v == "shot") {
+        if let Some(error) = reply.get("error") {
+            return fail(error.as_str().unwrap_or("screenshot failed"));
+        }
+        let Some(path) = reply.get("path").and_then(Value::as_str) else {
+            return fail("the window returned no screenshot path");
+        };
+        println!("{path}");
+    } else {
+        println!("{}", serde_json::to_string_pretty(&reply).unwrap_or_default());
+    }
     if reply.get("error").is_some() { 1 } else { 0 }
 }
 
@@ -117,6 +140,33 @@ fn parse_args(rest: &[String]) -> Result<Value, String> {
             Ok(Value::Object(out))
         }
     }
+}
+
+/// Encode before opening the destination: GPU errors must not truncate a good shot.
+pub fn save_shot(window: &gpui::Window, path: &std::path::Path) -> anyhow::Result<()> {
+    let image = window.render_to_image()?;
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, image.width(), image.height());
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+        encoder.write_header()?.write_image_data(image.as_raw())?;
+    }
+    // A sibling temporary file keeps publication on the same filesystem.
+    let temporary = path.with_file_name(format!(".herdr-shot-{}.png", std::process::id()));
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+    let result = (|| -> anyhow::Result<()> {
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn fail(message: &str) -> i32 {

@@ -1197,6 +1197,8 @@ pub struct Window {
     focused_text_input_active: bool,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
+    // HERDR: distinguish an empty scene from a window that has not drawn yet.
+    rendered_frame_size: Option<(Size<Pixels>, f32)>,
     pub(crate) next_frame: Frame,
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
@@ -2088,6 +2090,7 @@ impl Window {
             last_text_input_configuration: None,
             focused_text_input_active: false,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
+            rendered_frame_size: None,
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
             next_hitbox_id: HitboxId(0),
@@ -2749,8 +2752,15 @@ impl Window {
     /// Renders the current frame's scene to a texture and returns the pixel data as an RGBA image.
     /// This does not present the frame to screen - useful for visual testing where we want
     /// to capture what would be rendered without displaying it or requiring the window to be visible.
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(any(test, feature = "test-support", feature = "render-to-image"))]
     pub fn render_to_image(&self) -> anyhow::Result<image::RgbaImage> {
+        anyhow::ensure!(self.rendered_frame_size.is_some(), "no window frame has been rendered yet");
+        anyhow::ensure!(
+            self.rendered_frame_size == Some((
+                self.platform_window.content_size(), self.platform_window.scale_factor()
+            )),
+            "window size or scale changed; wait for the next frame"
+        );
         self.platform_window
             .render_to_image(&self.rendered_frame.scene)
     }
@@ -3393,6 +3403,7 @@ impl Window {
         let previous_focus_path = self.rendered_frame.focus_path();
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
+        self.rendered_frame_size = Some((self.viewport_size, self.scale_factor));
         self.next_frame.clear();
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;

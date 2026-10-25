@@ -46,6 +46,7 @@ Usage:
   herdr-app feedback <text>        draft feedback for the person to review and send
   herdr-app commands               every command, its arguments, what it does
   herdr-app status                 what the window shows, and any errors
+  herdr-app shot [file.png]        save the last window frame (default: herdr-shot.png)
   herdr-app check <mod folder>     load a mod once and report what's wrong
   herdr-app --skill                Agent Skill: driving the window, and where hc fits
   herdr-app --version
@@ -82,7 +83,7 @@ fn main() {
         gpui_shell::host::main_with_components(gpui_shell::FrozenComponentRegistry::default());
         return;
     }
-    if matches!(args.get(1).map(String::as_str), Some("do" | "status" | "ls" | "commands" | "feedback")) {
+    if matches!(args.get(1).map(String::as_str), Some("do" | "status" | "ls" | "commands" | "feedback" | "shot")) {
         std::process::exit(control::client(&args[1..]));
     }
     // Anything else from a shell answers in the shell; only a bare launch opens the window.

@@ -3264,6 +3264,12 @@ impl AppWindow {
             let args = cmd.get("args").cloned().unwrap_or(Value::Null);
             return self.run_as(name, args, false, window, cx);
         }
+        if let Some(path) = cmd.get("shot").and_then(Value::as_str) {
+            return match crate::control::save_shot(window, std::path::Path::new(path)) {
+                Ok(()) => json!({ "path": path }),
+                Err(error) => json!({ "error": format!("cannot save screenshot: {error:#}") }),
+            };
+        }
         if cmd.get("commands").is_some() {
             return crate::commands::listing();
         }
