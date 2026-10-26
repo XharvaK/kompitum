@@ -278,7 +278,7 @@ export function fonts(): string[];
  *  (`app.check_updates` starts a look). */
 export function updates(): {
   app: { version: string; ready: string | null; updates: boolean };
-  notes: { version: string; date: string; lines: string[]; spotlight: boolean; media: string[] }[];
+  notes: { version: string; date: string; items: { headline: string; detail: string; fixed: boolean; media: string[] }[]; spotlight: boolean }[];
   core: { version: string | null; managed: string | null; ready: string | null; updating: boolean; error: string | null };
   checked: number | null;
   checks: boolean;

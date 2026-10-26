@@ -3,6 +3,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
 import { theme, props, closeOverlay, presentUpdateNotes, updates } from "herdr";
+import { versionHeader, releaseItems } from "./release-notes.js";
 
 export default class WhatsNew extends View {
   init(_props, cx) {
@@ -20,11 +21,10 @@ export default class WhatsNew extends View {
   releaseNotes(t) {
     const body = v_flex().gap(18);
     for (const note of this.notes) {
-      const entry = v_flex().gap(10)
-        .child(div().text_size(18).font_semibold().text_color(t.foreground).child(`Herdr ${note.version} · ${note.date}`));
-      for (const line of note.lines) entry.child(div().w_full().text_size(13).line_height("20px").text_color(t.muted).child(line));
-      const media = updates().notes?.find(n => n.version === note.version)?.media ?? note.media;
-      for (const url of media) entry.child(image(url).w_full().h(240));
+      const current = updates().notes?.find(n => n.version === note.version) ?? note;
+      const entry = v_flex().gap(16)
+        .child(versionHeader(t, note))
+        .child(releaseItems(t, current, { spotlight: true }));
       body.child(entry);
     }
     return body;

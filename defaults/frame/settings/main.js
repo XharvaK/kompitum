@@ -9,6 +9,8 @@ import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
 import { hc, run, theme, themes, fonts, updates, presentUpdateNotes, telemetry, settings, layouts, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay } from "herdr";
 
+import { versionHeader, releaseItems } from "./release-notes.js";
+
 const I = (name) => `frame/settings/${name}.svg`;
 
 const SECTIONS = [
@@ -726,14 +728,12 @@ export default class Settings extends View {
         this.presentedNotes.add(note.version);
         presentUpdateNotes([note.version]);
       }
-      const card = v_flex().gap(8).p(12).rounded(8).border_1().border_color(t.border)
+      const card = v_flex().gap(16).p(16).rounded(8).border_1().border_color(t.border)
         .child(h_flex().id(`notes-${note.version}`).gap(8).cursor_pointer().items_center()
           .on_click((_e, cx) => { this.expandedNotes[note.version] = !expanded; cx.notify(); })
-          .child(div().text_size(13).font_semibold().text_color(t.foreground).child(`${expanded ? "▾" : "▸"} Herdr ${note.version} · ${note.date}`)));
-      if (expanded) {
-        for (const line of note.lines) card.child(div().text_size(13).line_height("20px").text_color(t.muted).child(line));
-        for (const url of note.media) card.child(image(url).w_full().h(240));
-      } else card.child(div().text_size(12).text_color(t.dim).child(note.lines[0] ?? "Release notes"));
+          .child(div().text_size(12).text_color(t.dim).child(expanded ? "▾" : "▸"))
+          .child(versionHeader(t, note)));
+      card.child(releaseItems(t, note, { collapsed: !expanded }));
       body.child(card);
     });
     return body;

@@ -290,8 +290,8 @@ fn release_notes_expand_only_the_newest_by_default(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let notes = json!([
-        {"version":"1.8.0","date":"2026-10-26","lines":["Newest headline", "Newest details"],"spotlight":true,"media":[]},
-        {"version":"1.7.0","date":"2026-10-25","lines":["Older headline", "Older details"],"spotlight":true,"media":[]}
+        {"version":"1.8.0","date":"2026-10-26","items":[{"headline":"Newest headline","detail":"Newest details","fixed":false,"media":[]},{"headline":"","detail":"Newest fix","fixed":true,"media":[]}],"spotlight":true},
+        {"version":"1.7.0","date":"2026-10-25","items":[{"headline":"Older headline","detail":"Older details","fixed":false,"media":[]},{"headline":"Another older headline","detail":"Hidden detail","fixed":false,"media":[]}],"spotlight":true}
     ]);
     let mut update = updates("ready", "current");
     update["notes"] = notes.clone();
@@ -299,7 +299,9 @@ fn release_notes_expand_only_the_newest_by_default(cx: &mut TestAppContext) {
     p["section"] = json!("updates");
     let tree = describe(cx, &staged, "frame/settings", true, p, update.clone(), None).unwrap();
     assert!(tree.contains("Newest details") && tree.contains("Older headline"));
-    assert!(!tree.contains("Older details"));
+    assert!(!tree.contains("Older details") && !tree.contains("Hidden detail"));
+    assert!(tree.contains("Another older headline") && tree.contains("Also fixed") && tree.contains("Newest fix"));
+    assert!(tree.contains("Oct 26") && !tree.contains("2026-10-26"));
     let mut p = props();
     p["notes"] = notes;
     let tree = describe(cx, &staged, "frame/whatsnew", true, p, update, None).unwrap();

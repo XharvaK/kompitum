@@ -643,7 +643,7 @@ impl AppWindow {
         if first_install {
             cx.defer_in(window, |this, window, cx| this.open_welcome(window, cx));
         } else if !crate::update_notes::spotlights().is_empty() {
-            cx.defer_in(window, |this, window, cx| this.open_whats_new(window, cx));
+            cx.defer_in(window, |this, window, cx| this.open_whats_new(false, window, cx));
         } else {
             w.update_success = crate::update_notes::changed();
         }
@@ -673,8 +673,9 @@ impl AppWindow {
     }
 
     /// After an update: what it brought (`defaults/frame/whatsnew`), once.
-    fn open_whats_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let notes = crate::update_notes::spotlights();
+    /// After an update: the spotlights not shown yet. Asked for: this version's notes.
+    fn open_whats_new(&mut self, asked: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let notes = if asked { crate::update_notes::notes(None) } else { crate::update_notes::spotlights() };
         if notes.is_empty() {
             self.run("app.settings", json!({ "section": "updates" }), window, cx);
             return;
@@ -2947,7 +2948,7 @@ impl AppWindow {
                 return;
             }
             "app.whats_new" => {
-                self.open_whats_new(window, cx);
+                self.open_whats_new(true, window, cx);
                 return;
             }
             "app.palette" => {

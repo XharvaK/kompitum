@@ -7,27 +7,40 @@ use std::sync::Mutex;
 pub struct Note {
     pub version: String,
     pub date: String,
-    pub lines: Vec<String>,
+    pub items: Vec<Item>,
     pub spotlight: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct Item {
+    pub headline: String,
+    pub detail: String,
+    pub fixed: bool,
     pub media: Vec<String>,
 }
 
 pub fn parse(text: &str) -> Vec<Note> {
     let mut notes: Vec<Note> = Vec::new();
+    let mut fixed = false;
     for line in text.lines().map(str::trim) {
         if let Some(heading) = line.strip_prefix("## [") {
             if let Some((version, date)) = heading.split_once("] - ") {
                 notes.push(Note { version: version.into(), date: date.into(), ..Note::default() });
+                fixed = false;
             }
         } else if let Some(note) = notes.last_mut() {
             if line == "<!-- spotlight -->" {
                 note.spotlight = true;
+            } else if line.starts_with("### ") {
+                fixed = line == "### Fixed";
             } else if let Some(url) = line.strip_prefix("![").and_then(|s| s.split_once("](")).and_then(|(_, s)| s.strip_suffix(')')) {
-                if url.starts_with("https://") {
-                    note.media.push(url.into());
+                if url.starts_with("https://") && let Some(item) = note.items.last_mut() {
+                    item.media.push(url.into());
                 }
             } else if let Some(text) = line.strip_prefix("- ") {
-                note.lines.push(text.into());
+                let (headline, detail) = text.strip_prefix("**").and_then(|s| s.split_once("**"))
+                    .map_or(("", text), |(headline, detail)| (headline, detail.trim()));
+                note.items.push(Item { headline: headline.into(), detail: detail.into(), fixed, ..Item::default() });
             }
         }
     }
@@ -60,7 +73,8 @@ impl Launch {
         let (lower, upper) = match target {
             Some(target) => (Some(self.running.as_str()), target),
             None if self.previous.as_deref().is_some_and(|v| crate::update::newer(v, &self.running)) => return Vec::new(),
-            None => (self.previous.as_deref(), self.running.as_str()),
+            // Since the last version that ran; with nothing new, this version's own notes.
+            None => (self.previous.as_deref().filter(|v| crate::update::newer(&self.running, v)), self.running.as_str()),
         };
         notes.iter().filter(|n| {
             !crate::update::newer(&n.version, upper)
@@ -128,7 +142,7 @@ fn media_path(url: &str) -> std::path::PathBuf {
 fn fetch_media(notes: &[Note]) {
     let dir = path("update-notes-media");
     if std::fs::create_dir_all(&dir).is_err() { return; }
-    for url in notes.iter().flat_map(|n| &n.media) {
+    for url in notes.iter().flat_map(|n| &n.items).flat_map(|item| &item.media) {
         let file = media_path(url);
         if file.is_file() { continue; }
         // The same URL may be in both the startup and newly fetched feed.
@@ -146,7 +160,9 @@ fn fetch_media(notes: &[Note]) {
 pub fn notes(target: Option<&str>) -> Vec<Note> {
     let mut notes = all();
     for note in &mut notes {
-        note.media = note.media.iter().map(|url| media_path(url)).filter(|p| p.is_file()).filter_map(|p| p.strip_prefix(crate::mods::app_dir()).ok().map(|p| p.to_string_lossy().into_owned())).collect();
+        for item in &mut note.items {
+            item.media = item.media.iter().map(|url| media_path(url)).filter(|p| p.is_file()).filter_map(|p| p.strip_prefix(crate::mods::app_dir()).ok().map(|p| p.to_string_lossy().into_owned())).collect();
+        }
     }
     LAUNCH.lock().unwrap().as_ref().map(|l| l.range(&notes, target)).unwrap_or_default()
 }
@@ -209,7 +225,10 @@ mod tests {
         let l = from(None, "1.8.0", false);
         assert!(l.changed);
         assert_eq!(l.range(&fixture(), None).len(), 1);
-        assert!(from(Some("1.8.0"), "1.8.0", false).range(&fixture(), None).is_empty());
+        // Nothing new since the last run: Settings still shows this version's notes.
+        let same = from(Some("1.8.0"), "1.8.0", false);
+        assert!(!same.changed);
+        assert_eq!(same.range(&fixture(), None).iter().map(|n| n.version.as_str()).collect::<Vec<_>>(), ["1.8.0"]);
     }
     #[test]
     fn spotlight_presented_before_restart_does_not_replay() {
@@ -220,11 +239,26 @@ mod tests {
         assert!(!after.range(&fixture(), None).iter().any(|n| n.spotlight && !after.record.presented.contains(&n.version)));
     }
     #[test]
+    fn sections_and_item_media() {
+        let notes = parse("## [1.8.0] - 2026-10-23\n### New\n- **A headline.** Its detail.\n![demo](https://example.com/demo.png)\n- **Another headline.** More detail.\n![bad](http://example.com/no.png)\n### Fixed\n- A short fix.\n## [1.7.0] - 2026-10-22\n- Plain item.\n");
+        let items = &notes[0].items;
+        assert_eq!(items[0].headline, "A headline.");
+        assert_eq!(items[0].detail, "Its detail.");
+        assert_eq!(items[0].media, ["https://example.com/demo.png"]);
+        assert!(items[1].media.is_empty());
+        assert!(items[2].fixed);
+        assert_eq!(items[2].detail, "A short fix.");
+        assert!(!notes[1].items[0].fixed);
+        assert_eq!(notes[1].items[0].detail, "Plain item.");
+    }
+    #[test]
     fn curated_markdown_and_remote_media() {
         let notes = fixture();
         assert!(notes[0].spotlight);
-        assert_eq!(notes[0].media, ["https://releases.herdr.dev/demo.png"]);
-        assert_eq!(notes[1].lines, ["Another thing"]);
+        assert_eq!(notes[0].items[0].media, ["https://releases.herdr.dev/demo.png"]);
+        assert_eq!(notes[1].items[0].detail, "Another thing");
+        assert!(notes[1].items[0].headline.is_empty());
+        assert!(!notes[1].items[0].fixed);
         assert_eq!(parse(include_str!("../CHANGELOG.md"))[0].version, env!("CARGO_PKG_VERSION"));
     }
 }

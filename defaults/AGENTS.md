@@ -575,7 +575,11 @@ What's about the user, never a look:
   media are optional. `update-notes.json` records the last successful app
   version and presented spotlights; `update-notes-cache.md` caches remote
   notes; `update-notes-media/` caches HTTPS images (including GIF clips),
-  referenced in the changelog as `![label](https://...)`. Mods use `updates().notes` and `presentUpdateNotes([version])` only
+  referenced below its item in the changelog as `![label](https://...)`.
+  Each version uses `### New` with `- **Headline.** detail` highlights and
+  `### Fixed` with short bullet items. Unsectioned bullets are plain items.
+  Notes expose `items` with `headline`, `detail`, `fixed`, and cached `media` paths.
+  Mods use `updates().notes` and `presentUpdateNotes([version])` only
   for spotlight entries actually shown expanded, not collapsed headlines.
   Keep signed macOS bundles unchanged: don't edit their Info.plist or
   re-sign them. Finder launches load the login shell's PATH, with the usual
