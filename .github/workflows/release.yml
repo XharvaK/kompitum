@@ -250,6 +250,10 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Install Bun for release media check
+        run: curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.4"
+      - name: Check release media before publishing
+        run: ~/.bun/bin/bun scripts/notes-media.ts check "${GITHUB_REF_NAME#v}"
       - name: Manifest
         run: |
           version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)

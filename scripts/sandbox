@@ -105,7 +105,7 @@ case ${1:-} in
     magick "$root/full.png" -resize '1100x>' "$out"
     echo "$out"
     ;;
-  move | click | drag | type | key | hold | release) input "$@" ;;
+  move | click | drag | type | key | hold | release | sequence) input "$@" ;;
   log) cat "$root/app.log" ;;
   opened) cat "$root/opened" 2>/dev/null || true ;;
   hc) shift; exec hc "$@" ;;

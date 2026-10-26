@@ -1,5 +1,14 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
+notes-clip scene version="":
+    bun scripts/notes-media.ts clip "{{scene}}" "{{version}}"
+
+notes-upload version:
+    bun scripts/notes-media.ts upload "{{version}}"
+
+notes-check version:
+    bun scripts/notes-media.ts check "{{version}}"
+
 check: test
 
 build:

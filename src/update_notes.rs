@@ -136,13 +136,39 @@ fn all() -> Vec<Note> {
 }
 
 fn media_path(url: &str) -> std::path::PathBuf {
-    path("update-notes-media").join(crate::update::sha256(url.as_bytes()))
+    let preview = std::env::var_os("HERDR_NOTES_MEDIA_DIR").is_some()
+        && local_media_path(url, std::path::Path::new("")).is_some();
+    path(if preview { "update-notes-preview" } else { "update-notes-media" }).join(crate::update::sha256(url.as_bytes()))
+}
+
+fn local_media_path(url: &str, dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let key = url.strip_prefix("https://media.herdr.dev/")?;
+    let parts: Vec<_> = key.split('/').collect();
+    if parts.len() != 2 || parts.iter().any(|p| p.is_empty() || *p == "." || *p == ".." || !p.bytes().all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))) {
+        return None;
+    }
+    Some(dir.join(key))
+}
+
+fn preview_media(url: &str) -> bool {
+    let Some(dir) = std::env::var_os("HERDR_NOTES_MEDIA_DIR") else { return false };
+    let Some(local) = local_media_path(url, std::path::Path::new(&dir)) else { return false };
+    let file = media_path(url);
+    let _ = std::fs::create_dir_all(path("update-notes-preview"));
+    let temp = file.with_extension(format!("{:?}.new", std::thread::current().id()));
+    if std::fs::copy(local, &temp).and_then(|_| std::fs::rename(&temp, &file)).is_err() {
+        let _ = std::fs::remove_file(temp);
+        // A missing preview must not silently display an old downloaded clip.
+        let _ = std::fs::remove_file(file);
+    }
+    true
 }
 
 fn fetch_media(notes: &[Note]) {
     let dir = path("update-notes-media");
     if std::fs::create_dir_all(&dir).is_err() { return; }
     for url in notes.iter().flat_map(|n| &n.items).flat_map(|item| &item.media) {
+        if preview_media(url) { continue; }
         let file = media_path(url);
         if file.is_file() { continue; }
         // The same URL may be in both the startup and newly fetched feed.
@@ -161,7 +187,7 @@ pub fn notes(target: Option<&str>) -> Vec<Note> {
     let mut notes = all();
     for note in &mut notes {
         for item in &mut note.items {
-            item.media = item.media.iter().map(|url| media_path(url)).filter(|p| p.is_file()).filter_map(|p| p.strip_prefix(crate::mods::app_dir()).ok().map(|p| p.to_string_lossy().into_owned())).collect();
+            item.media = item.media.iter().map(|url| { preview_media(url); media_path(url) }).filter(|p| p.is_file()).filter_map(|p| p.strip_prefix(crate::mods::app_dir()).ok().map(|p| p.to_string_lossy().into_owned())).collect();
         }
     }
     LAUNCH.lock().unwrap().as_ref().map(|l| l.range(&notes, target)).unwrap_or_default()
@@ -237,6 +263,14 @@ mod tests {
         let after = Launch::new(before.record, "1.8.0", false);
         assert!(after.changed);
         assert!(!after.range(&fixture(), None).iter().any(|n| n.spotlight && !after.record.presented.contains(&n.version)));
+    }
+    #[test]
+    fn local_media_is_limited_to_canonical_media_urls() {
+        let dir = std::path::Path::new("/var/tmp/media");
+        assert_eq!(local_media_path("https://media.herdr.dev/0.1.4/peek.webp", dir), Some(dir.join("0.1.4/peek.webp")));
+        for url in ["https://example.com/0.1.4/peek.webp", "https://media.herdr.dev/../peek.webp", "https://media.herdr.dev/0.1.4/a/b.webp", "https://media.herdr.dev/0.1.4/%2e%2e", "https://media.herdr.dev/0.1.4/a.webp?query"] {
+            assert!(local_media_path(url, dir).is_none());
+        }
     }
     #[test]
     fn sections_and_item_media() {
