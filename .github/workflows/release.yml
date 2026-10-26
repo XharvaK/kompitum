@@ -12,7 +12,9 @@
 # The cache is the whole target/, with scripts/ci-sources keeping unchanged
 # files fresh to Cargo: the vendored crates (gpui-kit, taffy, ghostty) are
 # the slow part, and a fresh checkout would otherwise rebuild them all.
-name: release
+name: build and release
+# Master pushes only build (to keep the cache warm); tags publish.
+run-name: ${{ github.ref_type == 'tag' && format('release {0}', github.ref_name) || format('build {0}', github.ref_name) }}
 
 on:
   push:
@@ -105,8 +107,11 @@ jobs:
         run: scripts/ci-sources restore
       # Runs on the native runner, including the Intel cross-build row on ARM Mac.
       # Windows exercises DirectX; macOS exercises Metal on the main thread.
+      # Windows runners have no interactive desktop for the test's hidden
+      # window, so it hangs there; Windows was checked by hand on a desktop.
       - name: Screenshot pixels
-        if: runner.os != 'Linux'
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
         env:
           HERDR_SHOT_NATIVE_TEST: "1"
         run: cargo test --locked --test shot_pixels
