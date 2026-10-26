@@ -34,6 +34,30 @@ pub fn use_core(bin: PathBuf) {
     let _ = BIN.set(bin);
 }
 
+/// Finder and Dock launches don't inherit the person's shell PATH.
+#[cfg(target_os = "macos")]
+pub fn fill_path() {
+    if std::os::unix::process::parent_id() != 1 {
+        return;
+    }
+    let home = crate::mods::home();
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    if let Some(path) = merged_path(login_shell_path().as_deref(), &usual_dirs(&home)[..3], &current) {
+        // SAFETY: called at startup, before other threads read the environment.
+        unsafe { std::env::set_var("PATH", path) };
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn merged_path(login: Option<&std::ffi::OsStr>, usual: &[PathBuf], current: &std::ffi::OsStr) -> Option<std::ffi::OsString> {
+    let mut dirs: Vec<PathBuf> = login.map(|path| dirs_on(path).collect()).unwrap_or_default();
+    dirs.extend_from_slice(usual);
+    dirs.extend(dirs_on(current));
+    let mut seen = std::collections::HashSet::new();
+    dirs.retain(|dir| seen.insert(dir.clone()));
+    std::env::join_paths(dirs).ok()
+}
+
 /// `hc X.Y.Z` if this binary is herdr-core and runs.
 pub fn version(bin: &Path) -> Option<String> {
     let out = crate::spawn::command(bin).arg("--version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
@@ -180,6 +204,17 @@ pub fn update_to(at_least: Option<&str>) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_path_keeps_shell_order_and_falls_back_to_usual_dirs() {
+        let usual = [PathBuf::from("/home/test/.local/bin"), PathBuf::from("/opt/homebrew/bin")];
+        let current = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
+        let login = std::env::join_paths(["/custom/bin", "/opt/homebrew/bin", "/usr/bin"]).unwrap();
+        let merged = merged_path(Some(&login), &usual, &current).unwrap();
+        assert_eq!(std::env::split_paths(&merged).collect::<Vec<_>>(), ["/custom/bin", "/opt/homebrew/bin", "/usr/bin", "/home/test/.local/bin", "/bin"].map(PathBuf::from));
+        let fallback = merged_path(None, &usual, &current).unwrap();
+        assert_eq!(std::env::split_paths(&fallback).collect::<Vec<_>>(), ["/home/test/.local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"].map(PathBuf::from));
+    }
 
     // Fakes the binary with a shell script.
     #[cfg(unix)]

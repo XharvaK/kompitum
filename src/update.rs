@@ -278,15 +278,23 @@ fn unpack(url: &str, sha: &str, work: &Path) -> Result<PathBuf, String> {
     run(crate::spawn::command(system("tar")).arg("-xzf").arg(&tarball).arg("-C").arg(work))?;
     let app = work.join(PACKED);
     if cfg!(target_os = "macos") {
-        // As the installer does: Finder doesn't pass a login shell's PATH, and
-        // changing Info.plist needs a new (ad hoc) signature.
-        let home = std::env::var("HOME").unwrap_or_default();
-        let path = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
-        let plist = app.join("Contents/Info.plist");
-        run(Command::new("/usr/libexec/PlistBuddy").arg("-c").arg(format!("Add :LSEnvironment:PATH string {path}")).arg(&plist))?;
-        run(Command::new("codesign").args(["--force", "--sign", "-"]).arg(&app))?;
+        let signature = Command::new("codesign").arg("-dv").arg(&app).output().map_err(|e| format!("codesign: {e}"))?;
+        if certificate_signed(&String::from_utf8_lossy(&signature.stderr)) {
+            run(Command::new("codesign").args(["--verify", "--deep", "--strict"]).arg(&app))?;
+        } else {
+            // Only dev builds may change the plist and lose their signature.
+            let home = std::env::var("HOME").unwrap_or_default();
+            let path = format!("{home}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin");
+            let plist = app.join("Contents/Info.plist");
+            run(Command::new("/usr/libexec/PlistBuddy").arg("-c").arg(format!("Add :LSEnvironment:PATH string {path}")).arg(&plist))?;
+            run(Command::new("codesign").args(["--force", "--sign", "-"]).arg(&app))?;
+        }
     }
     Ok(app)
+}
+
+fn certificate_signed(signature: &str) -> bool {
+    signature.lines().any(|line| line.starts_with("Authority="))
 }
 
 /// curl and tar: on Windows its own (System32), since Git's tar, often first
@@ -453,6 +461,13 @@ pub fn after_update() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn certificate_signatures_are_preserved() {
+        assert!(certificate_signed("Executable=/Herdr.app/Contents/MacOS/Herdr\nAuthority=Developer ID Application: Herdr (TEAM)\nAuthority=Developer ID Certification Authority\n"));
+        assert!(!certificate_signed("Executable=/Herdr.app/Contents/MacOS/Herdr\nSignature=adhoc\nTeamIdentifier=not set\n"));
+        assert!(!certificate_signed("/Herdr.app: code object is not signed at all\n"));
+    }
 
     #[test]
     fn versions_compare_like_semver() {

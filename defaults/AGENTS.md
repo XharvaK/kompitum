@@ -566,7 +566,9 @@ What's about the user, never a look:
 - `appearance`: `"light"` or `"dark"` always; absent, the system's. A layout
   with a light and a dark theme shows the matching one.
 - Updates: an installed app downloads them by itself and offers a restart;
-  a build from source never updates.
+  a build from source never updates. Keep signed macOS bundles unchanged:
+  don't edit their Info.plist or re-sign them. Finder launches load the login
+  shell's PATH, with the usual install folders as a fallback.
 - `telemetry`: `false` stops anonymous usage data and deletes what wasn't
   sent (on when absent; Settings → Privacy shows each report word for
   word, and `telemetry()` in mods). Once a day the app sends counts:

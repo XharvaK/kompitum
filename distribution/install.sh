@@ -4,8 +4,8 @@
 #   curl -fsSL https://releases.herdr.dev/app/install.sh | sh
 #
 # Linux: the app into ~/.local/share/herdr-app, `herdr-app` in ~/.local/bin,
-# a launcher entry and icon. macOS: Herdr.app into ~/Applications (signed
-# ad hoc; downloaded by curl, so macOS doesn't stop it). The core, with its
+# a launcher entry and icon. macOS: Herdr.app into ~/Applications, keeping
+# its release signature intact (ad hoc for unsigned/dev builds). The core, with its
 # own installer, into ~/.local/bin/herdr-core (and `hc`) only if none is
 # there yet; the app
 # keeps it current after that. Running it again updates the app.
@@ -84,9 +84,15 @@ else
   mkdir -p "$apps"
   # Prepared in the temp folder, so Spotlight never indexes a half-made
   # bundle under a temporary name in Applications.
-  # Finder doesn't pass a login shell's PATH; agents and hc must still be found.
-  /usr/libexec/PlistBuddy -c "Add :LSEnvironment:PATH string $bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" "$tmp/Herdr.app/Contents/Info.plist"
-  codesign --force --sign - "$tmp/Herdr.app" >/dev/null 2>&1
+  # Never change a certificate-signed bundle: macOS permissions follow its
+  # signing identity. Only unsigned/ad-hoc development builds need this PATH.
+  signature=$(codesign -dv "$tmp/Herdr.app" 2>&1 || true)
+  if printf '%s\n' "$signature" | grep -q '^Authority='; then
+    codesign --verify --deep --strict "$tmp/Herdr.app" || fail "invalid app signature"
+  else
+    /usr/libexec/PlistBuddy -c "Add :LSEnvironment:PATH string $bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" "$tmp/Herdr.app/Contents/Info.plist"
+    codesign --force --sign - "$tmp/Herdr.app" >/dev/null 2>&1
+  fi
   rm -rf "$app"
   mv "$tmp/Herdr.app" "$app"
   ln -sfn "$app/Contents/MacOS/Herdr" "$bin/herdr-app"

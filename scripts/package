@@ -6,7 +6,8 @@
 #                                 x86_64-apple-darwin on an Apple Silicon Mac
 #
 # Linux: a folder holding herdr-app and the icon.
-# macOS: Herdr.app, signed ad hoc.
+# macOS: Herdr.app, signed with APPLE_CERTIFICATE_P12 when available,
+# otherwise ad hoc. Notarization is a separate, non-blocking CI test.
 # Windows (Git Bash): a folder holding herdr-app.exe and the icon.
 # Windows has curl and tar too, so the app updates the same way.
 # No core inside: the installer and the app install the core's own release
@@ -80,9 +81,7 @@ else
     <key>NSHighResolutionCapable</key><true/>
     <key>LSEnvironment</key><dict/></dict></plist>
 PLIST
-  # Ad hoc until the Apple account arrives; the installer signs again after
-  # adding the person's PATH.
-  codesign --force --sign - "$app"
+  scripts/mac-sign "$app"
   tar -czf "$out" -C "$work" Herdr.app
 fi
 echo "package: $out ($(sha256 "$out"))"
