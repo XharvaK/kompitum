@@ -395,9 +395,9 @@ Sidebar on the right: swap the two children of `root`. No sidebar: set
 
 People share layouts at herdr.dev/layouts. Each is a folder laid out like
 this home: `layouts/<name>.json`, the `mods/<name>/` it needs, a
-`RECIPE.md` (what it is, how it was built, what it assumes) and a
-`preview.png`. Asked to add one (`herdr.dev/layouts/<owner>/<name>`, or a
-folder on GitHub):
+`RECIPE.md` (the brief to build it from scratch) and a `preview.png`. The
+files are one build of the recipe. Asked to add one
+(`herdr.dev/layouts/<owner>/<name>`, or a folder on GitHub):
 
 1. Read the recipe and every file before writing anything. Before adding,
    tell the person if a mod reaches the network, runs programs (`exec`,
@@ -407,15 +407,38 @@ folder on GitHub):
    or Herdr's), rename the new one: its file or folder, the `mod` names in
    the layout, and the mod's own `mods/<name>/` paths.
 3. Fit it to this setup only where its assumptions don't hold (a missing
-   program, a name clash) or the person asks.
+   program, a name clash) or the person asks. If the files don't work on
+   this version, or the person wants it different, build it from the
+   recipe instead.
 4. `herdr-app check` each mod, then `layout.switch {name}`. The person's
    own layout stays as it was; `ctrl-shift-l` switches back, and deleting
    the files removes it.
 
 To share one: put that folder in a public GitHub repo (one folder per
-layout if there are several), write its `RECIPE.md` from the real files,
-save a screenshot as `preview.png` and add the repo topic `herdr-layout`.
-It shows up at herdr.dev/layouts within the hour.
+layout if there are several), write its `RECIPE.md`, save a screenshot of
+it as `preview.png` and add the repo topic `herdr-layout`. It shows up at
+herdr.dev/layouts within the hour.
+
+A `RECIPE.md` is a brief: another agent with an empty folder builds the
+layout from it. Write it from the real files, in this order:
+
+1. `# Name`, one paragraph of what the person sees, `![Name](preview.png)`.
+2. **What you see:** the regions top to bottom or left to right, their
+   sizes, colors and type; what each one shows.
+3. **How it behaves:** every agent status (working, blocked, done, idle)
+   and how it looks; what clicks, keys and hovers do; what moves.
+4. **Built from:** the layout's node tree and blocks, each mod and its
+   `props` roles, the shipped mods it uses, the `herdr` functions and
+   commands it calls, any programs it runs, its art.
+5. **Watch out:** what tripped the build up and what a fresh build would
+   get wrong; limits (sizes, counts); controls that do nothing yet; what
+   it assumes about the setup.
+6. **Done when:** checks that prove a build works, each one something the
+   build really does.
+
+The person and what they see come first; code only in Built from and
+Watch out. Exact over vague (`#ab7748`, 29px, `agent.focus`), and nothing
+the build doesn't do.
 
 ## Keys: `keys.json`
 
