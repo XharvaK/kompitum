@@ -859,6 +859,9 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         .function("run", |a| {
             let name = a.string(0)?.to_owned();
             let args = a.get(1).map(from_host).unwrap_or(Value::Null);
+            if let Some(command) = crate::commands::find(&name) {
+                crate::commands::validate_args(command, &args).map_err(HostError::new)?;
+            }
             let final_kill = (name == "terminal.kill").then(|| FINAL_KILLS.with_borrow(Clone::clone)).flatten();
             if let Some((core, deadline)) = final_kill {
                 if let Err(error) = core.call_timeout(&name, args, deadline.saturating_duration_since(std::time::Instant::now())) {

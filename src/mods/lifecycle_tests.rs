@@ -68,6 +68,39 @@ export default class extends View {
 }
 
 #[gpui::test]
+fn mod_run_rejects_unknown_arguments_before_queueing_a_command(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let fixture = Fixture::new(r#"
+import { View, div } from "gpui-kit";
+import { run } from "herdr";
+import { note } from "fixture";
+export default class extends View {
+  init() {
+    for (const [name, args] of [["space.close", {space: "X", confirmed: true}], ["terminal.kill", {id: "X"}]]) {
+      try { run(name, args); note("accepted invalid command"); }
+      catch (error) { note(String(error)); }
+    }
+  }
+  render() { return div(); }
+}"#);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let calls = seen.clone();
+    gpui_shell::policy::set_default(Policy::new()
+        .with_host_module(module(Instance { name: "test".into(), props: Value::Null }, 0)).unwrap()
+        .with_host_module(HostModule::new("fixture").function("note", move |a| {
+            calls.borrow_mut().push(a.string(0)?.to_owned());
+            Ok(HostValue::Null)
+        })).unwrap());
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let window = cx.add_window(|_, _| Empty);
+    let _root = window.update(cx, |_, window, cx| runtime.try_load(&fixture.0, window, cx).unwrap()).unwrap();
+    let seen = seen.borrow();
+    assert_eq!(seen.len(), 2);
+    assert!(seen[0].contains("space.close: unknown argument(s): space; valid arguments: id, confirmed"), "{}", seen[0]);
+    assert!(seen[1].contains("terminal.kill: unknown argument(s): id; valid arguments: terminal"), "{}", seen[1]);
+}
+
+#[gpui::test]
 fn close_is_once_and_awaits_its_promise(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let fixture = Fixture::new(r#"

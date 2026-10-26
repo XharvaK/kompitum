@@ -60,7 +60,8 @@ The folder is on that machine; tabs and splits in the space stay there.
 and `hc file ... --on vps ...` for remote work, not your local file tools.
 
 `do` accepts `--key value` arguments (JSON for arrays/objects) or one JSON
-object. Use `commands` to confirm the command's exact shape:
+object. Unknown argument names fail and list valid names; they never target the
+current space or pane instead. Use `commands` to confirm the command's exact shape:
 
 ```sh
 herdr-app do pane.split '{"direction":"right","pane":"p12"}'

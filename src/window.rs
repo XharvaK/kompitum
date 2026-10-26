@@ -2433,9 +2433,8 @@ impl AppWindow {
     /// Runs a command for the person (keys, clicks, menus, mods): a missing
     /// name is asked for.
     fn run(&mut self, name: &str, args: Value, window: &mut Window, cx: &mut Context<Self>) {
-        // A click or key has nobody to read the reply: say why no terminal started.
-        let starts = matches!(name.split(':').next(), Some("space.new" | "tab.new" | "pane.split" | "terminal.open"));
-        if let Some(error) = self.run_as(name, args, true, window, cx).get("error").and_then(Value::as_str).filter(|_| starts) {
+        // A click or key has nobody to read the reply: show why it failed.
+        if let Some(error) = self.run_as(name, args, true, window, cx).get("error").and_then(Value::as_str) {
             let spec = json!({"kind":"toast", "notification":{"title":format!("{name} failed"),"body":error,"level":"error"}});
             self.open_overlay(mods::new_overlay_id(), spec, window, cx);
         }
@@ -2451,6 +2450,12 @@ impl AppWindow {
         if let Some((n, v)) = name.split_once(':')
             && let Some(c) = crate::commands::find(n)
         {
+            if let Err(error) = crate::commands::validate_args(c, &args) {
+                return json!({ "error": error });
+            }
+            if c.args.is_empty() {
+                return json!({ "error": format!("{n}: unexpected shorthand argument; valid arguments: none") });
+            }
             let mut short = crate::commands::shorthand(c, v);
             if let (Some(s), Some(extra)) = (short.as_object_mut(), args.as_object()) {
                 s.extend(extra.clone());
@@ -2468,6 +2473,9 @@ impl AppWindow {
             tracing::warn!("unknown command {name:?}");
             return json!({ "error": format!("unknown command {name:?}: see `herdr-app commands`; a mod's are <mod>.<command> and need the mod loaded") });
         };
+        if let Err(error) = crate::commands::validate_args(command, &args) {
+            return json!({ "error": error });
+        }
         if terminal_block(&self.chrome, self.focused_pane.as_deref()).is_some() && needs_model_pane(name, &args) {
             return json!({ "error": "a terminal layout block is focused, not a pane; focus a pane or pass an explicit pane id" });
         }
@@ -3754,7 +3762,7 @@ impl AppWindow {
                     .items_center()
                     .text_color(if on { c("foreground") } else { c("muted") })
                     .when(on, |d| d.bg(c("raised")))
-                    .on_click(cx.listener(move |this, _, w, cx| this.run("select", json!({ "stack": s, "child": id }), w, cx)))
+                    .on_click(cx.listener(move |this, _, w, cx| this.run("layout.select", json!({ "stack": s, "child": id }), w, cx)))
                     .child(ch.title.clone().unwrap_or_else(|| (i + 1).to_string())),
             );
         }

@@ -128,6 +128,12 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
     for name in ["run", "playSound", "setAgentOrder", "openOverlay", "closeOverlay", "notify", "presentUpdateNotes"] {
         let calls = calls.clone();
         module = module.function(name, move |a| {
+            if name == "run" {
+                let command = a.string(0)?;
+                let command = crate::commands::find(command).unwrap_or_else(|| panic!("unknown shipped mod command {command}"));
+                let args = a.get(1).map(from_host).unwrap_or(Value::Null);
+                crate::commands::validate_args(command, &args).unwrap();
+            }
             calls
                 .borrow_mut()
                 .effects
@@ -505,6 +511,17 @@ fn shipped_layouts_and_keys() {
         for bindings in sections.values() {
             for action in bindings.values() {
                 let name = action.split(':').next().unwrap();
+                if let Some(command) = crate::commands::find(name) {
+                    let args = match action.split_once(':') {
+                        Some((_, value)) => {
+                            assert!(!command.args.is_empty(), "unexpected shipped key argument {action}");
+                            crate::commands::shorthand(command, value)
+                        }
+                        None => Value::Null,
+                    };
+                    crate::commands::validate_args(command, &args).unwrap();
+                    assert!(crate::commands::missing(command, &args).is_none(), "missing shipped key argument {action}");
+                }
                 assert!(
                     action == "terminal"
                         || action.starts_with("send:")

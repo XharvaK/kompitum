@@ -36,12 +36,12 @@ pub const COMMANDS: &[Command] = &[
     cmd("space.move", &[req("id"), req("index")], "Move a space to a position (1 = first)."),
     cmd("tab.new", &[opt("name"), opt("space"), opt("folder"), opt("argv"), opt("task"), opt("mod"), opt("props")],
         "Make a tab in a space (default: the selected one; name default: none, so it's called by its number) with a terminal in folder (default: the focused terminal's), optionally an agent (argv) and its first message (task); or with a mod as its only pane (`mod`, its `props`: a file, a board)."),
-    cmd("tab.close", &[opt("id")], "Close a tab and end its terminals."),
+    cmd("tab.close", &[opt("id"), opt("confirmed")], "Close a tab and end its terminals."),
     cmd("tab.rename", &[opt("id"), opt("name")], "Rename a tab (asks the person when no name; an empty name: called by its number again)."),
     cmd("tab.move", &[req("id"), req("index")], "Move a tab to a position in its space (1 = first)."),
     cmd("pane.split", &[req("direction"), opt("pane"), opt("argv"), opt("mod"), opt("props")], "Split a pane (default: the focused one) \"right\" or \"down\" with a new terminal, or with a mod (`mod`, its `props`) beside it."),
     cmd("pane.close", &[opt("pane")], "Close a pane and end its terminal."),
-    cmd("terminal.open", &[opt("argv"), opt("folder"), opt("place")], "Start a terminal: as a new tab (place \"tab\", default), or \"right\"/\"down\" of the focused pane."),
+    cmd("terminal.open", &[opt("argv"), opt("folder"), opt("place"), opt("name")], "Start a terminal: as a new tab (place \"tab\", default), or \"right\"/\"down\" of the focused pane."),
     cmd("terminal.keep", &[req("terminal"), opt("place")], "Give a running terminal without a pane (a sub-agent) a pane: a new tab, or \"right\"/\"down\"."),
     cmd("terminal.park", &[req("terminal")], "Take a terminal's pane away and disable core keep; it keeps running (a sub-agent shows under its parent again)."),
     cmd("terminal.right_click", &[req("to"), opt("terminal")], "Where right-clicks in a terminal (default: the focused one) go when its program takes the mouse: \"program\" or \"menu\" (Herdr's, the default). Shift+right-click is always the menu."),
@@ -118,6 +118,24 @@ pub fn shorthand(c: &Command, value: &str) -> Value {
     }
 }
 
+/// Reject misspelled arguments before a command can use its current-target default.
+/// Null is the argument-free form used by keys and mods.
+pub fn validate_args(c: &Command, args: &Value) -> Result<(), String> {
+    let valid = if c.args.is_empty() { "none".into() } else { c.args.iter().map(|a| a.name).collect::<Vec<_>>().join(", ") };
+    match args {
+        Value::Null => Ok(()),
+        Value::Object(args) => {
+            let unknown: Vec<_> = args.keys().filter(|key| !c.args.iter().any(|a| a.name == key.as_str())).map(String::as_str).collect();
+            if unknown.is_empty() {
+                Ok(())
+            } else {
+                Err(format!("{}: unknown argument(s): {}; valid arguments: {valid}", c.name, unknown.join(", ")))
+            }
+        }
+        _ => Err(format!("{}: arguments must be an object; valid arguments: {valid}", c.name)),
+    }
+}
+
 /// The first required argument that's missing (an empty string counts as missing).
 pub fn missing(c: &Command, args: &Value) -> Option<&'static str> {
     c.args.iter().filter(|a| a.required).map(|a| a.name).find(|k| match args.get(k) {
@@ -150,6 +168,25 @@ mod tests {
         let guide = include_str!("../defaults/AGENTS.md");
         let missing: Vec<&str> = COMMANDS.iter().map(|c| c.name).filter(|n| !guide.contains(&format!("`{n}"))).collect();
         assert!(missing.is_empty(), "defaults/AGENTS.md (## Commands) doesn't name: {missing:?}");
+    }
+
+    #[test]
+    fn unknown_arguments_are_rejected_for_every_command() {
+        for c in COMMANDS {
+            let error = validate_args(c, &json!({ "typo": "target" })).unwrap_err();
+            assert!(error.contains(c.name), "{error}");
+            assert!(error.contains("unknown argument(s): typo"), "{error}");
+            assert!(error.contains("valid arguments:"), "{error}");
+            assert!(validate_args(c, &Value::Null).is_ok());
+            assert!(validate_args(c, &json!({})).is_ok());
+            assert!(validate_args(c, &json!(["target"])).is_err());
+            let args: serde_json::Map<String, Value> = c.args.iter().map(|a| (a.name.into(), json!("target"))).collect();
+            assert!(validate_args(c, &Value::Object(args)).is_ok());
+        }
+        let close = find("space.close").unwrap();
+        assert_eq!(validate_args(close, &json!({"space": "X", "confirmed": true})),
+            Err("space.close: unknown argument(s): space; valid arguments: id, confirmed".into()));
+        assert!(validate_args(close, &json!({"id": "X", "confirmed": true})).is_ok());
     }
 
     #[test]

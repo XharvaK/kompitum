@@ -471,7 +471,10 @@ the build doesn't do.
 
 The one way to change anything; keys, mods (`run(name, args)`), menus and
 you use the same list. `herdr-app commands` prints every one with its arguments
-(which are required) and what it does. The main ones:
+(which are required) and what it does. Unknown argument names are errors and list
+valid names; they never fall back to the current target. For example, closing a
+space uses `herdr-app do space.close --id <id> --confirmed true`, not `--space`.
+The main ones:
 
 - Spaces: `space.new {name?, folder?, tab?, argv?, task?, machine?}`
   (machine: another machine from `hc machine ls`; the space lives there, its
@@ -483,7 +486,8 @@ you use the same list. `herdr-app commands` prints every one with its arguments
 - Tabs: `tab.new {name?, space?, folder?, argv?, task?}` (argv: an
   agent to run, task: its first message), or `tab.new {name?, space?, mod,
   props?}` for a tab whose only pane is a mod (a file, a board; split a shell
-  in beside it like any tab), `tab.close {id?}`,
+  in beside it like any tab), `tab.close {id?, confirmed?}` (closing the last tab
+  closes its space and asks first unless confirmed),
   `tab.rename {id?, name}` ("": its number again), `tab.move {id, index}`,
   `tab.select {index | id}`, `tab.next`, `tab.prev`,
   `tab.settle {id?}`, `tab.unsettle {id?}` (index, next and prev
@@ -497,7 +501,7 @@ you use the same list. `herdr-app commands` prints every one with its arguments
   `terminal.show` fail, as do `terminal.open`/`terminal.keep` with place right/down.
   They never act on the terminal's source pane. An explicit `pane` still targets that
   model pane; composition edits belong to the mod (edit its layout instead).
-- Terminals: `terminal.open {argv?, folder?, place?}`, `terminal.kill {terminal}`,
+- Terminals: `terminal.open {argv?, folder?, place?, name?}`, `terminal.kill {terminal}`,
   `terminal.keep {terminal, place?}`, `terminal.park {terminal}`,
   `terminal.peek {terminal}` (peek over the tab, with keep-as-tab and close),
   `terminal.show {terminal?, pane?}`, `terminal.copy`, `terminal.paste` (an image
