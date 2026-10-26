@@ -17,6 +17,8 @@ include!(concat!(env!("OUT_DIR"), "/frame_mods.rs"));
 
 #[cfg(test)]
 mod render_tests;
+#[cfg(test)]
+mod lifecycle_tests;
 
 /// The frame's own mods (welcome, ...): the app's, not the person's. Written
 /// from the binary on every start, so no edit or broken mod can break them.
@@ -389,6 +391,25 @@ pub enum Request {
 }
 
 static REQUESTS: OnceLock<async_channel::Sender<Request>> = OnceLock::new();
+
+thread_local! {
+    static FINAL_KILLS: RefCell<Option<(std::sync::Arc<crate::hc::Core>, std::time::Instant)>> = const { RefCell::new(None) };
+}
+
+/// The event loop stops before queued commands run at quit. Send final terminal
+/// kills to the core now, bounded by the same deadline as the mod's cleanup.
+pub fn final_cleanup(core: std::sync::Arc<crate::hc::Core>, deadline: std::time::Instant, body: impl FnOnce()) {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) { FINAL_KILLS.with_borrow_mut(|slot| { slot.take(); }); }
+    }
+    FINAL_KILLS.with_borrow_mut(|slot| {
+        assert!(slot.is_none(), "nested final cleanup");
+        *slot = Some((core, deadline));
+    });
+    let _reset = Reset;
+    body();
+}
 
 /// Navigation order set by the mod that lists agents, with stale entries removed and new agents appended.
 pub fn agent_order(available: Vec<String>) -> Vec<String> {
@@ -834,7 +855,14 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         .function("run", |a| {
             let name = a.string(0)?.to_owned();
             let args = a.get(1).map(from_host).unwrap_or(Value::Null);
-            request(Request::Run { name, args });
+            let final_kill = (name == "terminal.kill").then(|| FINAL_KILLS.with_borrow(Clone::clone)).flatten();
+            if let Some((core, deadline)) = final_kill {
+                if let Err(error) = core.call_timeout(&name, args, deadline.saturating_duration_since(std::time::Instant::now())) {
+                    tracing::warn!("final terminal.kill: {error:#}");
+                }
+            } else {
+                request(Request::Run { name, args });
+            }
             Ok(HostValue::Null)
         })
         .function("spaces", |_| Ok(read(|s| &s.spaces)))

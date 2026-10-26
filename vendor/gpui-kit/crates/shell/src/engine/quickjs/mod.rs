@@ -1095,6 +1095,7 @@ pub(super) struct InputCallbackOwner {
     application: Option<Rc<ApplicationGeneration>>,
     view: Option<WeakEntity<ScriptView>>,
 }
+mod lifecycle;
 mod standard;
 mod template;
 mod theme_api;
@@ -4045,6 +4046,40 @@ impl ShellRuntime {
 
         if let Err(error) = result {
             tracing::error!("error in resize handler: {error}");
+        }
+        scheduler::drain_runtime_jobs(self, window, cx);
+    }
+
+    pub(crate) fn callback_application_id(&self, id: CallbackId) -> Option<u64> {
+        self.callbacks.borrow().get(id)?.application.as_ref().map(|app| app.id())
+    }
+
+    pub(crate) fn dispatch_size_change(
+        self: &Rc<Self>,
+        id: CallbackId,
+        size: gpui::Size<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(entry) = self.callbacks.borrow().get(id) else { return };
+        if entry.application.as_ref().is_some_and(|application| !application.is_active()) {
+            return;
+        }
+        let Some(view) = entry.live_view() else { return };
+        let policy = view.as_ref().map(|view| view.read(cx).policy())
+            .unwrap_or_else(crate::policy::default);
+        let (_guard, generation) = scope::enter_with_application(
+            self, window, cx, ScopePhase::Event, view, policy, entry.application.clone(),
+        );
+        let result = self.with_js(|ctx| {
+            let handler = entry.value.clone().restore(ctx)?;
+            let payload = Object::new(ctx.clone())?;
+            payload.set("width", f32::from(size.width))?;
+            payload.set("height", f32::from(size.height))?;
+            handler.call::<_, ()>((payload, context_object(ctx, ContextBinding::Call(generation))?))
+        });
+        if let Err(error) = result {
+            tracing::error!("error in size change handler: {error}");
         }
         scheduler::drain_runtime_jobs(self, window, cx);
     }
@@ -7150,6 +7185,7 @@ impl ShellRuntime {
                 "viewport_from_layout",
                 "controls_right",
                 "on_resize",
+                "on_size_change",
                 "set_position",
                 "pressed",
                 "start",
@@ -8098,6 +8134,7 @@ impl ShellRuntime {
             "on_click"
             | "on_link_click"
             | "on_resize"
+            | "on_size_change"
             | "on_change"
             | "token"
             | "on_token_click"
@@ -10092,6 +10129,7 @@ fn callback_op_name(method: &str) -> Option<&'static str> {
         "on_item_click" => "on_item_click",
         "on_item_secondary_click" => "on_item_secondary_click",
         "on_resize" => "on_resize",
+        "on_size_change" => "on_size_change",
         "tab_bar" => "tab_bar",
         "empty_group" => "empty_group",
         "drop_indicator" => "drop_indicator",

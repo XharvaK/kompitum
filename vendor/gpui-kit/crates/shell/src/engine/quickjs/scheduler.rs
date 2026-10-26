@@ -507,6 +507,24 @@ fn js_sleep<'js>(ctx: Ctx<'js>, ms: Opt<f64>) -> JsResult<Promise<'js>> {
         ),
     )?;
 
+    if SYNCHRONOUS_CLOSE.with_borrow(|pending| pending.is_some()) {
+        let due = std::time::Instant::now() + delay;
+        SYNCHRONOUS_CLOSE.with_borrow_mut(|pending| {
+            pending.as_mut().expect("synchronous close scope").push(Box::new(move |runtime| {
+                if std::time::Instant::now() < due { return false; }
+                if matches!(task.readiness(), Readiness::Ready(_))
+                    && let Some(resolve) = task.take_callback()
+                    && let Err(error) = runtime.with_js(|ctx| resolve.restore(ctx)?.call::<_, ()>(()))
+                {
+                    tracing::warn!("error settling View.close sleep: {error}");
+                }
+                finish(&task);
+                true
+            }));
+        });
+        return Ok(promise);
+    }
+
     let sleeping = task.clone();
     host.foreground
         .clone()
@@ -1229,6 +1247,37 @@ where
         }),
     )?;
 
+    if SYNCHRONOUS_CLOSE.with_borrow(|pending| pending.is_some()) {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let outcome = smol::block_on(smol::future::or(
+                async move { let _ = cancelled.recv().await; None },
+                async move { Some(work.await) },
+            ));
+            let _ = sender.send(outcome);
+        });
+        SYNCHRONOUS_CLOSE.with_borrow_mut(|pending| {
+            pending.as_mut().expect("synchronous close scope").push(Box::new(move |runtime| {
+                let outcome = match receiver.try_recv() {
+                    Ok(Some(outcome)) => outcome,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => return false,
+                    _ => { finish(&task); return true; }
+                };
+                if matches!(task.readiness(), Readiness::Ready(_)) {
+                    let resolve = task.take_callback();
+                    let reject = task.take_rejection();
+                    let result = runtime.with_js(|ctx| settle_awaited(ctx, resolve, reject, outcome));
+                    if let Err(error) = result {
+                        tracing::warn!("error settling View.close host call: {error}");
+                    }
+                }
+                finish(&task);
+                true
+            }));
+        });
+        return Ok(promise);
+    }
+
     let running = task.clone();
     host.foreground
         .clone()
@@ -1256,19 +1305,7 @@ where
                     &running.policy(),
                     running.application.clone(),
                     owner,
-                    move |ctx, _| match outcome {
-                        Ok(value) => match resolve {
-                            Some(resolve) => resolve.restore(ctx)?.call::<_, ()>((value,)),
-                            None => Ok(()),
-                        },
-                        Err(message) => match reject {
-                            Some(reject) => {
-                                let error = Exception::from_message(ctx.clone(), &message)?;
-                                reject.restore(ctx)?.call::<_, ()>((error,))
-                            }
-                            None => Ok(()),
-                        },
-                    },
+                    move |ctx, _| settle_awaited(ctx, resolve, reject, outcome),
                 );
             }
             finish(&running);
@@ -1276,6 +1313,24 @@ where
         .detach();
 
     Ok(promise)
+}
+
+fn settle_awaited<'js, T: IntoJs<'js>>(
+    ctx: &Ctx<'js>,
+    resolve: Option<Persistent<Function<'static>>>,
+    reject: Option<Persistent<Function<'static>>>,
+    outcome: Result<T, String>,
+) -> JsResult<()> {
+    match outcome {
+        Ok(value) => match resolve {
+            Some(resolve) => resolve.restore(ctx)?.call::<_, ()>((value,)),
+            None => Ok(()),
+        },
+        Err(message) => match reject {
+            Some(reject) => reject.restore(ctx)?.call::<_, ()>((Exception::from_message(ctx.clone(), &message)?,)),
+            None => Ok(()),
+        },
+    }
 }
 
 /// A promise settled by work that must not run on this thread.
@@ -1425,6 +1480,38 @@ where
         .detach();
 
     Ok(promise)
+}
+
+type ClosingPoll = Box<dyn FnMut(&Rc<ShellRuntime>) -> bool>;
+thread_local! {
+    static SYNCHRONOUS_CLOSE: RefCell<Option<Vec<ClosingPoll>>> = const { RefCell::new(None) };
+}
+
+/// Quit destroys windows before polling foreground futures. This narrow pump
+/// settles host-module calls while the final call's window is still borrowed.
+pub(super) struct SynchronousClose;
+impl SynchronousClose {
+    pub(super) fn enter() -> Self {
+        SYNCHRONOUS_CLOSE.with_borrow_mut(|pending| {
+            assert!(pending.is_none(), "nested synchronous close");
+            *pending = Some(Vec::new());
+        });
+        Self
+    }
+}
+impl Drop for SynchronousClose {
+    fn drop(&mut self) {
+        SYNCHRONOUS_CLOSE.with_borrow_mut(|pending| { pending.take(); });
+    }
+}
+pub(super) fn poll_synchronous_close(runtime: &Rc<ShellRuntime>) {
+    let mut pending = SYNCHRONOUS_CLOSE.with_borrow_mut(|slot| {
+        slot.as_mut().map(std::mem::take).unwrap_or_default()
+    });
+    pending.retain_mut(|poll| !poll(runtime));
+    SYNCHRONOUS_CLOSE.with_borrow_mut(|slot| {
+        if let Some(slot) = slot { slot.extend(pending); }
+    });
 }
 
 const MAX_OUTSTANDING_TASKS_PER_RUNTIME: usize = 1024;

@@ -370,6 +370,8 @@ export function notify(n: {
  *  A layout's terminal_menu mod gets {tab: "pane", target: {pane: string, terminal: string}, overlay: string}.
  *  Target names the clicked pane/terminal, not necessarily the focused one; pass it to actions.
  *  Close the popup with closeOverlay(props().overlay). */
+/** Size is not a prop: root div/h_flex/v_flex.on_size_change reports logical px.
+ * The exported View may implement async close(cx) for bounded final cleanup. */
 export function props(): any;
 
 /** Reads a value every mod can see (persisted). */

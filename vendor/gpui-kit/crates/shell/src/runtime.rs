@@ -201,6 +201,7 @@ Applications found below this directory:",
 pub(crate) struct ApplicationGeneration {
     id: u64,
     active: Cell<bool>,
+    pub(crate) close_deadline: Cell<Option<std::time::Instant>>,
 }
 
 impl ApplicationGeneration {
@@ -208,7 +209,12 @@ impl ApplicationGeneration {
         Rc::new(Self {
             id,
             active: Cell::new(true),
+            close_deadline: Cell::new(None),
         })
+    }
+
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     pub(crate) fn is_active(&self) -> bool {

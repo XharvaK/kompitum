@@ -149,11 +149,13 @@ fn main() {
             mods::init(cx);
             // Not restarted for it: the update goes in when the app quits.
             cx.on_app_quit(|cx| {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
                 // Where the window was, for the next start (a quit never asks the window).
                 for w in cx.windows() {
                     if let Some(w) = w.downcast::<window::AppWindow>() {
                         let _ = w.update(cx, |this, window, cx| {
                             this.drain_documents(window, cx);
+                            this.close_mods_now(deadline, window, cx);
                             place::save(window, cx);
                         });
                     }

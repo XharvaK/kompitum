@@ -199,6 +199,7 @@ impl AppWindow {
         match name {
             "window.close" => {
                 self.drain_documents(window, cx);
+                self.close_mods_now(std::time::Instant::now() + Duration::from_millis(250), window, cx);
                 crate::place::save(window, cx);
                 window.remove_window();
             }

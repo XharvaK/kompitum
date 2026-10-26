@@ -701,6 +701,21 @@ Rules:
   `cx.timer.every(ms, (cx) => …)`.
 - No `setTimeout`/`setInterval` (use `cx.timer`), no top-level `await` (use
   `cx.spawn` in `init`). Anything slow goes through `exec` or `fetch`.
+- Size: put `.id("root").on_size_change((size, cx) => { this.size = size; cx.notify(); })`
+  on the root `div()`, `h_flex()` or `v_flex()`. It reports `{width, height}`
+  in logical pixels after the first layout and whenever the size changes,
+  even with the pointer elsewhere. It does not change `props()`.
+- Cleanup: an optional `async close(cx)` on the exported `View` gets one final
+  call when its pane, tab, layout-owned slot or overlay goes, and on app quit.
+  It is not called for a hidden copy or an inactive tab. Start cleanup inside
+  `close()`; don't await work started earlier. Await cleanup directly,
+  for example `async close(cx) { await exec("hc", ["kill", this.browser]); }`.
+  Closing stays responsive: cleanup has at most 250 ms (shared across copies
+  on quit), then unfinished tasks are cancelled. On quit, use `exec(...)` and
+  `run("terminal.kill", { terminal: address })`: those go out before the event
+  loop stops; other commands may not run. An `exec` already started keeps
+  running; don't start new long-lived work in `close`. This is best-effort,
+  not a guarantee after a crash or forced termination.
 - Use `theme()` colors so the mod follows the user's theme.
 - **Animate natively, never with a timer.** Every redraw of a mod redraws
   the whole window, so `cx.timer.every(90, () => cx.notify())` for a

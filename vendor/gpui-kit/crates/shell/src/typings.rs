@@ -1227,6 +1227,12 @@ const CONTEXT_AND_VIEW: &str = r#"  /**
     init?(props: import("gpui-shell").Props | undefined, cx: AsyncContext): void;
     /** Runs when a parent changes this retained nested view's properties. */
     update?(props: import("gpui-shell").Props | undefined): void;
+    /** Application root only: one final call when the host closes this copy.
+     * Start cleanup here, rather than awaiting earlier work. At quit, newly
+     * started exec calls, terminal.kill commands and cx.sleep can finish within
+     * the host's short deadline; other commands may not run.
+     * Hiding a copy or switching tabs does not close it. */
+    close?(cx: AsyncContext): void | Promise<void>;
     abstract render(cx: Context): Element | Entity | string;
   }
 
@@ -1388,6 +1394,9 @@ const ELEMENT_METHODS: &str = r#"    /**
     on_click<Self extends Element>(this: Self, handler: (event: ClickEvent, cx: Context) => void): Self;
     /** GPUI `InteractiveElement::on_mouse_move`, delivered while this element is hovered. */
     on_mouse_move<Self extends Element>(this: Self, handler: (event: MouseMoveEvent, cx: Context) => void): Self;
+    /** div/h_flex/v_flex: initial size and changed layout size, in logical pixels.
+     * Runs after layout, even without pointer movement. Use a stable id. */
+    on_size_change<Self extends Element>(this: Self, handler: (size: { width: number; height: number }, cx: Context) => void): Self;
     /** GPUI `InteractiveElement::on_hover`; reports both pointer entry and exit. */
     on_hover<Self extends Element>(this: Self, handler: (hovered: boolean, cx: Context) => void): Self;
     /**

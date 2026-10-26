@@ -495,6 +495,12 @@ fn deadline(budgets: Budgets) -> impl FnMut() -> bool + 'static {
     let mut started = Instant::now();
 
     move || {
+        if scope::current_application_generation()
+            .and_then(|application| application.close_deadline.get())
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return true;
+        }
         let current = match scope::current_generation() {
             Some(generation) => ExecutionWindow::Scoped(generation),
             None => DETACHED_EXECUTION.with(|epoch| ExecutionWindow::Detached(epoch.get())),

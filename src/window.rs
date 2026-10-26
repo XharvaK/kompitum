@@ -475,7 +475,10 @@ impl AppWindow {
                 cx.hide();
                 return false;
             }
-            let _ = closing.update(cx, |this, cx| this.drain_documents(window, cx));
+            let _ = closing.update(cx, |this, cx| {
+                this.drain_documents(window, cx);
+                this.close_mods_now(std::time::Instant::now() + Duration::from_millis(250), window, cx);
+            });
             crate::place::save(window, cx);
             true
         });
@@ -878,7 +881,7 @@ impl AppWindow {
         let other = next != self.layout_name;
         if other {
             self.close_windows(window, cx);
-            self.drop_layout_copies();
+            self.drop_layout_copies(window, cx);
         }
         self.load_layout(&next);
         self.apply_look(window, cx);
@@ -1178,10 +1181,30 @@ impl AppWindow {
 
     /// Another layout: its mods start fresh. Pane mods (they belong to their
     /// tab) and overlays stay.
-    fn drop_layout_copies(&mut self) {
-        let (model, overlays) = (&self.model, &self.overlays);
-        self.copies
-            .retain(|s, _| model.tab_of(s).is_some() || overlays.iter().any(|o| o.slot == *s || o.layout.as_ref().is_some_and(|l| l.find(s).is_some())));
+    fn drop_layout_copies(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let gone: Vec<_> = self.copies.keys().filter(|s| {
+            self.model.tab_of(s).is_none() && !self.overlays.iter().any(|o| o.slot == **s || o.layout.as_ref().is_some_and(|l| l.find(s).is_some()))
+        }).cloned().collect();
+        for slot in gone {
+            self.remove_copy(&slot, window, cx);
+        }
+    }
+
+    fn remove_copy(&mut self, slot: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(copy) = self.copies.remove(slot)
+            && let (Some(runtime), Some(root)) = (&self.runtime, copy.root)
+        {
+            runtime.close(&root, std::time::Instant::now() + Duration::from_millis(250), window, cx).detach();
+        }
+    }
+
+    pub(crate) fn close_mods_now(&self, deadline: std::time::Instant, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(runtime) = &self.runtime else { return };
+        mods::final_cleanup(self.core.clone(), deadline, || {
+            for root in self.copies.values().filter_map(|copy| copy.root.as_ref()) {
+                runtime.close_now(root, deadline, window, cx);
+            }
+        });
     }
 
     fn shows_tab(&self) -> bool {
@@ -1300,7 +1323,10 @@ impl AppWindow {
         // inactive stack child, a hidden column, a pane in another tab), so it
         // keeps its place; only shown slots start a copy. Gone or changed: dropped.
         let owned = self.owned_mods();
-        self.copies.retain(|slot, c| owned.get(slot).is_some_and(|i| *i == c.inst));
+        let gone: Vec<_> = self.copies.iter().filter(|(slot, copy)| owned.get(*slot).is_none_or(|inst| *inst != copy.inst)).map(|(slot, _)| slot.clone()).collect();
+        for slot in gone {
+            self.remove_copy(&slot, window, cx);
+        }
         let want: HashMap<String, Instance> = mods_visible.into_iter().collect();
         for (slot, inst) in want {
             if !self.copies.contains_key(&slot) {
@@ -3205,7 +3231,7 @@ impl AppWindow {
                 self.win_drag = None;
             }
             self.bounds.borrow_mut().remove(&o.slot);
-            self.copies.remove(&o.slot);
+            self.remove_copy(&o.slot, window, cx);
             if o.layout.is_some() {
                 self.sync(window, cx);
             } else {
@@ -3234,7 +3260,7 @@ impl AppWindow {
         tracing::warn!("escape hatch: {layout} and keys.json set aside as *.reset-<time>");
         self.watched.keys = None;
         install_layouts();
-        self.drop_layout_copies();
+        self.drop_layout_copies(window, cx);
         self.load_layout("main");
         self.apply_look(window, cx);
         self.focused_pane = None;

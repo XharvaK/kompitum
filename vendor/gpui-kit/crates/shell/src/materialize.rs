@@ -442,6 +442,7 @@ struct Behavior {
     visible: Option<bool>,
     /// Reports the panel sizes of a resizable group once a drag has ended.
     on_resize: Option<CallbackId>,
+    on_size_change: Option<CallbackId>,
     /// Reports which item of a `VirtualList` was clicked.
     ///
     /// One handler for the whole list rather than one per row, and that is a
@@ -2129,6 +2130,7 @@ fn flex_element(
         && !behavior.needs_identity()
         && behavior.on_click.is_none()
         && behavior.on_mouse_move.is_none()
+        && behavior.on_size_change.is_none()
         && behavior.on_hover.is_none()
         && behavior.on_key_down.is_none()
         && behavior.on_key_up.is_none()
@@ -2177,6 +2179,26 @@ fn flex_element(
             let local = event.position - bounds.origin;
             if let Some(runtime) = runtime.upgrade() {
                 runtime.dispatch_mouse_move(callback, event, local, bounds, window, cx);
+            }
+        });
+    }
+    if let Some(callback) = behavior.on_size_change
+        && !checking()
+    {
+        let last = window.use_keyed_state((identity.clone(), "size-change"), cx, |_, _| {
+            Rc::new(Cell::new(None::<(Option<u64>, gpui::Size<Pixels>)>))
+        }).read(cx).clone();
+        let application = runtime.callback_application_id(callback);
+        let runtime = Rc::downgrade(runtime);
+        stateful = stateful.on_prepaint(move |bounds, window, cx| {
+            let current = (application, bounds.size);
+            if last.replace(Some(current)) != Some(current) {
+                let runtime = runtime.clone();
+                window.defer(cx, move |window, cx| {
+                    if let Some(runtime) = runtime.upgrade() {
+                        runtime.dispatch_size_change(callback, bounds.size, window, cx);
+                    }
+                });
             }
         });
     }
@@ -2628,6 +2650,7 @@ pub(in crate::materialize) fn resolve_ops(
                 "on_mouse_down_out" => behavior.on_mouse_down_out = Some(*id),
                 "on_scroll_wheel" => behavior.on_scroll_wheel = Some(*id),
                 "on_resize" => behavior.on_resize = Some(*id),
+                "on_size_change" => behavior.on_size_change = Some(*id),
                 "on_change" => behavior.on_change = Some(*id),
                 "token" => behavior.token = Some(*id),
                 "on_token_click" => behavior.on_token_click = Some(*id),
