@@ -78,6 +78,7 @@ Close a tab and end its terminals.
 | Argument | Required |
 |---|---|
 | `id` | no |
+| `confirmed` | no |
 
 ## `tab.rename`
 
@@ -126,6 +127,7 @@ Start a terminal: as a new tab (place "tab", default), or "right"/"down" of the 
 | `argv` | no |
 | `folder` | no |
 | `place` | no |
+| `name` | no |
 
 ## `terminal.keep`
 
