@@ -29,6 +29,9 @@ If all three are no, it belongs in mods (their shared storage, their own
 code), even at the price of some repetition. Same for herdr-core: what the
 app asks of it goes through Can too.
 
+`herdr-app --skill` prints the installable Agent Skill in `src/SKILL.md`.
+Keep it current when changing agent-facing behavior.
+
 ## The guide users' agents read
 
 `defaults/AGENTS.md` is written into every user's `~/.config/herdr-app` on

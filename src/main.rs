@@ -47,7 +47,7 @@ Usage:
   herdr-app commands               every command, its arguments, what it does
   herdr-app status                 what the window shows, and any errors
   herdr-app check <mod folder>     load a mod once and report what's wrong
-  herdr-app --agent-help           for AI agents: driving the window, and where hc fits
+  herdr-app --skill                Agent Skill: driving the window, and where hc fits
   herdr-app --version
 
 The terminals run in herdr-core (`hc`), which keeps them alive when the
@@ -91,7 +91,7 @@ fn main() {
         None if control::raise_running() => return,
         None => {}
         Some("-h" | "--help" | "help") => return print!("{HELP}"),
-        Some("--agent-help") => return print!("{}", include_str!("agent-help.txt")),
+        Some("--skill") => return print!("{}", include_str!("SKILL.md")),
         Some("-V" | "--version" | "version") => return println!("herdr-app {}", env!("CARGO_PKG_VERSION")),
         Some(other) => {
             eprint!("herdr-app: unknown argument {other:?}\n\n{HELP}");
