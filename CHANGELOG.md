@@ -1,5 +1,25 @@
 # Herdr changelog
 
+## [0.1.5] - 2026-10-27
+<!-- spotlight -->
+
+### New
+- **Drag panes where you want them.** Hover the top of a pane and grab the dots. Drop it on another pane to swap them, or near an edge to put it beside. A highlight shows where it lands.
+  ![Dragging a pane beside another](https://media.herdr.dev/0.1.5/pane-drag.webp)
+- **Ctrl-click a terminal to peek at it.** When an agent mentions another terminal, like t2, Ctrl-click (Cmd on macOS) its address to see it over your tab. Go to jumps there.
+  ![Peeking at a terminal an agent mentioned](https://media.herdr.dev/0.1.5/peek.webp)
+- **Agents can see the window.** `herdr-app shot` saves a picture of Herdr as it looks right now, so an agent building a mod can check its work. `herdr-app --skill` and `hc --skill` teach an agent the rest.
+- **What changed, after every update.** Release notes like these, in Settings → Updates, including versions you skipped.
+
+### Fixed
+- nvim and other full-screen programs redraw right after you resize their pane.
+- On Windows, AltGr and accent keys type the right characters, and Shift+Enter adds a new line in Claude Code.
+- On Windows, new terminals start in PowerShell 7 when you have it, and Herdr follows their folder.
+- On macOS, Herdr keeps the permissions you gave it across updates.
+- Short menus open next to the pointer instead of near the top of the window.
+- Removing a worktree asks once, then removes it.
+- Mods can fetch from the web, know their size, and clean up when they close.
+
 ## [0.1.4] - 2026-10-23
 <!-- spotlight -->
 
