@@ -121,9 +121,12 @@ fn native() {
                 |_, cx| cx.new(|_| Scene),
             )
             .unwrap();
-        cx.update_window(window.into(), |_, window, cx| check(window, cx))
-            .unwrap();
-        cx.defer(|cx| cx.quit());
+        cx.spawn(async move |cx| {
+            cx.update_window(window.into(), |_, window, cx| check(window, cx))
+                .unwrap();
+            cx.update(|cx| cx.quit());
+        })
+        .detach();
     });
 }
 
