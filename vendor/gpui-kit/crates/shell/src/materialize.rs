@@ -1484,7 +1484,8 @@ fn materialize_component(
         Component::AvatarFallback => components::avatar::orphan("AvatarFallback"),
         Component::Image(path) => {
             warn_unhonoured_a11y(&behavior, "image", &[]);
-            let mut image = gpui::img(SharedString::from(path));
+            // HERDR: animated images need an identity to retain their frame state.
+            let mut image = gpui::img(SharedString::from(path)).id(element_id(id, behavior.key.clone()));
             image.style().refine(&refinement);
             image.into_any_element()
         }

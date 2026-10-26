@@ -16,7 +16,14 @@ pub struct Item {
     pub headline: String,
     pub detail: String,
     pub fixed: bool,
-    pub media: Vec<String>,
+    pub media: Vec<Media>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct Media {
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 pub fn parse(text: &str) -> Vec<Note> {
@@ -35,7 +42,7 @@ pub fn parse(text: &str) -> Vec<Note> {
                 fixed = line == "### Fixed";
             } else if let Some(url) = line.strip_prefix("![").and_then(|s| s.split_once("](")).and_then(|(_, s)| s.strip_suffix(')')) {
                 if url.starts_with("https://") && let Some(item) = note.items.last_mut() {
-                    item.media.push(url.into());
+                    item.media.push(Media { path: url.into(), ..Media::default() });
                 }
             } else if let Some(text) = line.strip_prefix("- ") {
                 let (headline, detail) = text.strip_prefix("**").and_then(|s| s.split_once("**"))
@@ -167,7 +174,8 @@ fn preview_media(url: &str) -> bool {
 fn fetch_media(notes: &[Note]) {
     let dir = path("update-notes-media");
     if std::fs::create_dir_all(&dir).is_err() { return; }
-    for url in notes.iter().flat_map(|n| &n.items).flat_map(|item| &item.media) {
+    for media in notes.iter().flat_map(|n| &n.items).flat_map(|item| &item.media) {
+        let url = &media.path;
         if preview_media(url) { continue; }
         let file = media_path(url);
         if file.is_file() { continue; }
@@ -183,11 +191,20 @@ fn fetch_media(notes: &[Note]) {
     }
 }
 
+fn cached_media(file: &std::path::Path, root: &std::path::Path) -> Option<Media> {
+    let (width, height) = image::ImageReader::open(file).ok()?.with_guessed_format().ok()?.into_dimensions().ok()?;
+    if width == 0 || height == 0 { return None; }
+    Some(Media { path: file.strip_prefix(root).ok()?.to_string_lossy().into_owned(), width, height })
+}
+
 pub fn notes(target: Option<&str>) -> Vec<Note> {
     let mut notes = all();
     for note in &mut notes {
         for item in &mut note.items {
-            item.media = item.media.iter().map(|url| { preview_media(url); media_path(url) }).filter(|p| p.is_file()).filter_map(|p| p.strip_prefix(crate::mods::app_dir()).ok().map(|p| p.to_string_lossy().into_owned())).collect();
+            item.media = item.media.iter().filter_map(|media| {
+                preview_media(&media.path);
+                cached_media(&media_path(&media.path), &crate::mods::app_dir())
+            }).collect();
         }
     }
     LAUNCH.lock().unwrap().as_ref().map(|l| l.range(&notes, target)).unwrap_or_default()
@@ -273,12 +290,24 @@ mod tests {
         }
     }
     #[test]
+    fn cached_media_reads_dimensions_from_extensionless_files() {
+        let root = std::path::PathBuf::from(format!("/var/tmp/herdr-media-test-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("hashed-image");
+        image::RgbaImage::new(12, 7).save_with_format(&file, image::ImageFormat::Png).unwrap();
+        let media = cached_media(&file, &root).unwrap();
+        assert_eq!((media.path.as_str(), media.width, media.height), ("hashed-image", 12, 7));
+        std::fs::write(&file, b"not an image").unwrap();
+        assert!(cached_media(&file, &root).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn sections_and_item_media() {
         let notes = parse("## [1.8.0] - 2026-10-23\n### New\n- **A headline.** Its detail.\n![demo](https://example.com/demo.png)\n- **Another headline.** More detail.\n![bad](http://example.com/no.png)\n### Fixed\n- A short fix.\n## [1.7.0] - 2026-10-22\n- Plain item.\n");
         let items = &notes[0].items;
         assert_eq!(items[0].headline, "A headline.");
         assert_eq!(items[0].detail, "Its detail.");
-        assert_eq!(items[0].media, ["https://example.com/demo.png"]);
+        assert_eq!(items[0].media[0].path, "https://example.com/demo.png");
         assert!(items[1].media.is_empty());
         assert!(items[2].fixed);
         assert_eq!(items[2].detail, "A short fix.");
@@ -289,7 +318,7 @@ mod tests {
     fn curated_markdown_and_remote_media() {
         let notes = fixture();
         assert!(notes[0].spotlight);
-        assert_eq!(notes[0].items[0].media, ["https://releases.herdr.dev/demo.png"]);
+        assert_eq!(notes[0].items[0].media[0].path, "https://releases.herdr.dev/demo.png");
         assert_eq!(notes[1].items[0].detail, "Another thing");
         assert!(notes[1].items[0].headline.is_empty());
         assert!(!notes[1].items[0].fixed);

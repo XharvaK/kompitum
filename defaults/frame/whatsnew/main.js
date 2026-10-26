@@ -24,7 +24,7 @@ export default class WhatsNew extends View {
       const current = updates().notes?.find(n => n.version === note.version) ?? note;
       const entry = v_flex().gap(16)
         .child(versionHeader(t, note))
-        .child(releaseItems(t, current, { spotlight: true }));
+        .child(releaseItems(t, current, { width: this.notesWidth, onSizeChange: (size, cx) => { this.notesWidth = size.width; cx.notify(); } }));
       body.child(entry);
     }
     return body;

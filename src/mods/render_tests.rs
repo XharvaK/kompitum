@@ -1,4 +1,4 @@
-//! Initial descriptions only: real shipped JS and GPUI entities, no native materialization.
+//! Shipped JS descriptions and native rendering regressions.
 use super::*;
 use gpui::TestAppContext;
 use gpui_shell::{ShellRuntime, plugin::DescriptionSession, policy::Policy};
@@ -283,6 +283,56 @@ fn settings_sections_and_updates(cx: &mut TestAppContext) {
         }
     }
     eprintln!("19 settings cases, each twice: {:?}", start.elapsed());
+}
+
+#[gpui::test]
+fn animated_images_advance_with_explicit_and_implicit_ids(cx: &mut TestAppContext) {
+    use gpui::{IntoElement as _, http_client::{AsyncBody, FakeHttpClient, Response}};
+    use image::{Delay, Frame, Rgba, RgbaImage, codecs::gif::GifEncoder};
+    use std::{sync::Arc, time::Duration};
+
+    cx.update(gpui_shell::init);
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = GifEncoder::new(&mut bytes);
+        for color in [[255, 0, 0, 255], [0, 255, 0, 255]] {
+            encoder.encode_frame(Frame::from_parts(RgbaImage::from_pixel(2, 2, Rgba(color)), 0, 0, Delay::from_numer_denom_ms(20, 1))).unwrap();
+        }
+    }
+    let client = FakeHttpClient::create(move |_| {
+        let bytes = bytes.clone();
+        async move { Ok(Response::builder().status(200).body(AsyncBody::from(bytes)).unwrap()) }
+    });
+    cx.update(|cx| cx.set_http_client(client));
+    let staged = Staged::new();
+    for explicit in [false, true] {
+        let runtime = ShellRuntime::new_isolated().unwrap();
+        let url = format!("https://images.example/animation-{explicit}.gif");
+        let source = format!("import {{ View, image }} from 'gpui-kit'; export default class Demo extends View {{ render() {{ return image('{url}'){}.size(20); }} }}", if explicit { ".id('clip')" } else { "" });
+        std::fs::write(staged.0.join("main.js"), source).unwrap();
+        let context = cx.add_empty_window();
+        let view = context.update(|window, cx| {
+            window.activate_window();
+            let root = runtime.try_load(&staged.0, window, cx).unwrap();
+            root.read(cx).content().clone()
+        });
+        let draw = |context: &mut gpui::VisualTestContext| {
+            let view = view.clone();
+            context.draw(gpui::Point::default(), gpui::size(gpui::px(40.), gpui::px(40.)), move |_, _| view.into_any_element());
+        };
+        draw(context);
+        context.run_until_parked();
+        draw(context);
+        assert!(context.update(|window, _| window.is_window_active()));
+        let resource = gpui::Resource::Uri(url.into());
+        let data: Arc<gpui::RenderImage> = context.update(|_, cx| cx.fetch_asset::<gpui::ImgResourceLoader>(&resource).unwrap().unwrap());
+        assert_eq!(data.frame_count(), 2);
+        assert!(!context.update(|window, _| window.has_image_atlas_entry(&data)));
+        // GPUI's image clock is wall time, not the test executor's clock.
+        std::thread::sleep(Duration::from_millis(25));
+        draw(context);
+        assert!(context.update(|window, _| window.has_image_atlas_entry(&data)), "both animation frames must have painted (explicit id: {explicit})");
+    }
 }
 
 #[gpui::test]

@@ -578,7 +578,9 @@ What's about the user, never a look:
   referenced below its item in the changelog as `![label](https://...)`.
   Each version uses `### New` with `- **Headline.** detail` highlights and
   `### Fixed` with short bullet items. Unsectioned bullets are plain items.
-  Notes expose `items` with `headline`, `detail`, `fixed`, and cached `media` paths.
+  Notes expose `items` with `headline`, `detail`, `fixed`, and cached `media`
+  objects (`path`, pixel `width`, pixel `height`). Highlights use matching cards:
+  edge-to-edge media at its original aspect ratio, then headline and detail.
   For local release-media previews only, launch with
   `HERDR_NOTES_MEDIA_DIR=/var/tmp/herdr-notes-media`: URLs under
   `https://media.herdr.dev/<version>/<scene>.webp` use that directory's

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 sandbox() { bash scripts/sandbox "$@"; }
-case ${1:?setup or play} in
+case ${1:?setup, play or crop} in
+  crop) echo '940:370:330:60' ;;
   setup)
     sandbox do overlay.close '{"id":"frame-welcome"}'
     sandbox do space.new '{"name":"website","tab":"dev server","argv":["bash","--noprofile","--norc","-c","printf \"\\033[2J\\033[H\\033[1;36mwebsite / frontend\\033[0m\\n\\n$ bun run dev\\n\\n  VITE v6.1.0  ready in 180 ms\\n\\n  Local: http://localhost:5173\\n\\n  14:32:08  page reload src/App.tsx\\n  14:32:11  hmr update src/styles.css\\n\"; exec sleep infinity"]}'

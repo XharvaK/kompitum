@@ -733,7 +733,7 @@ export default class Settings extends View {
           .on_click((_e, cx) => { this.expandedNotes[note.version] = !expanded; cx.notify(); })
           .child(div().text_size(12).text_color(t.dim).child(expanded ? "▾" : "▸"))
           .child(versionHeader(t, note)));
-      card.child(releaseItems(t, note, { collapsed: !expanded }));
+      card.child(releaseItems(t, note, { collapsed: !expanded, width: this.notesWidth, onSizeChange: (size, cx) => { this.notesWidth = size.width; cx.notify(); } }));
       body.child(card);
     });
     return body;

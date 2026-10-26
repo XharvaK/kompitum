@@ -680,7 +680,10 @@ impl AppWindow {
             self.run("app.settings", json!({ "section": "updates" }), window, cx);
             return;
         }
-        let spec = json!({ "mod": "frame-whatsnew", "kind": "window", "width": 720, "height": 640, "props": { "notes": notes } });
+        let viewport = window.viewport_size();
+        let width = 880.0_f32.min((f32::from(viewport.width) / settings::zoom() - 24.0).max(1.0));
+        let height = 760.0_f32.min((f32::from(viewport.height) / settings::zoom() - 24.0).max(1.0));
+        let spec = json!({ "mod": "frame-whatsnew", "kind": "window", "width": width, "height": height, "props": { "notes": notes } });
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 

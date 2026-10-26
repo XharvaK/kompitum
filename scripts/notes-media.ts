@@ -83,6 +83,8 @@ async function clip(scene: string, v: string) {
   const env = { ...process.env, HERDR_APP_SANDBOX: name, HERDR_APP_HOME: `/var/tmp/herdr-app-${name}/home` };
   const frames = await mkdtemp("/var/tmp/herdr-notes-frames-");
   const pointerFile = join(frames, "pointer.json");
+  const crop = (await Bun.$`bash ${script} crop`.cwd(root).quiet().text()).trim();
+  if (!/^\d+:\d+:\d+:\d+$/.test(crop)) throw new Error("scene crop must be width:height:x:y");
   const pointers: { x: number; y: number; cursor: string }[] = [];
   const sandbox = join(root, "scripts/sandbox");
   let action: ReturnType<typeof Bun.spawn> | undefined;
@@ -111,7 +113,7 @@ async function clip(scene: string, v: string) {
     await mkdir(dir, { recursive: true });
     const out = join(dir, scene + ".webp");
     for (const width of [1200, 1100, 960]) {
-      await run(["ffmpeg", "-hide_banner", "-loglevel", "warning", "-y", "-framerate", "12", "-i", join(frames, "%03d.png"), "-vf", `scale=${width}:-2:flags=lanczos`, "-c:v", "libwebp_anim", "-lossless", "1", "-compression_level", "6", "-loop", "0", out]);
+      await run(["ffmpeg", "-hide_banner", "-loglevel", "warning", "-y", "-framerate", "12", "-i", join(frames, "%03d.png"), "-vf", `crop=${crop},scale=${width}:-2:flags=lanczos`, "-c:v", "libwebp_anim", "-lossless", "1", "-compression_level", "6", "-loop", "0", out]);
       if (Bun.file(out).size <= limit) { console.log(`${out} (${Bun.file(out).size} bytes)`); return; }
     }
     await rm(out);

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 sandbox() { bash scripts/sandbox "$@"; }
-case ${1:?setup or play} in
+case ${1:?setup, play or crop} in
+  crop) echo '1040:420:120:60' ;;
   setup)
     sandbox do overlay.close '{"id":"frame-welcome"}'
     sandbox do space.new '{"name":"website","tab":"pricing page","argv":["bash","--noprofile","--norc","-c","printf \"\\033[2J\\033[H\\033[1;36mClaude Code\\033[0m\\n\\nUpdated the pricing cards and mobile navigation.\\n\\nThe test run is ready in t2\\n\\nAll 12 checks passed. Take a look before we ship.\\n\"; printf '\''\\033]7501;state=done:app=claude-code\\033\\\\'\''; exec sleep infinity"]}'
