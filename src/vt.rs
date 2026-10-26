@@ -1052,6 +1052,21 @@ mod tests {
     }
 
     #[test]
+    fn resize_queues_a_report_only_when_the_program_requested_it() {
+        let mut vt = Vt::new(20, 4);
+        vt.resize(30, 5, 9, 18);
+        assert!(vt.take_replies().is_empty(), "a shell receives no resize input");
+        vt.write(b"\x1b[?2048h");
+        vt.take_replies();
+        vt.resize(40, 6, 9, 18);
+        assert_eq!(vt.take_replies(), b"\x1b[48;6;40;108;360t");
+        assert!(vt.take_replies().is_empty(), "the report is sent only once");
+        vt.write(b"\x1b[?2048l");
+        vt.resize(50, 7, 9, 18);
+        assert!(vt.take_replies().is_empty());
+    }
+
+    #[test]
     fn text_that_would_vanish_turns_readable() {
         let (ink, white, dark_red) = (Rgb(0x25, 0x27, 0x2c), Rgb(0xff, 0xff, 0xff), Rgb(0x46, 0x1e, 0x20));
         assert_eq!(readable(ink, white), ink);

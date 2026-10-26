@@ -1266,6 +1266,9 @@ impl Render for TerminalView {
                             g.vt.resize(cols, rows, cw, ch);
                             if let Some(chan) = g.channel {
                                 g.core.resize(chan, cols, rows);
+                                // Mode 2048 programs wait for this report, not SIGWINCH.
+                                let replies = g.vt.take_replies();
+                                g.core.input(chan, &replies);
                             }
                         }
                     },
