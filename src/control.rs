@@ -71,6 +71,10 @@ fn raise_running_at(path: &std::path::Path) -> bool {
 
 /// The client side; returns the process exit code.
 pub fn client(args: &[String]) -> i32 {
+    if args == ["commands"] {
+        println!("{}", serde_json::to_string_pretty(&crate::commands::listing()).unwrap());
+        return 0;
+    }
     let cmd = match args {
         [verb, rest @ ..] if verb == "shot" && rest.len() <= 1 => {
             let path = PathBuf::from(rest.first().map(String::as_str).unwrap_or("herdr-shot.png"));
@@ -85,7 +89,6 @@ pub fn client(args: &[String]) -> i32 {
         },
         [verb] if verb == "status" => json!({ "status": true }),
         [verb] if verb == "ls" => json!({ "ls": true }),
-        [verb] if verb == "commands" => json!({ "commands": true }),
         [verb, message] if verb == "feedback" => json!({ "do": "app.feedback", "args": { "message": message, "from": "agent" } }),
         [verb, command, rest @ ..] if verb == "do" => match parse_args(rest) {
             Ok(a) => json!({ "do": command, "args": a }),

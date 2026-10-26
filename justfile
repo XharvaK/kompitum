@@ -17,6 +17,13 @@ build:
 test:
     cargo test --locked
 
+docs-generate: build
+    bun scripts/docs.ts generate
+
+docs-check: build
+    bun test scripts/docs.test.ts
+    bun scripts/docs.ts check
+
 [linux]
 install:
     bash scripts/install-linux

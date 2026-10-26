@@ -10,7 +10,7 @@ name: ci
 on:
   push:
     branches: [master]
-    paths-ignore: [".brain/**", "**/*.md"]
+    paths-ignore: [".brain/**"]
   # No paths-ignore here: CI is required to merge, so every PR needs it.
   pull_request:
 
@@ -63,3 +63,9 @@ jobs:
       # dev builds (they make Can's debug app fast): unoptimized compiles
       # far quicker on CI's small runner. One command builds the app too.
       - run: cargo test --locked --config 'profile.dev.package."*".opt-level=0'
+      - name: Install Bun
+        run: curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.4"
+      - name: Check documentation
+        run: |
+          ~/.bun/bin/bun test scripts/docs.test.ts
+          ~/.bun/bin/bun scripts/docs.ts check

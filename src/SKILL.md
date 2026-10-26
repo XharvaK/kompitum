@@ -30,7 +30,8 @@ herdr-app status      # current layout, focus, overlays, zoom and file/mod error
 herdr-app commands    # available commands, arguments and descriptions
 ```
 
-These talk to the running window, not a new app. Do not launch bare
+`ls` and `status` talk to the running window, not a new app. `commands`
+prints the built-in command list even without an open window. Do not launch bare
 `herdr-app` to inspect it: that opens or raises the window. Do not stop,
 signal or restart the person's app or core. A window closing does not kill
 its terminals.
