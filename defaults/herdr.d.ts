@@ -310,6 +310,8 @@ export function feedbackPreview(message: string, email: string, images?: number)
 export function feedbackPasteImage(): { path: string } | { error: string } | null;
 /** Picks image files (at most 3), each kept like a pasted one. Frame-only. */
 export function feedbackPickImages(): Promise<({ path: string } | { error: string })[]>;
+/** Attaches dropped image paths (at most 3), using the picker's conversion and limits. Frame-only. */
+export function feedbackAttachImages(paths: string[]): ({ path: string } | { error: string })[];
 /** Drops the form's kept screenshots. Frame-only. */
 export function feedbackClearImages(): null;
 export function sendFeedback(body: import("gpui-kit").HostValue, images?: string[]): Promise<string | null>;

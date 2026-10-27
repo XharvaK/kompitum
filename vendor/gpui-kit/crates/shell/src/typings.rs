@@ -1453,6 +1453,8 @@ const ELEMENT_METHODS: &str = r#"    /**
      * for any button.
      */
     on_mouse_down_out<Self extends Element>(this: Self, handler: (event: MouseButtonEvent, cx: Context) => void): Self;
+    /** Files dropped from outside the app, as absolute paths. Use on a plain layout element. */
+    on_drop<Self extends Element>(this: Self, handler: (event: { paths: string[] }, cx: Context) => void): Self;
     /**
      * GPUI `InteractiveElement::on_scroll_wheel`: wheel and trackpad scrolling
      * over this element.
@@ -3981,6 +3983,7 @@ mod tests {
         "on_mouse_down",
         "on_mouse_up",
         "on_mouse_down_out",
+        "on_drop",
         "on_scroll_wheel",
         "on_action",
         "key_context",

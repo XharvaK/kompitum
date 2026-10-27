@@ -672,9 +672,9 @@ impl AppWindow {
         });
     }
 
-    /// After an update: the spotlights not shown yet. Asked for: this version's notes.
+    /// After an update: unseen spotlights. Asked for: the pending range, or this version's notes.
     fn open_whats_new(&mut self, asked: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let notes = if asked { crate::update_notes::notes(None) } else { crate::update_notes::spotlights() };
+        let notes = if asked { crate::update_notes::notes(crate::update::ready().as_deref()) } else { crate::update_notes::spotlights() };
         if notes.is_empty() {
             self.run("app.settings", json!({ "section": "updates" }), window, cx);
             return;

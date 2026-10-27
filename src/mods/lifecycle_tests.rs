@@ -68,6 +68,44 @@ export default class extends View {
 }
 
 #[gpui::test]
+fn external_file_drops_reach_mod_elements(cx: &mut TestAppContext) {
+    use gpui::{ExternalPaths, FileDropEvent, InputEvent};
+    cx.update(gpui_shell::init);
+    let fixture = Fixture::new(r#"
+import { View, div } from "gpui-kit";
+import { note } from "fixture";
+export default class extends View {
+  render() {
+    return div().size_full().on_drop((event, cx) => { note(event.paths); cx.stop_propagation(); });
+  }
+}"#);
+    let paths = Rc::new(RefCell::new(Vec::new()));
+    let calls = paths.clone();
+    gpui_shell::policy::set_default(Policy::new().with_host_module(
+        HostModule::new("fixture").function("note", move |a| {
+            calls.borrow_mut().push(from_host(a.value(0)?));
+            Ok(HostValue::Null)
+        })
+    ).unwrap());
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&fixture.0, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    visual.update(|window, cx| {
+        let position = gpui::point(gpui::px(20.), gpui::px(20.));
+        window.dispatch_event(FileDropEvent::Entered {
+            position,
+            paths: ExternalPaths([PathBuf::from("/var/tmp/screenshot.png"), PathBuf::from("/var/tmp/a file.jpg")].into_iter().collect()),
+        }.to_platform_input(), cx);
+        window.draw(cx).clear(cx);
+        window.dispatch_event(FileDropEvent::Submit { position }.to_platform_input(), cx);
+    });
+    visual.run_until_parked();
+    assert_eq!(*paths.borrow(), vec![json!(["/var/tmp/screenshot.png", "/var/tmp/a file.jpg"])]);
+}
+
+#[gpui::test]
 fn mod_run_rejects_unknown_arguments_before_queueing_a_command(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let fixture = Fixture::new(r#"

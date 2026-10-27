@@ -800,6 +800,11 @@ fn module(inst: Instance, copy: u64) -> HostModule {
                 Some(b) => to_host(&match crate::feedback::attach(&b) { Ok(path) => json!({ "path": path }), Err(e) => json!({ "error": e }) }),
             })
         })
+        .function("feedbackAttachImages", move |a| {
+            if !feedback_frame { return Err(HostError::new("feedback screenshots are frame-only")); }
+            let paths = strings(a.get(0)).into_iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
+            Ok(to_host(&json!(crate::feedback::attach_files(&paths))))
+        })
         .async_function("feedbackPickImages", move |_| {
             if !feedback_frame { return Err(HostError::new("feedback screenshots are frame-only")); }
             let picked = gpui_shell::with_current_app(|cx| cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -807,10 +812,7 @@ fn module(inst: Instance, copy: u64) -> HostModule {
             })).ok_or_else(|| HostError::new("no window to pick from"))?;
             Ok(async move {
                 let paths = picked.await.ok().and_then(Result::ok).flatten().unwrap_or_default();
-                let out: Vec<Value> = paths.iter().take(crate::feedback::MAX_IMAGES).map(|p| match std::fs::read(p) {
-                    Ok(b) => match crate::feedback::attach(&b) { Ok(path) => json!({ "path": path }), Err(e) => json!({ "error": e }) },
-                    Err(_) => json!({ "error": "Couldn't read that file." }),
-                }).collect();
+                let out = crate::feedback::attach_files(&paths);
                 Ok(to_host(&Value::Array(out)))
             })
         })

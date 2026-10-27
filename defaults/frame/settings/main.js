@@ -2,9 +2,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
-import { hc, run, theme, themes, fonts, updates, presentUpdateNotes, telemetry, settings, layouts, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay } from "herdr";
-
-import { versionHeader, releaseItems } from "./release-notes.js";
+import { hc, run, theme, themes, fonts, updates, telemetry, settings, layouts, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay } from "herdr";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
@@ -31,8 +29,6 @@ export default class Settings extends View {
   init(_props, cx) {
     const asked = props()?.section;
     this.section = SECTIONS.some((s) => s.id === asked) ? asked : "look";
-    this.expandedNotes = {};
-    this.presentedNotes = new Set();
     this.picking = null; // "font" | "ui_font" while its list is open
     this.filter = "";
     this.fontInput = InputState.new({ placeholder: "Type to search fonts" });
@@ -698,41 +694,22 @@ export default class Settings extends View {
         : c.error
           ? [`The update failed: ${c.error}`, primary("st-core-retry", "Try again", () => run("app.update_core"))]
           : c.ready
-            ? [`${c.ready} is ready. Your terminals keep running through it.`, primary("st-core-update", "Update", () => run("app.update_core"))]
+            ? [`${c.ready} is ready. Your terminals keep running through it.`, primary("st-core-update", "Update herdr-core", () => run("app.update_core"))]
             : u.checks
               ? [`Up to date.${checked}`, check("st-check-core")]
               : ["Not checked: a build from source looks for no updates.", null];
     return v_flex()
       .w_full()
       .child(this.heading(t, "Herdr"))
-      .child(this.row(t, `Herdr ${u.app.version}`, app[0], app[1] ?? div()))
-      .child(this.releaseNotes(t, u.notes ?? []))
+      .child(this.row(t, `Herdr ${u.app.version}`, app[0], h_flex().gap(8).flex_none()
+        .child(this.button(t, "st-whats-new", "What's new", () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
+        .when(Boolean(app[1]), (el) => el.child(app[1]))))
       .child(div().h(18))
       .child(this.heading(t, "herdr-core"))
       .child(this.row(t, `herdr-core ${c.version ?? ""}`, core[0], core[1] ?? div()))
       .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Herdr looks for both every hour and tells you in the corner. herdr-core runs your terminals, so they keep running through its updates."));
   }
 
-  releaseNotes(t, notes) {
-    const body = v_flex().gap(10).pt(18);
-    if (!notes.length) return body.child(div().text_size(13).text_color(t.dim).child("No release notes in this update range."));
-    body.child(this.heading(t, "What changed"));
-    notes.forEach((note, index) => {
-      const expanded = this.expandedNotes[note.version] ?? index === 0;
-      if (expanded && note.spotlight && !this.presentedNotes.has(note.version)) {
-        this.presentedNotes.add(note.version);
-        presentUpdateNotes([note.version]);
-      }
-      const card = v_flex().gap(16).p(16).rounded(8).border_1().border_color(t.border)
-        .child(h_flex().id(`notes-${note.version}`).gap(8).cursor_pointer().items_center()
-          .on_click((_e, cx) => { this.expandedNotes[note.version] = !expanded; cx.notify(); })
-          .child(div().text_size(12).text_color(t.dim).child(expanded ? "▾" : "▸"))
-          .child(versionHeader(t, note)));
-      card.child(releaseItems(t, note, { collapsed: !expanded, width: this.notesWidth, onSizeChange: (size, cx) => { this.notesWidth = size.width; cx.notify(); } }));
-      body.child(card);
-    });
-    return body;
-  }
 
   // Privacy --------------------------------------------------------------
 

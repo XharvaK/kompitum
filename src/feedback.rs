@@ -61,6 +61,19 @@ pub fn attach(bytes: &[u8]) -> Result<String, String> {
     Ok(format!("data/frame-feedback/{name}"))
 }
 
+/// Picker and external drops share the same conversion and size limits.
+pub fn attach_files(paths: &[PathBuf]) -> Vec<Value> {
+    paths.iter().take(MAX_IMAGES).map(|p| {
+        match std::fs::read(p) {
+            Ok(bytes) => match attach(&bytes) {
+                Ok(path) => json!({ "path": path }),
+                Err(error) => json!({ "error": error }),
+            },
+            Err(_) => json!({ "error": "Couldn't read that file." }),
+        }
+    }).collect()
+}
+
 /// Drops the form's screenshots (a new form starts empty; a sent one is done with them).
 pub fn clear_shots() {
     let Ok(entries) = std::fs::read_dir(shots_dir()) else { return };

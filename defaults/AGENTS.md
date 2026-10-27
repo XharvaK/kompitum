@@ -569,9 +569,9 @@ What's about the user, never a look:
 - `appearance`: `"light"` or `"dark"` always; absent, the system's. A layout
   with a light and a dark theme shows the matching one.
 - Updates: an installed app downloads them by itself and offers Restart and
-  What changed. Settings → Updates shows every release since the previous
-  version (or through the waiting update), newest expanded; expand older
-  headlines to read them. Reading never clears the waiting-update dot.
+  What changed. Settings → Updates keeps app and core actions together;
+  its What's new button opens the waiting update's release range, or this
+  version's notes, in the What's new window. Reading never clears the waiting-update dot.
   Rare spotlight releases open What’s new after restart, once; otherwise a
   quiet Updated pill lasts for that launch. A build from source never updates.
   Curated notes come from the bundled root `CHANGELOG.md`; remote notes and
@@ -765,6 +765,9 @@ Chained builders with GPUI's snake_case names: `div()`, `h_flex()`,
 `.rounded(n)`; `.id("unique")` then `.on_click(...)`, `.on_mouse_down("right", ...)`,
 `.hover((s) => s.bg(c))`, `.on_scroll_wheel(...)`; keyboard: `this.h = cx.focus_handle()`
 in init, `.track_focus(this.h).on_key_down((e, cx) => …)`, `this.h.focus()`.
+`.on_drop((event, cx) => …)` on a plain layout element receives external files as
+`event.paths` (absolute paths). The feedback form accepts dropped images with
+the same limits, previews and removal as picked images.
 `.on_hover((hovered, cx) => …)` reports pointer entry and exit on buttons
 and other interactive controls too.
 `.when(cond, (el) => …)`, `.children([...])`. Controls from `gpui-base`

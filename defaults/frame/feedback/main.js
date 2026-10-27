@@ -1,6 +1,6 @@
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
-import { theme, props, closeOverlay, feedbackPreview, feedbackPasteImage, feedbackPickImages, feedbackClearImages, sendFeedback } from "herdr";
+import { theme, props, closeOverlay, feedbackPreview, feedbackPasteImage, feedbackPickImages, feedbackAttachImages, feedbackClearImages, sendFeedback } from "herdr";
 
 const MAX_SHOTS = 3;
 
@@ -84,6 +84,12 @@ export default class Feedback extends View {
     const label = (text) => div().text_size(13).text_color(t.muted).child(text);
     const field = (el) => el.w_full().p(10).rounded(7).border_1().border_color(t.border).bg(t.background).text_color(t.foreground).text_size(14);
     return v_flex().id("feedback").track_focus(this.handle).w_full().min_h(0).h(650).bg(t.popover)
+      .on_drop((e, cx) => {
+        if (this.sending || this.sent) return;
+        if (this.shots.length >= MAX_SHOTS) this.error = "Up to 3 screenshots.";
+        else this.add(feedbackAttachImages(e.paths.slice(0, MAX_SHOTS - this.shots.length)));
+        cx.notify();
+      })
       .on_key_down((e, cx) => { if (e.key === "escape") { this.close(); cx.stop_propagation(); } })
       // The title drags the window; everything below keeps its presses (selecting text).
       .child(div().flex_none().px(24).py(18).cursor_grab().text_size(19).font_semibold().text_color(t.foreground).child("Send feedback"))
@@ -92,7 +98,7 @@ export default class Feedback extends View {
         .when(props()?.from === "agent", (el) => el.child(div().p(10).rounded(7).bg(t.raised).text_color(t.accent).text_size(14).child("Drafted by an agent: read it before sending")))
         .when(this.sent, (el) => el.child(div().py(20).text_size(16).text_color(t.foreground).child("Sent. Thanks for helping us improve Herdr.")))
         .when(!this.sent, (el) => el
-          .child(label("Your message (up to 4000 characters). Paste screenshots into it, up to 3."))
+          .child(label("Your message (up to 4000 characters). Paste or drop screenshots, up to 3."))
           .child(field(Textarea.new(this.message)).h(130))
           .child(this.shots_row(t))
           .child(label("Email: only if you want a reply"))

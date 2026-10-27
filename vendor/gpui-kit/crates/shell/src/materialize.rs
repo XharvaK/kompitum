@@ -376,6 +376,7 @@ struct Behavior {
     /// on an outside press through exactly this listener, and until now a
     /// script had no way to.
     on_mouse_down_out: Option<CallbackId>,
+    on_drop: Option<CallbackId>,
     /// Wheel and trackpad scrolling over this element.
     on_scroll_wheel: Option<CallbackId>,
     /// Handlers for named actions, one entry per action listened for.
@@ -596,6 +597,7 @@ impl Behavior {
             || self.on_mouse_move.is_some()
             || self.on_hover.is_some()
             || self.on_key_down.is_some()
+            || self.on_drop.is_some()
             || self.on_key_up.is_some()
             || self.on_modifiers_changed.is_some()
             || !self.on_mouse_down.is_empty()
@@ -1784,6 +1786,14 @@ where
     E: StatefulInteractiveElement + ParentElement,
 {
     let mut element = element;
+    if let Some(callback) = behavior.on_drop {
+        let runtime = Rc::downgrade(runtime);
+        element = element.on_drop(move |paths: &gpui::ExternalPaths, window, cx| {
+            if let Some(runtime) = runtime.upgrade() {
+                runtime.dispatch_file_drop(callback, paths.paths(), window, cx);
+            }
+        });
+    }
     if let Some(callback) = behavior.on_key_down {
         let runtime = Rc::downgrade(runtime);
         element = element.on_key_down(move |event, window, cx| {
@@ -2008,6 +2018,7 @@ fn warn_unhonoured_input(component: &Component, behavior: &Behavior) {
     let asked = [
         ("on_key_down", behavior.on_key_down.is_some()),
         ("on_key_up", behavior.on_key_up.is_some()),
+        ("on_drop", behavior.on_drop.is_some()),
         (
             "on_modifiers_changed",
             behavior.on_modifiers_changed.is_some(),
@@ -2698,6 +2709,7 @@ pub(in crate::materialize) fn resolve_ops(
                 "on_mouse_up_right" => behavior.on_mouse_up.push((MouseButton::Right, *id)),
                 "on_mouse_up_middle" => behavior.on_mouse_up.push((MouseButton::Middle, *id)),
                 "on_mouse_down_out" => behavior.on_mouse_down_out = Some(*id),
+                "on_drop" => behavior.on_drop = Some(*id),
                 "on_scroll_wheel" => behavior.on_scroll_wheel = Some(*id),
                 "on_resize" => behavior.on_resize = Some(*id),
                 "on_size_change" => behavior.on_size_change = Some(*id),

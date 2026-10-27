@@ -4151,6 +4151,25 @@ impl ShellRuntime {
         scheduler::drain_runtime_jobs(self, window, cx);
     }
 
+    pub(crate) fn dispatch_file_drop(
+        self: &Rc<Self>,
+        id: CallbackId,
+        paths: &[std::path::PathBuf],
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let paths: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        self.dispatch_simple_event(id, "file drop", window, cx, move |ctx| {
+            let payload = Object::new(ctx.clone())?;
+            let files = rquickjs::Array::new(ctx.clone())?;
+            for (index, path) in paths.into_iter().enumerate() {
+                files.set(index, path)?;
+            }
+            payload.set("paths", files)?;
+            Ok(payload)
+        });
+    }
+
     /// Delivers one dispatched action to a script handler.
     ///
     /// The id is handed over even though the handler was registered for one
@@ -7147,6 +7166,7 @@ impl ShellRuntime {
                 "on_mouse_down",
                 "on_mouse_up",
                 "on_mouse_down_out",
+                "on_drop",
                 "on_scroll_wheel",
                 "on_action",
                 "key_context",
@@ -8151,6 +8171,7 @@ impl ShellRuntime {
             | "on_key_up"
             | "on_modifiers_changed"
             | "on_mouse_down_out"
+            | "on_drop"
             | "on_scroll_wheel"
             | "tab_bar"
             | "empty_group"
@@ -10125,6 +10146,7 @@ fn callback_op_name(method: &str) -> Option<&'static str> {
         "on_key_up" => "on_key_up",
         "on_modifiers_changed" => "on_modifiers_changed",
         "on_mouse_down_out" => "on_mouse_down_out",
+        "on_drop" => "on_drop",
         "on_scroll_wheel" => "on_scroll_wheel",
         "on_item_click" => "on_item_click",
         "on_item_secondary_click" => "on_item_secondary_click",

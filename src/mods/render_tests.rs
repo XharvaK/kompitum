@@ -145,7 +145,7 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
             })
         });
     }
-    for name in ["feedbackPasteImage", "feedbackClearImages"] {
+    for name in ["feedbackPasteImage", "feedbackClearImages", "feedbackAttachImages"] {
         module = module.function(name, |_| Ok(HostValue::Null));
     }
     module = module.async_function("feedbackPickImages", |_| Ok(async { Ok(HostValue::Array(vec![])) }));
@@ -342,7 +342,7 @@ fn animated_images_advance_with_explicit_and_implicit_ids(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-fn release_notes_expand_only_the_newest_by_default(cx: &mut TestAppContext) {
+fn settings_keep_notes_in_the_whats_new_window(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let notes = json!([
@@ -354,14 +354,14 @@ fn release_notes_expand_only_the_newest_by_default(cx: &mut TestAppContext) {
     let mut p = props();
     p["section"] = json!("updates");
     let tree = describe(cx, &staged, "frame/settings", true, p, update.clone(), None).unwrap();
-    assert!(tree.contains("Newest details") && tree.contains("Older headline"));
-    assert!(!tree.contains("Older details") && !tree.contains("Hidden detail"));
-    assert!(tree.contains("Another older headline") && tree.contains("Also fixed") && tree.contains("Newest fix"));
-    assert!(tree.contains("Oct 26") && !tree.contains("2026-10-26"));
+    assert!(tree.contains("st-whats-new") && tree.contains("st-app-update") && tree.contains("st-check-core"));
+    assert!(!tree.contains("Newest details") && !tree.contains("Older headline"));
     let mut p = props();
     p["notes"] = notes;
     let tree = describe(cx, &staged, "frame/whatsnew", true, p, update, None).unwrap();
     assert!(tree.contains("Newest details") && tree.contains("Older details"));
+    assert!(tree.contains("Also fixed") && tree.contains("Newest fix"));
+    assert!(tree.contains("Oct 26") && !tree.contains("2026-10-26"));
 }
 
 #[gpui::test]
