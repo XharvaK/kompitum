@@ -112,6 +112,10 @@ jobs:
         run: scripts/ci-sources restore
       # Screenshot tests run natively on macOS, including the Intel cross-build row.
       # Windows runners lack an interactive desktop.
+      - name: Build the screenshot test
+        if: runner.os == 'macOS'
+        run: cargo test --locked --test shot_pixels --no-run
+      # The limit catches a hung window, not a slow build.
       - name: Screenshot pixels
         if: runner.os == 'macOS'
         timeout-minutes: 5
