@@ -93,7 +93,7 @@ Mods are trusted code, not sandboxed extensions. Read [security and privacy](doc
 herdr-app --skill
 ```
 
-This prints the agent guide for driving the window and tells your agent how to install it as a skill.
+This prints the agent guide for driving the window. The herdr-core skill points agents here.
 Use herdr-core for running and coordinating programs; use the app to change what you see.
 
 ```sh

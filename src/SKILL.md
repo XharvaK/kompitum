@@ -1,19 +1,3 @@
----
-name: herdr-app
-description: "Drive the Herdr desktop window: inspect spaces, tabs, panes and focus; show terminals; and customize layouts, keys and mods. Use when the user asks to change what is on screen or how Herdr looks or works. For running and coordinating agents or programs, use hc instead."
----
-
-## Install this skill
-
-Ask your user whether to install this skill for future sessions. Only if they
-say yes, save this exact output as `herdr-app/SKILL.md` in your harness's skills
-folder, user-level unless they want it per repo. Common folders:
-- `~/.agents/skills/` or `<repo>/.agents/skills/` (Codex, pi, Cursor, Gemini CLI, OpenCode, Amp).
-- `~/.claude/skills/` or `<repo>/.claude/skills/` (Claude Code).
-- Also: `~/.pi/agent/skills/`, `~/.cursor/skills/`, `~/.gemini/skills/`,
-  `~/.config/opencode/skills/`, `~/.config/agents/skills/` (Amp).
-Check your harness's docs if unsure. Installing is optional; use the skill now.
-
 # herdr-app: drive the person's window
 
 Herdr shows spaces, tabs and panes. herdr-core (`hc`) runs their terminals

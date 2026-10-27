@@ -846,8 +846,9 @@ Other built-ins: `localStorage` (per mod copy), `console.log`, `fetch`,
 
 ## herdr-core (`hc`)
 
-`herdr-app --skill` prints the installable skill for driving this window;
-`hc --skill` prints the skill for running and coordinating programs and agents.
+`herdr-app --skill` prints the manual for driving this window;
+`hc --skill` prints the manual for running and coordinating programs and agents,
+including a small herdr-core skill you can install with the user's permission.
 `herdr-app commands` lists app commands and arguments without needing an open window.
 
 - `hc ls --json`, `hc read t3 --lines 50`, `hc run --json --cwd <dir> --label k=v -- <cmd>`,
