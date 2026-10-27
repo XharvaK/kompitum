@@ -151,9 +151,7 @@ struct Routes {
     early: HashMap<u32, Vec<Stream>>,
 }
 
-/// The core generation this app speaks. The core never breaks its API within
-/// one; a new generation is an emergency brake (decisions "the app doesn't
-/// carry a core").
+/// The supported core API generation; a generation change requires a matching app update.
 pub const GENERATION: u64 = 1;
 /// What the app calls on the core: a core without one of them can't run it.
 pub const USES: &[&str] = &["terminal.run", "terminal.list", "terminal.kill", "terminal.label", "terminal.attach", "terminal.keep", "doc.get", "doc.set", "events.subscribe"];

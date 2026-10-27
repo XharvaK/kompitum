@@ -2,20 +2,19 @@
 
 The Herdr 2 desktop app (`herdr-app`): a native GPUI client of
 [herdr-core](https://github.com/herdrdev/herdr-core). Can (`ogulcancelik`)
-maintains it. His working notes live in `.brain/` (gitignored): if
-`.brain/README.md` exists, read it first.
+maintains it.
 
-## Not released: no backward compatibility
+If AGENTS.local.md exists, read it too: the maintainer's local rules.
 
-Nobody depends on it yet. Until the first release, rename and reshape
-freely: no aliases for old names, no migration code, no reading old labels,
-files or formats "so existing setups keep working". Old-name aliases
-already in the code can be deleted when you touch them. Remove this section
-at release.
+## Compatibility
+
+Preserve compatibility with released versions and installed user data.
+Discuss breaking changes and removal of compatibility code with the maintainer
+before changing documented behavior.
 
 ## Before you grow the app's core: ask Can
 
-The app's core (the model, `spaces.json`, commands, what every mod gets)
+The app's core (the model, machine layout documents, commands, and shared mod APIs)
 stays small; everything else is mods. Before adding anything to it, answer
 these three, then discuss with Can and wait for his go:
 
@@ -45,10 +44,9 @@ the full API.
 ## What ships in the box
 
 `defaults/` is built into the app: mods, `layouts/*.json`, `keys.json`
-(Linux, Windows) and `keys.macos.json` (Mac). Mods update in the user's
-`~/.config/herdr-app` on start if they didn't edit them (and go when no
-longer shipped). Layouts update by merge and keep the user's edits
-(`src/layout_sync.rs`). `keys.json` is installed only when missing, so a
+(Linux, Windows) and `keys.macos.json` (Mac). Shipped layouts and mods are
+replaced on start; edited versions are moved to personal copies. Layout
+clicks are kept separately. `keys.json` is installed only when missing, so a
 changed default key never reaches existing users by itself.
 
 ## Building and testing
@@ -78,37 +76,5 @@ Work on a branch and open a pull request to `master`. CI must pass and Can
 approves; merges are squashed. Commit messages: lowercase conventional
 commits, single line, no AI co-author lines. Only Can releases (a `v*` tag).
 
-## Only on Can's machines
-
-Skip this section unless the checkout is Can's: `~/Projects/herdr-app` on
-his Linux desktop or his Mac (`ssh mac`).
-
-- Commit only when Can says go. Propose the message first.
-- His terminals live in herdr-core, so quitting and reopening the app never
-  kills them. Your own session usually runs inside his app. Never stop,
-  signal or restart his app or his core (`hc server ...` without
-  `HC_SESSION`). `herdr-app status` / `ls` against his window are fine.
-- Can's Herdr is the main checkout's `target/release/herdr-app`
-  (`~/.local/bin/herdr-app` and the GNOME app "Herdr", set up by
-  `scripts/install-linux`). Never point that link anywhere else. When a
-  change is ready, `cargo build --release` in the main checkout and tell
-  him; he quits and reopens the app.
-- Big work happens on a branch in a worktree
-  (`~/Projects/herdr-app-worktrees/<name>`, its `target` a link into
-  `/var/tmp`). Can tries a branch in **Herdr Dev**
-  (`~/.local/bin/herdr-app-dev`, its own home `~/.config/herdr-app-dev` and
-  core session `herdr-app-dev`): point its script at the branch's build.
-  Never point it, or anything, at his `~/.config/herdr-app`. "Move my
-  Herdr" means: bring the branch into the main checkout and build it there.
-- When a change breaks his `~/.config/herdr-app` or his running terminals'
-  labels, say so and fix his copy by hand with his OK. `keys.json` there is
-  his: when you change a default key, ask whether to change his file too.
-- On the Mac, run `scripts/install-macos` after syncing changes. It builds
-  and installs a native executable inside `~/Applications/Herdr.app`, signs
-  it locally and registers it; `~/.local/bin/herdr-app` points to it. Never
-  replace it with a shell wrapper: macOS needs the bundle identity. The
-  installer does not quit or reopen the app.
-- Start sub-agents with herdr-core, not a harness's subagent tool (we
-  dogfood `hc`): `hc run --bg --name <name> --cwd <dir> gpt-implementer
-  "<task>"` (templates in `~/.config/herdr-core/templates`, `reviewer` for
-  reviews), then `hc wait`, `hc read`, `hc send`.
+Never stop, signal, or restart someone else's app or core. Use an isolated
+app home and core session for testing.

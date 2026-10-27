@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The bench's scenarios in Ghostty alone and in Herdr 1.x inside Ghostty,
-measured the same way (macOS: instructions, energy, wakeups), as the bar
-Herdr 2 has to clear. See .brain/perf.md.
+measured the same way (macOS: instructions, energy, wakeups) for a CPU
+baseline comparison.
 
     scripts/bench_compare.py ghostty|herdr
 

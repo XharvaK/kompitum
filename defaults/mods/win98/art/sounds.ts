@@ -1,5 +1,8 @@
 import { spawnSync } from 'node:child_process';
-const dir='/var/tmp/herdr98/mods/win98/sounds';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
+const dir=`${resolve(process.argv[2]??'/var/tmp/herdr98')}/mods/win98/sounds`;
+mkdirSync(dir,{recursive:true});
 const pi='2*PI';
 const tone=(f:number,delay=0,decay=2)=>`sin(${pi}*${f}*(t-${delay}))*exp(-${decay}*(t-${delay}))*gte(t,${delay})`;
 const chord=(fs:number[],delay=0,decay=2)=>fs.map(f=>tone(f,delay,decay)).join('+');

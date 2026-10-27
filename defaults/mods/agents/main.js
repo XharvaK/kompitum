@@ -1,18 +1,5 @@
-// Agents, as Herdr's sidebar shows them: every terminal whose program
-// reports a status, with its space and tab, the agent's name, and its
-// state, and how long it has been in that state. "done" means it finished
-// while you weren't looking. Two views (the button by the title picks,
-// `shared("agents.sort")`): priority, under Needs you (blocked), Done, Working
-// and Idle, the latest change first in each; or grouped, under a header per
-// space. In priority an agent sits where its most urgent sub-agent would (a done
-// agent you look at stays with Done until you leave it). A header folds its
-// group. Hovering a row shows a pin: pinned agents sit in Pinned on top in both
-// views, in the order pinned (this screen only; a pin goes when its agent
-// ends). Click a row to jump there.
-// Sub-agents (terminals an agent started with `hc run`) hang under it as a
-// tree, open at first; its chevron folds them (not remembered; folded shows
-// how many). Click one to peek at it over the tab (the peek mod's bar keeps
-// or closes it; another click swaps it). Bottom-right « collapses the sidebar.
+// Agents in grouped or priority views; parents take their most urgent sub-agent's place.
+// A viewed done agent stays in Done until left.
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -194,7 +181,7 @@ export default class Agents extends View {
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
     if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
     if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
-    // Idle: a ring (as zen's ○); done (finished while you weren't looking): a dot.
+    // Idle: a ring; done: a dot.
     if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
     return div().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
   }
@@ -272,7 +259,7 @@ export default class Agents extends View {
     const row = (a, i, subs = []) => {
       const pic = icon(a.program, 16, t.foreground);
       const more = detail.get(a.address);
-      // An agent on another machine (`vps/t7`) says which, as Herdr 1.x did.
+      // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
       if (collapsed) {
         return h_flex()

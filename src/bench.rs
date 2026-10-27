@@ -1,4 +1,4 @@
-//! Counts for `scripts/bench`: how often the window and terminals are drawn.
+//! Counts for `scripts/bench.py`: how often the window and terminals are drawn.
 //! With HERDR_APP_BENCH=<file>, one JSON line per second goes there.
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};

@@ -506,13 +506,13 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Sends a mouse event to a program that tracks the mouse. Returns whether it did
-    /// (shift keeps the mouse for Herdr: selecting, the menu).
     /// The program tracks the mouse and Shift isn't held (Shift keeps the mouse Herdr's).
     fn takes_mouse(&self, mods: Modifiers) -> bool {
         self.grid.borrow().vt.mouse_tracking() && !mods.shift
     }
 
+    /// Sends a mouse event to a program that tracks the mouse. Returns whether it did
+    /// (shift keeps the mouse for Herdr: selecting, the menu).
     fn mouse(&mut self, action: GhosttyMouseAction, button: Option<MouseButton>, pos: Point<Pixels>, mods: Modifiers) -> bool {
         let mut g = self.grid.borrow_mut();
         match action {
@@ -584,9 +584,6 @@ impl TerminalView {
     }
 }
 
-/// Ctrl on Linux, Cmd on macOS, alone: hovering shows links and a click opens one (as in Ghostty).
-/// Paths as a shell reads them, space-separated with a trailing space: bare
-/// when plain, else single-quoted (`'` escaped as the shell wants it).
 /// A title as it's shown: an agent's spinner in front of it (`\u{2733} Fix the
 /// tests`, braille dots) is no part of it. Herdr draws its own, and a title
 /// that spins would redraw every mod that shows titles, 10 times a second.
@@ -601,6 +598,8 @@ pub(crate) fn shown_title(title: &str) -> &str {
     if rest.is_empty() || !title[..led].chars().any(spinner) || !title[..led].ends_with(char::is_whitespace) { title } else { rest }
 }
 
+/// Paths as a shell reads them, space-separated with a trailing space: bare
+/// when plain, else single-quoted (`'` escaped as the shell wants it).
 fn quote_paths(paths: impl IntoIterator<Item = String>) -> String {
     let quote = |p: String| {
         if !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+=,:@%~".contains(c)) {
@@ -643,7 +642,6 @@ fn local(g: &Grid, p: Point<Pixels>) -> (f32, f32) {
     (f32::from(p.x - g.origin.x).max(0.0), f32::from(p.y - g.origin.y).max(0.0))
 }
 
-/// (columns, rows, cell width, cell height) for mouse reports.
 /// Whole lines to scroll for one scroll event. A touchpad sends many small
 /// moves: they add up to a line before one scrolls (as in Zed), and each
 /// gesture starts from nothing. Kept under a screen, so turning back is quick.
@@ -664,11 +662,11 @@ fn scroll_steps(scrolled: &mut f32, phase: TouchPhase, lines: f32, rows: f32) ->
     }
 }
 
+/// (columns, rows, cell width, cell height) for mouse reports.
 fn grid_size(g: &Grid) -> (u32, u32, f32, f32) {
     (g.vt.cols as u32, g.vt.rows as u32, f32::from(g.cell.width), f32::from(g.cell.height))
 }
 
-/// GPUI key name → (ghostty key, whether shift is implied, unshifted character).
 /// An icon's glyph in the bundled symbols font, with its outline's bounds in
 /// font units (y up).
 struct IconGlyph {

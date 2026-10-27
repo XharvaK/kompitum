@@ -1,6 +1,4 @@
-// The Terminals layout's pane header, after Rex: the program's glyph (or the agent's logo), the
-// program's title and its folder; split, zoom and close on the right, quiet
-// until hovered. Props from the app: { pane, terminal }. Click: focus it.
+// Terminals pane header; props: { pane, terminal }.
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";

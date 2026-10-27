@@ -1,11 +1,4 @@
-// The Terminals layout's top bar, after Rex (Superlogical). Left: the space switcher, a
-// chip with the shown space's name that opens the picker. Middle: the
-// space's tabs as tabs in one rounded tray, each with a tile of what
-// runs in it (the agent's logo, else a green prompt), a status dot, its name
-// and folder; the shown one lifted. Right: the command palette and a new tab,
-// and the window buttons where the system draws none (Linux). The layout
-// hides the system title bar and makes this bar drag the window; the
-// controls here stop the press so clicking them never moves it.
+// Terminals layout's draggable top bar: space picker, tabs, and window controls.
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";

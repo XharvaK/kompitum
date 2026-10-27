@@ -22,8 +22,7 @@ from the same parts you have.
   start a terminal, read its screen, send it text, wait for an agent
   (`hc --help`). The Herdr app is one client of it.
 
-A `herdr` command on this machine is Herdr 1.x, an older terminal
-multiplexer: a different program.
+`herdr-app` controls this app; `hc` controls herdr-core.
 
 ## What you can and can't do
 
@@ -145,7 +144,7 @@ machine first, then machines by name; `space.move` stays inside its machine's bl
   status is the most urgent of its agents: blocked > done > working > idle.
 - **Sub-agents** are terminals an agent started with `hc run`: the core
   records the starter as `parent` (see `terminals()`). They belong to their
-  parent's tab without a pane; the `agents` and `team` mods show them,
+  parent's tab without a pane; the `agents` mod shows them,
   `terminal.peek` opens one, `terminal.keep` gives one a pane.
   Ctrl-click (Cmd-click on macOS) a live terminal address in terminal text to
   peek at it. Bare addresses refer to the machine of the terminal showing them;

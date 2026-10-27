@@ -1,16 +1,5 @@
-// Git worktrees as spaces, like Herdr 1.x: "New worktree" asks for a
-// branch name and opens a space on a fresh checkout of it; "Open
-// worktree" lists the repo's checkouts (filter, up/down, Enter) and opens one
-// as a space, or goes to its space when one shows it; "Remove worktree"
-// closes the space and deletes the checkout (the branch stays). Opened as a
-// dialog with props { space, action: "new" | "open" | "remove" }; the
-// space menu and the + menu open it. Spaces are left unnamed, so they're
-// called after their checkout folder and nest under their repo's space. The repo is where the space's first terminal is now;
-// { folder } names another (the + menu passes the terminal you're looking at). With { branch } it doesn't ask, it makes that one at
-// once ({ tab, argv }: the new space's first tab, e.g. an agent).
-// { folder, machine } instead of { space }: a repo no space shows yet (the
-// Sessions layout's new session uses it). An example: change the folder, the naming or
-// the wording below, or what happens after.
+// Worktree dialog: { space, action: "new" | "open" | "remove" } or
+// { folder, machine } for a repo without a space; optional { branch, tab, argv }.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar } from "gpui-base";
@@ -199,6 +188,7 @@ export default class Worktree extends View {
     const r = await git(this.repo.top, add, this.on);
     if (!r.ok) return r.err || "git worktree add failed.";
     const p = props();
+    // Leave spaces unnamed so they follow the checkout folder and nest under the repo.
     run("space.new", { folder: path, machine: this.on, tab: p.tab, argv: p.argv });
     return "";
   }

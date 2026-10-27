@@ -1,6 +1,8 @@
 import { readdirSync,unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-const base='/var/tmp/herdr98',icons=`${base}/mods/win98/icons`,font='/home/can/.local/share/fonts/herdr98/PixelatedMSSansSerif-Regular.ttf';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
+const base=resolve(process.argv[2]??'/var/tmp/herdr98'),icons=`${base}/mods/win98/icons`,font=fileURLToPath(new URL('../fonts/PixelatedMSSansSerif-Regular.ttf',import.meta.url));
 const files=readdirSync(icons).filter(x=>x.endsWith('.svg')).sort();
 const out:string[]=[];
 for(let i=0;i<files.length;i++){

@@ -4,7 +4,7 @@
     scripts/bench.py [--bin target/release/herdr-app] [--seconds 20] [--sample]
 
 Runs the app on its own home and core (/var/tmp/herdr-app-bench, core
-session herdr-app-bench): nothing of yours is touched. The window must stay
+session hb): nothing of yours is touched. The window must stay
 visible while it runs (hidden windows aren't drawn, which flatters the
 numbers). Per scenario: CPU % of the app, the core and its holder
 (averaged over the run, 100 = one core), and draws per second (window
@@ -77,7 +77,7 @@ def env():
     e = dict(os.environ)
     e.update(
         HERDR_APP_HOME=f"{ROOT}/home",
-        HC_SESSION="hb",  # short: macOS caps socket paths (core-asks 8)
+        HC_SESSION="hb",  # Short name avoids macOS socket-path limits.
         HERDR_APP_NO_SOUND="1",
         HERDR_APP_BENCH=f"{ROOT}/frames.jsonl",
         WAYLAND_DISPLAY=e.get("WAYLAND_DISPLAY", ""),
@@ -277,26 +277,26 @@ def main():
             do(bin, "tab.new", {"name": "title", "argv": reports("title")})
             rows.append(measure("spinners+title", app.pid, a.seconds, a.sample))
             return
-        do(bin, "project.new", {"name": "bench", "folder": ROOT})
+        do(bin, "space.new", {"name": "bench", "folder": ROOT})
         rows.append(measure("idle-shell", app.pid, a.seconds, a.sample))
-        for layout in ("zen", "t-rex", "t4", "main"):
+        for layout in ("terminals", "win98", "main"):
             do(bin, "layout.switch", {"name": layout})
             rows.append(measure(f"idle-{layout}", app.pid, a.seconds, a.sample))
-        do(bin, "context.new", {"name": "agent", "argv": agent})
+        do(bin, "tab.new", {"name": "agent", "argv": agent})
         rows.append(measure("agent", app.pid, a.seconds, a.sample))
-        do(bin, "context.new", {"name": "btop", "argv": ["btop"]})
+        do(bin, "tab.new", {"name": "btop", "argv": ["btop"]})
         rows.append(measure("btop", app.pid, a.seconds, a.sample))
-        do(bin, "context.new", {"name": "four", "argv": agent})
+        do(bin, "tab.new", {"name": "four", "argv": agent})
         do(bin, "pane.split", {"direction": "right", "argv": ["btop"]})
         do(bin, "pane.split", {"direction": "down", "argv": agent})
         do(bin, "pane.split", {"direction": "down"})
         rows.append(measure("four-panes", app.pid, a.seconds, a.sample))
         # Busy terminals elsewhere, an idle shell on screen.
-        do(bin, "context.select", {"index": 1})
+        do(bin, "tab.select", {"index": 1})
         rows.append(measure("idle-busy-bg", app.pid, a.seconds, a.sample))
         # Ten agents streaming (seven more), one of them on screen.
         for i in range(7):
-            do(bin, "context.new", {"name": f"ten{i}", "argv": agent})
+            do(bin, "tab.new", {"name": f"ten{i}", "argv": agent})
         rows.append(measure("ten-agents", app.pid, a.seconds, a.sample))
     finally:
         with open(f"{ROOT}/results.json", "w") as f:

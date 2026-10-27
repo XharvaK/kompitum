@@ -1,12 +1,4 @@
-// The frame's welcome: a window in the middle the first time the app opens
-// (and with `app.welcome`), over the live app, not in front of a dimmed
-// one: every step changes what's behind it, and it moves where you drag
-// its header (the grab hand says so). 1 what Herdr is, with light or
-// dark and the size; 2 your other machines; 3 the panels you want (Files,
-// Changes: mods, shown in place as you pick them); 4 how to make it yours.
-// Start sets shared "frame.welcomed" to "finished" (and opens a first space
-// if there is none), the close button and Escape to "skipped".
-// This is the app's own mod: rewritten from the binary on every start.
+// First-run welcome over the live app; records finished/skipped in frame.welcomed.
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";

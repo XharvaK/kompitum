@@ -1,7 +1,6 @@
-# Every push and pull request: build and test on Linux, the cheap runner.
-# The four-platform builds run in release.yml.
+# Build and test on Linux; release.yml builds release targets.
 #
-# Cache rules (learned in Herdr 1.x's CI): one pinned toolchain so caches
+# Cache rules: one pinned toolchain so caches
 # don't die on a stable bump; only master pushes save, so PR and branch
 # caches can't evict the ones everybody restores; libghostty's Zig build
 # lives in Cargo's OUT_DIR, kept with the workspace crates.
@@ -59,9 +58,7 @@ jobs:
             pkg-config clang libclang-dev \
             libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev mesa-vulkan-drivers libfontconfig-dev libfreetype-dev
-      # Tests don't need the optimized dependencies Cargo.toml asks for in
-      # dev builds (they make Can's debug app fast): unoptimized compiles
-      # far quicker on CI's small runner. One command builds the app too.
+      # Disable optimized dev dependencies in CI to reduce test compile time.
       - run: cargo test --locked --config 'profile.dev.package."*".opt-level=0'
       - name: Install Bun
         run: curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.4"

@@ -1,5 +1,4 @@
-//! ~/.config/herdr-app/settings.json: fonts and the one theme everything draws with
-//! (terminals, mods, chrome). Reloaded live; zoom is a runtime offset.
+//! Live settings and the resolved layout look, including persisted app zoom.
 //!
 //! A theme is a palette plus optional color overrides: a built-in preset
 //! (graphite, ink, moss, paper) or `themes/<name>.json`. Chrome colors are

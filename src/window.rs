@@ -672,7 +672,6 @@ impl AppWindow {
         });
     }
 
-    /// After an update: what it brought (`defaults/frame/whatsnew`), once.
     /// After an update: the spotlights not shown yet. Asked for: this version's notes.
     fn open_whats_new(&mut self, asked: bool, window: &mut Window, cx: &mut Context<Self>) {
         let notes = if asked { crate::update_notes::notes(None) } else { crate::update_notes::spotlights() };
@@ -1000,8 +999,6 @@ impl AppWindow {
         }
     }
 
-    /// Writes the clicks, with the file they were made on (so a later change
-    /// to the file can win over them).
     /// What installing layouts kept of the person's own, as toasts.
     fn show_layout_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for clone in mods::take_sync_notes() {
@@ -1010,6 +1007,8 @@ impl AppWindow {
         }
     }
 
+    /// Writes the clicks, with the file they were made on (so a later change
+    /// to the file can win over them).
     fn write_state(&mut self, state: &layout_sync::State) {
         let mut state = state.clone();
         if !state.is_empty() {
@@ -4103,14 +4102,12 @@ fn recheck(last: Option<&FolderCheck>, cwd: &str, busy: bool, active: bool) -> b
     last.cwd != cwd || (last.busy && !busy) || (active && last.repo && last.at.elapsed() > FOLDER_FALLBACK)
 }
 
-/// The repo a folder is in (a worktree counts as its main checkout's), else the
-/// folder itself, and the branch; and whether it is a repo (or git couldn't say).
-/// How long a missing terminal the core couldn't answer for waits before the next look.
-
 /// Set once the app starts quitting, the OS ending the session included: the
 /// saved layout stays as it was.
 pub static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The repo a folder is in (a worktree counts as its main checkout's), else the
+/// folder itself, and the branch; and whether it is a repo (or git couldn't say).
 fn folder_info(cwd: &str, home: &str, on: Option<&str>) -> (model::FolderInfo, bool) {
     let none = model::FolderInfo { top: cwd.into(), branch: None };
     if on.is_none() && cwd == home {

@@ -20,7 +20,7 @@ use std::rc::Rc;
 use gpui_shell::action::ShellAction;
 use std::collections::BTreeMap;
 
-/// The one key no file can take away: resets to a plain terminal.
+/// The reserved shortcut that restores the default layout and keys.
 pub const ESCAPE_HATCH: &str = "ctrl-alt-shift-escape";
 
 /// The shipped keys: prefix-free; plain ctrl+letter always stays with the
@@ -177,7 +177,7 @@ pub fn parse(text: &str) -> Result<Vec<KeyBinding>, String> {
 struct KitKeys(Vec<KeyBinding>);
 impl gpui::Global for KitKeys {}
 
-/// Replaces every binding. The escape hatch is always added last.
+/// Restores kit bindings, installs user bindings, then adds reserved bindings.
 pub fn install(bindings: Vec<KeyBinding>, cx: &mut App) {
     if !cx.has_global::<KitKeys>() {
         let kit = cx.key_bindings().borrow().bindings().cloned().collect();

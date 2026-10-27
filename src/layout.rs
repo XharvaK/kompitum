@@ -1,4 +1,4 @@
-//! The locked layout primitives (see .brain/primitives.md): a tree of nodes.
+//! Layout primitives: a tree of blocks and containers.
 //! A node is a block (terminal, mod, or the active tab) or a
 //! container (row, column, stack). Pure data + tree operations, so the
 //! rules are testable without a window.
@@ -147,9 +147,8 @@ impl Padding {
     }
 }
 
-/// How things look inside a node, cascading: the nearest node up the tree
-/// that sets a field wins. The layout's root sets its look; settings.json
-/// never does (it's the person: zoom, sounds).
+/// Layout look cascades down the tree: the nearest node setting a field wins.
+/// Unset root fields fall back to settings.json.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Look {
     /// A preset or a file in themes/, or one for light and one for dark.

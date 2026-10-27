@@ -1,9 +1,4 @@
-// The frame's settings: the person's look, fonts, sounds and updates. Opened
-// with `app.settings` (palette, ctrl+, / cmd+,, the Mac menu, the update
-// pill opens Updates). Every change is
-// written at once to the same files agents edit (settings.json, the shown
-// layout through `app.theme` / `layout.switch`), so there's no Save.
-// The app's own mod: rewritten from the binary on every start.
+// App-owned settings mod. Writes changes immediately; no Save step.
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";

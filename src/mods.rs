@@ -1,5 +1,5 @@
 //! Mods: folders of JavaScript under ~/.config/herdr-app/mods that agents write and
-//! Herdr runs live (gpui-component-shell), plus the `herdr` module they import.
+//! Herdr runs live (gpui-shell), plus the `herdr` module they import.
 
 use crate::layout::Node;
 use gpui::App;
@@ -32,8 +32,6 @@ pub fn home() -> PathBuf {
     std::env::home_dir().unwrap_or_else(|| "/".into())
 }
 
-/// The app's home: `$HERDR_APP_HOME` (tests, experiments), else
-/// `$XDG_CONFIG_HOME/herdr-app`, else `~/.config/herdr-app`, on every OS.
 /// The fonts on this machine (`fonts()`): read when the window opens and
 /// again when the home brings new ones.
 static FONTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
@@ -46,6 +44,8 @@ pub fn note_fonts(cx: &gpui::App) {
     *FONTS.lock().unwrap() = names;
 }
 
+/// The app's home: `$HERDR_APP_HOME` (tests, experiments), else
+/// `$XDG_CONFIG_HOME/herdr-app`, else `~/.config/herdr-app`, on every OS.
 pub fn app_dir() -> PathBuf {
     let env = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
     env("HERDR_APP_HOME").unwrap_or_else(|| env("XDG_CONFIG_HOME").unwrap_or_else(|| home().join(".config")).join("herdr-app"))
