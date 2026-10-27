@@ -49,6 +49,15 @@ replaced on start; edited versions are moved to personal copies. Layout
 clicks are kept separately. `keys.json` is installed only when missing, so a
 changed default key never reaches existing users by itself.
 
+## Platform differences
+
+Gate per OS only where the OS really behaves differently. A one-line
+`cfg!(windows)` next to the quirk is fine, with a comment saying why; anything
+bigger goes behind one small module per concern rather than `#[cfg]` spread
+through shared code. Give the quirk a test on its platform and keep the other
+platforms' behavior unchanged (and tested). Windows and macOS changes are
+checked on those systems, not only by cross-compiling.
+
 ## Building and testing
 
 `just build`, `just test` (what CI runs, on Linux), `just check` (the tests).
