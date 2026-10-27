@@ -129,7 +129,7 @@ pub fn install_icons() {
     for (name, bytes) in DEFAULT_ICONS {
         let file = dir.join(name);
         if std::fs::read(&file).ok().as_deref() != Some(*bytes) {
-            let _ = std::fs::write(file, bytes);
+            let _ = crate::persist::write_atomic(&file, bytes);
         }
     }
 }

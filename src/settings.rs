@@ -539,7 +539,7 @@ pub fn color_or_literal(v: &str) -> Hsla {
 pub fn load_person() -> Result<Person, String> {
     let p = path();
     if !p.exists() {
-        let _ = std::fs::write(&p, serde_json::to_string_pretty(&Person::default()).unwrap() + "\n");
+        let _ = crate::persist::write_atomic(&p, serde_json::to_string_pretty(&Person::default()).unwrap() + "\n");
     }
     let text = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
     let person: Person = serde_json::from_str(&text).map_err(|e| e.to_string())?;
@@ -562,7 +562,7 @@ pub fn telemetry_setting(person: &Result<Person, String>) -> bool {
 }
 
 pub fn write_person(person: &Person) -> std::io::Result<()> {
-    std::fs::write(path(), serde_json::to_string_pretty(person).unwrap_or_default() + "\n")
+    crate::persist::write_atomic(&path(), serde_json::to_string_pretty(person).unwrap_or_default() + "\n")
 }
 
 /// Installs new settings; returns whether anything changed.

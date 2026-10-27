@@ -129,7 +129,7 @@ fn state_text(s: &layout_sync::State) -> String {
 
 /// Where to set `path` aside: `<path>.<tag>-<time>`, with `-2`, `-3` ... when
 /// that's taken, so an older one is never replaced.
-fn aside(path: &std::path::Path, tag: &str) -> PathBuf {
+pub(crate) fn aside(path: &std::path::Path, tag: &str) -> PathBuf {
     let stamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     (1..).map(|i| path.with_file_name(if i == 1 { format!("{name}.{tag}-{stamp}") } else { format!("{name}.{tag}-{stamp}-{i}") })).find(|p| !p.exists()).unwrap_or_else(|| path.to_path_buf())
@@ -138,13 +138,13 @@ fn aside(path: &std::path::Path, tag: &str) -> PathBuf {
 /// Writes through a temporary file and a rename, so a reader never sees half
 /// a file. Says whether it worked.
 fn write_atomic(path: &std::path::Path, text: &str) -> bool {
-    let tmp = path.with_extension("json.tmp");
-    let ok = std::fs::write(&tmp, text).is_ok() && std::fs::rename(&tmp, path).is_ok();
-    if !ok {
-        let _ = std::fs::remove_file(&tmp);
-        tracing::warn!("cannot write {}", path.display());
+    match crate::persist::write_atomic(path, text) {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!("cannot write {}: {error}", path.display());
+            false
+        }
     }
-    ok
 }
 
 /// The mods a layout file names that aren't in mods/ (frame mods are always there).
@@ -3492,7 +3492,7 @@ impl AppWindow {
                 continue;
             }
             self.seen.insert(f.id.clone());
-            let _ = std::fs::write(file("seen.json"), serde_json::to_string(&self.seen).unwrap_or_default());
+            write_atomic(&file("seen.json"), &serde_json::to_string(&self.seen).unwrap_or_default());
             let shown = self.chrome.walk().iter().any(|n| matches!(n.content(), Some(Content::Mod { name, .. }) if *name == f.id));
             let place = f.hint.place.as_deref().unwrap_or("right");
             if !shown && place != "none" && !shipped_layouts().contains(&self.layout_name.as_str()) {

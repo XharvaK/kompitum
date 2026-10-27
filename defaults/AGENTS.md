@@ -82,6 +82,10 @@ first frame or during GPU recovery it reports an error instead of a PNG.
 | `view.json` | this screen's selected space/tab/pane, zoom, settled tabs, recent spaces and seen attention | written by Herdr |
 | `shared.json`, `data/`, `seen.json`, `installed.json`, `window.json`, `windows.json` | mod state, bookkeeping, where the window was (size, maximized), mods' windows (spots, kept ones) | written by Herdr |
 
+Shared state is saved atomically in the background, with the latest change winning.
+If `shared.json` is invalid, Herdr logs a warning and keeps it as
+`shared.json.corrupt-<time>` before starting empty.
+
 ## The model: spaces, tabs, terminals
 
 Every layout shows the same world; a layout may show less, never a

@@ -35,7 +35,7 @@ fn edit(f: impl FnOnce(&mut Value)) {
     let mut v = read();
     f(&mut v);
     if let Ok(s) = serde_json::to_string_pretty(&v) {
-        let _ = std::fs::write(path(), s + "\n");
+        let _ = crate::persist::write_atomic(&path(), s + "\n");
     }
 }
 

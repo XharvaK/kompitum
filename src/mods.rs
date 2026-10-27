@@ -425,25 +425,103 @@ pub fn agent_order(available: Vec<String>) -> Vec<String> {
 }
 
 pub fn shared(key: &str) -> Option<Value> {
-    SHARED.with(|s| s.borrow().get(key).cloned())
+    with_shared(|s| s.values.get(key).cloned())
 }
 
 /// Sets a value every mod can read (persisted in shared.json); mods re-render.
 pub fn set_shared(key: String, value: Value) {
-    let snapshot = SHARED.with(|s| {
-        let mut s = s.borrow_mut();
-        if s.get(&key) == Some(&value) {
-            return None;
-        }
-        s.insert(key, value);
-        Some(Value::Object(s.clone()).to_string())
-    });
-    if let Some(text) = snapshot {
-        // Off the UI thread: a slow disk must not stall a frame.
-        let path = app_dir().join("shared.json");
-        std::thread::spawn(move || std::fs::write(path, text));
+    if with_shared(|s| s.set(key, value)) {
         request(Request::Refresh);
     }
+}
+
+fn with_shared<R>(f: impl FnOnce(&mut SharedStore) -> R) -> R {
+    SHARED.with_borrow_mut(|slot| f(slot.get_or_insert_with(|| SharedStore::load(app_dir().join("shared.json")))))
+}
+
+/// Called after mod close handlers, so their last changes reach disk before exit.
+pub fn finish_shared() {
+    SHARED.with_borrow_mut(|slot| {
+        if let Some(store) = slot {
+            store.finish();
+        }
+    });
+}
+
+struct SharedStore {
+    values: serde_json::Map<String, Value>,
+    path: PathBuf,
+    writable: bool,
+    writer: Option<(std::sync::mpsc::Sender<String>, std::thread::JoinHandle<()>)>,
+}
+
+impl SharedStore {
+    fn load(path: PathBuf) -> Self {
+        let mut writable = true;
+        let values = match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice(&bytes) {
+                Ok(values) => values,
+                Err(error) => {
+                    let backup = crate::window::aside(&path, "corrupt");
+                    match std::fs::rename(&path, &backup) {
+                        Ok(()) => tracing::warn!("{} is invalid ({error}); kept in {}", path.display(), backup.display()),
+                        Err(e) => {
+                            writable = false;
+                            tracing::warn!("{} is invalid ({error}); cannot keep it aside: {e}; shared persistence disabled", path.display());
+                        }
+                    }
+                    serde_json::Map::new()
+                }
+            },
+            Err(error) => {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    writable = false;
+                    tracing::warn!("cannot read {}: {error}; shared persistence disabled", path.display());
+                }
+                serde_json::Map::new()
+            }
+        };
+        Self { values, path, writable, writer: None }
+    }
+
+    fn set(&mut self, key: String, value: Value) -> bool {
+        if self.values.get(&key) == Some(&value) {
+            return false;
+        }
+        self.values.insert(key, value);
+        if self.writable {
+            let (writer, _) = self.writer.get_or_insert_with(|| shared_writer(self.path.clone()));
+            if let Err(error) = writer.send(serde_json::to_string(&self.values).expect("shared values encode as JSON")) {
+                tracing::warn!("shared writer stopped: {error}");
+            }
+        }
+        true
+    }
+
+    fn finish(&mut self) {
+        if let Some((sender, worker)) = self.writer.take() {
+            drop(sender);
+            if worker.join().is_err() {
+                tracing::warn!("shared writer stopped before saving finished");
+            }
+        }
+    }
+}
+
+fn shared_writer(path: PathBuf) -> (std::sync::mpsc::Sender<String>, std::thread::JoinHandle<()>) {
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let worker = std::thread::spawn(move || {
+        while let Ok(mut text) = rx.recv() {
+            // A burst needs only its newest snapshot. Never let an older write land last.
+            for newer in rx.try_iter() {
+                text = newer;
+            }
+            if let Err(error) = crate::persist::write_atomic(&path, text) {
+                tracing::warn!("cannot write {}: {error}", path.display());
+            }
+        }
+    });
+    (tx, worker)
 }
 
 pub fn request_sender() -> Option<async_channel::Sender<Request>> {
@@ -461,9 +539,7 @@ thread_local! {
     /// re-render when they change.
     static SNAPSHOT: RefCell<Snapshot> = RefCell::new(Snapshot::default());
     static AGENT_ORDER: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    static SHARED: RefCell<serde_json::Map<String, Value>> = RefCell::new(
-        std::fs::read_to_string(app_dir().join("shared.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default(),
-    );
+    static SHARED: RefCell<Option<SharedStore>> = const { RefCell::new(None) };
     /// Where key commands for each loaded copy go: (copy, mod, sender).
     static COMMANDS: RefCell<Vec<(u64, String, async_channel::Sender<String>)>> = const { RefCell::new(Vec::new()) };
     /// The copies on screen: only they get commands (a hidden copy kept alive must
@@ -934,7 +1010,7 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         .function("props", move |_| Ok(to_host(&props)))
         .function("shared", |a| {
             let k = a.string(0)?;
-            Ok(SHARED.with(|s| s.borrow().get(k).map(to_host).unwrap_or(HostValue::Null)))
+            Ok(with_shared(|s| s.values.get(k).map(to_host).unwrap_or(HostValue::Null)))
         })
         .function("setShared", |a| {
             set_shared(a.string(0)?.to_owned(), from_host(a.value(1)?));
@@ -1037,6 +1113,64 @@ pub fn prepare_load(inst: &Instance) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_bursts_persist_only_complete_snapshots_and_finish_at_final_state() {
+        let root = if cfg!(target_os = "linux") { PathBuf::from("/var/tmp") } else { std::env::temp_dir() };
+        let dir = root.join(format!("herdr-shared-stress-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shared.json");
+        let reading = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let reader = {
+            let path = path.clone();
+            let reading = reading.clone();
+            std::thread::spawn(move || {
+                while reading.load(std::sync::atomic::Ordering::Relaxed) {
+                    match std::fs::read(&path) {
+                        Ok(bytes) => { serde_json::from_slice::<Value>(&bytes).unwrap(); }
+                        Err(e) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
+                    }
+                    std::thread::yield_now();
+                }
+            })
+        };
+        let expected = std::thread::spawn(move || {
+            SHARED.with_borrow_mut(|s| *s = Some(SharedStore::load(path)));
+            for i in 0..2000 {
+                set_shared("changing".into(), json!("x".repeat(if i % 2 == 0 { 16000 } else { 3 })));
+                set_shared("revision".into(), json!(i));
+            }
+            set_shared("final".into(), json!(true));
+            finish_shared();
+            with_shared(|s| s.values.clone())
+        }).join().unwrap();
+        reading.store(false, std::sync::atomic::Ordering::Relaxed);
+        reader.join().unwrap();
+        let actual: serde_json::Map<String, Value> = serde_json::from_slice(&std::fs::read(dir.join("shared.json")).unwrap()).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn corrupt_shared_file_is_kept_before_starting_empty() {
+        let root = if cfg!(target_os = "linux") { PathBuf::from("/var/tmp") } else { std::env::temp_dir() };
+        let dir = root.join(format!("herdr-shared-corrupt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shared.json");
+        let corrupt = b"{\"kept\":true} old snapshot tail";
+        std::fs::write(&path, corrupt).unwrap();
+        let store = SharedStore::load(path.clone());
+        assert!(store.values.is_empty());
+        assert!(store.writable);
+        assert!(!path.exists());
+        let backup = std::fs::read_dir(&dir).unwrap().next().unwrap().unwrap().path();
+        assert!(backup.file_name().unwrap().to_string_lossy().starts_with("shared.json.corrupt-"));
+        assert_eq!(std::fs::read(&backup).unwrap(), corrupt);
+        crate::persist::write_atomic(&path, "{}").unwrap();
+        assert_eq!(std::fs::read(backup).unwrap(), corrupt);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn navigation_follows_mod_order() {

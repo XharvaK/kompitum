@@ -99,7 +99,7 @@ fn note(window: &Window, cx: &App) -> Option<Place> {
 
 fn write(p: &Place) {
     if let Ok(s) = serde_json::to_string_pretty(p) {
-        let _ = std::fs::write(path(), s + "\n");
+        let _ = crate::persist::write_atomic(&path(), s + "\n");
     }
 }
 

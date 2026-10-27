@@ -15,6 +15,7 @@ mod model;
 mod mirror;
 mod mirror_sync;
 mod place;
+mod persist;
 #[cfg(target_os = "macos")]
 mod macos;
 mod mods;
@@ -163,6 +164,7 @@ fn main() {
                         });
                     }
                 }
+                mods::finish_shared();
                 telemetry::quit();
                 update::apply();
                 async {}
