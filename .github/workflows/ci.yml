@@ -60,6 +60,8 @@ jobs:
             libvulkan-dev mesa-vulkan-drivers libfontconfig-dev libfreetype-dev
       # Disable optimized dev dependencies in CI to reduce test compile time.
       - run: cargo test --locked --config 'profile.dev.package."*".opt-level=0'
+      - name: Check release packaging
+        run: python3 -m unittest discover -s scripts -p test_distribution.py
       - name: Install Bun
         run: curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.4"
       - name: Check documentation
