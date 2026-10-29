@@ -853,26 +853,27 @@ fn row_ops(row: &[vt::Cell], cell: Size<Pixels>, window: &mut Window) -> Vec<Row
     }
     let mut x = 0;
     while x < row.len() {
-        let c = &row[x];
+        let start = x;
+        let c = &row[start];
+        // Consume the first cell before dispatch: every path must make progress,
+        // even when a private-use character has no bundled icon glyph.
+        x += 1;
         if c.text.is_empty() && !c.underline && !c.strike {
-            x += 1;
             continue;
         }
-        let start = x;
         let mut color = hsla(c.fg);
         if c.faint {
             color.a = 0.6;
         }
         if crate::sprites::is_sprite(&c.text) {
-            ops.push(RowOp::Sprite { x, text: c.text.clone(), color });
-            x += 1;
+            ops.push(RowOp::Sprite { x: start, text: c.text.clone(), color });
             continue;
         }
         if let Some(icon) = c.text.chars().next().filter(|_| is_icon(&c.text)).and_then(icon_glyph) {
             // Fitted to the cell by its real outline, as Ghostty does:
             // centered, as tall as fits, two cells wide when a space
             // follows (prompts, statuslines, file trees).
-            let room = if row.get(x + 1).is_none_or(|d| d.text.trim().is_empty()) { 2.0 } else { 1.0 };
+            let room = if row.get(x).is_none_or(|d| d.text.trim().is_empty()) { 2.0 } else { 1.0 };
             let (w, h) = (f32::from(cell.width) * room, f32::from(cell.height));
             let (gw, gh) = ((icon.x1 - icon.x0).max(1.0), (icon.y1 - icon.y0).max(1.0));
             // Up to ~1.5 cells of two, so it doesn't touch the next word.
@@ -884,15 +885,11 @@ fn row_ops(row: &[vt::Cell], cell: Size<Pixels>, window: &mut Window) -> Vec<Row
             let baseline = (h - gh * scale) / 2.0 + icon.y1 * scale;
             let font = window.text_system().resolve_font(&font(crate::settings::SYMBOLS_FONT));
             let size = px(scale * icon.units_per_em);
-            ops.push(RowOp::Icon { x, offset: point(px(left), px(baseline)), font, glyph: GlyphId(icon.id), size, color });
-            x += 1;
+            ops.push(RowOp::Icon { x: start, offset: point(px(left), px(baseline)), font, glyph: GlyphId(icon.id), size, color });
             continue;
         }
-        let mut text = String::new();
-        if c.wide {
-            text.push_str(&c.text);
-            x += 1;
-        } else {
+        let mut text = if c.text.is_empty() { " ".to_owned() } else { c.text.clone() };
+        if !c.wide {
             while x < row.len() {
                 let d = &row[x];
                 let same = !d.wide
@@ -902,6 +899,7 @@ fn row_ops(row: &[vt::Cell], cell: Size<Pixels>, window: &mut Window) -> Vec<Row
                     && d.faint == c.faint
                     && d.underline == c.underline
                     && d.strike == c.strike;
+                // A missing icon breaks the run too; the next outer pass draws it as text.
                 if !same || (d.text.is_empty() && !d.underline && !d.strike) || crate::sprites::is_sprite(&d.text) || is_icon(&d.text) {
                     break;
                 }
@@ -1307,6 +1305,65 @@ impl Focusable for TerminalView {
 
 #[cfg(test)]
 mod tests {
+    struct Empty;
+    impl gpui::Render for Empty {
+        fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
+            gpui::div()
+        }
+    }
+
+    #[gpui::test]
+    fn missing_icons_render_as_text_at_every_position(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        window.update(cx, |_, window, _| {
+            for missing in ['\u{f557}', '\u{f85a}'] {
+                assert!(super::icon_glyph(missing).is_none());
+                assert!(super::icon_glyph('\u{f10d}').is_some());
+                for (underline, strike) in [(false, false), (true, false), (false, true), (true, true)] {
+                    for text in [format!("{missing}a\u{f10d}"), format!("\u{f10d}{missing}a"), format!("a\u{f10d}{missing}")] {
+                        let row: Vec<_> = text.chars().map(|c| crate::vt::Cell {
+                            text: c.to_string(), underline, strike, ..Default::default()
+                        }).collect();
+                        let ops = super::row_ops(&row, gpui::size(gpui::px(8.0), gpui::px(16.0)), window);
+                        let rendered: String = ops.iter().filter_map(|op| match op {
+                            super::RowOp::Text { line, .. } => Some(line.text.as_ref()),
+                            _ => None,
+                        }).collect();
+                        assert!(rendered.contains(missing), "{text:?}, underline={underline}, strike={strike}");
+                        assert!(ops.iter().any(|op| matches!(op, super::RowOp::Icon { .. })));
+                        let positions: Vec<_> = ops.iter().filter_map(|op| match op {
+                            super::RowOp::Text { x, line } => { assert!(!line.text.is_empty()); Some(*x) }
+                            super::RowOp::Icon { x, .. } => Some(*x),
+                            _ => None,
+                        }).collect();
+                        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+                    }
+                }
+            }
+        }).unwrap();
+    }
+
+    #[gpui::test]
+    fn private_use_rows_always_advance(cx: &mut gpui::TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        window.update(cx, |_, window, _| {
+            for code in (0xe000..=0xf8ff).chain(0xf0000..=0xf0fff) {
+                let text = char::from_u32(code).unwrap().to_string();
+                for decorated in [false, true] {
+                    let row = [crate::vt::Cell { text: text.clone(), underline: decorated, strike: decorated, ..Default::default() }];
+                    let ops = super::row_ops(&row, gpui::size(gpui::px(8.0), gpui::px(16.0)), window);
+                    assert_eq!(ops.len(), 1, "U+{code:X}");
+                    match &ops[0] {
+                        super::RowOp::Text { x, line } => { assert_eq!(*x, 0); assert_eq!(line.text.as_ref(), text); }
+                        super::RowOp::Icon { x, .. } => assert_eq!(*x, 0),
+                        super::RowOp::Sprite { x, text: rendered, .. } => { assert_eq!(*x, 0); assert_eq!(*rendered, text); }
+                        _ => panic!("PUA cell was not rendered: U+{code:X}"),
+                    }
+                }
+            }
+        }).unwrap();
+    }
+
     #[test]
     fn a_titles_spinner_is_not_part_of_it() {
         use super::shown_title;
