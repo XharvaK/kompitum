@@ -1,5 +1,20 @@
 # Herdr changelog
 
+## [0.1.6] - 2026-10-29
+
+### New
+- **Coming from herdr?** The welcome says what carries over and gives you one line for your agent to bring your keybinds and settings across. Open it again with Show the welcome again in the command palette.
+- **Updates at a glance.** Settings → Updates shows the app and the core on one row each, with What's new a click away.
+- **herdr-core updates with Herdr.** After Herdr updates, its core moves to the latest version too. Your terminals keep running.
+- **Screenshots in feedback.** Drop images straight onto the feedback form.
+
+### Fixed
+- Paste and copy in a peek go to the terminal you're peeking at, not the agent behind it.
+- Scroll back through thousands of lines instead of a few hundred.
+- Mod data, like topics and colors, can't get lost if Herdr closes in the middle of saving.
+- Commands with an argument they don't know say so instead of acting on the current terminal.
+- On Windows, file links at the end of a sentence open the right file.
+
 ## [0.1.5] - 2026-10-27
 <!-- spotlight -->
 
