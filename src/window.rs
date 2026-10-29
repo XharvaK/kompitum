@@ -31,6 +31,42 @@ use std::time::{Duration, Instant, SystemTime};
 const HEADER_HEIGHT: f32 = 30.0;
 const HANDLE: f32 = 6.0;
 
+// The three native buttons plus their trailing breathing room (also used by the tabs mod).
+const TRAFFIC_LIGHT_WIDTH: f32 = 64.0;
+
+fn traffic_light_divider_inset(n: &Node, axis: Axis, index: usize, macos: bool, zoom: f32) -> f32 {
+    if !macos || axis != Axis::Row || n.titlebar != Some(crate::layout::Titlebar::Layout) {
+        return 0.0;
+    }
+    let Some([x, _]) = n.traffic_lights else { return 0.0 };
+    let shown: Vec<_> = n.children().iter().filter(|child| !child.hidden).collect();
+    let mut edge = n.padding.map_or(0.0, |padding| padding.axes().1)
+        + index as f32 * (n.gap.unwrap_or(0.0) + n.divider.as_ref().map_or(0.0, |line| line.width));
+    for child in shown.iter().take(index + 1) {
+        let Some(Span::Px { px }) = child.size else { return 0.0 };
+        edge += px;
+    }
+    if edge * zoom < x || edge * zoom > x + TRAFFIC_LIGHT_WIDTH {
+        return 0.0;
+    }
+    // Keep the toolbar continuous above the rail; the divider starts with the content.
+    shown.iter().skip(index).take(2).filter_map(|column| {
+        let header = column.children().iter().find(|child| !child.hidden)?;
+        match header.size {
+            Some(Span::Px { px }) if header.window_drag => Some(px),
+            _ => None,
+        }
+    }).reduce(f32::min).unwrap_or(0.0)
+}
+
+fn separator_line(row: bool, width: f32, color: Hsla, top: f32) -> Div {
+    div().bg(color)
+        .when(row, |d| d.w(px(width)))
+        .when(row && top == 0.0, |d| d.h_full())
+        .when(row && top > 0.0, |d| d.absolute().top(px(top)).bottom_0())
+        .when(!row, |d| d.h(px(width)).w_full())
+}
+
 fn c(name: &str) -> Hsla {
     settings::color_or_literal(name)
 }
@@ -3783,7 +3819,13 @@ impl AppWindow {
         let mut sep = div().flex_none().relative().flex().items_center().justify_center();
         sep = if row { sep.w(px(width)).h_full() } else { sep.h(px(width)).w_full() };
         if let Some((w, color)) = line {
-            sep = sep.child(div().bg(color).when(row, |d| d.w(px(w)).h_full()).when(!row, |d| d.h(px(w)).w_full()));
+            let top = traffic_light_divider_inset(n, axis, index, cfg!(target_os = "macos"), zoom) * zoom;
+            if top > 0.0
+                && let Some(Paint::Color(background)) = n.children().iter().filter(|child| !child.hidden).nth(index).and_then(|child| child.background.as_ref())
+            {
+                sep = sep.bg(c(background));
+            }
+            sep = sep.child(separator_line(row, w, color, top));
         }
         if n.resizable() {
             let container = n.id.clone();
@@ -4421,6 +4463,41 @@ impl Render for AppWindow {
 mod tests {
     use gpui::{div, point, px, size, Context, IntoElement, Render, TestAppContext, Window};
     use gpui::prelude::*;
+
+    #[gpui::test]
+    fn traffic_light_dividers_start_below_the_toolbar(cx: &mut TestAppContext) {
+        use std::{cell::Cell, rc::Rc};
+        let mut layout: crate::layout::Node = serde_json::from_str(include_str!("../defaults/layouts/main.json")).unwrap();
+        let context = cx.add_empty_window();
+        for (macos, titlebar, width, zoom, expected) in [
+            (true, crate::layout::Titlebar::Layout, 44.0, 1.0, 42.0),
+            (true, crate::layout::Titlebar::Layout, 90.0, 0.75, 42.0),
+            (true, crate::layout::Titlebar::Layout, 60.0, 1.5, 0.0),
+            (true, crate::layout::Titlebar::Layout, 60.0, 1.0, 42.0),
+            (true, crate::layout::Titlebar::Layout, 76.0, 1.0, 42.0),
+            (true, crate::layout::Titlebar::Layout, 268.0, 1.0, 0.0),
+            (false, crate::layout::Titlebar::Layout, 44.0, 1.0, 0.0),
+            (true, crate::layout::Titlebar::System, 44.0, 1.0, 0.0),
+        ] {
+            layout.titlebar = Some(titlebar);
+            layout.children_mut().unwrap()[0].size = Some(crate::layout::Size::Px { px: width });
+            let top = super::traffic_light_divider_inset(&layout, crate::layout::Axis::Row, 0, macos, zoom);
+            assert_eq!(top, expected);
+            let bounds = Rc::new(Cell::new(gpui::Bounds::default()));
+            let observed = bounds.clone();
+            context.draw(point(px(0.0), px(0.0)), size(px(1.0), px(100.0)), move |_, _| {
+                div().size_full().relative().flex().items_center().justify_center().child(
+                    super::separator_line(true, 1.0, gpui::rgb(0xffffff).into(), top).child(
+                        gpui::canvas(move |bounds, _, _| observed.set(bounds), |_, _, _, _| {}).size_full()
+                    )
+                )
+            });
+            assert_eq!(bounds.get().origin.y, px(expected));
+            assert_eq!(bounds.get().size.height, px(100.0 - expected));
+        }
+        layout.traffic_lights = None;
+        assert_eq!(super::traffic_light_divider_inset(&layout, crate::layout::Axis::Row, 0, true, 1.0), 0.0);
+    }
 
     #[gpui::test]
     fn fitted_popups_use_their_rendered_size_at_the_window_edge(cx: &mut TestAppContext) {
