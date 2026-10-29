@@ -131,6 +131,8 @@ fn main() {
             }
         }
     };
+    #[cfg(target_os = "macos")]
+    core_bin::install_cli_link();
     if core.is_ok() {
         update::after_update();
     }

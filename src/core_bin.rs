@@ -12,7 +12,22 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+#[cfg(any(target_os = "macos", all(test, unix)))]
+mod cli_link;
+
 static BIN: OnceLock<PathBuf> = OnceLock::new();
+
+#[cfg(target_os = "macos")]
+pub fn install_cli_link() {
+    if let Err(e) = std::thread::Builder::new().name("cli-link".into()).spawn(|| {
+        let result = std::env::current_exe().and_then(|exe| cli_link::ensure(&crate::mods::home(), &exe));
+        if let Err(e) = result {
+            tracing::warn!("cannot install herdr-app CLI link: {e}");
+        }
+    }) {
+        tracing::warn!("cannot start herdr-app CLI setup: {e}");
+    }
+}
 
 /// The core the app runs (`hc` until one is found).
 pub fn path() -> PathBuf {

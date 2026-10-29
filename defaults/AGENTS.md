@@ -599,8 +599,11 @@ What's about the user, never a look:
   for spotlight entries actually shown expanded, not collapsed headlines.
   macOS releases require Apple Silicon; Intel Macs must build from source.
   Keep signed macOS bundles unchanged: don't edit their Info.plist or
-  re-sign them. Finder launches load the login shell's PATH, with the usual
-  install folders as a fallback.
+  re-sign them. On launch, an installed macOS bundle creates or repairs its
+  own `~/.local/bin/herdr-app` symlink, leaving personal files and other
+  apps' links alone. Disk-image and translocated launches don't create it.
+  Finder launches load the login shell's PATH, with the usual install
+  folders as a fallback.
 - `telemetry`: `false` stops anonymous usage data and deletes what wasn't
   sent (on when absent; Settings → Privacy shows each report word for
   word, and `telemetry()` in mods). Once a day the app sends counts:
