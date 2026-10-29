@@ -21,6 +21,7 @@ class DistributionTests(unittest.TestCase):
         self.stub("uname", 'case "$1" in -s) echo "$TEST_OS";; -m) echo "$TEST_ARCH";; esac')
         self.stub("curl", 'echo "unexpected download" >&2; exit 97')
         self.stub("cargo", 'echo "unexpected build" >&2; exit 97')
+        self.stub("sysctl", 'exit 1')
 
     def stub(self, name, body):
         path = self.bin / name
@@ -41,6 +42,24 @@ class DistributionTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("Intel Macs aren't supported; build from source", result.stderr)
                 self.assertNotIn("unexpected download", result.stderr)
+
+    def test_rosetta_mac_installer_uses_arm64(self):
+        for key in ("hw.optional.arm64", "sysctl.proc_translated"):
+            with self.subTest(key=key):
+                self.stub("sysctl", f'[ "$2" = "{key}" ] && echo 1')
+                self.stub("curl", '''while [ "$#" -gt 0 ]; do
+  if [ "$1" = -o ]; then
+    printf '%s' '{"version":"test","macos-aarch64":{"url":"test","sha256":"test"}}' > "$2"
+    exit 0
+  fi
+  shift
+done
+exit 97''')
+                result = self.run_script("distribution/install.sh", "Darwin", "x86_64")
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("Installing Herdr test for macos-aarch64", result.stdout)
+                self.assertIn("download is damaged", result.stderr)
+                self.assertNotIn("Intel Macs", result.stderr)
 
     def test_intel_mac_package_stops_before_build(self):
         for args in ((), ("x86_64-apple-darwin",)):

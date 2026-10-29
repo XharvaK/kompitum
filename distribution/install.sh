@@ -30,8 +30,14 @@ case "$(uname -m)" in
   arm64 | aarch64) arch=aarch64 ;;
   *) fail "no build for $(uname -m)" ;;
 esac
-if [ "$os" = macos ] && [ "$arch" != aarch64 ]; then
-  fail "Intel Macs aren't supported; build from source: https://github.com/herdrdev/herdr-app#build-from-source"
+if [ "$os" = macos ] && [ "$arch" = x86_64 ]; then
+  # Rosetta reports x86_64 even on Apple Silicon.
+  if [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ] ||
+     [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || true)" = 1 ]; then
+    arch=aarch64
+  else
+    fail "Intel Macs aren't supported; build from source: https://github.com/herdrdev/herdr-app#build-from-source"
+  fi
 fi
 target="$os-$arch"
 

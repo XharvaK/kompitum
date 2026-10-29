@@ -45,7 +45,7 @@ fn write(path: &Path, text: &str, expected: Option<&str>) -> Result<(), String> 
         return f.write_all(text.as_bytes()).map_err(|e| e.to_string());
     }
     // Resolve symlinks so replacing the file does not replace the link itself.
-    let target = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let target = crate::persist::resolve_target(path).map_err(|e| e.to_string())?;
     let temp = target.with_file_name(format!(
         ".herdr-app-write-{}",
         std::time::SystemTime::now()
