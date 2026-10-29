@@ -575,7 +575,9 @@ What's about the user, never a look:
 - `appearance`: `"light"` or `"dark"` always; absent, the system's. A layout
   with a light and a dark theme shows the matching one.
 - Updates: an installed app downloads them by itself and offers Restart and
-  What changed. Settings → Updates keeps app and core actions together;
+  What changed. The first start after an app update also updates herdr-core
+  to the latest release of the same generation, keeping terminals running.
+  Settings → Updates keeps app and core actions together;
   its What's new button opens the waiting update's release range, or this
   version's notes, in the What's new window. Reading never clears the waiting-update dot.
   Rare spotlight releases open What’s new after restart, once; otherwise a

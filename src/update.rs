@@ -10,7 +10,7 @@
 //! Herdr.app too, so the install's shape alone can't tell.
 //!
 //! The core is checked on the same clock (`core/latest.json`): a newer core
-//! of the same generation is offered (never applied without a click), unless
+//! of the same generation is offered (also applied after an app update), unless
 //! a package manager owns it. Within a generation a newer core only adds.
 
 use std::path::{Path, PathBuf};
@@ -200,12 +200,31 @@ fn check_core() -> Result<(), String> {
     if managed.is_some() {
         return Ok(());
     }
-    let text = curl_text(&format!("{}/core/latest.json", releases()))?;
-    let m: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("core/latest.json: {e}"))?;
-    let version = m["version"].as_str().ok_or("core/latest.json: no version")?;
-    let same = m["generation"].as_u64() == Some(crate::hc::GENERATION);
-    CORE.lock().unwrap().ready = (same && newer(version, &have)).then(|| version.to_owned());
+    let latest = latest_core()?;
+    let same = latest.generation == Some(crate::hc::GENERATION);
+    CORE.lock().unwrap().ready = (same && newer(&latest.version, &have)).then_some(latest.version);
     Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct CoreRelease {
+    version: String,
+    generation: Option<u64>,
+}
+
+fn latest_core() -> Result<CoreRelease, String> {
+    let text = curl_text(&format!("{}/core/latest.json", releases()))?;
+    serde_json::from_str(&text).map_err(|e| format!("core/latest.json: {e}"))
+}
+
+fn after_update_target<'a>(have: &str, latest: Option<&'a CoreRelease>, generation: u64, core_min: &'a str) -> Option<&'a str> {
+    if newer("0.1.5", have) {
+        return None;
+    }
+    Some(match latest {
+        Some(latest) if latest.generation == Some(generation) && newer(&latest.version, have) => &latest.version,
+        _ => core_min,
+    })
 }
 
 /// `hc update` (terminals keep running; the app reconnects when the core restarts).
@@ -441,10 +460,11 @@ fn marker() -> PathBuf {
     crate::mods::app_dir().join(".updated")
 }
 
-/// The first start after an update: bring the core up to at least what this
-/// app needs (`hc update --version`, terminals kept; a newer core stays).
-/// Cores before 0.1.5 lack `--version`: they get the latest of their
-/// generation instead. A core a package manager owns is left alone (hc says so).
+/// The first start after an app update brings the core to the latest release
+/// of this app's generation (`hc update --version`, terminals kept). If the
+/// release check fails or offers another generation, keep the minimum pin.
+/// Cores before 0.1.5 lack `--version`: they keep their same-generation update
+/// path. A core a package manager owns is left alone (hc says so).
 pub fn after_update() {
     if std::fs::remove_file(marker()).is_err() {
         return;
@@ -454,9 +474,10 @@ pub fn after_update() {
     }
     std::thread::spawn(|| {
         let have = crate::core_bin::version(&crate::core_bin::path()).unwrap_or_default();
-        let pins = !newer("0.1.5", have.trim_start_matches("hc "));
         CORE.lock().unwrap().updating = true;
-        let result = crate::core_bin::update_to(pins.then(crate::hc::core_min));
+        let latest = latest_core().map_err(|e| tracing::warn!("core release check after app update: {e}")).ok();
+        let target = after_update_target(have.trim_start_matches("hc "), latest.as_ref(), crate::hc::GENERATION, crate::hc::core_min());
+        let result = crate::core_bin::update_to(target);
         let mut core = CORE.lock().unwrap();
         core.updating = false;
         match result {
@@ -492,6 +513,23 @@ mod tests {
         assert!(!newer("1.0.0-rc.1", "1.0.0"));
         assert!(!newer("0.1.0", "0.1.0"));
         assert!(!newer("0.0.9", "0.1.0"));
+    }
+
+    #[test]
+    fn after_app_update_targets_latest_only_in_our_generation() {
+        let release = |version: &str, generation| CoreRelease { version: version.into(), generation };
+        let latest = release("0.1.13", Some(1));
+        assert_eq!(after_update_target("0.1.12", Some(&latest), 1, "0.1.11"), Some("0.1.13"));
+        for have in ["0.1.13", "0.1.14"] {
+            assert_eq!(after_update_target(have, Some(&latest), 1, "0.1.11"), Some("0.1.11"));
+        }
+        for latest in [None, Some(release("0.2.0", Some(2))), Some(release("0.1.13", None))] {
+            assert_eq!(after_update_target("0.1.12", latest.as_ref(), 1, "0.1.11"), Some("0.1.11"));
+            assert_eq!(after_update_target("0.1.4", latest.as_ref(), 1, "0.1.11"), None);
+        }
+        assert_eq!(after_update_target("0.1.4", Some(&latest), 1, "0.1.11"), None);
+        assert_eq!(after_update_target("0.1.5", Some(&latest), 1, "0.1.11"), Some("0.1.13"));
+        assert_eq!(after_update_target("0.1.5", None, 1, "0.1.11"), Some("0.1.11"));
     }
 
     #[test]
