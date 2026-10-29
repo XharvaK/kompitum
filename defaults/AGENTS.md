@@ -492,7 +492,10 @@ The main ones:
   `space.move {id, index}`, `space.select {index | id}`, `space.next`, `space.prev`.
   With no `argv`, the target core chooses that machine's default shell (PowerShell 7 when available on Windows).
 - Tabs: `tab.new {name?, space?, folder?, argv?, task?}` (argv: an
-  agent to run, task: its first message), or `tab.new {name?, space?, mod,
+  agent to run, task: its first message). Agents run in your interactive
+  shell (including fish), which stays open after the agent exits. A terminal
+  that exits with a nonzero code within two seconds of launch shows an error
+  toast with its exit code and last output lines. Or `tab.new {name?, space?, mod,
   props?}` for a tab whose only pane is a mod (a file, a board; split a shell
   in beside it like any tab), `tab.close {id?, confirmed?}` (closing the last tab
   closes its space and asks first unless confirmed),

@@ -107,6 +107,28 @@ pub fn shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
 }
 
+fn unix_agent_argv(sh: String, cmd: Vec<String>) -> Vec<String> {
+    let script = if std::path::Path::new(&sh).file_name().and_then(|s| s.to_str()) == Some("fish") {
+        "command $argv[2..]; exec $argv[1] -i"
+    } else {
+        "\"$@\"; exec \"$0\" -i"
+    };
+    let mut run = vec![sh.clone(), "-ic".into(), script.into(), sh];
+    run.extend(cmd);
+    run
+}
+
+fn launch_failure(record: &Value, output: &str) -> Option<String> {
+    let code = record["exit_code"].as_i64().filter(|c| *c != 0)?;
+    let elapsed = record["finished_ms"].as_u64()?.checked_sub(record["created_ms"].as_u64()?)?;
+    if record["reason"].as_str() != Some("exited") || elapsed > 2000 {
+        return None;
+    }
+    let lines = output.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>();
+    let tail = lines[lines.len().saturating_sub(5)..].join("\n");
+    Some(if tail.is_empty() { format!("Exit code {code}") } else { format!("Exit code {code}\n{tail}") })
+}
+
 /// The shipped layouts (defaults/layouts): `main` is Herdr's window (spaces
 /// sidebar, tab bar).
 const LAYOUTS: &[(&str, &str)] = &[
@@ -2093,6 +2115,9 @@ impl AppWindow {
             self.focused_pane = None;
             return self.sync(window, cx);
         }
+        if let Some(address) = self.model.address_of(block) {
+            self.notify_launch_failure(&address, window, cx);
+        }
         if let Some(o) = self.overlays.iter().find(|o| o.layout.as_ref().is_some_and(|l| l.find(block).is_some())) {
             let id = o.id.clone();
             return self.close_overlay(&id, window, cx);
@@ -2114,6 +2139,27 @@ impl AppWindow {
             }
         }
         // Otherwise the next listing checks closure; core owns lost terminals.
+    }
+
+    fn notify_launch_failure(&mut self, address: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.born.borrow_mut().remove(address).is_none() {
+            return;
+        }
+        let core = self.core.clone();
+        let address = address.to_owned();
+        cx.spawn_in(window, async move |this, cx| {
+            let failure = cx.background_executor().spawn(async move {
+                let record = core.call("terminal.get", json!({"terminal": address})).ok()?;
+                launch_failure(&record, "")?;
+                let output = core.call("terminal.read", json!({"terminal": address, "lines": 5})).unwrap_or(Value::Null);
+                launch_failure(&record, output["text"].as_str().unwrap_or_default())
+            }).await;
+            if let Some(body) = failure {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    this.open_overlay(mods::new_overlay_id(), json!({"kind":"toast", "notification":{"title":"Terminal failed to start", "body":body, "level":"error"}}), window, cx);
+                });
+            }
+        }).detach();
     }
 
     // ---- creating terminals ------------------------------------------------
@@ -2185,9 +2231,7 @@ impl AppWindow {
                 // PowerShell has no `-ic`: run it, then stay. `&` finds npm's `.cmd` shims too.
                 return vec![sh, "-NoExit".into(), "-Command".into(), crate::programs::powershell_line(&cmd)];
             }
-            let mut run = vec![sh.clone(), "-ic".into(), "\"$@\"; exec \"$0\" -i".into(), sh];
-            run.extend(cmd);
-            run
+            unix_agent_argv(sh, cmd)
         })
     }
 
@@ -2290,6 +2334,7 @@ impl AppWindow {
                 let mut changed = false;
                 for (pane, addr) in closed {
                     if this.model.address_of(&pane).as_deref() == Some(&addr) {
+                        this.notify_launch_failure(&addr, window, cx);
                         this.model.remove_pane(&pane);
                         changed = true;
                     }
@@ -2301,8 +2346,9 @@ impl AppWindow {
 
     fn just_born(&self, addr: &str) -> bool {
         let mut born = self.born.borrow_mut();
-        born.retain(|_, t| t.elapsed() < Duration::from_secs(5));
-        born.contains_key(addr)
+        // Keep launch facts until hidden panes have passed through `check_closed`.
+        born.retain(|_, t| t.elapsed() < Duration::from_secs(30));
+        born.get(addr).is_some_and(|t| t.elapsed() < Duration::from_secs(5))
     }
 
     /// Gives a running terminal without a pane (a sub-agent, say) one in the
@@ -4463,6 +4509,37 @@ impl Render for AppWindow {
 mod tests {
     use gpui::{div, point, px, size, Context, IntoElement, Render, TestAppContext, Window};
     use gpui::prelude::*;
+
+    #[test]
+    fn agent_commands_keep_arguments_out_of_shell_source() {
+        let cmd = vec!["agent".to_owned(), "a 'quoted' task; $(not-a-command)\nnext line".to_owned(), "".to_owned()];
+        for sh in ["/bin/bash", "/bin/zsh", "/bin/sh", "/bin/dash", "/bin/fish"] {
+            let run = super::unix_agent_argv(sh.into(), cmd.clone());
+            assert_eq!(run[0], sh);
+            assert_eq!(run[1], "-ic");
+            assert_eq!(run[3], sh);
+            assert_eq!(run[4..], cmd);
+            assert_eq!(run[2], if sh.ends_with("/fish") { "command $argv[2..]; exec $argv[1] -i" } else { "\"$@\"; exec \"$0\" -i" });
+        }
+    }
+
+    #[test]
+    fn early_launch_failures_show_exit_code_and_last_output_lines() {
+        let mut record = serde_json::json!({"reason":"exited", "exit_code":127, "created_ms":1000, "finished_ms":3000});
+        assert_eq!(super::launch_failure(&record, "old\none\ntwo\nthree\nfour\nfive\n\n").as_deref(), Some("Exit code 127\none\ntwo\nthree\nfour\nfive"));
+        assert_eq!(super::launch_failure(&record, "").as_deref(), Some("Exit code 127"));
+        record["exit_code"] = 0.into();
+        assert!(super::launch_failure(&record, "").is_none());
+        record["exit_code"] = 1.into();
+        record["finished_ms"] = 3001.into();
+        assert!(super::launch_failure(&record, "").is_none());
+        record["finished_ms"] = 999.into();
+        assert!(super::launch_failure(&record, "").is_none());
+        record["finished_ms"] = 2000.into();
+        record["reason"] = "killed".into();
+        assert!(super::launch_failure(&record, "").is_none());
+        assert!(super::launch_failure(&serde_json::Value::Null, "").is_none());
+    }
 
     #[gpui::test]
     fn traffic_light_dividers_start_below_the_toolbar(cx: &mut TestAppContext) {
