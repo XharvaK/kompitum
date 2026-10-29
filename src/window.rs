@@ -4393,6 +4393,7 @@ impl Render for AppWindow {
                 if ev.pressed_button != Some(MouseButton::Left) {
                     this.drag = None;
                     this.save();
+                    this.publish(cx);
                     return;
                 }
                 this.drag_to(ev.position);
@@ -4402,6 +4403,8 @@ impl Render for AppWindow {
                 this.drag_from = None;
                 if this.drag.take().is_some() {
                     this.save();
+                    // Mods see the new sizes (the sidebar picks its rail by width).
+                    this.publish(cx);
                     this.flush_documents(false, window, cx);
                 }
             }))
