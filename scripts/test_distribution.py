@@ -81,13 +81,8 @@ exit 97''')
 
     def test_packages_keep_full_notices_on_every_platform(self):
         checkout = self.bin / "checkout"
-        inputs = [
-            line.split(" ", 2)[2]
-            for line in (ROOT / "THIRD-PARTY-NOTICES").read_text().splitlines()
-            if line.startswith("Input-SHA256: ")
-        ]
         for path in [
-            *inputs, "LICENSE", "THIRD-PARTY-NOTICES", "scripts/package",
+            "Cargo.toml", "LICENSE", "THIRD-PARTY-NOTICES", "scripts/package",
             "assets/icons/herdr-ui-icon-clean.svg", "assets/icons/Herdr.icns",
         ]:
             destination = checkout / path
@@ -115,13 +110,21 @@ exit 97''')
                             archive.extractfile(f"{prefix}/{name}").read(),
                             (ROOT / name).read_bytes(),
                         )
-        lock = checkout / "Cargo.lock"
-        lock.write_text(lock.read_text() + "\n# changed dependency graph\n")
         self.stub("cargo", 'echo "unexpected build" >&2; exit 97')
-        result = self.run_script(checkout / "scripts/package", "Linux", "x86_64")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("Cargo.lock changed; run just notices", result.stderr)
-        self.assertNotIn("unexpected build", result.stderr)
+        for name in ("LICENSE", "THIRD-PARTY-NOTICES"):
+            notice = checkout / name
+            original = notice.read_bytes()
+            for state in ("empty", "missing"):
+                with self.subTest(notice=name, state=state):
+                    if state == "empty":
+                        notice.write_bytes(b"")
+                    else:
+                        notice.unlink()
+                    result = self.run_script(checkout / "scripts/package", "Linux", "x86_64")
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn(f"{name} is missing or empty", result.stderr)
+                    self.assertNotIn("unexpected build", result.stderr)
+            notice.write_bytes(original)
 
     def test_supported_packages_still_try_build(self):
         for os_name, arch in (("Darwin", "arm64"), ("Linux", "x86_64"), ("Linux", "aarch64")):

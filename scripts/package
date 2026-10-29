@@ -50,13 +50,9 @@ target="$os-$arch"
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
 echo "package: herdr-app $version for $target"
-# Check freshness without compiling a second, debug build just to run a test.
-while read -r marker expected input; do
-  [[ $marker == Input-SHA256: ]] || continue
-  input=${input%$'\r'}
-  actual=$(tr -d '\r' < "$input" | sha256 -)
-  [[ $actual == "$expected" ]] || { echo "package: $input changed; run just notices" >&2; exit 1; }
-done < THIRD-PARTY-NOTICES
+for notice in LICENSE THIRD-PARTY-NOTICES; do
+  [[ -s $notice ]] || { echo "package: $notice is missing or empty" >&2; exit 1; }
+done
 # Only release builds update themselves (src/update.rs).
 HERDR_APP_RELEASE=1 cargo build --release --locked ${triple:+--target "$triple"}
 
