@@ -8,6 +8,7 @@ const I = (name) => `frame/welcome/${name}.svg`;
 const W = (name) => `mods/workspace-chrome/${name}.svg`;
 const PAGES = 4;
 const ASK = "Read ~/.config/herdr-app/AGENTS.md, then tell me what you can change in Herdr.";
+const MIGRATE = "Read `herdr-app --skill`, then migrate my keybinds and settings from ~/.config/herdr/config.toml";
 const APPEARANCES = [
   [null, "System"],
   ["light", "Light"],
@@ -39,7 +40,7 @@ export default class Welcome extends View {
   init(_props, cx) {
     this.page = 1;
     this.machines = [];
-    this.copied = false;
+    this.copied = null;
     this.appearance = null;
     this.handle = cx.focus_handle();
     this.handle.focus();
@@ -221,6 +222,63 @@ export default class Welcome extends View {
       .child(v_flex().flex_1().min_w(0).gap(3).child(div().text_size(13.5).font_semibold().text_color(t.foreground).child(title)).child(this.para(t, body)));
   }
 
+  copyLine(t, text, id = "w-copy") {
+    const copied = this.copied === id;
+    return v_flex()
+      .gap(10)
+      .p(12)
+      .rounded(10)
+      .bg(t.background)
+      .border_1()
+      .border_color(t.input)
+      .child(div().text_size(13).line_height("20px").text_color(t.foreground).child(text))
+      .child(
+        h_flex().child(
+          div()
+            .id(id)
+            .px(12)
+            .py(5)
+            .rounded(7)
+            .cursor_pointer()
+            .text_size(12.5)
+            .font_medium()
+            .bg(copied ? t.ansi2 + "22" : t.raised)
+            .text_color(copied ? t.ansi2 : t.foreground)
+            .border_1()
+            .border_color(t.border)
+            .hover((s) => s.bg(t.hover))
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_click((_e, cx) => {
+              cx.write_to_clipboard(text);
+              this.copied = id;
+              cx.notify();
+            })
+            .child(copied ? "Copied" : "Copy"),
+        ),
+      );
+  }
+
+  comingFromHerdr(t) {
+    return v_flex()
+      .gap(12)
+      .p(16)
+      .rounded(12)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.raised)
+      .child(
+        h_flex()
+          .gap(10)
+          .items_center()
+          .child(svg(I("terminal")).size(16).text_color(t.muted))
+          .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child("Coming from herdr?")),
+      )
+      .child(this.para(t, "This is a new app on a new core. Your herdr workspaces stay where they are; nothing moves over."))
+      .child(this.para(t, "Same idea as before: spaces, tabs and terminals."))
+      .child(this.para(t, "Want your keybinds and settings carried over? Give your agent this line:"))
+      .child(this.copyLine(t, MIGRATE, "w-migrate-copy"));
+  }
+
   // Pages ---------------------------------------------------------------
 
   pageOne(t) {
@@ -232,7 +290,8 @@ export default class Welcome extends View {
       .child(this.feature(t, "layers", "Your other machines, in the same window", "A server or a Mac mini runs its own herdr-core, so its agents keep going even while this laptop sleeps."))
       .child(div().h(1).bg(t.border))
       .child(h_flex().gap(10).items_center().child(div().w(84).text_size(13).text_color(t.muted).child("Appearance")).child(this.segment(t, APPEARANCES, this.appearance, (v, cx) => this.setAppearance(v, cx))))
-      .child(h_flex().gap(10).items_center().child(div().w(84).text_size(13).text_color(t.muted).child("Size")).child(this.sizeControl(t)));
+      .child(h_flex().gap(10).items_center().child(div().w(84).text_size(13).text_color(t.muted).child("Size")).child(this.sizeControl(t)))
+      .child(this.comingFromHerdr(t));
   }
 
   machineRow(t, icon, name, note, ok) {
@@ -375,40 +434,7 @@ export default class Welcome extends View {
         ),
       )
       .child(this.title(t, "Make it yours", "Every part of this window is a layout or a mod: plain files your agent can change or add to. Give it this line to start:"))
-      .child(
-        v_flex()
-          .gap(10)
-          .p(12)
-          .rounded(10)
-          .bg(t.background)
-          .border_1()
-          .border_color(t.input)
-          .child(div().text_size(13).line_height("20px").text_color(t.foreground).child(ASK))
-          .child(
-            h_flex().child(
-              div()
-                .id("w-copy")
-                .px(12)
-                .py(5)
-                .rounded(7)
-                .cursor_pointer()
-                .text_size(12.5)
-                .font_medium()
-                .bg(this.copied ? t.ansi2 + "22" : t.raised)
-                .text_color(this.copied ? t.ansi2 : t.foreground)
-                .border_1()
-                .border_color(t.border)
-                .hover((s) => s.bg(t.hover))
-                .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                .on_click((_e, cx) => {
-                  cx.write_to_clipboard(ASK);
-                  this.copied = true;
-                  cx.notify();
-                })
-                .child(this.copied ? "Copied" : "Copy"),
-            ),
-          ),
-      )
+      .child(this.copyLine(t, ASK))
       .child(this.para(t, "Then ask for anything: \u201cmove the sidebar to the right\u201d, \u201ca panel with my pull requests\u201d."))
       .child(
         v_flex()
