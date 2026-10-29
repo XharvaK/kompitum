@@ -597,6 +597,7 @@ What's about the user, never a look:
   media uses the normal HTTPS cache.
   Mods use `updates().notes` and `presentUpdateNotes([version])` only
   for spotlight entries actually shown expanded, not collapsed headlines.
+  macOS releases require Apple Silicon; Intel Macs must build from source.
   Keep signed macOS bundles unchanged: don't edit their Info.plist or
   re-sign them. Finder launches load the login shell's PATH, with the usual
   install folders as a fallback.

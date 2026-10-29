@@ -2,12 +2,11 @@
 # Builds a release of the app for this machine and packs it:
 #
 #   scripts/package            -> dist/herdr-app-<os>-<arch>.tar.gz
-#   scripts/package <triple>   -> the same for another Rust target, e.g.
-#                                 x86_64-apple-darwin on an Apple Silicon Mac
+#   scripts/package <triple>   -> the same for another supported Rust target
 #
 # Linux: a folder holding herdr-app and the icon.
 # macOS: Herdr.app, signed with APPLE_CERTIFICATE_P12 when available,
-# otherwise ad hoc. Notarization is a separate, non-blocking CI test.
+# otherwise ad hoc. The notarized DMG is a separate, non-blocking CI job.
 # Windows (Git Bash): a folder holding herdr-app.exe and the icon.
 # Windows has curl and tar too, so the app updates the same way.
 # No core inside: the installer and the app install the core's own release
@@ -42,6 +41,10 @@ case "$arch" in
   arm64 | aarch64) arch=aarch64 ;;
   *) echo "package: unsupported CPU $arch" >&2; exit 1 ;;
 esac
+if [[ $os == macos && $arch != aarch64 ]]; then
+  echo "package: Intel Macs aren't supported; build from source instead." >&2
+  exit 1
+fi
 target="$os-$arch"
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }

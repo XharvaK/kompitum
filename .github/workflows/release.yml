@@ -28,7 +28,8 @@ on:
       - scripts/package
       - scripts/mac-sign
       - scripts/macos-entitlements.plist
-      - scripts/mac-notary-test
+      - scripts/mac-dmg
+      - distribution/macos/dmg/**
       - scripts/ci-sources
       - .github/workflows/release.yml
   # Builds only; publishing needs a tag.
@@ -57,8 +58,6 @@ jobs:
           - { target: linux-x86_64, runner: ubuntu-22.04 }
           - { target: linux-aarch64, runner: ubuntu-22.04-arm }
           - { target: macos-aarch64, runner: macos-15 }
-          # Cross-compile Intel macOS on Apple Silicon.
-          - { target: macos-x86_64, runner: macos-15, rust-target: x86_64-apple-darwin }
           - { target: windows-x86_64, runner: windows-2022 }
     runs-on: ${{ matrix.runner }}
     # Only tags can access the release environment's Apple certificate.
@@ -75,7 +74,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          targets: ${{ matrix.rust-target }}
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: 0.16.0
@@ -110,7 +108,7 @@ jobs:
           [ "$want" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME but Cargo.toml says $want"; exit 1; }
       - name: Keep unchanged sources fresh
         run: scripts/ci-sources restore
-      # Screenshot tests run natively on macOS, including the Intel cross-build row.
+      # Screenshot tests run natively on macOS.
       # Windows runners lack an interactive desktop.
       - name: Build the screenshot test
         if: runner.os == 'macOS'
@@ -127,7 +125,7 @@ jobs:
           RELEASES_URL: ${{ vars.RELEASES_URL }}
           APPLE_CERTIFICATE_P12: ${{ runner.os == 'macOS' && github.ref_type == 'tag' && secrets.APPLE_CERTIFICATE_P12 || '' }}
           APPLE_CERTIFICATE_PASSWORD: ${{ runner.os == 'macOS' && github.ref_type == 'tag' && secrets.APPLE_CERTIFICATE_PASSWORD || '' }}
-        run: scripts/package ${{ matrix.rust-target }}
+        run: scripts/package
       - name: Note the sources the cache was built from
         if: github.ref == 'refs/heads/master'
         run: scripts/ci-sources record
@@ -198,32 +196,45 @@ jobs:
           overwrite: true
           retention-days: 7
 
-  # Experiment only: no stapling, DMG, artifact replacement, or publish dependency.
-  notary-test:
+  # A website download, never a dependency of update publishing below.
+  mac-dmg:
     needs: build
     if: github.event_name == 'push' && github.ref_type == 'tag' && github.triggering_actor == 'ogulcancelik'
     environment: release
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 40
     continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [macos-aarch64, macos-x86_64]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: herdr-app-${{ matrix.target }}
+          name: herdr-app-macos-aarch64
           path: dist
-      - name: Time Apple's notarization service
+      - name: Install DMG tools
+        run: brew install create-dmg jq awscli
+      - name: Build, sign, notarize and verify DMG
         env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: scripts/mac-notary-test dist/herdr-app-${{ matrix.target }}.tar.gz
+        run: |
+          tar -xzf dist/herdr-app-macos-aarch64.tar.gz -C dist
+          scripts/mac-dmg dist/Herdr.app dist/Herdr.dmg
+      - name: Upload website download
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          ENDPOINT: https://${{ vars.CLOUDFLARE_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          BUCKET: ${{ vars.R2_BUCKET }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          aws s3 cp --endpoint-url "$ENDPOINT" dist/Herdr.dmg "s3://$BUCKET/app/$version/Herdr.dmg" --cache-control "public, max-age=31536000, immutable" --content-type application/x-apple-diskimage
+          aws s3 cp --endpoint-url "$ENDPOINT" dist/Herdr.dmg "s3://$BUCKET/app/Herdr.dmg" --cache-control "no-cache" --content-type application/x-apple-diskimage
 
   publish:
     needs: [build, sign-windows]

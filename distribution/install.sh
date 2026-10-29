@@ -30,6 +30,9 @@ case "$(uname -m)" in
   arm64 | aarch64) arch=aarch64 ;;
   *) fail "no build for $(uname -m)" ;;
 esac
+if [ "$os" = macos ] && [ "$arch" != aarch64 ]; then
+  fail "Intel Macs aren't supported; build from source: https://github.com/herdrdev/herdr-app#build-from-source"
+fi
 target="$os-$arch"
 
 sha256() {
