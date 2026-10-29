@@ -303,7 +303,9 @@ layout's look and a block can differ:
 - `themes/<name>.json`: `{ "background", "foreground", "selection",
   "cursor"?, "ansi": [16 colors], "colors"?: {...} }`, all `#rrggbb`; panel
   colors are derived from these, `colors` overrides them. Herdr ships
-  `atom-one-dark`. A theme named like a layout (`themes/win98.json`) is
+  `atom-one-dark`. The original unedited Atom One Dark and Win98 theme files
+  are upgraded to readable terminal colors; edited theme files are kept.
+  A theme named like a layout (`themes/win98.json`) is
   that layout's own: Settings offers it only there.
 - `font` / `font_size`: the terminals' (px at zoom 1); `ui_font`: the mods'
   (their text sizes are their own, in px, and follow zoom). Optional: without
@@ -621,6 +623,13 @@ What's about the user, never a look:
   Alt shortcuts (including Option+E without composition); `"off"` keeps native
   Option input on every layout. Changes apply immediately, including layout
   switches. Linux and Windows are unchanged.
+- `minimum_contrast`: terminal text contrast ratio, `1` (default) leaves
+  program colors unchanged. Set it to `1.6` to enable the previous readability
+  adjustment, or another number from `1` to `21`. Text below that ratio is
+  replaced with near-white or near-black, whichever contrasts more with its
+  background; this is a threshold, not a guaranteed resulting ratio.
+  Box/block, Powerline and sprite glyph colors are never adjusted.
+  Changes apply immediately, including text already on screen.
 - `clipboard_write`: `false` blocks terminal programs from writing the local
   clipboard (default `true`, including remote terminals attached in this window).
   OSC 52 accepts base64 UTF-8 text up to 1 MiB: `c` writes the system clipboard,
