@@ -284,7 +284,18 @@ impl TerminalView {
             for item in batch {
                 match item {
                     Stream::Data(bytes) => {
+                        g.vt.allow_clipboard_write(crate::settings::get().clipboard_write);
                         g.vt.write(&bytes);
+                        let [clipboard, primary] = g.vt.take_clipboard();
+                        if let Some(text) = clipboard {
+                            cx.write_to_clipboard(ClipboardItem::new_string(text));
+                        }
+                        #[cfg(target_os = "linux")]
+                        if let Some(text) = primary {
+                            cx.write_to_primary(ClipboardItem::new_string(text));
+                        }
+                        #[cfg(not(target_os = "linux"))]
+                        let _ = primary;
                         if let Some(ch) = g.channel {
                             g.core.credit(ch, bytes.len());
                             // What the core leaves to viewers (e.g. kitty graphics replies).
@@ -618,19 +629,30 @@ fn image_file(item: &ClipboardItem) -> Option<std::path::PathBuf> {
         ClipboardEntry::Image(i) => Some(i),
         _ => None,
     })?;
-    let ext = match image.format {
+    let (format, bytes) = paste_image_bytes(image.format, &image.bytes)?;
+    let ext = match format {
         ImageFormat::Jpeg => "jpg",
         ImageFormat::Gif => "gif",
         ImageFormat::Webp => "webp",
-        ImageFormat::Bmp => "bmp",
-        ImageFormat::Tiff => "tiff",
         ImageFormat::Svg => "svg",
         _ => "png",
     };
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
     let path = std::env::temp_dir().join(format!("herdr-paste-{stamp}.{ext}"));
-    std::fs::write(&path, &image.bytes).ok()?;
+    std::fs::write(&path, bytes).ok()?;
     Some(path)
+}
+
+fn paste_image_bytes(format: ImageFormat, bytes: &[u8]) -> Option<(ImageFormat, std::borrow::Cow<'_, [u8]>)> {
+    let source = match format {
+        ImageFormat::Tiff => image::ImageFormat::Tiff,
+        ImageFormat::Bmp => image::ImageFormat::Bmp,
+        _ => return Some((format, std::borrow::Cow::Borrowed(bytes))),
+    };
+    let image = image::load_from_memory_with_format(bytes, source).ok()?;
+    let mut png = std::io::Cursor::new(Vec::new());
+    image.write_to(&mut png, image::ImageFormat::Png).ok()?;
+    Some((ImageFormat::Png, std::borrow::Cow::Owned(png.into_inner())))
 }
 
 fn link_mods(m: &Modifiers) -> bool {
@@ -1362,6 +1384,24 @@ mod tests {
                 }
             }
         }).unwrap();
+    }
+
+    #[test]
+    fn clipboard_tiff_and_bmp_become_png() {
+        use super::{paste_image_bytes, ImageFormat};
+        let original = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(2, 3, image::Rgba([12, 34, 56, 255])));
+        for (source, format) in [(image::ImageFormat::Tiff, ImageFormat::Tiff), (image::ImageFormat::Bmp, ImageFormat::Bmp)] {
+            let mut encoded = std::io::Cursor::new(Vec::new());
+            original.write_to(&mut encoded, source).unwrap();
+            let (format, bytes) = paste_image_bytes(format, encoded.get_ref()).unwrap();
+            assert_eq!(format, ImageFormat::Png);
+            assert_eq!(image::guess_format(&bytes).unwrap(), image::ImageFormat::Png);
+            assert_eq!(image::load_from_memory(&bytes).unwrap().to_rgba8(), original.to_rgba8());
+        }
+        assert!(paste_image_bytes(ImageFormat::Tiff, b"broken").is_none());
+        let (_, bytes) = paste_image_bytes(ImageFormat::Jpeg, b"unchanged").unwrap();
+        assert!(matches!(bytes, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(&*bytes, b"unchanged");
     }
 
     #[test]

@@ -518,7 +518,8 @@ The main ones:
   `terminal.show {terminal?, pane?}`, `terminal.copy`, `terminal.paste` (an image
   alone, into a terminal on another machine: copied there, its path pasted; a
   local program reads the clipboard itself), `terminal.paste_image` (Ctrl+V: the
-  same for an image; otherwise Ctrl+V goes to the program),
+  same for an image; otherwise Ctrl+V goes to the program). TIFF and BMP clipboard
+  images are converted to PNG before sending,
   `terminal.right_click {to: "program" | "menu", terminal?}` (where right-clicks go
   when the program takes the mouse; kept as its label `herdr.right-click=program`;
   Shift+right-click is always Herdr's menu). Copy, paste, paste-image and implicit
@@ -614,6 +615,12 @@ What's about the user, never a look:
   apps' links alone. Disk-image and translocated launches don't create it.
   Finder launches load the login shell's PATH, with the usual install
   folders as a fallback.
+- `clipboard_write`: `false` blocks terminal programs from writing the local
+  clipboard (default `true`, including remote terminals attached in this window).
+  OSC 52 accepts base64 UTF-8 text up to 1 MiB: `c` writes the system clipboard,
+  `p` writes Linux primary selection. `s` is ignored; cut buffers `0`–`7`
+  are treated as the system clipboard.
+  Clipboard reads (`?`) are never allowed.
 - `telemetry`: `false` stops anonymous usage data and deletes what wasn't
   sent (on when absent; Settings → Privacy shows each report word for
   word, and `telemetry()` in mods). Once a day the app sends counts:

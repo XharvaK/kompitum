@@ -115,6 +115,8 @@ struct Shared {
     title_changed: bool,
     /// Replies the terminal writes back to the program (e.g. kitty graphics acks).
     replies: Vec<u8>,
+    clipboard_write: bool,
+    clipboard: [Option<String>; 2],
 }
 
 /// One kitty graphics image on screen, in cells of the viewport.
@@ -135,6 +137,55 @@ unsafe extern "C" fn on_write_pty(_t: GhosttyTerminal, userdata: *mut c_void, da
     let shared = unsafe { &mut *(userdata as *mut Shared) };
     if !data.is_null() && len > 0 {
         shared.replies.extend_from_slice(unsafe { std::slice::from_raw_parts(data, len) });
+    }
+}
+
+const MAX_CLIPBOARD_BYTES: usize = 1 << 20;
+
+unsafe extern "C" fn on_clipboard_write(_t: GhosttyTerminal, userdata: *mut c_void, request: *const GhosttyClipboardWrite) {
+    let shared = unsafe { &mut *(userdata as *mut Shared) };
+    let request = unsafe { &*request };
+    if !shared.clipboard_write || request.size < std::mem::size_of::<GhosttyClipboardWrite>() {
+        return;
+    }
+    let slot = match request.location {
+        GHOSTTY_CLIPBOARD_LOCATION_STANDARD => 0,
+        GHOSTTY_CLIPBOARD_LOCATION_PRIMARY if cfg!(target_os = "linux") => 1,
+        _ => return,
+    };
+    let text = if request.contents_len == 0 {
+        ""
+    } else {
+        if request.contents_len != 1 || request.contents.is_null() {
+            return;
+        }
+        let content = unsafe { &*request.contents };
+        if content.mime.ptr.is_null() || content.data.len > MAX_CLIPBOARD_BYTES {
+            return;
+        }
+        let mime = unsafe { std::slice::from_raw_parts(content.mime.ptr, content.mime.len) };
+        if mime != b"text/plain" {
+            return;
+        }
+        let bytes = if content.data.len == 0 {
+            &[][..]
+        } else if content.data.ptr.is_null() {
+            return;
+        } else {
+            unsafe { std::slice::from_raw_parts(content.data.ptr, content.data.len) }
+        };
+        let Ok(text) = std::str::from_utf8(bytes) else { return };
+        text
+    };
+    // Keep only the last write per destination, bounding a whole output batch.
+    shared.clipboard[slot] = Some(text.to_owned());
+    if let Some(reply) = request.reply {
+        let result = GhosttyClipboardWriteReply {
+            size: std::mem::size_of::<GhosttyClipboardWriteReply>(),
+            result: GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS,
+            remember: false,
+        };
+        unsafe { reply(request, &result) };
     }
 }
 
@@ -285,7 +336,7 @@ impl Vt {
             ok(ghostty_mouse_event_new(std::ptr::null(), &mut mouse_event), "mouse_event_new");
 
             install_png_decoder();
-            let mut shared = Box::new(Shared { state, held_since: None, title_changed: false, replies: Vec::new() });
+            let mut shared = Box::new(Shared { state, held_since: None, title_changed: false, replies: Vec::new(), clipboard_write: true, clipboard: [None, None] });
             let ud = &mut *shared as *mut Shared as *const c_void;
             ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_USERDATA, ud);
             let hold: GhosttyTerminalRenderHoldFn = Some(on_render_hold);
@@ -294,6 +345,11 @@ impl Vt {
             ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, std::mem::transmute(title));
             let write: GhosttyTerminalWritePtyFn = Some(on_write_pty);
             ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_WRITE_PTY, std::mem::transmute(write));
+            let clipboard: GhosttyTerminalClipboardWriteFn = Some(on_clipboard_write);
+            ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE, std::mem::transmute::<GhosttyTerminalClipboardWriteFn, *const c_void>(clipboard));
+            let max_clipboard: usize = MAX_CLIPBOARD_BYTES;
+            ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES, &max_clipboard as *const _ as *const c_void);
+            // No read callback: programs can never read the local clipboard.
             let images: u64 = 128 << 20;
             ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &images as *const _ as *const c_void);
 
@@ -655,6 +711,14 @@ impl Vt {
     pub fn write(&mut self, bytes: &[u8]) {
         self.win32.watch(bytes);
         unsafe { ghostty_terminal_vt_write(self.term, bytes.as_ptr(), bytes.len()) };
+    }
+
+    pub fn allow_clipboard_write(&mut self, allow: bool) {
+        self.shared.clipboard_write = allow;
+    }
+
+    pub fn take_clipboard(&mut self) -> [Option<String>; 2] {
+        std::mem::take(&mut self.shared.clipboard)
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16, cell_w: u32, cell_h: u32) {
@@ -1223,6 +1287,49 @@ mod tests {
         assert_eq!(hit.target, "https://herdr.dev");
         assert_eq!(hit.spans, vec![(0, 4, 11)]);
         assert_eq!(vt.link_at(13, 0, crate::links::find), None);
+    }
+
+    #[test]
+    fn osc52_writes_are_decoded_and_bounded() {
+        use base64::Engine;
+        let mut vt = Vt::new(80, 24);
+        vt.write(b"\x1b]52;c;aGVs");
+        assert_eq!(vt.take_clipboard(), [None, None]);
+        vt.write(b"bG8=\x07");
+        assert_eq!(vt.take_clipboard(), [Some("hello".into()), None]);
+        vt.write(b"\x1b]52;c;8J+YgA==\x1b\\");
+        assert_eq!(vt.take_clipboard(), [Some("😀".into()), None]);
+        for selector in b"01234567" {
+            vt.write(format!("\x1b]52;{};aGk=\x07", *selector as char).as_bytes());
+            assert_eq!(vt.take_clipboard(), [Some("hi".into()), None]);
+        }
+        vt.write(b"\x1b]52;p;aGk=\x07");
+        let expected = if cfg!(target_os = "linux") { Some("hi".into()) } else { None };
+        assert_eq!(vt.take_clipboard(), [None, expected]);
+        for sequence in [b"\x1b]52;c;?\x07".as_slice(), b"\x1b]52;c;%%%\x07", b"\x1b]52;c;/w==\x07", b"\x1b]52;s;aGk=\x07"] {
+            vt.write(sequence);
+            assert_eq!(vt.take_clipboard(), [None, None]);
+            assert!(vt.take_replies().is_empty());
+        }
+        let limit = base64::engine::general_purpose::STANDARD.encode(vec![b'x'; MAX_CLIPBOARD_BYTES]);
+        vt.write(format!("\x1b]52;c;{limit}\x07").as_bytes());
+        assert_eq!(vt.take_clipboard()[0].as_ref().map(String::len), Some(MAX_CLIPBOARD_BYTES));
+        let huge = base64::engine::general_purpose::STANDARD.encode(vec![b'x'; MAX_CLIPBOARD_BYTES + 1]);
+        vt.write(format!("\x1b]52;c;{huge}\x07").as_bytes());
+        assert_eq!(vt.take_clipboard(), [None, None]);
+        vt.write(b"\x1b]52;c;b2s=\x07");
+        assert_eq!(vt.take_clipboard(), [Some("ok".into()), None]);
+        vt.allow_clipboard_write(false);
+        vt.write(b"\x1b]52;c;aGk=\x07");
+        assert_eq!(vt.take_clipboard(), [None, None]);
+        vt.allow_clipboard_write(true);
+        vt.write(b"\x1b]52;c;YQ==\x07\x1b]52;c;Yg==\x07");
+        assert_eq!(vt.take_clipboard(), [Some("b".into()), None]);
+        vt.write(b"\x1b]52;c;YQ==\x07\x1b]52;c;\x07");
+        assert_eq!(vt.take_clipboard(), [Some(String::new()), None]);
+        vt.write(b"\x1b]52;p;\x1b\\");
+        let expected = if cfg!(target_os = "linux") { Some(String::new()) } else { None };
+        assert_eq!(vt.take_clipboard(), [None, expected]);
     }
 
     #[test]
