@@ -513,7 +513,9 @@ The main ones:
   same for an image; otherwise Ctrl+V goes to the program),
   `terminal.right_click {to: "program" | "menu", terminal?}` (where right-clicks go
   when the program takes the mouse; kept as its label `herdr.right-click=program`;
-  Shift+right-click is always Herdr's menu).
+  Shift+right-click is always Herdr's menu). Copy, paste, paste-image and implicit
+  right-click targeting follow keyboard focus, including peek and floating terminals;
+  with no terminal holding keyboard focus, they use the focused pane or block.
 - Agents: `agent.next`, `agent.prev`, `agent.focus {terminal}`.
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`

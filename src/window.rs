@@ -1414,6 +1414,13 @@ impl AppWindow {
         self.swapped.get(pane).and_then(|_| self.terms.get(&format!("{pane}{SWAP}"))).or_else(|| self.terms.get(pane))
     }
 
+    /// Peeks, floats and swapped-in views own keyboard focus without changing the model pane.
+    fn focused_terminal(&self, window: &Window) -> Option<&Term> {
+        self.terms.values().find(|t| t.focus.is_focused(window))
+            .or_else(|| self.focused_pane.as_deref().and_then(|p| self.pane_term(p)))
+            .or_else(|| self.model.focused_pane().and_then(|p| self.pane_term(&p)))
+    }
+
     fn pane_focus(&self, pane: &str) -> Option<FocusHandle> {
         self.pane_term(pane).map(|t| t.focus.clone())
     }
@@ -2754,7 +2761,7 @@ impl AppWindow {
                     Some("menu") => "",
                     other => return self.fail(format!("terminal.right_click to is \"program\" or \"menu\", not {other:?}")),
                 };
-                let t = Self::owned(a, "terminal").or_else(|| self.focused_pane.as_deref().and_then(|p| self.pane_term(p)).map(|t| t.address.clone())).or_else(|| self.model.focused_pane().and_then(|p| self.model.address_of(&p)));
+                let t = Self::owned(a, "terminal").or_else(|| self.focused_terminal(window).map(|t| t.address.clone()));
                 let Some(t) = t.filter(|t| self.live.contains_key(t)) else { return self.fail("no such running terminal") };
                 // Off the UI thread: a terminal on a slow machine answers late.
                 let core = self.core.clone();
@@ -2803,7 +2810,7 @@ impl AppWindow {
                 }
             }
             "terminal.copy" | "terminal.paste" | "terminal.paste_image" => {
-                if let Some(t) = self.focused_pane.as_ref().and_then(|p| self.terms.get(p)) {
+                if let Some(t) = self.focused_terminal(window) {
                     t.view.update(cx, |v, cx| match name {
                         "terminal.paste" => v.paste(cx),
                         "terminal.paste_image" => v.paste_image(cx),
