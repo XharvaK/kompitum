@@ -586,7 +586,9 @@ What's about the user, never a look:
 - `appearance`: `"light"` or `"dark"` always; absent, the system's. A layout
   with a light and a dark theme shows the matching one.
 - Updates: an installed app downloads them by itself and offers Restart and
-  What changed. The first start after an app update also updates herdr-core
+  What changed. If the app crashes or is killed with a verified newer update
+  waiting, the next launch installs it before opening a window. The first
+  start after an app update also updates herdr-core
   to the latest release of the same generation, keeping terminals running.
   Settings → Updates keeps app and core actions together;
   its What's new button opens the waiting update's release range, or this
