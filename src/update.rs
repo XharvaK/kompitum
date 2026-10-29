@@ -265,7 +265,9 @@ fn check(root: &Path) -> Result<Option<String>, String> {
         return Ok(None);
     }
     // Notes are optional: a missing feed must never hold up the update.
-    if let Ok(text) = curl_text(&format!("{}/app/{version}/changelog.md", releases())) {
+    if !crate::update_notes::has(version)
+        && let Ok(text) = curl_text(&format!("{}/app/{version}/changelog.md", releases()))
+    {
         crate::update_notes::cache(&text);
     }
     let staged = beside(root, ".new");
