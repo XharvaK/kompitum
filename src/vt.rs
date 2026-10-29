@@ -36,6 +36,13 @@ fn contrast(a: Rgb, b: Rgb) -> f32 {
 /// exactly as it chose (dim text is often meant to be low contrast).
 const MIN_CONTRAST: f32 = 1.6;
 
+/// Ghostty's graphics ranges retain intentional low contrast, as do our sprites.
+fn preserves_graphics_color(text: &str) -> bool {
+    crate::sprites::is_sprite(text)
+        || text.chars().next().is_some_and(|c| matches!(c as u32,
+            0x2500..=0x259f | 0xe0b0..=0xe0d7 | 0x1fb00..=0x1fbff | 0x1cc00..=0x1cebf))
+}
+
 /// `fg`, or near-white / near-black when it would vanish into `bg`.
 fn readable(fg: Rgb, bg: Rgb) -> Rgb {
     if contrast(fg, bg) >= MIN_CONTRAST {
@@ -548,6 +555,11 @@ impl Vt {
                 Select::Press => {
                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
                     ghostty_selection_gesture_event_set(e, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_TIME_NS, &now as *const _ as *const c_void);
+                    // GPUI doesn't expose the platform's double-click interval.
+                    let interval = 500_000_000u64;
+                    let distance = f64::from(4.0 * SUBPIXEL);
+                    ghostty_selection_gesture_event_set(e, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_INTERVAL_NS, &interval as *const _ as *const c_void);
+                    ghostty_selection_gesture_event_set(e, GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_DISTANCE, &distance as *const _ as *const c_void);
                 }
                 Select::Drag => {
                     let g = GhosttySelectionGestureGeometry {
@@ -948,11 +960,6 @@ impl Vt {
             if selected {
                 bg = Some(self.theme.selection_bg);
             }
-            // A program that painted for another theme (dark diff lines on a
-            // light one, white text on white) stays readable: text that
-            // almost vanishes into its background turns light or dark.
-            fg = readable(fg, bg.unwrap_or(self.theme.bg));
-
             let mut text = String::new();
             if wide != GHOSTTY_CELL_WIDE_SPACER_TAIL && wide != GHOSTTY_CELL_WIDE_SPACER_HEAD && !style.invisible {
                 let mut len: u32 = 0;
@@ -962,6 +969,11 @@ impl Vt {
                     ghostty_render_state_row_cells_get(c, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, cps.as_mut_ptr() as *mut c_void);
                     text = cps.into_iter().filter_map(char::from_u32).collect();
                 }
+            }
+
+            // Text stays readable across themes; graphics keep their chosen colors.
+            if !preserves_graphics_color(&text) {
+                fg = readable(fg, bg.unwrap_or(self.theme.bg));
             }
 
             Cell {
@@ -1160,6 +1172,38 @@ mod tests {
         assert_eq!(readable(Rgb(0xfa, 0xfa, 0xfa), white), Rgb(0x1b, 0x1b, 0x1e));
         // Dim text keeps its color.
         assert_eq!(readable(Rgb(0x7b, 0x7e, 0x87), white), Rgb(0x7b, 0x7e, 0x87));
+    }
+
+    #[test]
+    fn graphics_keep_low_contrast_colors_in_frames() {
+        let mut vt = Vt::new(8, 2);
+        let fg = Rgb(30, 31, 40);
+        for code in (0x2500..=0x259f).chain(0xe0b0..=0xe0d7).chain(0x1fb00..=0x1fbff).chain(0x1cc00..=0x1cebf).chain([0x23fa]) {
+            let ch = char::from_u32(code).unwrap();
+            vt.write(format!("\x1b[H\x1b[38;2;30;31;40;48;2;32;33;42m{ch}X").as_bytes());
+            let frame = vt.frame();
+            assert_eq!(frame.rows[0][0].fg, fg, "{code:x}");
+            let text = frame.rows[0].iter().find(|c| c.text == "X").unwrap();
+            assert_ne!(text.fg, fg, "ordinary text still gets contrast adjustment");
+        }
+        for code in [0x24ff, 0x25a0, 0xe0af, 0xe0d8, 0x1faff, 0x1fc00, 0x1cbff, 0x1cec0] {
+            assert!(!preserves_graphics_color(&char::from_u32(code).unwrap().to_string()), "{code:x}");
+        }
+    }
+
+    #[test]
+    fn repeated_clicks_select_words_then_lines() {
+        let mut vt = Vt::new(30, 3);
+        vt.write(b"hello world\r\nsecond line");
+        for (x, expected) in [(12.0, None), (14.0, Some("hello")), (13.0, Some("hello world"))] {
+            vt.select(Select::Press, 1, 0, x, 5.0, 10.0, 60.0);
+            vt.select(Select::Release, 1, 0, x, 5.0, 10.0, 60.0);
+            assert_eq!(vt.selection_text().as_deref(), expected);
+        }
+        // A nearby cell outside the pixel tolerance starts a new gesture.
+        vt.select(Select::Press, 2, 0, 27.0, 5.0, 10.0, 60.0);
+        vt.select(Select::Release, 2, 0, 27.0, 5.0, 10.0, 60.0);
+        assert_eq!(vt.selection_text(), None);
     }
 
     #[test]
