@@ -659,7 +659,14 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
 - `match`: other process names (or agents' `app` names) for the entry.
 - `run`: how to start it (`["cursor-agent"]`), for agents people start
   from a menu: `knownAgents()` lists the entries with one, and whether this
-  machine (or another) has them installed.
+  machine (or another) has them installed. For example, override
+  `"claude": { "run": ["my-claude"] }` or add
+  `"claude-alt": { "name": "Claude (alt)", "icon": "icons/claude.svg", "run": ["my-claude-alt"] }`
+  inside `programs`. Use programs or shell functions, not aliases (the launcher
+  does not expand them). Local checks include functions in shells such as bash
+  and zsh; fish and remote checks find executables only. Installation
+  checks are cached for up to a minute; changing the commands checks again.
+  Invalid JSON is reported in `programs.error` (a valid file has no error).
 - It follows what runs in the terminal now (lazygit, nvim), else what it
   started with.
 
