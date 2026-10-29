@@ -1087,7 +1087,7 @@ fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, w
 }
 
 /// OS text input (AltGr, Pinyin, Japanese, Korean, dead keys) types here.
-/// Native Windows composition previews reach this handler; other keys go through
+/// Native composition previews reach this handler; other keys go through
 /// `key_bytes`. The program gets the finished text as it is.
 impl EntityInputHandler for TerminalView {
     fn text_for_range(&mut self, range: std::ops::Range<usize>, adjusted: &mut Option<std::ops::Range<usize>>, _w: &mut Window, _cx: &mut Context<Self>) -> Option<String> {
@@ -1453,6 +1453,9 @@ mod tests {
     /// editor.
     #[test]
     fn keys_send_what_ghostty_sends() {
+        // Herdr keeps native Option text on macOS (libghostty's default
+        // option-as-alt=false); other platforms prefix an unconsumed Alt.
+        const ALT_B: &[u8] = if cfg!(target_os = "macos") { b"b" } else { b"\x1bb" };
         const KEYS: &[(&str, Option<&str>, &[u8], &[u8], &[u8])] = &[
             // key, typed, plain, kitty disambiguate (>1u, Neovim), kitty report-all (>9u)
             ("a", Some("a"), b"a", b"a", b"\x1b[97u"),
@@ -1463,7 +1466,8 @@ mod tests {
             ("space", Some(" "), b" ", b" ", b"\x1b[32u"),
             ("ctrl-c", None, b"\x03", b"\x1b[99;5u", b"\x1b[99;5u"),
             ("ctrl-space", None, b"\x00", b"\x1b[32;5u", b"\x1b[32;5u"),
-            ("alt-b", Some("b"), b"\x1bb", b"\x1b[98;3u", b"\x1b[98;3u"),
+            ("alt-b", Some("b"), ALT_B, b"\x1b[98;3u", b"\x1b[98;3u"),
+            ("alt-b", Some("∫"), "∫".as_bytes(), "∫".as_bytes(), b"\x1b[98;3u"),
             ("alt-s", Some("\u{df}"), "\u{df}".as_bytes(), "\u{df}".as_bytes(), b"\x1b[115;3u"),
             ("escape", None, b"\x1b", b"\x1b[27u", b"\x1b[27u"),
             ("enter", None, b"\r", b"\r", b"\x1b[13u"),

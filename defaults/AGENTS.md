@@ -467,7 +467,9 @@ the build doesn't do.
   and letters type characters on many Mac keyboards (`[`, `@`). Don't pick
   these on your own. If the person asks for one, bind it and tell them what
   it takes from typing.
-- Windows AltGr and dead-key compositions type text in terminals.
+- Windows AltGr and dead-key compositions type text in terminals. macOS
+  dead keys compose accents through native text input; Option keeps its
+  keyboard-layout characters rather than acting as Alt.
 - Terminal keys honor the program's negotiated Kitty mode, including on Windows.
 
 ## Commands

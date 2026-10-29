@@ -464,7 +464,10 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                         mods |= OPTION_MOD;
                     }
 
-                    key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
+                    // Keep dead keys for NSTextInputClient instead of sending their
+                    // spacing accent to key-down listeners before composition starts.
+                    let text = translate_key(native_event.keyCode(), mods, false);
+                    key_char = (!text.is_empty()).then_some(text);
                 }
 
                 if shift
@@ -510,6 +513,10 @@ const SHIFT_MOD: u32 = 2;
 const OPTION_MOD: u32 = 8;
 
 fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
+    translate_key(code, modifiers, true)
+}
+
+fn translate_key(code: CGKeyCode, modifiers: u32, resolve_dead_keys: bool) -> String {
     // Values from: https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h#L126
     // shifted >> 8 for UCKeyTranslate
     const CG_SPACE_KEY: u16 = 49;
@@ -554,7 +561,7 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
             &mut buffer_size as *mut usize,
             &mut buffer as *mut u16,
         );
-        if dead_key_state != 0 {
+        if resolve_dead_keys && dead_key_state != 0 {
             UCKeyTranslate(
                 keyboard_layout as *const c_void,
                 CG_SPACE_KEY,
