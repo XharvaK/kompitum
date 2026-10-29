@@ -258,6 +258,9 @@ unsafe extern "C" fn on_title(_t: GhosttyTerminal, userdata: *mut c_void) {
 const SYNC_OUTPUT: GhosttyMode = 2026;
 const BRACKETED_PASTE: GhosttyMode = 2004;
 const MAX_HOLD: Duration = Duration::from_millis(1000);
+const SCROLLBACK_MAX_LINES: usize = 10_000;
+// Bound memory per terminal; wide or heavily styled rows may hit this first.
+const SCROLLBACK_MAX_BYTES: usize = 10_000_000;
 /// Units per pixel for selection gestures (see `select`).
 const SUBPIXEL: f32 = 64.0;
 
@@ -298,8 +301,8 @@ impl Vt {
             let mut colors = GhosttyRenderStateColors { size: std::mem::size_of::<GhosttyRenderStateColors>(), ..Default::default() };
             ghostty_render_state_get(state, GHOSTTY_RENDER_STATE_DATA_COLORS, &mut colors as *mut _ as *mut c_void);
 
-            let max_lines: usize = 10_000;
-            ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES, &max_lines as *const _ as *const c_void);
+            ok(ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES, &SCROLLBACK_MAX_BYTES as *const _ as *const c_void), "scrollback_max_bytes");
+            ok(ghostty_terminal_set(term, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES, &SCROLLBACK_MAX_LINES as *const _ as *const c_void), "scrollback_max_lines");
 
             let mut gesture = std::ptr::null_mut();
             ok(ghostty_selection_gesture_new(std::ptr::null(), &mut gesture), "selection_gesture_new");
@@ -1015,6 +1018,25 @@ impl Drop for Vt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrollback_retains_five_thousand_styled_lines() {
+        for cols in [80, 200] {
+            let mut vt = Vt::new(cols, 25);
+            for line in 1..=5000 {
+                vt.write(format!("\x1b[1;31m{line:04}\x1b[0m {}\r\n", "x".repeat(cols as usize - 6)).as_bytes());
+            }
+            vt.scroll_viewport(-10_000);
+            for first in (1..=5000).step_by(25) {
+                let frame = vt.frame();
+                for (offset, row) in frame.rows.iter().enumerate() {
+                    let text: String = row.iter().map(|c| c.text.as_str()).collect();
+                    assert!(text.starts_with(&format!("{:04} ", first + offset)), "{cols} columns: {text:?}");
+                }
+                vt.scroll_viewport(25);
+            }
+        }
+    }
 
     #[test]
     fn styled_text_reaches_the_frame() {
