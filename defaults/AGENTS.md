@@ -251,6 +251,8 @@ Properties any node can have:
   buttons over the layout at `"traffic_lights": [x, y]` (px); leave them
   room. Where the system draws no buttons (`window().buttons`, Linux and
   Windows), the bar draws them with `window.minimize`, `window.maximize`, `window.close`.
+  Windows' shipped tab bar and system strip use vector window icons, with a
+  restore icon when maximized, rather than font glyphs.
 - Root only: `"preview": "layouts/<name>.svg"` (or png): the picture the
   settings screen shows for this layout. Draw one when you make a layout;
   without it the person sees a plain frame. New layouts and `themes/*.json`
