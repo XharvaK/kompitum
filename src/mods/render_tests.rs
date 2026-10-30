@@ -169,6 +169,9 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                 "hc" if first == json!(["machine", "ls", "--json"]) => {
                     Some(json!({"code":0,"stdout":"{\"machines\":[{\"name\":\"remote\",\"state\":\"online\"}]}","stderr":""}))
                 }
+                "hc" if first.as_array().and_then(|a| a.first()).and_then(Value::as_str) == Some("run") => {
+                    Some(json!({"code":0,"stdout":"{\"address\":\"t-setup\"}","stderr":""}))
+                }
                 // The files panel lists a folder with sh: kind and name pairs.
                 "exec" if first == "sh" && a.get(1).map(from_host).and_then(|v| v.get(2).cloned()) == Some(json!("files")) => {
                     Some(json!({"code":0,"stdout":"d\u{0}src\u{0}f\u{0}README.md\u{0}","stderr":""}))
@@ -322,6 +325,45 @@ fn font_pickers_contain_scroll_on_the_wrapper(cx: &mut TestAppContext) {
         assert!(!scroll.contains("on_scroll_wheel"), "the native scroller must receive the event: {tree}");
         assert_eq!(tree.matches("on_scroll_wheel").count(), 1, "the wrapper must stop scroll chaining: {tree}");
     }
+}
+
+#[gpui::test]
+fn machine_picker_keeps_long_lists_scrollable(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe(
+        cx, &staged, "mods/machine-add", false, props(), updates("current", "current"),
+        Some("this.hosts = Array.from({length: 30}, (_, i) => ({alias: `host-${i}`, aliases: []}));"),
+    ).unwrap();
+    let scroll = tree.lines().find(|line| line.contains("ma-hosts")).unwrap();
+    assert!(scroll.contains("overflow_y_scroll") && !scroll.contains("overflow_y_scrollbar"), "{tree}");
+    assert!(scroll.contains(".min_h[Number(0.0)]"), "{tree}");
+    assert!(tree.contains("ma-row-host-29"), "{tree}");
+    assert_eq!(tree.matches(".flex_none").count(), 60, "rows must not shrink into the viewport: {tree}");
+}
+
+#[gpui::test]
+fn machine_setup_prompt_stacks_above_the_picker(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new().with_host_module(module(fixture(false, props(), updates("current", "current")), calls.clone())).unwrap();
+    let root = staged.wrapper("mods/machine-add", "cx.spawn(async () => { await this.inTerminal('host'); });");
+    let window = cx.add_window(|_, _| Empty);
+    let mut session = window.update(cx, |_, window, cx| {
+        DescriptionSession::load(ShellRuntime::new_isolated().unwrap(), root, policy, window, cx).unwrap()
+    }).unwrap();
+    cx.run_until_parked();
+    window.update(cx, |_, window, cx| {
+        session.describe(window, cx).unwrap();
+        window.remove_window();
+    }).unwrap();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    let spec = &calls.effects.iter().find(|(name, _)| name == "openOverlay").unwrap().1[0];
+    assert_eq!(spec["kind"], "dialog");
+    assert_eq!(spec["layout"]["children"][1]["content"]["terminal"], "t-setup");
+    assert!(!calls.effects.iter().any(|(name, _)| name == "closeOverlay"), "the picker must keep monitoring setup");
 }
 
 #[gpui::test]

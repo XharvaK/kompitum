@@ -543,11 +543,14 @@ The main ones:
   `layout.reset {name?}` (reset a shipped layout and its clicks),
   `layout.clone {name, as?}` (duplicate, then switch; default `<name>-copy`).
 - App: `mod.clone {name, as?}` (duplicate; default `<name>-copy`), `mod.open {name}`, `overlay.close {id?}`, `app.help`, `app.palette`, `app.settings {section?}`
-  (sections: `look`, `machines`, `alerts`, `updates`, `privacy`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do),
+  (sections: `look`, `machines`, `alerts`, `updates`, `privacy`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
   `app.check_updates`, `app.update_core` (a newer herdr-core of this generation, terminals kept;
   never one a package manager owns), `app.welcome`, `app.whats_new`, `app.feedback {message?, from?}` (from `"person"` or `"agent"`; opens a review window, where the person can paste up to 3 screenshots; never sends until the person clicks Send), `app.reset`,
   `app.theme {name}`, `app.zoom_in`, `app.zoom_out`, `app.zoom_reset`,
   `app.update` (restart into a downloaded update).
+  Add machine lists all named ssh-config hosts in a scrollable list. Setup
+  prompts open above the picker; close the setup terminal to return to the
+  updated list and any machine-specific guidance.
 - Window: `window.minimize`, `window.maximize` (or back), `window.close`.
 - macOS: `app.quit`, `app.hide`, `app.hide_others`, `app.show_all`.
 
