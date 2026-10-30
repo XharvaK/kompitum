@@ -2126,7 +2126,7 @@ impl AppWindow {
             let id = o.id.clone();
             return self.close_overlay(&id, window, cx);
         }
-        if self.chrome.find(block).is_some() {
+        if self.chrome.find(block).is_some_and(|n| n.terminal().is_some()) {
             self.chrome.remove(block);
             self.sync(window, cx);
         }
