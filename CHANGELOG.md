@@ -1,5 +1,12 @@
 # Herdr changelog
 
+## [0.1.9] - 2026-10-30
+
+### Fixed
+- On macOS, updates keep Herdr's Apple signature again, so macOS stops forgetting the permissions you gave Herdr.
+- Herdr no longer uses CPU in the background when the Changes or Files panel is open in a git repo.
+- Mods use less CPU while they wait for work.
+
 ## [0.1.8] - 2026-10-30
 
 ### New
