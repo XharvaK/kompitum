@@ -453,15 +453,13 @@ impl TerminalView {
         }
     }
 
-    /// Ctrl+V: the image for a terminal on another machine; otherwise the key goes on.
+    /// Ctrl+V: a remote image, clipboard text on Windows, or the key itself.
     pub fn paste_image(&mut self, cx: &mut Context<Self>) {
         if self.send_image(cx) {
             return;
         }
-        let bytes = Keystroke::parse("ctrl-v").ok().and_then(|keystroke| {
-            let event = KeyDownEvent { keystroke, is_held: false, prefer_character_input: false };
-            key_bytes(&mut self.grid.borrow_mut().vt, &event)
-        });
+        let text = if cfg!(windows) { cx.read_from_clipboard().and_then(|c| c.text()) } else { None };
+        let bytes = paste_image_fallback(&mut self.grid.borrow_mut().vt, text.as_deref());
         if let Some(bytes) = bytes {
             self.send(&bytes);
         }
@@ -765,6 +763,15 @@ fn icon_glyph(c: char) -> Option<IconGlyph> {
 fn is_icon(text: &str) -> bool {
     let mut chars = text.chars();
     matches!((chars.next(), chars.next()), (Some(c), None) if matches!(c as u32, 0xE000..=0xF8FF | 0xF0000..=0x10FFFD))
+}
+
+fn paste_image_fallback(vt: &mut vt::Vt, text: Option<&str>) -> Option<Vec<u8>> {
+    // Windows console programs expect the terminal to paste clipboard text.
+    if cfg!(windows) && let Some(text) = text {
+        return Some(vt.paste_bytes(text));
+    }
+    let keystroke = Keystroke::parse("ctrl-v").ok()?;
+    key_bytes(vt, &KeyDownEvent { keystroke, is_held: false, prefer_character_input: false })
 }
 
 /// What a key press sends to the program: the key described to libghostty,
@@ -1541,6 +1548,18 @@ mod tests {
             },
             is_held: false,
             prefer_character_input: false,
+        }
+    }
+
+    #[test]
+    fn ctrl_v_clipboard_text_follows_platform_paste_convention() {
+        let mut vt = Vt::new(20, 3);
+        assert_eq!(super::paste_image_fallback(&mut vt, None).unwrap(), b"\x16");
+        for bracketed in [false, true] {
+            vt.write(if bracketed { b"\x1b[?2004h" } else { b"\x1b[?2004l" });
+            let bytes = super::paste_image_fallback(&mut vt, Some("paste-probe")).unwrap();
+            let expected = if cfg!(windows) { vt.paste_bytes("paste-probe") } else { vec![0x16] };
+            assert_eq!(bytes, expected);
         }
     }
 
