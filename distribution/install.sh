@@ -109,12 +109,21 @@ else
   # bundle under a temporary name in Applications.
   # Never change a certificate-signed bundle: macOS permissions follow its
   # signing identity. Only unsigned/ad-hoc development builds need this PATH.
-  signature=$(codesign -dv "$tmp/Herdr.app" 2>&1 || true)
-  if printf '%s\n' "$signature" | grep -q '^Authority='; then
-    codesign --verify --deep --strict "$tmp/Herdr.app" || fail "invalid app signature"
+  signed=false
+  if signature=$(/usr/bin/codesign -dvv "$tmp/Herdr.app" 2>&1); then
+    if printf '%s\n' "$signature" | grep -q '^Authority=Developer ID Application:'; then
+      signed=true
+    elif ! printf '%s\n' "$signature" | grep -qx 'Signature=adhoc'; then
+      fail "cannot determine app signature: $signature"
+    fi
+  elif ! printf '%s\n' "$signature" | grep -q ': code object is not signed at all$'; then
+    fail "cannot determine app signature: $signature"
+  fi
+  if [ "$signed" = true ]; then
+    /usr/bin/codesign --verify --deep --strict "$tmp/Herdr.app" || fail "invalid app signature"
   else
     /usr/libexec/PlistBuddy -c "Add :LSEnvironment:PATH string $bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" "$tmp/Herdr.app/Contents/Info.plist"
-    codesign --force --sign - "$tmp/Herdr.app" >/dev/null 2>&1
+    /usr/bin/codesign --force --sign - "$tmp/Herdr.app" >/dev/null 2>&1
   fi
   rm -rf "$app"
   mv "$tmp/Herdr.app" "$app"
