@@ -637,7 +637,7 @@ What's about the user, never a look:
   Finder launches load the login shell's PATH, with the usual install
   folders as a fallback.
 - `option_as_alt`: macOS only, `"auto"` (default), `"on"`, or `"off"`.
-  `"auto"` sends Option as Alt on US, US International, ABC and ABC variants;
+  `"auto"` sends Option as Alt on US, US International, ABC and ABC-India;
   other layouts keep native Option text and dead keys. `"on"` enables terminal
   Alt shortcuts (including Option+E without composition); `"off"` keeps native
   Option input on every layout. Changes apply immediately, including layout
