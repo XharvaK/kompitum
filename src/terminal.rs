@@ -56,7 +56,7 @@ struct Grid {
     told_cell: Option<(u32, u32)>,
     /// Top-left of the cell grid in window coordinates, from the last paint.
     origin: Point<Pixels>,
-    buttons_down: usize,
+    buttons_down: Vec<MouseButton>,
     /// Kitty images uploaded for drawing, by (image, generation, source rect).
     images: HashMap<(u32, u64, [u32; 4]), Arc<RenderImage>>,
     /// Where the pointer is over the pane.
@@ -89,12 +89,8 @@ pub struct TerminalView {
     pub cwd: Option<PathBuf>,
     /// The link under the pointer while the link modifier is held.
     link: Option<LinkTarget>,
-    /// The press opened a link: its release isn't the program's.
-    link_click: bool,
     /// Right-clicks go to the program when it takes the mouse (Shift: the menu).
     pub right_click_to_program: bool,
-    /// The program got the right press: it gets the release too.
-    right_to_program: bool,
     grid: Rc<RefCell<Grid>>,
     focus: FocusHandle,
     was_focused: bool,
@@ -134,6 +130,22 @@ fn device_cell(cell: Size<Pixels>, scale: f32) -> (u32, u32) {
     (px(cell.width), px(cell.height))
 }
 
+// Held-button events belong to the pane that received the press.
+fn track_mouse_button(buttons: &mut Vec<MouseButton>, action: GhosttyMouseAction, button: Option<MouseButton>) -> bool {
+    if let Some(button) = button {
+        if action == GHOSTTY_MOUSE_ACTION_PRESS {
+            if !buttons.contains(&button) {
+                buttons.push(button);
+            }
+        } else if !buttons.contains(&button) {
+            return false;
+        } else if action == GHOSTTY_MOUSE_ACTION_RELEASE {
+            buttons.retain(|b| *b != button);
+        }
+    }
+    true
+}
+
 impl TerminalView {
     /// Attaches at `size` (cols, rows): the terminal's current size, so attaching
     /// a hidden terminal doesn't resize its program.
@@ -148,9 +160,7 @@ impl TerminalView {
             selection_scroll: None,
             cwd: None,
             link: None,
-            link_click: false,
             right_click_to_program: false,
-            right_to_program: false,
             grid: Rc::new(RefCell::new(Grid {
                 vt: Vt::new(size_hint.0.max(2), size_hint.1.max(1)),
                 core: core.clone(),
@@ -160,7 +170,7 @@ impl TerminalView {
                 vt_cell: (9, 18),
                 told_cell: None,
                 origin: Point::default(),
-                buttons_down: 0,
+                buttons_down: Vec::new(),
                 images: HashMap::new(),
                 hover: None,
                 link_spans: Vec::new(),
@@ -551,10 +561,8 @@ impl TerminalView {
     /// (shift keeps the mouse for Herdr: selecting, the menu).
     fn mouse(&mut self, action: GhosttyMouseAction, button: Option<MouseButton>, pos: Point<Pixels>, mods: Modifiers) -> bool {
         let mut g = self.grid.borrow_mut();
-        match action {
-            GHOSTTY_MOUSE_ACTION_PRESS => g.buttons_down += 1,
-            GHOSTTY_MOUSE_ACTION_RELEASE => g.buttons_down = g.buttons_down.saturating_sub(1),
-            _ => {}
+        if !track_mouse_button(&mut g.buttons_down, action, button) {
+            return false;
         }
         if !g.vt.mouse_tracking() || mods.shift {
             return false;
@@ -566,7 +574,7 @@ impl TerminalView {
             _ => GHOSTTY_MOUSE_BUTTON_UNKNOWN,
         });
         let ((x, y), size) = mouse_at(&g, pos);
-        let any = g.buttons_down > 0;
+        let any = !g.buttons_down.is_empty();
         let bytes = g.vt.encode_mouse(action, b, 0, x, y, size, any);
         if let Some(ch) = g.channel {
             g.core.input(ch, &bytes);
@@ -633,7 +641,7 @@ impl TerminalView {
     fn finish_selection(&mut self, pos: Option<Point<Pixels>>, cx: &mut Context<Self>) {
         self.selecting = false;
         let mut g = self.grid.borrow_mut();
-        g.buttons_down = g.buttons_down.saturating_sub(1);
+        g.buttons_down.retain(|b| *b != MouseButton::Left);
         if let Some(pos) = pos {
             drop(g);
             self.select(Select::Release, pos, cx);
@@ -1338,7 +1346,6 @@ impl Render for TerminalView {
                         LinkTarget::External(target) => links::open(&target),
                         LinkTarget::Terminal(address) => cx.emit(TerminalEvent::Peek(address)),
                     }
-                    this.link_click = true;
                     return;
                 }
                 if !this.mouse(GHOSTTY_MOUSE_ACTION_PRESS, Some(ev.button), ev.position, ev.modifiers) {
@@ -1351,14 +1358,9 @@ impl Render for TerminalView {
             .on_mouse_down(MouseButton::Right, cx.listener(|this, ev: &MouseDownEvent, _, cx| {
                 cx.stop_propagation();
                 if this.right_click_to_program && this.takes_mouse(ev.modifiers) {
-                    this.right_to_program = this.mouse(GHOSTTY_MOUSE_ACTION_PRESS, Some(ev.button), ev.position, ev.modifiers);
+                    this.mouse(GHOSTTY_MOUSE_ACTION_PRESS, Some(ev.button), ev.position, ev.modifiers);
                 } else {
                     cx.emit(TerminalEvent::ContextMenu(ev.position));
-                }
-            }))
-            .on_mouse_up(MouseButton::Right, cx.listener(|this, ev: &MouseUpEvent, _, _| {
-                if std::mem::take(&mut this.right_to_program) {
-                    this.mouse(GHOSTTY_MOUSE_ACTION_RELEASE, Some(ev.button), ev.position, ev.modifiers);
                 }
             }))
             .on_mouse_down(MouseButton::Middle, cx.listener(|this, ev: &MouseDownEvent, _, cx| {
@@ -1366,19 +1368,13 @@ impl Render for TerminalView {
                     this.paste(cx);
                 }
             }))
-            .on_mouse_up(MouseButton::Left, cx.listener(|this, ev: &MouseUpEvent, _, _| {
-                if std::mem::take(&mut this.link_click) {
-                    return;
-                }
-                this.mouse(GHOSTTY_MOUSE_ACTION_RELEASE, Some(ev.button), ev.position, ev.modifiers);
-            }))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
                 this.grid.borrow_mut().hover = Some(ev.position);
                 if link_mods(&ev.modifiers) || this.link.is_some() {
                     cx.notify();
                 }
-                if !this.selecting {
-                    this.mouse(GHOSTTY_MOUSE_ACTION_MOTION, ev.pressed_button, ev.position, ev.modifiers);
+                if !this.selecting && ev.pressed_button.is_none() {
+                    this.mouse(GHOSTTY_MOUSE_ACTION_MOTION, None, ev.position, ev.modifiers);
                 }
             }))
             .child(
@@ -1416,6 +1412,9 @@ impl Render for TerminalView {
                         window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _, cx| {
                             if phase == DispatchPhase::Capture {
                                 let _ = view.update(cx, |this, cx| {
+                                    if !this.selecting && ev.pressed_button.is_some() && !this.grid.borrow().buttons_down.is_empty() {
+                                        this.mouse(GHOSTTY_MOUSE_ACTION_MOTION, ev.pressed_button, ev.position, ev.modifiers);
+                                    }
                                     if this.selecting {
                                         this.selection_pointer = ev.position;
                                         if ev.pressed_button == Some(MouseButton::Left) {
@@ -1429,9 +1428,12 @@ impl Render for TerminalView {
                             }
                         });
                         window.on_mouse_event(move |ev: &MouseUpEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Capture && ev.button == MouseButton::Left {
+                            if phase == DispatchPhase::Capture {
                                 let _ = selection_view.update(cx, |this, cx| {
-                                    if this.selecting {
+                                    if (!this.selecting || ev.button != MouseButton::Left) && this.grid.borrow().buttons_down.contains(&ev.button) {
+                                        this.mouse(GHOSTTY_MOUSE_ACTION_RELEASE, Some(ev.button), ev.position, ev.modifiers);
+                                    }
+                                    if this.selecting && ev.button == MouseButton::Left {
                                         this.selection_scroll = None;
                                         this.finish_selection(Some(ev.position), cx);
                                         cx.stop_propagation();
@@ -1474,6 +1476,30 @@ impl Focusable for TerminalView {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mouse_buttons_only_follow_the_pane_that_took_each_press() {
+        use super::*;
+        let mut buttons = Vec::new();
+        let left = Some(MouseButton::Left);
+        let right = Some(MouseButton::Right);
+        assert!(track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_MOTION, None));
+        assert!(!track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_MOTION, left));
+        assert!(!track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_RELEASE, left));
+        assert!(track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_PRESS, left));
+        assert!(track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_MOTION, left));
+        assert!(!track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_RELEASE, right));
+        assert_eq!(buttons, vec![MouseButton::Left]);
+        assert!(track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_PRESS, right));
+        assert!(track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_RELEASE, right));
+        assert_eq!(buttons, vec![MouseButton::Left]);
+        assert!(!track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_MOTION, right));
+        assert!(track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_RELEASE, left));
+        assert!(buttons.is_empty());
+        assert!(!track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_MOTION, left));
+        assert!(!track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_RELEASE, left));
+        assert!(track_mouse_button(&mut buttons, GHOSTTY_MOUSE_ACTION_MOTION, None));
+    }
+
     #[test]
     fn selection_autoscroll_only_runs_outside_the_grid_and_caps_speed() {
         use super::selection_scroll_lines as lines;
