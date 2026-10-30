@@ -51,8 +51,11 @@ commands. They're rewritten on every start to match this version.
 - Edits apply at once. If a file is invalid, the app keeps the last good
   version and writes why to `<name>.error` (`layout.error`, `keys.error`,
   `settings.error`, `programs.error`). Check after every edit.
-- `herdr-app check <mod folder>` loads a mod once and reports what's wrong.
-  Never call a mod done without a passing check.
+- `herdr-app check <mod folder>` loads a mod once and checks its initial
+  description and eager native elements, including virtual lists and motion.
+  It does not lay out the mod or run deferred rows, nested renders, or later
+  async states. Never call a mod done without a passing check; also try it
+  in the app.
 - **Escape hatch:** `ctrl-alt-shift-escape` always works: it sets the shown
   layout and `keys.json` aside (`*.reset-<time>`) and goes back to the
   default `main` layout. Nothing can rebind it.

@@ -328,6 +328,29 @@ fn font_pickers_contain_scroll_on_the_wrapper(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn check_materializes_retained_elements_in_a_rendered_view(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for body in [
+        "v_flex().h(400).child(v_virtual_list('rows', 0, 28, (i) => 'a', () => { throw new Error('deferred rows ran'); }))",
+        "v_flex().h(400).child(v_virtual_list('rows', 1, 28, (i) => 'a', () => { throw new Error('deferred rows ran'); }))",
+        "div().w(100).h(50).left(10).transition('left', 200)",
+        "div().w(100).h(50).transition('width', 200)",
+        "div().w(100).h(50).left(10).spring('left')",
+        "div().opacity(0.5).transition('opacity', 200)",
+    ] {
+        std::fs::write(staged.0.join("main.js"), format!(
+            "import {{ View, div }} from 'gpui-kit'; import {{ v_flex, v_virtual_list }} from 'gpui-base'; export default class Demo extends View {{ render() {{ return {body}; }} }}"
+        )).unwrap();
+        let runtime = ShellRuntime::new_isolated().unwrap();
+        let window = cx.add_window(|_, _| Empty);
+        let description = window.update(cx, |_, window, cx| runtime.check(&staged.0, window, cx)).unwrap().unwrap();
+        assert!(!description.is_empty(), "{body}");
+        gpui::AnyWindowHandle::from(window).update(cx, |_, window, _| window.remove_window()).unwrap();
+    }
+}
+
+#[gpui::test]
 fn machine_picker_keeps_long_lists_scrollable(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
