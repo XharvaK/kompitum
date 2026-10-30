@@ -1637,6 +1637,8 @@ mod tests {
                 modifiers: Modifiers { control: has("ctrl"), alt: has("alt"), shift: has("shift"), platform: has("cmd"), function: false },
                 key: key.into(),
                 key_char: typed.map(str::to_owned),
+                #[cfg(target_os = "macos")]
+                unshifted_key: None,
             },
             is_held: false,
             prefer_character_input: false,

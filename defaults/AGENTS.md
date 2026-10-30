@@ -489,6 +489,9 @@ the build doesn't do.
 - Windows AltGr and dead-key compositions type text in terminals. macOS
   dead keys compose accents through native text input; Option keeps its
   keyboard-layout characters rather than acting as Alt.
+- On macOS, shifted punctuation shortcuts accept both spellings from the
+  current layout: `cmd-shift-]` and `cmd-}` match the same US-layout keypress.
+  Existing `keys.json` files don't need to change.
 - Terminal keys honor the program's negotiated Kitty mode, including on Windows.
 
 ## Commands
