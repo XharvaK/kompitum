@@ -700,7 +700,9 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
   `"claude": { "run": ["my-claude"] }` or add
   `"claude-alt": { "name": "Claude (alt)", "icon": "icons/claude.svg", "run": ["my-claude-alt"] }`
   inside `programs`. Use programs or shell functions, not aliases (the launcher
-  does not expand them). Local checks include functions in shells such as bash
+  does not expand them). On macOS the menu launcher loads login profiles before
+  running the agent and leaves an interactive login shell when it ends.
+  Linux keeps interactive non-login shells. Local checks include functions in shells such as bash
   and zsh; fish and remote checks find executables only. Installation
   checks are cached for up to a minute; changing the commands checks again.
   Invalid JSON is reported in `programs.error` (a valid file has no error).
