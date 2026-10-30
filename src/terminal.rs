@@ -420,13 +420,17 @@ impl TerminalView {
         .detach();
     }
 
-    /// Text as a paste; an image alone (a screenshot) for a terminal on another machine.
+    /// Text as a paste; copied files (Finder, a clipboard manager's image) as
+    /// if dropped; an image alone (a screenshot) as Ctrl+V pastes it.
     pub fn paste(&mut self, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+        let Some(item) = cx.read_from_clipboard() else { return };
+        if let Some(paths) = copied_files(&item) {
+            self.dropped(paths, cx);
+        } else if let Some(text) = item.text() {
             let bytes = self.grid.borrow().vt.paste_bytes(&text);
             self.send(&bytes);
-        } else {
-            self.send_image(cx);
+        } else if item.entries().iter().any(|e| matches!(e, ClipboardEntry::Image(_))) {
+            self.paste_image(cx);
         }
     }
 
@@ -622,6 +626,15 @@ fn quote_paths(paths: impl IntoIterator<Item = String>) -> String {
     let mut out: String = paths.into_iter().map(quote).collect::<Vec<_>>().join(" ");
     out.push(' ');
     out
+}
+
+/// Files on the clipboard: their text is only the bare path, which an agent
+/// reads as words, not as an image to attach.
+fn copied_files(item: &ClipboardItem) -> Option<Vec<std::path::PathBuf>> {
+    item.entries().iter().find_map(|e| match e {
+        ClipboardEntry::ExternalPaths(p) if !p.paths().is_empty() => Some(p.paths().to_vec()),
+        _ => None,
+    })
 }
 
 /// The clipboard's image saved to a file of its own, for its path to be pasted.
@@ -1467,6 +1480,20 @@ mod tests {
         assert_eq!(q(&["/tmp/shot.png"]), "/tmp/shot.png ");
         assert_eq!(q(&["/tmp/my shot.png", "/a/b"]), "'/tmp/my shot.png' /a/b ");
         assert_eq!(q(&["/tmp/it's.png"]), "'/tmp/it'\\''s.png' ");
+    }
+
+    #[test]
+    fn copied_files_paste_as_files_not_their_bare_path_text() {
+        use gpui::{ClipboardEntry, ClipboardItem, ExternalPaths};
+        let shot = std::path::PathBuf::from("/Users/me/Library/Application Support/clip/file-1.png");
+        let item = ClipboardItem {
+            entries: vec![
+                ClipboardEntry::ExternalPaths(ExternalPaths(smallvec::smallvec![shot.clone()])),
+                ClipboardItem::new_string(shot.to_string_lossy().into_owned()).entries.remove(0),
+            ],
+        };
+        assert_eq!(super::copied_files(&item), Some(vec![shot]));
+        assert_eq!(super::copied_files(&ClipboardItem::new_string("hello".into())), None);
     }
 
     /// A key as the OS hands it over: "shift-;" with what it typed (":"), as
