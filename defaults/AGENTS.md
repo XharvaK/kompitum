@@ -175,7 +175,8 @@ shared `"workspace.panels"`, set by the welcome); a status bar,
 `workspace-status`), and as examples `terminals` ("Terminals": tabs in
 the title bar, panes as cards, a space picker) and `win98`
 ("Herdr 98": a whole desktop in one mod, `win98`). Add a layout by
-writing a new file.
+writing a new file. The Files panel supports Windows folder paths with spaces,
+parentheses and apostrophes.
 
 **Herdr's own layouts and mods are read-only.** They are replaced whole
 on every start. Use settings.json for look (fonts, sizes, theme, colors,
