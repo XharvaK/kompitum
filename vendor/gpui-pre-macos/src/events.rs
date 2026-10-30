@@ -485,7 +485,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                     chars_ignoring_modifiers = chars_with_cmd;
                 }
 
-                if !control && !command && !function {
+                // Fn can accompany printable keys from programmable keyboards.
+                if !control && !command {
                     let caps_lock = modifiers.contains(NSEventModifierFlags::NSAlphaShiftKeyMask);
                     let mods = text_modifiers(shift, alt && !option_as_alt(), caps_lock);
 
