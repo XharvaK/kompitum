@@ -237,6 +237,7 @@ pub struct Vt {
     key_event: GhosttyKeyEvent,
     mouse: GhosttyMouseEncoder,
     mouse_event: GhosttyMouseEvent,
+    last_mouse_report: Vec<u8>,
     pub cols: u16,
     pub rows: u16,
     theme: Theme,
@@ -384,6 +385,7 @@ impl Vt {
                 keys,
                 key_event,
                 mouse,
+                last_mouse_report: Vec::new(),
                 mouse_event,
                 cols,
                 rows,
@@ -1066,9 +1068,15 @@ impl Vt {
             let mut buf = [0u8; 64];
             let mut len = 0usize;
             let r = ghostty_mouse_encoder_encode(self.mouse, e, buf.as_mut_ptr() as *mut _, buf.len(), &mut len);
-            if r != GHOSTTY_SUCCESS {
+            if r != GHOSTTY_SUCCESS || len == 0 {
                 return Vec::new();
             }
+            // Refreshing the encoder's terminal/size options resets its cell tracking.
+            if action == GHOSTTY_MOUSE_ACTION_MOTION && self.last_mouse_report == buf[..len] {
+                return Vec::new();
+            }
+            self.last_mouse_report.clear();
+            self.last_mouse_report.extend_from_slice(&buf[..len]);
             buf[..len].to_vec()
         }
     }
@@ -1299,6 +1307,22 @@ mod tests {
         let x = 39.0 * cw + 5.0; // inside column 39 (1-based 40)
         let bytes = vt.encode_mouse(GHOSTTY_MOUSE_ACTION_PRESS, Some(GHOSTTY_MOUSE_BUTTON_LEFT), 0, x, 10.0, (80, 2, cw, ch), false);
         assert_eq!(String::from_utf8_lossy(&bytes), "\x1b[<0;40;1M");
+    }
+
+    #[test]
+    fn mouse_hover_tracks_only_changed_cells_and_respects_button_mode() {
+        let mut vt = Vt::new(80, 2);
+        let size = (80, 2, 10.0, 20.0);
+        vt.write(b"\x1b[?1003h\x1b[?1006h");
+        assert_eq!(vt.encode_mouse(GHOSTTY_MOUSE_ACTION_MOTION, None, 0, 15.0, 5.0, size, false), b"\x1b[<35;2;1M");
+        assert!(vt.encode_mouse(GHOSTTY_MOUSE_ACTION_MOTION, None, 0, 16.0, 5.0, size, false).is_empty());
+        assert_eq!(vt.encode_mouse(GHOSTTY_MOUSE_ACTION_MOTION, None, 0, 25.0, 5.0, size, false), b"\x1b[<35;3;1M");
+        vt.write(b"\x1b[?1002h");
+        assert!(vt.encode_mouse(GHOSTTY_MOUSE_ACTION_MOTION, None, 0, 35.0, 5.0, size, false).is_empty());
+        assert_eq!(vt.encode_mouse(GHOSTTY_MOUSE_ACTION_MOTION, Some(GHOSTTY_MOUSE_BUTTON_LEFT), 0, 35.0, 5.0, size, true), b"\x1b[<32;4;1M");
+        vt.write(b"\x1b[?1003h\x1b[?1016h");
+        assert_eq!(vt.encode_mouse(GHOSTTY_MOUSE_ACTION_MOTION, None, 0, 15.0, 5.0, size, false), b"\x1b[<35;15;5M");
+        assert_eq!(vt.encode_mouse(GHOSTTY_MOUSE_ACTION_MOTION, None, 0, 16.0, 5.0, size, false), b"\x1b[<35;16;5M");
     }
 
     #[test]

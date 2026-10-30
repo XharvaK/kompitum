@@ -1318,7 +1318,7 @@ impl Render for TerminalView {
                 }
                 if this.selecting && ev.pressed_button == Some(MouseButton::Left) {
                     this.select(Select::Drag, ev.position, cx);
-                } else if this.grid.borrow().buttons_down > 0 {
+                } else {
                     this.mouse(GHOSTTY_MOUSE_ACTION_MOTION, ev.pressed_button, ev.position, ev.modifiers);
                 }
             }))
