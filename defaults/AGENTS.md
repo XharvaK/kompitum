@@ -544,6 +544,8 @@ The main ones:
   Shift+right-click is always Herdr's menu). Copy, paste, paste-image and implicit
   right-click targeting follow keyboard focus, including peek and floating terminals;
   with no terminal holding keyboard focus, they use the focused pane or block.
+  Terminals display Kitty graphics, including Unicode placeholder images used by
+  programs such as yazi; partial images and scrolling follow the placeholder cells.
 - Agents: `agent.next`, `agent.prev`, `agent.focus {terminal}`.
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`

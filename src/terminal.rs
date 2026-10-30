@@ -1018,7 +1018,7 @@ fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, w
     g.origin = origin;
     let frame = g.vt.frame();
     let placements = g.vt.placements();
-    let mut images: Vec<(i32, Bounds<Pixels>, Arc<RenderImage>)> = Vec::new();
+    let mut images: Vec<(bool, Bounds<Pixels>, Arc<RenderImage>)> = Vec::new();
     let mut keep = std::collections::HashSet::new();
     for p in &placements {
         let key = (p.image, p.generation, p.source);
@@ -1030,10 +1030,16 @@ fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, w
             g.images.insert(key, Arc::new(RenderImage::new(smallvec::smallvec![image::Frame::new(buf)])));
         }
         if let Some(img) = g.images.get(&key) {
-            let pos = origin + point(cell.width * p.col as f32, cell.height * p.row as f32);
-            // Placements are in device pixels.
-            let shown = size(px(p.width as f32 / scale), px(p.height as f32 / scale));
-            images.push((p.z, Bounds::new(pos, shown), img.clone()));
+            let [x, y, mut width, mut height] = p.pixel_geometry(f32::from(cell.width), f32::from(cell.height));
+            if p.cell_pixels.is_none() {
+                // Direct placements are in device pixels.
+                width /= scale;
+                height /= scale;
+            }
+            let pos = origin + point(px(x), px(y));
+            // Placeholder runs contain no text and must cover explicit cell backgrounds.
+            let below = p.z < 0 && p.cell_pixels.is_none();
+            images.push((below, Bounds::new(pos, size(px(width), px(height))), img.clone()));
         }
     }
     g.images.retain(|k, _| keep.contains(k));
@@ -1050,8 +1056,8 @@ fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, w
         Bounds::new(point(x0, y0), size(x1 - x0, y1 - y0))
     };
     let paint_images = |below: bool, window: &mut Window| {
-        for (z, b, img) in &images {
-            if (*z < 0) == below {
+        for (image_below, b, img) in &images {
+            if *image_below == below {
                 let _ = window.paint_image(*b, *b, Corners::default(), img.clone(), 0, false);
             }
         }
