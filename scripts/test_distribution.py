@@ -7,6 +7,7 @@ import os
 import shutil
 import tarfile
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -62,6 +63,46 @@ exit 97''')
                 self.assertIn("Installing Herdr test for macos-aarch64", result.stdout)
                 self.assertIn("download is damaged", result.stderr)
                 self.assertNotIn("Intel Macs", result.stderr)
+
+    def download_url(self, url, releases="https://releases.example", installed=False):
+        """The URL install.sh downloads the app from, for a manifest giving `url`."""
+        home = Path(self.work.name) / "home"
+        data = home / ".local/share"
+        shutil.rmtree(data / "herdr-app", ignore_errors=True)
+        (data / "herdr-app" if installed else data).mkdir(parents=True, exist_ok=True)
+        log = Path(self.work.name) / "urls"
+        log.unlink(missing_ok=True)
+        manifest = Path(self.work.name) / "latest.json"
+        manifest.write_text('{"version":"1.0.0","targets":{"linux-x86_64":{"url":"%s","sha256":"x"}}}' % url)
+        self.stub("curl", f'''out=; url=; prev=
+for a; do
+  if [ "$prev" = -o ]; then out=$a; else case $a in -*) ;; *) url=$a ;; esac; fi
+  prev=$a
+done
+echo "$url" >> "{log}"
+case $url in */latest.json) cp "{manifest}" "$out"; exit 0 ;; esac
+exit 22''')
+        env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", TEST_OS="Linux", TEST_ARCH="x86_64",
+                   HOME=str(home), XDG_DATA_HOME=str(data), HERDR_RELEASES_URL=releases)
+        result = subprocess.run([str(ROOT / "distribution/install.sh")], cwd=ROOT, env=env,
+                                capture_output=True, text=True, check=False)
+        self.assertIn("download failed", result.stderr)
+        return log.read_text().splitlines()[-1]
+
+    def test_installer_marks_plain_release_downloads_for_the_counter(self):
+        r = "https://releases.example"
+        tarball = f"{r}/app/1.0.0/herdr-app-linux-x86_64.tar.gz"
+        self.assertEqual(self.download_url(tarball), f"{tarball}?src=install")
+        self.assertEqual(self.download_url(tarball, installed=True), f"{tarball}?src=reinstall")
+        # A mirror's query (a signed URL) or fragment, or another host: exactly as given.
+        for url in (f"{tarball}?sig=a%2Fb&exp=1", f"{tarball}?src=update", f"{tarball}#x",
+                    "https://mirror.example/app/1.0.0/herdr-app-linux-x86_64.tar.gz",
+                    "https://releases.example.evil/app/1.0.0/herdr-app-linux-x86_64.tar.gz"):
+            with self.subTest(url=url):
+                self.assertEqual(self.download_url(url), url)
+        # A test server elsewhere marks its own URLs.
+        local = "http://127.0.0.1:8000/e2e"
+        self.assertEqual(self.download_url(f"{local}/app/1.0.0/a.tar.gz", releases=local), f"{local}/app/1.0.0/a.tar.gz?src=install")
 
     def test_intel_mac_package_stops_before_build(self):
         for args in ((), ("x86_64-apple-darwin",)):

@@ -57,8 +57,22 @@ want=$(printf '%s' "$entry" | sed -n 's/.*"sha256":"\([^"]*\)".*/\1/p')
 version=$(tr -d '\n ' < "$tmp/latest.json" | sed -n 's/^{"version":"\([^"]*\)".*/\1/p')
 [ -n "$url" ] && [ -n "$want" ] || fail "no build for $target yet"
 
+# Tells the release server's download counter a new install from a reinstall;
+# the file is the same either way. Only plain URLs on the release server in
+# use are marked: one with a query or fragment (a mirror's signed URL) is
+# fetched exactly as the manifest gives it.
+src=install
+for have in "${XDG_DATA_HOME:-$HOME/.local/share}/herdr-app" "$HOME/Applications/Herdr.app" /Applications/Herdr.app; do
+  if [ -e "$have" ]; then src=reinstall; fi
+done
+case $url in
+  *[?#]*) download=$url ;;
+  "$releases"/*) download="$url?src=$src" ;;
+  *) download=$url ;;
+esac
+
 say "Installing Herdr ${version:-} for $target..."
-curl -fsSL "$url" -o "$tmp/app.tar.gz" || fail "download failed"
+curl -fsSL "$download" -o "$tmp/app.tar.gz" || fail "download failed"
 [ "$(sha256 "$tmp/app.tar.gz")" = "$want" ] || fail "download is damaged (checksum mismatch); try again"
 tar -xzf "$tmp/app.tar.gz" -C "$tmp"
 mkdir -p "$bin"
