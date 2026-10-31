@@ -7,7 +7,8 @@ const source = await readFile(new URL("../defaults/mods/files/main.js", import.m
 const directorySource = source.slice(source.indexOf("async function directory("), source.indexOf("\nexport default class"));
 const directory = new Function("exec", "window", `${directorySource}; return directory;`)(
   async (command: string, args: string[]) => {
-    const p = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "pipe" });
+    // Hidden like the app's spawns: a visible console would give PowerShell UTF-8 and hide code page bugs.
+    const p = Bun.spawn([command, ...args], { stdout: "pipe", stderr: "pipe", windowsHide: true });
     const [code, stdout, stderr] = await Promise.all([p.exited, new Response(p.stdout).text(), new Response(p.stderr).text()]);
     return { code, stdout, stderr };
   },
