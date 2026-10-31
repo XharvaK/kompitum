@@ -6,7 +6,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { agents, spaces, terminals, run, hc, theme, props, closeOverlay, openOverlay, shared, setShared } from "herdr";
+import { agents, spaces, terminals, run, hc, theme, settings, props, closeOverlay, openOverlay, shared, setShared } from "herdr";
 
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 
@@ -127,19 +127,20 @@ export default class Picker extends View {
     let y = 0;
     rows.forEach((r) => { tops.push(y); y += H[r.kind] ?? 32; });
     const total = y;
-    const fixed = total > 320;
-    const maxScroll = Math.max(0, total - 320);
+    const height = Math.min(320, this.listHeight ?? 320);
+    const fixed = total > height;
+    const maxScroll = Math.max(0, total - height);
     this.scroll = Math.max(0, Math.min(this.scroll, maxScroll));
     const si = rows.indexOf(sel);
     if (si >= 0) {
       if (tops[si] < this.scroll) this.scroll = tops[si];
-      if (tops[si] + (H[sel.kind] ?? 32) > this.scroll + 320) this.scroll = tops[si] + (H[sel.kind] ?? 32) - 320;
+      if (tops[si] + (H[sel.kind] ?? 32) > this.scroll + height) this.scroll = tops[si] + (H[sel.kind] ?? 32) - height;
     }
     const place = (el, i) =>
       fixed
-        ? el.absolute().left(0).right(0).top(tops[i] - this.scroll).bottom(320 - (tops[i] + (H[rows[i].kind] ?? 32) - this.scroll))
+        ? el.absolute().left(0).right(0).top(tops[i] - this.scroll).bottom(height - (tops[i] + (H[rows[i].kind] ?? 32) - this.scroll))
         : el;
-    const visible = (i) => !fixed || (tops[i] + (H[rows[i].kind] ?? 32) > this.scroll && tops[i] < this.scroll + 320);
+    const visible = (i) => !fixed || (tops[i] + (H[rows[i].kind] ?? 32) > this.scroll && tops[i] < this.scroll + height);
 
     const row = (r) => {
       if (r.kind === "head") {
@@ -245,17 +246,20 @@ export default class Picker extends View {
       )
       .child(
         v_flex()
+          .id("pk-list")
+          .on_size_change((size, cx) => {
+            this.listHeight = size.height / settings().zoom;
+            cx.notify();
+          })
           .h(Math.min(320, total))
           .min_h(0)
           .mb(6)
           .when(fixed, (el) =>
             el.overflow_hidden().on_scroll_wheel((e, cx) => {
-              // Wheels report lines, touchpads pixels.
-              const d = Math.abs(e.delta.y) < 4 ? e.delta.y * 32 : e.delta.y;
-              this.scroll = Math.max(0, Math.min(this.scroll - d, maxScroll));
+              this.scroll = Math.max(0, Math.min(this.scroll - e.delta.y, maxScroll));
               // The selection follows the wheel, so the next frame doesn't scroll back to it.
               while (this.at < pickable.length - 1 && tops[rows.indexOf(pickable[this.at])] < this.scroll) this.at++;
-              while (this.at > 0 && tops[rows.indexOf(pickable[this.at])] + (H[pickable[this.at].kind] ?? 32) > this.scroll + 320) this.at--;
+              while (this.at > 0 && tops[rows.indexOf(pickable[this.at])] + (H[pickable[this.at].kind] ?? 32) > this.scroll + height) this.at--;
               cx.notify();
             }))
           .children(rows.map((r, i) => (visible(i) ? place(row(r), i) : null)).filter(Boolean)),
