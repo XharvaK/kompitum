@@ -244,8 +244,6 @@ impl TerminalView {
             g.vt_cell = cell;
             g.told_display = None;
             let facts = display_update(&mut g.told_display, &vt::theme(), cell).unwrap();
-            // Addresses on other machines are `machine/tN`.
-            g.vt.allow_local_image_files(!self.address.contains('/'));
             g.core = core.clone();
             g.channel = None;
             (cols, rows, facts)
