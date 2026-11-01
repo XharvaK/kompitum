@@ -651,11 +651,13 @@ What's about the user, never a look:
   apps' links alone. Disk-image and translocated launches don't create it.
   Finder launches load the login shell's PATH, with the usual install
   folders as a fallback.
-- `option_as_alt`: macOS only, `"auto"` (default), `"on"`, or `"off"`.
+- `option_as_alt`: macOS only, `"auto"` (default), `"on"`, `"off"`, `"left"`, or `"right"`.
+  Available in Settings → Keyboard.
   `"auto"` sends Option as Alt on US, US International, ABC and ABC-India;
   other layouts keep native Option text and dead keys. `"on"` enables terminal
   Alt shortcuts (including Option+E without composition); `"off"` keeps native
-  Option input on every layout. Changes apply immediately, including layout
+  Option input on every layout. `"left"` / `"right"` makes only that Option
+  key act as Alt; the other types characters. Changes apply immediately, including layout
   switches. Linux and Windows are unchanged.
 - `minimum_contrast`: terminal text contrast ratio, `1` (default) leaves
   program colors unchanged. Set it to `1.6` to enable the previous readability

@@ -1445,7 +1445,12 @@ impl Vt {
             ghostty_key_encoder_setopt_from_terminal(self.keys, self.term);
             #[cfg(target_os = "macos")]
             {
-                let option = if gpui_macos::option_as_alt() { GHOSTTY_OPTION_AS_ALT_TRUE } else { GHOSTTY_OPTION_AS_ALT_FALSE };
+                let option = match gpui_macos::option_as_alt() {
+                    gpui_macos::OptionAsAlt::None => GHOSTTY_OPTION_AS_ALT_FALSE,
+                    gpui_macos::OptionAsAlt::Both => GHOSTTY_OPTION_AS_ALT_TRUE,
+                    gpui_macos::OptionAsAlt::Left => GHOSTTY_OPTION_AS_ALT_LEFT,
+                    gpui_macos::OptionAsAlt::Right => GHOSTTY_OPTION_AS_ALT_RIGHT,
+                };
                 ghostty_key_encoder_setopt(self.keys, GHOSTTY_KEY_ENCODER_OPT_MACOS_OPTION_AS_ALT, &option as *const _ as *const c_void);
             }
             let e = self.key_event;
