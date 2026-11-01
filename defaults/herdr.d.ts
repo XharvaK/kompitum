@@ -160,7 +160,8 @@ export interface AgentInfo {
   tab: string;
   tab_index: number;
   tab_name: string;
-  /** "done" means it finished while you weren't looking; it becomes "idle" once you look. */
+  /** "done" means it finished while you weren't looking; it becomes "idle" once you look
+   *  (here or on another Herdr client). */
   status: Status;
   /** What the agent reported (OSC 7501 `app`), e.g. "claude-code", "pi", "codex". */
   app: string | null;
@@ -169,6 +170,8 @@ export interface AgentInfo {
   title: string;
   /** Higher = changed more recently. */
   seq: number;
+  /** Pinned with `terminal.pin`, on any Herdr client. */
+  pinned: boolean;
   focused: boolean;
 }
 

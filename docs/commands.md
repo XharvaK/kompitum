@@ -155,6 +155,15 @@ Where right-clicks in a terminal (default: the focused one) go when its program 
 | `to` | yes |
 | `terminal` | no |
 
+## `terminal.pin`
+
+Pin an agent to the top of the agent lists (pinned true) or unpin it (false). Pins are kept with the terminal, so every Herdr client shows them, and end with it.
+
+| Argument | Required |
+|---|---|
+| `terminal` | yes |
+| `pinned` | yes |
+
 ## `terminal.kill`
 
 End a terminal and its sub-agents.
