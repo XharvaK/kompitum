@@ -534,6 +534,8 @@ The main ones:
   `pane.zoom {pane?}`, `pane.focus {pane | terminal}`, `pane.go {direction}`, `pane.swap {direction}`.
   `pane.go` prefers the most recently focused pane along the nearest edge in that
   direction; unvisited panes fall back to overlap, then top/left layout order.
+  `pane.go` also reaches visible mods whose `mod.json` says `"focusable": true`, and
+  starts from that mod while it holds the keyboard.
   `pane.swap` uses geometry only. Focus history lasts until the window closes.
   `pane.focus {terminal}` prefers the first visible layout terminal block showing that
   address, then its model pane. Clicking a terminal block focuses it too.
@@ -742,6 +744,12 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
   mod.json    where it first appears: { "place": "right" | "left" | "top" | "bottom" | "none", "size": 320 }
   *.js, *.svg   more modules ("./ui.js"), its own icons
 ```
+
+- `"focusable": true` in `mod.json` lets `pane.go` give a shown copy the keyboard.
+  It gets `"focus"` from `nextCommand()`: focus your own handle then
+  (`this.handle.focus()`) and handle keys with `on_key_down`. The copy gets `"focus"`
+  again after a popup over it closes. Leave with `run("pane.go", {direction})`.
+  Without this opt-in, navigation and clicks stay unchanged.
 
 - The first time Herdr sees a folder, it docks one copy per `mod.json` into
   the shown layout (`"none"`: only where a layout or another mod puts it).

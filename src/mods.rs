@@ -340,6 +340,9 @@ pub struct Hint {
     pub place: Option<String>,
     #[serde(default)]
     pub size: Option<f32>,
+    /// `pane.go` can give it the keyboard.
+    #[serde(default)]
+    pub focusable: bool,
 }
 
 #[derive(Clone)]
@@ -674,6 +677,19 @@ pub fn send_command(name: &str, command: &str) -> bool {
             }
         }
         any
+    })
+}
+
+/// Delivers `command` to one shown copy (the block given the keyboard, not
+/// every copy of its mod).
+pub fn send_command_to(copy: u64, command: &str) -> bool {
+    if !SHOWN_COPIES.with(|s| s.borrow().contains(&copy)) {
+        return false;
+    }
+    COMMANDS.with(|c| {
+        let mut c = c.borrow_mut();
+        c.retain(|(_, _, tx)| !tx.is_closed());
+        c.iter().any(|(id, _, tx)| *id == copy && tx.try_send(command.to_owned()).is_ok())
     })
 }
 
@@ -1203,6 +1219,37 @@ mod tests {
             drop(reads);
             assert!(!snapshot_changed(1));
         }).join().unwrap();
+    }
+
+    #[test]
+    fn keyboard_focus_is_opt_in_and_commands_only_reach_the_shown_copy() {
+        for metadata in [json!({}), json!({"focusable": false})] {
+            assert!(!serde_json::from_value::<Hint>(metadata).unwrap().focusable);
+        }
+        assert!(serde_json::from_value::<Hint>(json!({"focusable": true})).unwrap().focusable);
+
+        let (first_tx, first) = async_channel::unbounded();
+        let (second_tx, second) = async_channel::unbounded();
+        let (hidden_tx, hidden) = async_channel::unbounded();
+        COMMANDS.with_borrow_mut(|c| *c = vec![
+            (1, "same-mod".into(), first_tx),
+            (2, "same-mod".into(), second_tx),
+            (3, "same-mod".into(), hidden_tx),
+        ]);
+        set_shown_copies([1, 2].into());
+        assert!(send_command_to(2, "focus"));
+        assert_eq!(second.try_recv().unwrap(), "focus");
+        assert!(first.is_empty());
+        assert!(hidden.is_empty());
+        assert!(!send_command_to(3, "focus"));
+        assert!(!send_command_to(99, "focus"));
+        // Existing mod key bindings still broadcast to every shown copy.
+        assert!(send_command("same-mod", "existing-key"));
+        assert_eq!(first.try_recv().unwrap(), "existing-key");
+        assert_eq!(second.try_recv().unwrap(), "existing-key");
+        assert!(hidden.is_empty());
+        COMMANDS.with_borrow_mut(Vec::clear);
+        set_shown_copies(Default::default());
     }
 
     #[cfg(unix)]

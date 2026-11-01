@@ -249,7 +249,7 @@ Focus a pane (or the pane showing a terminal).
 
 ## `pane.go`
 
-Focus the pane to the "left", "right", "up" or "down".
+Focus the pane or focusable mod to the "left", "right", "up" or "down".
 
 | Argument | Required |
 |---|---|
