@@ -508,7 +508,9 @@ types are rejected before a current-target default applies; null means omitted.
 The main ones:
 
 - Spaces: `space.new {name?, folder?, tab?, argv?, task?, machine?}`
-  (machine: another machine from `hc machine ls`; the space lives there, its
+  (machine: another machine from `hc machine ls`; omitted: the focused space's
+  machine for keys and clicks, this computer for scripts; `""`: this computer.
+  The space lives there, its
   terminals start in that machine's home unless folder, and its tabs and
   splits stay there; `spaces()` gives each space's `machine`, null here),
   `space.close {id?, confirmed?}`, `space.rename {id?, name}` ("": Herdr's name again),
