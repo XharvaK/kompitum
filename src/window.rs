@@ -3567,6 +3567,9 @@ impl AppWindow {
 
     /// Files people or agents edited: apply what they change.
     fn files_changed(&mut self, changed: Vec<std::path::PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        for path in changed_asset_paths(&mods::app_dir(), &changed) {
+            invalidate_asset(&path, window, cx);
+        }
         let top = |p: &std::path::PathBuf| p.components().next().and_then(|c| c.as_os_str().to_str().map(str::to_owned)).unwrap_or_default();
         if changed.iter().any(|p| matches!(top(p).as_str(), "settings.json" | "keys.json" | "programs.json" | "themes")) {
             self.reload_config(window, cx);
@@ -4543,10 +4546,145 @@ impl Render for AppWindow {
     }
 }
 
+fn invalidate_asset(path: &std::path::Path, window: &mut Window, cx: &mut gpui::App) {
+    let key = gpui_shell::AppAssets::cache_key(&path.to_string_lossy());
+    invalidate_image(&gpui::Resource::Embedded(key.clone()), window, cx);
+    window.invalidate_svg(&key);
+}
+
+fn invalidate_image(resource: &gpui::Resource, window: &mut Window, cx: &mut gpui::App) {
+    if let Some(Ok(old)) = cx.cached_asset::<gpui::ImgResourceLoader>(resource) {
+        cx.drop_image(old, Some(window));
+    }
+    cx.remove_asset::<gpui::ImgResourceLoader>(resource);
+}
+
+/// The changed paths, plus the files inside changed mod folders (a folder
+/// renamed into place arrives as one event). Runs on the UI thread: skips what
+/// the watcher ignores (hidden, `node_modules`) and stops at a mod-sized limit.
+fn changed_asset_paths(home: &std::path::Path, changed: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    const MAX_FILES: usize = 2000;
+    let mut paths: std::collections::BTreeSet<_> = changed.iter().cloned().collect();
+    let mut seen = std::collections::HashSet::new();
+    let mut pending: Vec<_> = changed.iter().filter(|p| p.starts_with("mods")).cloned().collect();
+    while let Some(path) = pending.pop() {
+        // Do not follow symlinks out of the mod folder (or into a cycle).
+        if !seen.insert(path.clone()) || !home.join(&path).symlink_metadata().is_ok_and(|m| m.is_dir()) { continue; }
+        let Ok(entries) = std::fs::read_dir(home.join(&path)) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || name == "node_modules" { continue; }
+            let child = path.join(&*name);
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                pending.push(child);
+            } else if paths.len() < MAX_FILES {
+                paths.insert(child);
+            } else {
+                return paths.into_iter().collect();
+            }
+        }
+    }
+    paths.into_iter().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{div, point, px, size, Context, IntoElement, Render, TestAppContext, Window};
     use gpui::prelude::*;
+
+    #[gpui::test]
+    fn image_invalidation_drops_cached_atlas_tiles_without_loading_missing_assets(cx: &mut TestAppContext) {
+        use gpui::{ImgResourceLoader, Resource};
+        let temp = if cfg!(target_os = "linux") { std::path::PathBuf::from("/var/tmp") } else { std::env::temp_dir() };
+        let home = temp.join(format!("herdr-image-atlas-test-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        let file = home.join("image.gif");
+        let mut encoder = image::codecs::gif::GifEncoder::new(std::fs::File::create(&file).unwrap());
+        for color in [[255, 0, 0, 255], [0, 255, 0, 255]] {
+            encoder.encode_frame(image::Frame::new(image::RgbaImage::from_pixel(2, 2, image::Rgba(color)))).unwrap();
+        }
+        drop(encoder);
+        let resource = Resource::Path(file.into());
+        cx.update(|cx| { cx.fetch_asset::<ImgResourceLoader>(&resource); });
+        cx.background_executor.run_until_parked();
+        let old = cx.update(|cx| cx.cached_asset::<ImgResourceLoader>(&resource)).unwrap().unwrap();
+        let context = cx.add_empty_window();
+        let displayed = old.clone();
+        assert_eq!(old.frame_count(), 2);
+        context.draw(point(px(0.0), px(0.0)), size(px(20.0), px(20.0)), move |_, _| {
+            gpui::canvas(|_, _, _| (), move |bounds, _, window, _| {
+                for frame in 0..displayed.frame_count() {
+                    window.paint_image(bounds, bounds, gpui::Corners::default(), displayed.clone(), frame, false).unwrap();
+                }
+            }).size_full()
+        });
+        context.update(|window, cx| {
+            assert!(window.has_image_atlas_entry(&old));
+            super::invalidate_image(&resource, window, cx);
+            assert!(!window.has_image_atlas_entry(&old));
+            assert!(!cx.has_asset::<ImgResourceLoader>(&resource));
+            let missing = Resource::Embedded("mods/missing.png".into());
+            super::invalidate_image(&missing, window, cx);
+            assert!(!cx.has_asset::<ImgResourceLoader>(&missing));
+        });
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn directory_changes_include_nested_assets() {
+        let temp = if cfg!(target_os = "linux") { std::path::PathBuf::from("/var/tmp") } else { std::env::temp_dir() };
+        let home = temp.join(format!("herdr-image-directory-test-{}", std::process::id()));
+        std::fs::create_dir_all(home.join("mods/probe/nested")).unwrap();
+        std::fs::write(home.join("mods/probe/nested/icon.svg"), "svg").unwrap();
+        for ignored in ["node_modules/pkg", ".git"] {
+            std::fs::create_dir_all(home.join("mods/probe").join(ignored)).unwrap();
+            std::fs::write(home.join("mods/probe").join(ignored).join("logo.svg"), "svg").unwrap();
+        }
+        let changed = vec![std::path::PathBuf::from("mods/probe")];
+        // A repeated root and a covered child are walked once.
+        let events = [changed[0].clone(), changed[0].clone(), "mods/probe/nested".into()];
+        let paths = super::changed_asset_paths(&home, &events);
+        assert!(paths.contains(&std::path::PathBuf::from("mods/probe/nested/icon.svg")));
+        assert!(paths.contains(&changed[0]));
+        assert!(!paths.iter().any(|p| p.to_string_lossy().contains("node_modules") || p.to_string_lossy().contains(".git")));
+        assert_eq!(paths.iter().filter(|p| p.ends_with("icon.svg")).count(), 1);
+        std::fs::remove_dir_all(&home).unwrap();
+        assert_eq!(super::changed_asset_paths(&home, &changed), changed);
+    }
+
+    #[test]
+    fn asset_cache_keys_match_file_events_without_requiring_the_file() {
+        use gpui_shell::AppAssets;
+        let expected = AppAssets::cache_key("mods/probe/icon.svg");
+        for alias in ["./mods/probe/icon.svg", "/mods/probe/icon.svg", "mods//probe/./icon.svg"] {
+            assert_eq!(AppAssets::cache_key(alias), expected);
+        }
+        // Traversal remains invalid, rather than becoming a valid cache hit.
+        assert_eq!(AppAssets::cache_key("mods/probe/../icon.svg").as_ref(), "mods/probe/../icon.svg");
+        #[cfg(windows)]
+        assert_eq!(AppAssets::cache_key(r"mods\probe\icon.svg"), expected);
+    }
+
+    #[test]
+    fn svg_invalidation_removes_every_size_but_preserves_other_assets() {
+        use gpui::{AtlasKey, DevicePixels, HeadlessAtlas, PlatformAtlas, RenderSvgParams, Size};
+        let atlas = HeadlessAtlas::default();
+        let key = |path: &str, size| AtlasKey::Svg(RenderSvgParams {
+            path: path.to_owned().into(), size: Size::new(DevicePixels(size), DevicePixels(size)),
+        });
+        let keys = [key("icons/icon.svg", 16), key("icons/icon.svg", 32), key("icons/nested/icon.svg", 16), key("icons-other/icon.svg", 16), AtlasKey::Image(gpui::RenderImageParams { image_id: gpui::ImageId(1), frame_index: 0 })];
+        let mut build = || Ok(Some((Size::new(DevicePixels(1), DevicePixels(1)), std::borrow::Cow::Borrowed(&[255u8][..]))));
+        let tiles: Vec<_> = keys.iter().map(|key| atlas.get_or_insert_with(key.clone(), &mut build).unwrap().unwrap()).collect();
+        atlas.remove_svg("icons");
+        atlas.remove_svg("icons");
+        for (index, key) in keys.iter().enumerate() {
+            assert_eq!(atlas.contains(key), index >= 3);
+            let tile = atlas.get_or_insert_with(key.clone(), &mut build).unwrap().unwrap();
+            assert_eq!(tile == tiles[index], index >= 3);
+        }
+    }
 
     #[test]
     fn agent_commands_keep_arguments_out_of_shell_source() {
