@@ -921,8 +921,11 @@ All of it is in `herdr.d.ts`. In short:
 - Files: `readTextFile(path, { on })` (here, or on that machine),
   `writeTextFile(path, text, expected)` (here only), and
   `watchFolder(dir)` (here only; poll a remote space's folder): resolves with the changed paths the next time anything
-  under `dir` changes (none missed between calls), so a file tree, a board
-  or a git panel stays live without polling:
+  under `dir` changes. On Linux, Git-ignored directories and Git objects are skipped,
+  and trees above 4096 non-ignored directories reject the watch; use a timer fallback.
+  macOS and Windows watch recursively, including ignored directories.
+  A returned root path means refresh everything (the pending paths are bounded).
+  Files also refreshes on its 10-second timer:
   `cx.spawn(async (cx) => { for (;;) { await watchFolder(dir); this.reload(); cx.notify(); } })`.
 - `notify({ ..., action: { name, args } })`: the toast runs the command when clicked.
 - This copy: `props()`, `shared(key)` / `setShared(key, value)` (every mod
