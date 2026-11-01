@@ -394,12 +394,9 @@ export function setShared(key: string, value: unknown): null;
 export function nextCommand(): Promise<string>;
 
 /**
- * Waits for changes under a folder and returns absolute paths in batches.
- * On Linux, Git-ignored directories and Git's object database are skipped; trees
- * above 4096 non-ignored directories reject the watch, so use a timer fallback.
- * macOS and Windows watch recursively, including ignored directories.
- * Pending paths are bounded: a batch containing the root means refresh everything.
- * Shared by every mod. Files also refreshes on its 10-second timer.
+ * Waits for the next changes under a folder (recursive) and returns the changed paths
+ * (absolute). Changes that came since the last call return at once, so none are missed;
+ * a save's events come as one batch. One OS watcher per folder, shared by every mod.
  *   cx.spawn(async (cx) => { for (;;) { await watchFolder(dir); this.reload(); cx.notify(); } });
  * Watch what you show, not a whole home folder (node_modules is a lot of events).
  */
