@@ -574,7 +574,10 @@ The main ones:
   `app.update` (restart into a downloaded update).
   Add machine lists all named ssh-config hosts in a scrollable list. Setup
   prompts open above the picker; close the setup terminal to return to the
-  updated list and any machine-specific guidance.
+  updated list and any machine-specific guidance. If a remote machine was rebuilt
+  or replaced and a different core answers there, its sidebar offers Connect:
+  explicitly forget the old identity and pair again with the same name and target.
+  Other unreachable machines don't offer this.
 - Window: `window.minimize`, `window.maximize` (or back), `window.close`.
 - macOS: `app.quit`, `app.hide`, `app.hide_others`, `app.show_all`.
 
