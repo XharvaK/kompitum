@@ -428,6 +428,7 @@ pub struct AppWindow {
     titlebar_applied: Option<(crate::layout::Titlebar, Option<[f32; 2]>)>,
     focused_pane: Option<String>,
     synced_model_pane: Option<String>,
+    pane_history: Vec<String>,
     window_active: bool,
     /// The system's appearance; a layout with a light and a dark theme follows it.
     system_dark: bool,
@@ -514,6 +515,7 @@ impl AppWindow {
             titlebar_applied: None,
             focused_pane: None,
             synced_model_pane: None,
+            pane_history: Vec::new(),
             window_active: true,
             system_dark: is_dark(window.appearance()),
             file_events: crate::files::watch(&mods::app_dir()),
@@ -1439,6 +1441,10 @@ impl AppWindow {
         } else {
             model_pane.clone()
         };
+        self.pane_history.retain(|id| self.model.spaces.iter().any(|s| s.tabs.iter().any(|t| t.root.find(id).is_some())));
+        if let Some(id) = model_pane.as_ref() {
+            remember_pane(&mut self.pane_history, id);
+        }
         self.synced_model_pane = model_pane;
         let pane_changed = focused != self.focused_pane;
         self.focused_pane = focused.clone();
@@ -2886,7 +2892,7 @@ impl AppWindow {
                     return self.fail(format!("{name} direction is left, right, up or down, not {dir:?}"));
                 }
                 if let Some(from) = self.model.focused_pane()
-                    && let Some(to) = self.neighbor(&from, dir)
+                    && let Some(to) = self.neighbor(&from, dir, name == "pane.go")
                 {
                     if name == "pane.swap" {
                         if let Some(ctx) = self.model.tab_of(&from).map(|c| c.id.clone())
@@ -3257,26 +3263,12 @@ impl AppWindow {
     }
 
     /// The nearest visible pane in a direction, by what's on screen.
-    fn neighbor(&self, from: &str, dir: &str) -> Option<String> {
+    fn neighbor(&self, from: &str, dir: &str, use_history: bool) -> Option<String> {
         let bounds = self.bounds.borrow();
         let cur = *bounds.get(from)?;
         let c = self.model.active_tab()?;
-        let candidates: Vec<String> = c.shown().visible_blocks().iter().filter(|n| n.is_pane() && n.id != from).map(|n| n.id.clone()).collect();
-        let overlap = |a0: Pixels, a1: Pixels, b0: Pixels, b1: Pixels| f32::from(a1.min(b1) - a0.max(b0)).max(0.0);
-        candidates
-            .into_iter()
-            .filter_map(|id| {
-                let r = *bounds.get(&id)?;
-                let (gap, ov) = match dir {
-                    "left" => (f32::from(cur.left() - r.right()), overlap(cur.top(), cur.bottom(), r.top(), r.bottom())),
-                    "right" => (f32::from(r.left() - cur.right()), overlap(cur.top(), cur.bottom(), r.top(), r.bottom())),
-                    "up" => (f32::from(cur.top() - r.bottom()), overlap(cur.left(), cur.right(), r.left(), r.right())),
-                    _ => (f32::from(r.top() - cur.bottom()), overlap(cur.left(), cur.right(), r.left(), r.right())),
-                };
-                (gap > -2.0 && ov > 0.0).then_some((gap, -ov, id))
-            })
-            .min_by(|a, b| a.partial_cmp(b).unwrap())
-            .map(|(_, _, id)| id)
+        let candidates = c.shown().visible_blocks().into_iter().filter(|n| n.is_pane() && n.id != from).filter_map(|n| Some((n.id.clone(), *bounds.get(&n.id)?)));
+        nearest(cur, dir, candidates, if use_history { &self.pane_history } else { &[] })
     }
 
     // ---- overlays ----------------------------------------------------------
@@ -4266,6 +4258,35 @@ fn agent_name(app: &str) -> String {
     }
 }
 
+fn remember_pane(history: &mut Vec<String>, id: &str) {
+    if history.last().is_some_and(|last| last == id) {
+        return;
+    }
+    history.retain(|pane| pane != id);
+    history.push(id.to_owned());
+}
+
+/// Prefer the most recently focused pane along the nearest edge. Unvisited
+/// panes fall back to overlap and layout order, ignoring subpixel split noise.
+fn nearest(cur: Bounds<Pixels>, dir: &str, candidates: impl IntoIterator<Item = (String, Bounds<Pixels>)>, history: &[String]) -> Option<String> {
+    let overlap = |a0: Pixels, a1: Pixels, b0: Pixels, b1: Pixels| f32::from(a1.min(b1) - a0.max(b0)).max(0.0);
+    let cmp = |a: f32, b: f32| if (a - b).abs() < 1.0 { std::cmp::Ordering::Equal } else { a.total_cmp(&b) };
+    candidates
+        .into_iter()
+        .filter_map(|(id, r)| {
+            let (gap, ov) = match dir {
+                "left" => (f32::from(cur.left() - r.right()), overlap(cur.top(), cur.bottom(), r.top(), r.bottom())),
+                "right" => (f32::from(r.left() - cur.right()), overlap(cur.top(), cur.bottom(), r.top(), r.bottom())),
+                "up" => (f32::from(cur.top() - r.bottom()), overlap(cur.left(), cur.right(), r.left(), r.right())),
+                _ => (f32::from(r.top() - cur.bottom()), overlap(cur.left(), cur.right(), r.left(), r.right())),
+            };
+            let recent = history.iter().position(|pane| pane == &id);
+            (gap > -2.0 && ov > 0.0).then_some((gap, recent, ov, id))
+        })
+        .reduce(|best, next| if cmp(next.0, best.0).then(best.1.cmp(&next.1)).then(cmp(best.2, next.2)).is_lt() { next } else { best })
+        .map(|(_, _, _, id)| id)
+}
+
 fn position_popup(at: Point<Pixels>, body: Stateful<Div>) -> Anchored {
     anchored()
         .position(point(at.x.max(px(8.0)), at.y.max(px(8.0))))
@@ -4675,6 +4696,41 @@ fn changed_asset_paths(home: &std::path::Path, changed: &[std::path::PathBuf]) -
 mod tests {
     use gpui::{div, point, px, size, Context, IntoElement, Render, TestAppContext, Window};
     use gpui::prelude::*;
+
+    #[test]
+    fn going_back_into_a_split_column_takes_its_top_pane_whatever_the_fractions() {
+        let r = |x: f32, y: f32, w: f32, h: f32| gpui::Bounds::new(point(px(x), px(y)), size(px(w), px(h)));
+        // An odd height splits into halves a fraction apart, the bottom one larger.
+        let column = || vec![("top".to_owned(), r(0.0, 0.0, 400.0, 300.4)), ("bottom".to_owned(), r(0.0, 300.4, 400.0, 300.6))];
+        assert_eq!(super::nearest(r(401.0, 0.0, 399.0, 601.0), "left", column(), &[]).as_deref(), Some("top"));
+        // More overlap by a pixel or more still decides.
+        assert_eq!(super::nearest(r(401.0, 250.0, 399.0, 351.0), "left", column(), &[]).as_deref(), Some("bottom"));
+        // A visited pane wins even when an unvisited pane has more overlap.
+        assert_eq!(super::nearest(r(401.0, 250.0, 399.0, 351.0), "left", column(), &["top".to_owned()]).as_deref(), Some("top"));
+    }
+
+    #[test]
+    fn directional_round_trips_return_to_the_recent_pane_in_either_split() {
+        let r = |x: f32, y: f32, w: f32, h: f32| gpui::Bounds::new(point(px(x), px(y)), size(px(w), px(h)));
+        for (a, b, other, out, back) in [
+            (r(0.0, 0.0, 400.0, 300.4), r(0.0, 300.4, 400.0, 300.6), r(401.0, 0.0, 399.0, 601.0), "right", "left"),
+            (r(0.0, 0.0, 300.4, 400.0), r(300.4, 0.0, 300.6, 400.0), r(0.0, 401.0, 601.0, 399.0), "down", "up"),
+        ] {
+            let split = || vec![("a".to_owned(), a), ("b".to_owned(), b)];
+            assert_eq!(super::nearest(other, back, split(), &[]).as_deref(), Some("a"));
+            let mut history = Vec::new();
+            for (id, bounds) in [("a", a), ("b", b), ("a", a)] {
+                super::remember_pane(&mut history, id);
+                assert_eq!(super::nearest(bounds, out, vec![("other".to_owned(), other)], &history).as_deref(), Some("other"));
+                super::remember_pane(&mut history, "other");
+                assert_eq!(super::nearest(other, back, split(), &history).as_deref(), Some(id));
+                super::remember_pane(&mut history, id);
+            }
+            assert_eq!(history.len(), 3);
+            // Recency cannot select a pane outside the requested direction.
+            assert_eq!(super::nearest(other, out, split(), &history), None);
+        }
+    }
 
     #[gpui::test]
     fn image_invalidation_drops_cached_atlas_tiles_without_loading_missing_assets(cx: &mut TestAppContext) {
