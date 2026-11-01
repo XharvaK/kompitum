@@ -99,7 +99,7 @@ pub struct TerminalView {
     /// When the person last typed here: output right after is shown at once.
     typed_at: Cell<Option<Instant>>,
     /// Scrolled this gesture, in lines, toward the next whole one.
-    scrolled: f32,
+    scrolled: Point<f32>,
     _reader: Option<Task<()>>,
 }
 
@@ -207,7 +207,7 @@ impl TerminalView {
             was_focused: false,
             shown_in: Cell::new(0),
             typed_at: Cell::new(None),
-            scrolled: 0.0,
+            scrolled: point(0.0, 0.0),
             _reader: None,
         };
         view.connect(core, false, cx);
@@ -551,27 +551,20 @@ impl TerminalView {
     fn scroll(&mut self, ev: &ScrollWheelEvent, _w: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
         let mut g = self.grid.borrow_mut();
-        let rows = g.vt.rows as f32;
-        let steps = match ev.delta {
-            ScrollDelta::Lines(p) if cfg!(target_os = "macos") => macos_wheel_steps(p.y),
-            ScrollDelta::Lines(p) => scroll_steps(&mut self.scrolled, ev.touch_phase, p.y, rows),
-            ScrollDelta::Pixels(p) => scroll_steps(&mut self.scrolled, ev.touch_phase, p.y / g.cell.height, rows),
-        };
-        let n = steps.unsigned_abs() as usize;
-        if n == 0 {
+        let steps = scroll_delta_steps(&mut self.scrolled, ev.delta, ev.touch_phase, g.cell, g.vt.cols, g.vt.rows);
+        let n = steps.y.unsigned_abs() as usize;
+        if steps.x == 0 && n == 0 {
             return;
         }
-        let up = steps > 0;
+        let up = steps.y > 0;
         if g.vt.mouse_tracking() {
             let ((x, y), size) = mouse_at(&g, ev.position);
-            let button = if up { GHOSTTY_MOUSE_BUTTON_FOUR } else { GHOSTTY_MOUSE_BUTTON_FIVE };
-            let mut out = Vec::new();
-            for _ in 0..n {
-                out.extend(g.vt.encode_mouse(GHOSTTY_MOUSE_ACTION_PRESS, Some(button), 0, x, y, size, false));
-            }
+            let out = scroll_mouse_bytes(&mut g.vt, steps, x, y, size);
             if let Some(ch) = g.channel {
                 g.core.input(ch, &out);
             }
+        } else if n == 0 {
+            return;
         } else if g.vt.alt_screen() {
             let key = if up { GHOSTTY_KEY_ARROW_UP } else { GHOSTTY_KEY_ARROW_DOWN };
             let mut out = Vec::new();
@@ -790,6 +783,30 @@ fn link_mods(m: &Modifiers) -> bool {
 
 fn local(g: &Grid, p: Point<Pixels>) -> (f32, f32) {
     (f32::from(p.x - g.origin.x).max(0.0), f32::from(p.y - g.origin.y).max(0.0))
+}
+
+fn scroll_delta_steps(scrolled: &mut Point<f32>, delta: ScrollDelta, phase: TouchPhase, cell: Size<Pixels>, cols: u16, rows: u16) -> Point<i32> {
+    let lines = match delta {
+        // As in Ghostty, a sideways notch moves one column; a vertical one, three lines.
+        ScrollDelta::Lines(p) if cfg!(target_os = "macos") => return point(macos_wheel_steps(p.x) / 3, macos_wheel_steps(p.y)),
+        ScrollDelta::Lines(p) => p,
+        ScrollDelta::Pixels(p) => point(p.x / cell.width, p.y / cell.height),
+    };
+    point(scroll_steps(&mut scrolled.x, phase, lines.x, cols as f32), scroll_steps(&mut scrolled.y, phase, lines.y, rows as f32))
+}
+
+fn scroll_mouse_bytes(vt: &mut Vt, steps: Point<i32>, x: f32, y: f32, size: (u32, u32, f32, f32)) -> Vec<u8> {
+    let mut out = Vec::new();
+    for (steps, positive, negative) in [
+        (steps.y, GHOSTTY_MOUSE_BUTTON_FOUR, GHOSTTY_MOUSE_BUTTON_FIVE),
+        (steps.x, GHOSTTY_MOUSE_BUTTON_SIX, GHOSTTY_MOUSE_BUTTON_SEVEN),
+    ] {
+        let button = if steps > 0 { positive } else { negative };
+        for _ in 0..steps.unsigned_abs() {
+            out.extend(vt.encode_mouse(GHOSTTY_MOUSE_ACTION_PRESS, Some(button), 0, x, y, size, false));
+        }
+    }
+    out
 }
 
 /// Whole lines to scroll for one scroll event. A touchpad sends many small
@@ -1663,6 +1680,43 @@ mod tests {
         assert_eq!(super::scroll_steps(&mut s, Started, 0.0, 40.0), 0);
         assert_eq!(super::scroll_steps(&mut s, Moved, -0.5, 40.0), 0, "a new gesture forgets the last one's leftover");
         assert_eq!(super::scroll_steps(&mut s, Moved, -0.6, 40.0), -1);
+    }
+
+    #[test]
+    fn horizontal_and_vertical_scroll_report_sgr_wheel_buttons() {
+        use gpui::{point, px, size, ScrollDelta, TouchPhase};
+        let mut vt = Vt::new(80, 24);
+        vt.write(b"\x1b[?1000h\x1b[?1006h");
+        let cell = size(px(10.0), px(20.0));
+        let mut scrolled = point(0.0, 0.0);
+        for (delta, expected) in [
+            (point(10.0, 0.0), b"\x1b[<66;2;2M".as_slice()),
+            (point(-10.0, 0.0), b"\x1b[<67;2;2M".as_slice()),
+            (point(0.0, 20.0), b"\x1b[<64;2;2M".as_slice()),
+            (point(0.0, -20.0), b"\x1b[<65;2;2M".as_slice()),
+            (point(-10.0, 20.0), b"\x1b[<64;2;2M\x1b[<67;2;2M".as_slice()),
+        ] {
+            let steps = super::scroll_delta_steps(&mut scrolled, ScrollDelta::Pixels(point(px(delta.x), px(delta.y))), TouchPhase::Moved, cell, 80, 24);
+            assert_eq!(super::scroll_mouse_bytes(&mut vt, steps, 15.0, 25.0, (80, 24, 10.0, 20.0)), expected);
+        }
+        let steps = super::scroll_delta_steps(&mut scrolled, ScrollDelta::Lines(point(1.0, -1.0)), TouchPhase::Moved, cell, 80, 24);
+        let count = if cfg!(target_os = "macos") { 3 } else { 1 };
+        assert_eq!(steps, point(1, -count));
+        assert_eq!(super::scroll_mouse_bytes(&mut vt, steps, 15.0, 25.0, (80, 24, 10.0, 20.0)), [b"\x1b[<65;2;2M".repeat(count as usize), b"\x1b[<66;2;2M".to_vec()].concat());
+    }
+
+    #[test]
+    fn scroll_axes_accumulate_independently_and_reset_together() {
+        use gpui::{point, px, size, ScrollDelta, TouchPhase::*};
+        let mut scrolled = point(0.0, 0.0);
+        let mut steps = |phase, x, y| super::scroll_delta_steps(&mut scrolled, ScrollDelta::Pixels(point(px(x), px(y))), phase, size(px(10.0), px(20.0)), 80, 24);
+        assert_eq!(steps(Moved, 6.0, 8.0), point(0, 0));
+        assert_eq!(steps(Moved, 5.0, 8.0), point(1, 0));
+        assert_eq!(steps(Moved, 0.0, 8.0), point(0, 1));
+        assert_eq!(steps(Started, 0.0, 0.0), point(0, 0));
+        assert_eq!(steps(Moved, -9.0, -19.0), point(0, 0));
+        assert_eq!(steps(Moved, -2.0, -2.0), point(-1, -1));
+        assert_eq!(steps(Ended, 100.0, 100.0), point(0, 0));
     }
 
     #[test]
