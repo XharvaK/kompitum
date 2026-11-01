@@ -165,7 +165,9 @@ mod tests {
         let out = home.run(check(&["printf".into()]), None);
         assert!(String::from_utf8(out.stdout).unwrap().contains("herdr-has:printf\n"));
         let out = home.run(launch(vec!["/usr/bin/printf".into(), "%s".into(), "literal 'argument'".into()]), None);
-        assert_eq!(out.stdout, b"literal 'argument'");
+        // The account's own shell may still greet (zsh on macOS runners).
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        assert_eq!(stdout.replace("rc greeting without newline", ""), "literal 'argument'", "{stdout:?}");
     }
 
     #[test]
