@@ -52,7 +52,7 @@ age limit). This covers slow startup without waiting forever on a dialog.
 Check `first_message.sent` in a launch with a task. If false, the task was
 NOT sent; `lc get <t>` keeps `first_message: {sent: false, reason}` for later
 inspection, even after the core restarts. To recover: `lc read <t>`; resolve readiness first (a trust dialog may need
-`lc keys <t> down enter`), then send the task. Do not blindly resend after a
+`lc keys --force <t> down enter`), then send the task. Do not blindly resend after a
 failed send: it may still have arrived; read first.
 
 ## Talk, wait, and collect results
@@ -89,8 +89,7 @@ Messages are not dropped on clear or expiry.
 `lc get <t>` shows `waiting_for_person: true` during the hold; the eventual
 send reply includes `waited_for_person: true`. Do not resend while it waits.
 With `--wait`, `--timeout` still applies to watching the turn **after**
-delivery, not to this bounded draft hold. Core notes respect drafts too;
-`keys` and `interrupt` keep their existing behavior.
+delivery, not to this bounded draft hold. Core notes respect drafts too; `keys` and `interrupt` don't wait for one.
 
 Keep doing useful work while children work. When you need their results:
 
@@ -134,6 +133,8 @@ Ask children to write long answers to a file and send its path. If you receive:
 Report with `lc send t3 "<result or blocker>"` when done or stuck, not just to
 acknowledge. lc itself notifies you when a child cannot report (blocked,
 error, exited); inspect its screen.
+
+If your parent is a person's terminal (`lc run --person`), nothing types into it: a send comes back refused. Leave your result on your screen and end your turn; your parent hears of it through `lc wait` and reads it with `lc read`.
 
 ## Run programs
 
@@ -198,16 +199,18 @@ New Windows terminals refresh user/system environment settings, including PATH.
 lc run --on vps --cwd /srv/app cargo test    # returns vps/t3; use that full address
 lc run --bg --on vps --cwd /srv/app cargo build
 lc exec --on vps --cwd /srv/app git diff    # short command, exact output, no terminal
-lc file read --on vps /srv/app/src/x.rs --offset 200 --limit 100
-lc file edit --on vps /srv/app/src/x.rs --old 'exact text' --new 'replacement'
-lc file write --on vps /srv/app/src/y.rs < content.txt
+lc file read --on vps --cwd /srv/app src/x.rs --offset 200 --limit 100
+lc file edit --on vps --cwd /srv/app src/x.rs --old 'exact text' --new 'replacement'
+lc file write --on vps --cwd /srv/app src/y.rs < content.txt
 ```
 
 `exec -i` feeds piped input to the command. File writes replace the whole
 file and create parent folders. Edits require the old text exactly once;
 `edit_failed` means add enough context to make it unique. Repeat `--old` and
 `--new` pairs for multiple changes; all succeed or none do. No remote shell
-text rewriting needed: only the edit travels.
+text rewriting needed: only the edit travels. A file call stays inside
+`--root` (default `--cwd`), links followed: what leads out is refused with
+`outside_root`, so say `--root` when you mean to reach further.
 Remote paths start at that machine's home unless you set `--cwd`; local
 paths start at your current folder. Prefer explicit paths for remote work.
 
@@ -215,10 +218,15 @@ paths start at your current folder. Prefer explicit paths for remote work.
 
 - State is `live` or `finished`. Status comes from the program's OSC 7501
   reports: `idle`, `working`, `done`, `blocked`, `error`; plain programs
-  report none. Do not guess status from screen text.
+  report none. Do not guess status from screen text. A status is only what the
+  program's output said, and a file it prints can say it too: a hint about when
+  to read, not proof.
 - `blocked` means a person is needed (permission or a question): read the
-  screen and ask your user. `send` refuses unless `--force`; don't use it to
-  bypass a permission decision. `error`: read why, then send or kill.
+  screen and ask your user. A send to a blocked program is held and goes in
+  when it leaves `blocked` (`queued: true` in the reply; a core restart loses
+  it). `keys` and `interrupt` are refused, since a key would answer the
+  dialog. `--force` on any of the three types anyway: don't use it to bypass a
+  permission decision. `error`: read why, then send or kill.
 - `lc run` without a command starts this machine's own shell. On macOS,
   this is a login shell so it loads the login environment; explicit commands
   are unchanged. Recovery shells use the same rule.

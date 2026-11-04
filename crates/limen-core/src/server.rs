@@ -413,7 +413,12 @@ async fn handle(
         return reply(rpc::response(request["id"].clone(), Err(err)));
     };
     let call = api::Call { core, conn, plain };
-    let params = crate::remote::from_peer(core, conn, request["params"].clone());
+    let mut params = crate::remote::from_peer(core, conn, request["params"].clone());
+    // A program can't pose as another terminal: its `LIMEN_SCOPE` gives it away.
+    if let Err(e) = api::check_caller(core, &mut params) {
+        let reply = request.get("id").map(|id| rpc::response(id.clone(), Err(e)));
+        return Handled { reply, framed: false, stop: false };
+    }
     let result = match crate::remote::route(core, method, &params) {
         _ if method == "$/orphaned" => crate::remote::orphaned(core, conn, &params).await,
         Ok(Some((crate::remote::To::Machine(machine), params))) if method == "terminal.attach" => match conn {

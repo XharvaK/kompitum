@@ -779,6 +779,11 @@
               "null"
             ]
           },
+          "person": {
+            "default": false,
+            "description": "A person works here: nothing types into it (see `lc run --person`).",
+            "type": "boolean"
+          },
           "pid": {
             "format": "uint32",
             "minimum": 0,
@@ -918,6 +923,10 @@
       },
       "SendResult": {
         "properties": {
+          "queued": {
+            "description": "True when the program was blocked: the text is held and goes in when it leaves\n`blocked`. A core restart loses it.",
+            "type": "boolean"
+          },
           "started": {
             "description": "Whether it went `working` within a few seconds; null when it doesn't\nreport status, so nobody can tell.",
             "type": [
@@ -956,7 +965,8 @@
         },
         "required": [
           "turn",
-          "waited_for_person"
+          "waited_for_person",
+          "queued"
         ],
         "type": "object"
       },
@@ -1260,6 +1270,11 @@
               "integer",
               "null"
             ]
+          },
+          "person": {
+            "default": false,
+            "description": "A person works here: nothing types into it (see `lc run --person`).",
+            "type": "boolean"
           },
           "pid": {
             "format": "uint32",
@@ -1845,6 +1860,16 @@
           }
         },
         {
+          "description": "A person works in this terminal: only `lc attach` types into it. `send`, `keys`,\n`interrupt` and notes are refused, `--force` included. News of its children waits\nfor its next `lc wait`.",
+          "name": "person",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "A person works in this terminal: only `lc attach` types into it. `send`, `keys`,\n`interrupt` and notes are refused, `--force` included. News of its children waits\nfor its next `lc wait`.",
+            "type": "boolean"
+          }
+        },
+        {
           "description": "Remove it right after it exits (once a waiting parent has the exit code).",
           "name": "rm",
           "required": false,
@@ -2424,7 +2449,7 @@
       }
     },
     {
-      "description": "Paste text and press Enter after the person submits or clears their draft (up to 3 min), then ~3 s quiet; keys a person presses meanwhile are held, then delivered. Refuses a blocked program unless `force`.",
+      "description": "Paste text and press Enter after the person submits or clears their draft (up to 3 min), then ~3 s quiet; keys a person presses meanwhile are held, then delivered. Refuses a blocked program unless `force`; a plain send to one is held until it leaves `blocked`.",
       "errors": [
         {
           "code": -32000,
@@ -2481,6 +2506,13 @@
             "kind": "config"
           },
           "message": "config"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "refused"
+          },
+          "message": "refused"
         }
       ],
       "name": "terminal.send",
@@ -2689,7 +2721,7 @@
       }
     },
     {
-      "description": "Press named keys, encoded for the program's current keyboard modes. Same quiet rule as send.",
+      "description": "Press named keys, encoded for the program's current keyboard modes. Same quiet rule as send. Refuses a blocked program unless `force`.",
       "errors": [
         {
           "code": -32000,
@@ -2725,6 +2757,20 @@
             "kind": "invalid_params"
           },
           "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "blocked"
+          },
+          "message": "blocked"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "refused"
+          },
+          "message": "refused"
         }
       ],
       "name": "terminal.keys",
@@ -2738,6 +2784,16 @@
               "string",
               "null"
             ]
+          }
+        },
+        {
+          "description": "Press them even if the program is blocked: that answers its dialog.",
+          "name": "force",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Press them even if the program is blocked: that answers its dialog.",
+            "type": "boolean"
           }
         },
         {
@@ -2770,7 +2826,7 @@
       }
     },
     {
-      "description": "Press the stop key (esc if it reports status, else ctrl+c), then report what was observed. Never escalates.",
+      "description": "Press the stop key (esc if it reports status, else ctrl+c), then report what was observed. Never escalates. Refuses a blocked program unless `force`.",
       "errors": [
         {
           "code": -32000,
@@ -2806,11 +2862,35 @@
             "kind": "invalid_params"
           },
           "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "blocked"
+          },
+          "message": "blocked"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "refused"
+          },
+          "message": "refused"
         }
       ],
       "name": "terminal.interrupt",
       "paramStructure": "by-name",
       "params": [
+        {
+          "description": "Interrupt even if the program is blocked: the key answers its dialog.",
+          "name": "force",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Interrupt even if the program is blocked: the key answers its dialog.",
+            "type": "boolean"
+          }
+        },
         {
           "description": "The terminal: `t7`, a name, or `machine/t7`.",
           "name": "terminal",
@@ -3048,7 +3128,7 @@
       }
     },
     {
-      "description": "Read a text file here or on a machine (`on`): lines from `offset`, at most `limit` and 8 MB, and how many it has.",
+      "description": "Read a text file here or on a machine (`on`): lines from `offset`, at most `limit` and 8 MB, and how many it has. Stays inside `root`, by default `cwd`.",
       "errors": [
         {
           "code": -32602,
@@ -3077,6 +3157,13 @@
             "kind": "io"
           },
           "message": "io"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "outside_root"
+          },
+          "message": "outside_root"
         },
         {
           "code": -32000,
@@ -3163,6 +3250,18 @@
             "description": "The file: absolute, or from `cwd`.",
             "type": "string"
           }
+        },
+        {
+          "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+          "name": "root",
+          "required": false,
+          "schema": {
+            "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         }
       ],
       "result": {
@@ -3173,7 +3272,7 @@
       }
     },
     {
-      "description": "Write a file here or on a machine (`on`), making missing folders. Swapped in whole: a reader sees old or new, never half. An existing file keeps its mode; a symlink is followed.",
+      "description": "Write a file here or on a machine (`on`), making missing folders. Swapped in whole: a reader sees old or new, never half. An existing file keeps its mode; a symlink is followed. Stays inside `root`, by default `cwd`.",
       "errors": [
         {
           "code": -32602,
@@ -3188,6 +3287,13 @@
             "kind": "io"
           },
           "message": "io"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "outside_root"
+          },
+          "message": "outside_root"
         },
         {
           "code": -32000,
@@ -3255,6 +3361,18 @@
             "description": "The file: absolute, or from `cwd`.",
             "type": "string"
           }
+        },
+        {
+          "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+          "name": "root",
+          "required": false,
+          "schema": {
+            "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         }
       ],
       "result": {
@@ -3265,7 +3383,7 @@
       }
     },
     {
-      "description": "Edit a text file here or on a machine (`on`): each `old` must be found exactly once in the file as it was, edits must not overlap; all are made or none. Written like file.write.",
+      "description": "Edit a text file here or on a machine (`on`): each `old` must be found exactly once in the file as it was, edits must not overlap; all are made or none. Written like file.write, and stays inside `root`.",
       "errors": [
         {
           "code": -32602,
@@ -3301,6 +3419,13 @@
             "kind": "io"
           },
           "message": "io"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "outside_root"
+          },
+          "message": "outside_root"
         },
         {
           "code": -32000,
@@ -3370,6 +3495,18 @@
           "schema": {
             "description": "The file: absolute, or from `cwd`.",
             "type": "string"
+          }
+        },
+        {
+          "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+          "name": "root",
+          "required": false,
+          "schema": {
+            "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       ],

@@ -74,6 +74,7 @@ lc read review --lines 100
 
 Agents started inside an lc terminal become its children.
 They can report back with `lc send` and wait for their children with `lc wait --children all`.
+A terminal started with `lc run --person` is a person's: only `lc attach` types into it, `--force` included. News of its children waits for its next `lc wait`.
 The parent gets notes when a child needs attention or ends.
 Children end with their parent unless started with `--outlive-parent`.
 

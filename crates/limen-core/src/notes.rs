@@ -52,9 +52,10 @@ fn last_lines(text: &str) -> Vec<String> {
 }
 
 /// A parent can take a note: a live agent not on a dialog (typing could answer
-/// it). A working agent takes typed text as a message, like any steer.
+/// it), and not a person's terminal. A working agent takes typed text as a
+/// message, like any steer.
 fn can_take_note(t: &Terminal) -> bool {
-    t.is_live() && t.reported && !blocked(t)
+    t.is_live() && t.reported && !blocked(t) && !t.person
 }
 
 /// `t7 reviewer`: address, then name or template.
@@ -154,7 +155,7 @@ impl Core {
             return format!("<lc from=\"{afar}\">{text}</lc>");
         }
         match sender.filter(|s| s.reported && target.is_some_and(|t| t.reported)) {
-            Some(s) if reach => {
+            Some(s) if reach && !s.person => {
                 format!("<lc from=\"{}\" reach=\"lc send {} when done or stuck\">{text}</lc>", who(s), s.address)
             }
             Some(s) => format!("<lc from=\"{}\">{text}</lc>", who(s)),
@@ -181,7 +182,13 @@ impl Core {
         while let Some(job) = jobs.recv().await {
             match job {
                 Job::Notes(parent) => {
-                    let start = self.lock().note_tasks.insert(parent);
+                    let mut st = self.lock();
+                    // A person's terminal takes no notes: a task would wait there forever.
+                    if st.reg.terminals.get(&parent).is_some_and(|t| t.person) {
+                        continue;
+                    }
+                    let start = st.note_tasks.insert(parent);
+                    drop(st);
                     if start {
                         tokio::spawn(self.clone().deliver_notes(parent));
                     }
@@ -228,7 +235,7 @@ impl Core {
     }
 
     /// Types notes into `parent` whenever it can take them, until there are none.
-    fn notes_on(&self) -> bool {
+    pub(crate) fn notes_on(&self) -> bool {
         crate::config::load(&self.paths.config).map(|c| c.notes.unwrap_or(true)).unwrap_or(true)
     }
 
@@ -239,6 +246,15 @@ impl Core {
             while !self.wait_for(Duration::from_secs(60), ready).await {}
             let alive = self.lock().reg.terminals.get(&parent).is_some_and(|t| t.is_live());
             if !alive || !enabled {
+                // Nothing here will ever type them: say how much was dropped, and for which.
+                let dropped = self.lock().held_notes.remove(&parent).unwrap_or_default().len();
+                if dropped > 0 {
+                    eprintln!(
+                        "core: dropped {dropped} held notes for {}: {}",
+                        crate::terminals::address(parent),
+                        if alive { "notes are off" } else { "it is gone" }
+                    );
+                }
                 break;
             }
             match self.type_note(parent).await {
@@ -247,7 +263,7 @@ impl Core {
                 Err(_) => continue, // it got busy while we waited for quiet: try again
             }
             let mut st = self.lock();
-            if self.unseen(&st, &crate::terminals::address(parent)).is_empty() && !st.afar_notes.contains_key(&parent) {
+            if self.unseen(&st, &crate::terminals::address(parent)).is_empty() && !st.held_notes.contains_key(&parent) {
                 st.note_tasks.remove(&parent);
                 return;
             }
@@ -262,7 +278,7 @@ impl Core {
             .and_then(|c| c.notes_quiet)
             .map_or_else(crate::input::quiet, |s| Duration::from_secs_f64(s.max(0.0)));
         // Notes from other machines were decided there: type them as they are.
-        let afar = self.lock().afar_notes.remove(&parent).unwrap_or_default();
+        let afar = self.lock().held_notes.remove(&parent).unwrap_or_default();
         let typed = self
             .type_in(parent, quiet, true, |st, t| {
                 if !can_take_note(t) {
@@ -289,7 +305,7 @@ impl Core {
             Ok((told, _)) => told,
             Err(e) => {
                 if !afar.is_empty() {
-                    self.lock().afar_notes.entry(parent).or_default().splice(0..0, afar);
+                    self.lock().held_notes.entry(parent).or_default().splice(0..0, afar);
                 }
                 return Err(e);
             }

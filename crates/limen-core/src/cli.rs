@@ -375,6 +375,9 @@ fn run(cmd: Option<Cmd>, json: bool, asked: bool) -> Result<Option<Out>, RpcErro
             if r["waited_for_person"] == true {
                 human.push_str("; waited for the person's draft");
             }
+            if r["queued"] == true {
+                human.push_str("; held until it leaves blocked");
+            }
             if !r["wait"].is_null() {
                 human = format!("{human}\n{}", describe_wait(&r["wait"]));
             }
@@ -657,6 +660,7 @@ fn flags_after_task(paths: &Paths, p: RunParams) -> Result<(RunParams, bool), Rp
         rm: p.rm || q.rm,
         keep: p.keep || q.keep,
         contain: p.contain || q.contain,
+        person: p.person || q.person,
         bg: p.bg || q.bg,
         timeout: q.timeout.or(p.timeout),
         ..p

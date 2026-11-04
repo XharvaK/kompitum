@@ -14,6 +14,9 @@ use std::time::{Duration, Instant};
 // Limen's own tests, apart from upstream's, so a merge of this file stays small.
 #[path = "windows/contain.rs"]
 mod contain;
+// What core refuses: a person's terminal, a blocked program, a posing caller, a file out of root.
+#[path = "windows/refusals.rs"]
+mod refusals;
 
 const BIN: &str = env!("CARGO_BIN_EXE_limen-core");
 static LIVE: Mutex<Vec<(String, PathBuf)>> = Mutex::new(Vec::new());
@@ -123,6 +126,7 @@ fn cmd_at(exe: &Path, session: &str, root: &Path) -> Command {
         .env("COMSPEC", real_cmd())
         .env_remove("LIMEN_COMSPEC")
         .env_remove("LIMEN_TERMINAL_ID")
+        .env_remove("LIMEN_SCOPE")
         .env_remove("LIMEN_SOCKET")
         .env_remove("SSH_CONNECTION")
         .env_remove("SSH_CLIENT")

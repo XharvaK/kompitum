@@ -283,6 +283,23 @@ pub fn paste(bracketed: bool, text: &str) -> Vec<u8> {
     if bracketed { format!("\x1b[200~{text}\x1b[201~").into_bytes() } else { text.into_bytes() }
 }
 
+/// Typing here could answer a dialog, so it takes `force`. The hint never names
+/// `--force`: agents read hints.
+fn check_blocked(t: &Terminal, id: u32, force: bool) -> Result<(), RpcError> {
+    if state_word(t).as_deref() == Some("blocked") && !force {
+        let address = crate::terminals::address(id);
+        return Err(RpcError::new(
+            "blocked",
+            format!(
+                "{address} is blocked ({})",
+                t.status.as_ref().and_then(|s| s.kind.as_deref()).unwrap_or("waiting")
+            ),
+            format!("typing would answer its dialog; read its screen first (lc read {address})"),
+        ));
+    }
+    Ok(())
+}
+
 pub struct Sent {
     pub status: Option<String>,
     pub turn: u64,
@@ -331,6 +348,14 @@ impl Core {
                     )
                 })?;
                 t.check_program()?;
+                if t.person {
+                    let address = crate::terminals::address(id);
+                    return Err(RpcError::new(
+                        "refused",
+                        format!("{address} is a person's terminal: nothing types into it"),
+                        "nothing was typed; they hear of you through lc wait and read you with lc read",
+                    ));
+                }
                 let gate = st.gates.entry(id).or_default();
                 let draft = protect_draft && gate.draft.pending && Instant::now() < deadline;
                 if protect_draft {
@@ -411,21 +436,8 @@ impl Core {
         self.settle(id).await?;
         let ((status, turn, reported), waited_for_person) = self
             .type_in(id, quiet(), true, |st, t| {
+                check_blocked(t, id, force)?;
                 let word = state_word(t);
-                if word.as_deref() == Some("blocked") && !force {
-                    return Err(RpcError::new(
-                        "blocked",
-                        format!(
-                            "{} is blocked ({})",
-                            crate::terminals::address(id),
-                            t.status.as_ref().and_then(|s| s.kind.as_deref()).unwrap_or("waiting")
-                        ),
-                        format!(
-                            "typing would answer its dialog; read its screen first (lc read {}), or --force",
-                            crate::terminals::address(id)
-                        ),
-                    ));
-                }
                 if let Some(want) = only_if
                     && word.as_deref() != Some(want)
                 {
@@ -496,9 +508,11 @@ impl Core {
         }
     }
 
-    /// Named keys, after a person has paused typing.
-    pub async fn keys(&self, id: u32, names: &[String]) -> Result<(Option<String>, u64), RpcError> {
+    /// Named keys, after a person has paused typing. Refuses a blocked program
+    /// (a key would answer its dialog) unless `force`.
+    pub async fn keys(&self, id: u32, names: &[String], force: bool) -> Result<(Option<String>, u64), RpcError> {
         self.type_in(id, quiet(), false, |st, t| {
+            check_blocked(t, id, force)?;
             let screen = st.screens.get(&id).expect("live terminal has a screen");
             let mut steps = Vec::new();
             for name in names {
@@ -512,7 +526,8 @@ impl Core {
     }
 
     /// Esc for programs that report status, else ctrl+c; then watch what happens.
-    pub async fn interrupt(&self, id: u32, timeout: Duration) -> Result<(Interrupted, String), RpcError> {
+    /// Refuses a blocked program (the key would answer its dialog) unless `force`.
+    pub async fn interrupt(&self, id: u32, timeout: Duration, force: bool) -> Result<(Interrupted, String), RpcError> {
         let (reported, pid) = {
             let st = self.lock();
             let t = st.reg.terminals.get(&id).ok_or_else(|| RpcError::new("not_found", "terminal removed", ""))?;
@@ -522,6 +537,7 @@ impl Core {
         let before = if reported { -1 } else { self.foreground(id).await };
         let key = self
             .type_in(id, Duration::ZERO, false, |st, t| {
+                check_blocked(t, id, force)?;
                 let default = if reported { "esc" } else { "ctrl+c" };
                 let key = t.stop.clone().unwrap_or_else(|| default.into());
                 let screen = st.screens.get(&id).expect("live terminal has a screen");

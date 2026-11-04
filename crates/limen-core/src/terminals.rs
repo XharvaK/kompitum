@@ -24,6 +24,9 @@ pub struct Terminal {
     /// Nothing it starts can leave its terminal (see `lc run --contain`).
     #[serde(default)]
     pub contain: bool,
+    /// A person works here: nothing types into it (see `lc run --person`).
+    #[serde(default)]
+    pub person: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_cwd: Option<String>,
     /// Only caller overrides, never the inherited core environment.
@@ -144,6 +147,10 @@ pub struct Terminal {
     /// Machines (core ids) it started work on: they may call back to it.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub afar: std::collections::BTreeSet<String>,
+    /// When each of those may no longer call back, ms since the epoch; no entry
+    /// while a child of its work there is live.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub afar_until: BTreeMap<String, u64>,
 }
 
 impl Terminal {
@@ -167,6 +174,34 @@ impl Terminal {
             ));
         }
         Ok(())
+    }
+
+    /// May machine `id` still call back into this terminal or send it notes?
+    pub fn reachable_by(&self, id: &str, now_ms: u64) -> bool {
+        self.afar.contains(id) && self.afar_until.get(id).is_none_or(|until| *until > now_ms)
+    }
+
+    /// What is now known about its work on machine `id`. While a child is live the reach
+    /// stays open; after that it ends `grace_ms` later. Once ended, only a new run reopens it.
+    pub fn work_there(&mut self, id: &str, child_live: bool, now_ms: u64, grace_ms: u64) -> bool {
+        if !self.afar.contains(id) {
+            return false;
+        }
+        match (child_live, self.afar_until.get(id).copied()) {
+            // A child still live there: the reach stays open, and its end is not counted yet.
+            (true, Some(until)) if until > now_ms => self.afar_until.remove(id).is_some(),
+            (false, None) => {
+                self.afar_until.insert(id.to_string(), now_ms + grace_ms);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// It started work on machine `id`.
+    pub fn reached(&mut self, id: &str) {
+        self.afar.insert(id.to_string());
+        self.afar_until.remove(id);
     }
 }
 
@@ -228,6 +263,7 @@ pub struct NewTerminal {
     pub rm: bool,
     pub keep: bool,
     pub contain: bool,
+    pub person: bool,
     pub name: Option<String>,
     pub labels: BTreeMap<String, String>,
     pub argv: Vec<String>,
@@ -270,6 +306,7 @@ impl Registry {
                 cwd: new.cwd,
                 keep: new.keep,
                 contain: new.contain,
+                person: new.person,
                 last_cwd: None,
                 restart_env: BTreeMap::new(),
                 restart_after_ms: 0,
@@ -312,6 +349,7 @@ impl Registry {
                 paste_gap_ms: new.template.as_ref().and_then(|t| t.paste_gap_ms),
                 foreground: None,
                 afar: Default::default(),
+                afar_until: BTreeMap::new(),
                 template: new.template.map(|t| t.name),
                 first_message: None,
                 holder: None,
@@ -425,6 +463,7 @@ const PRIVATE: &[&str] = &[
     "full_screen",
     "win32_input",
     "afar",
+    "afar_until",
     "last_cwd",
     "restart_env",
     "restart_after_ms",
@@ -572,5 +611,36 @@ mod tests {
         let old = r.expired(RETAIN_MS + 100);
         assert_eq!(old.len(), 100);
         assert!(!old.contains(&live));
+    }
+
+    #[test]
+    fn a_machines_reach_ends_a_grace_after_its_work_and_only_a_run_reopens_it() {
+        let mut r = Registry::default();
+        let id = r.create(new(None), 0).unwrap();
+        let t = r.terminals.get_mut(&id).unwrap();
+        assert!(!t.reachable_by("box", 0), "no work there yet");
+        assert!(!t.work_there("box", false, 0, 1000), "nothing to settle: not a machine it reached");
+
+        t.reached("box");
+        assert!(t.reachable_by("box", 0), "a run there opens its reach");
+        assert!(t.afar_until.is_empty(), "no grace while the work is new");
+
+        // The child ended: the reach lives on for the grace, so its news can arrive.
+        assert!(t.work_there("box", false, 100, 1000));
+        assert!(t.reachable_by("box", 1099));
+        assert!(!t.reachable_by("box", 1100), "the grace is over");
+        assert!(!t.work_there("box", false, 1100, 1000), "already counting down");
+        assert!(!t.work_there("box", true, 1100, 1000), "an ended reach stays ended while a child is live");
+
+        // Only a new run reopens an ended reach.
+        t.reached("box");
+        assert!(t.reachable_by("box", 2000));
+        // A child still live there after the grace began clears the countdown.
+        assert!(t.work_there("box", false, 2000, 1000));
+        assert!(!t.reachable_by("box", 3001), "the grace is over");
+        assert!(t.work_there("box", true, 2500, 1000), "a live child clears the countdown");
+        assert!(t.reachable_by("box", 5000), "and the reach stays open");
+        t.reached("desk");
+        assert!(t.reachable_by("desk", 0) && t.reachable_by("box", 0));
     }
 }

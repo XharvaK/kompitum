@@ -166,6 +166,7 @@ Options:
       --json          JSON output even in a terminal
       --on <MACHINE>  On another machine (see `lc machine ls`)
       --cwd <CWD>     Where a relative path starts (default: where lc runs; through the API, the core's; with --on, that machine's home)
+      --root <ROOT>   Stay inside this folder: a path or link that leads out is refused. Relative ones start at `cwd`. Default: `cwd`
       --old <OLD>     Exact text found once in the file (repeatable, paired with --new in order)
       --new <NEW>     What replaces it
   -h, --help          Print help
@@ -185,6 +186,7 @@ Options:
       --json             JSON output even in a terminal
       --on <MACHINE>     On another machine (see `lc machine ls`)
       --cwd <CWD>        Where a relative path starts (default: where lc runs; through the API, the core's; with --on, that machine's home)
+      --root <ROOT>      Stay inside this folder: a path or link that leads out is refused. Relative ones start at `cwd`. Default: `cwd`
       --offset <OFFSET>  The first line to give, from 1
       --limit <LIMIT>    At most this many lines (default: all, up to 8 MB)
   -h, --help             Print help
@@ -204,6 +206,7 @@ Options:
       --json          JSON output even in a terminal
       --on <MACHINE>  On another machine (see `lc machine ls`)
       --cwd <CWD>     Where a relative path starts (default: where lc runs; through the API, the core's; with --on, that machine's home)
+      --root <ROOT>   Stay inside this folder: a path or link that leads out is refused. Relative ones start at `cwd`. Default: `cwd`
   -h, --help          Print help
 ```
 
@@ -235,6 +238,7 @@ Arguments:
 Options:
       --json               JSON output even in a terminal
       --timeout <TIMEOUT>  Seconds to watch for an effect (default 10)
+      --force              Interrupt even if the program is blocked: the key answers its dialog
   -h, --help               Print help
 ```
 
@@ -266,8 +270,9 @@ Arguments:
   <KEYS>...   Key names: enter, esc, tab, up, ctrl+c, alt+x, f5, a, ...
 
 Options:
-      --json  JSON output even in a terminal
-  -h, --help  Print help
+      --force  Press them even if the program is blocked: that answers its dialog
+      --json   JSON output even in a terminal
+  -h, --help   Print help
 ```
 
 ## lc kill
@@ -499,6 +504,7 @@ Options:
       --rm                 Remove it right after it exits (once a waiting parent has the exit code)
       --keep               Replace lost programs with a shell in place, never re-run the original command
       --contain            Nothing this program starts can leave its terminal: no breaking away from its job, and on Windows a shell started through COMSPEC stays hidden. Changes nothing on Unix, where everything carrying the terminal's mark ends with it
+      --person             A person works in this terminal: only `lc attach` types into it. `send`, `keys`, `interrupt` and notes are refused, `--force` included. News of its children waits for its next `lc wait`
       --bg                 Start it and come back at once (a server, several workers)
       --timeout <TIMEOUT>  Seconds before a wait checks in, leaving it running (default: config `wait_timeout`, else 180)
   -h, --help               Print help

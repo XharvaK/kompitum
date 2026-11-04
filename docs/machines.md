@@ -89,14 +89,14 @@ printf 'hello\n' | lc exec -i --on box cat
 Use file for remote reads and exact edits:
 
 ```sh
-lc file read --on box /srv/app/src/main.rs --offset 1 --limit 100
-lc file edit --on box /srv/app/config.txt --old 'port=3000' --new 'port=4000'
-lc file write --on box /srv/app/note.txt < note.txt
+lc file read --on box --cwd /srv/app src/main.rs --offset 1 --limit 100
+lc file edit --on box --cwd /srv/app config.txt --old 'port=3000' --new 'port=4000'
+lc file write --on box --cwd /srv/app note.txt < note.txt
 ```
 
 Write replaces the whole file and creates parent folders.
 Edit requires the old text exactly once. Add context if it is missing or repeated.
-Repeat old/new pairs for several edits; all succeed or none do.
+Repeat old/new pairs for several edits; all succeed or none do. A call stays inside `--root`, by default `--cwd`: a path or link that leads out is refused.
 `lc put box/build ./report.txt` sends a local file beside that terminal and prints where it landed.
 
 ## When something goes wrong

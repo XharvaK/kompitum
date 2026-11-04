@@ -96,17 +96,17 @@ methods! { Ctx<'_>;
         "Open a raw stream to a live terminal on this framed connection (see `hello` with `framed`). Loss ends the stream even when kept; reattach after the restarted event.",
         errors ["not_found", "machine_unknown", "finished", "unavailable", "needs_framed"];
     "terminal.send" => terminal_send, SendParams => SendResult,
-        "Paste text and press Enter after the person submits or clears their draft (up to 3 min), then ~3 s quiet; keys a person presses meanwhile are held, then delivered. Refuses a blocked program unless `force`.",
-        errors ["not_found", "machine_unknown", "finished", "unavailable", "blocked", "status_mismatch", "invalid_params", "config"];
+        "Paste text and press Enter after the person submits or clears their draft (up to 3 min), then ~3 s quiet; keys a person presses meanwhile are held, then delivered. Refuses a blocked program unless `force`; a plain send to one is held until it leaves `blocked`.",
+        errors ["not_found", "machine_unknown", "finished", "unavailable", "blocked", "status_mismatch", "invalid_params", "config", "refused"];
     "terminal.wait" => terminal_wait, WaitParams => crate::wait::WaitResult,
         "Wait until the program is not working (any word but working, or it exited/was lost); already not working returns at once. A program that never reported status is working until it exits. After a send from the same caller, waits for the turn that send started. A message to the caller also ends it: ended false, reason message, from = sender. A timeout is a check-in: ended false, current status.",
         errors ["not_found", "machine_unknown", "invalid_params", "needs_target", "config"];
     "terminal.keys" => terminal_keys, KeysParams => KeysResult,
-        "Press named keys, encoded for the program's current keyboard modes. Same quiet rule as send.",
-        errors ["not_found", "machine_unknown", "finished", "unavailable", "invalid_params"];
+        "Press named keys, encoded for the program's current keyboard modes. Same quiet rule as send. Refuses a blocked program unless `force`.",
+        errors ["not_found", "machine_unknown", "finished", "unavailable", "invalid_params", "blocked", "refused"];
     "terminal.interrupt" => terminal_interrupt, InterruptParams => InterruptResult,
-        "Press the stop key (esc if it reports status, else ctrl+c), then report what was observed. Never escalates.",
-        errors ["not_found", "machine_unknown", "finished", "unavailable", "invalid_params"];
+        "Press the stop key (esc if it reports status, else ctrl+c), then report what was observed. Never escalates. Refuses a blocked program unless `force`.",
+        errors ["not_found", "machine_unknown", "finished", "unavailable", "invalid_params", "blocked", "refused"];
     "terminal.put" => terminal_put, PutParams => PutResult,
         "Write bytes to a file beside a live terminal, on its machine, for its program to read (a pasted image). Lands in a folder of its own, removed with the terminal; the name is kept (a suffix when taken). Types nothing: paste the path yourself.",
         errors ["not_found", "machine_unknown", "finished", "invalid_params"];
@@ -114,14 +114,14 @@ methods! { Ctx<'_>;
         "Run one program here or on a machine (`on`) without a terminal; return its exit code and exactly what it wrote (base64). `argv` runs as given, `line` in that machine's shell. Everything it started ends with it: at its exit, at `timeout` (default 60 s), or when the caller goes away. A nonzero exit or a timeout is a result, not an error.",
         errors ["invalid_params", "spawn_failed", "machine_unknown", "unavailable", "needs_update"];
     "file.read" => file_read, FileReadParams => FileReadResult,
-        "Read a text file here or on a machine (`on`): lines from `offset`, at most `limit` and 8 MB, and how many it has.",
-        errors ["invalid_params", "not_found", "not_text", "io", "machine_unknown", "unavailable", "needs_update"];
+        "Read a text file here or on a machine (`on`): lines from `offset`, at most `limit` and 8 MB, and how many it has. Stays inside `root`, by default `cwd`.",
+        errors ["invalid_params", "not_found", "not_text", "io", "outside_root", "machine_unknown", "unavailable", "needs_update"];
     "file.write" => file_write, FileWriteParams => FileResult,
-        "Write a file here or on a machine (`on`), making missing folders. Swapped in whole: a reader sees old or new, never half. An existing file keeps its mode; a symlink is followed.",
-        errors ["invalid_params", "io", "machine_unknown", "unavailable", "needs_update"];
+        "Write a file here or on a machine (`on`), making missing folders. Swapped in whole: a reader sees old or new, never half. An existing file keeps its mode; a symlink is followed. Stays inside `root`, by default `cwd`.",
+        errors ["invalid_params", "io", "outside_root", "machine_unknown", "unavailable", "needs_update"];
     "file.edit" => file_edit, FileEditParams => FileResult,
-        "Edit a text file here or on a machine (`on`): each `old` must be found exactly once in the file as it was, edits must not overlap; all are made or none. Written like file.write.",
-        errors ["invalid_params", "edit_failed", "not_found", "not_text", "io", "machine_unknown", "unavailable", "needs_update"];
+        "Edit a text file here or on a machine (`on`): each `old` must be found exactly once in the file as it was, edits must not overlap; all are made or none. Written like file.write, and stays inside `root`.",
+        errors ["invalid_params", "edit_failed", "not_found", "not_text", "io", "outside_root", "machine_unknown", "unavailable", "needs_update"];
     "doc.get" => doc_get, DocGetParams => DocGetResult,
         "Read an opaque JSON document and its version (zero when never written). Optional on selects another machine.",
         errors ["invalid_params", "machine_unknown", "unavailable", "needs_update"];
@@ -167,6 +167,36 @@ fn record(core: &Core, id: u32) -> Result<Terminal, RpcError> {
     })?;
     t.waiting_for_person = st.gates.get(&id).is_some_and(|g| g.waiting_for_person);
     Ok(t)
+}
+
+/// Whether a call showing `claimed` may name a terminal whose own scope is `own`.
+/// Nothing claimed, or a record with no scope to check it against: taken as given.
+fn scope_allows(own: Option<&str>, claimed: Option<&str>) -> bool {
+    match (own, claimed) {
+        (_, None) | (None, Some(_)) => true,
+        (Some(own), Some(claimed)) => own == claimed,
+    }
+}
+
+/// A program in a terminal inherits its `LIMEN_SCOPE`, so a scope that differs from the
+/// terminal it names as caller means it is posing as that terminal, usually through a
+/// hand-set `LIMEN_TERMINAL_ID`. A call showing no scope comes from outside any terminal
+/// and is taken at its word: the OS account is the boundary (docs/security.md).
+pub fn check_caller(core: &Core, params: &mut serde_json::Value) -> Result<(), RpcError> {
+    let claimed = params.as_object_mut().and_then(|p| p.remove("caller_scope"));
+    let Some(claimed) = claimed.as_ref().and_then(serde_json::Value::as_str) else { return Ok(()) };
+    // Only a local id says anything: `ppid:…` and `box/t3` are not terminals here.
+    let Some(caller) = params["caller"].as_str() else { return Ok(()) };
+    let Some(id) = crate::terminals::parse_id(caller) else { return Ok(()) };
+    let own = core.lock().reg.terminals.get(&id).and_then(|t| t.scope.clone());
+    if scope_allows(own.as_deref(), Some(claimed)) {
+        return Ok(());
+    }
+    Err(RpcError::new(
+        "denied",
+        format!("this call names {caller} as its caller, but it runs in another terminal"),
+        "don't set LIMEN_TERMINAL_ID by hand; nothing was done",
+    ))
 }
 
 async fn hello(core: Ctx<'_>, p: HelloParams) -> Result<HelloResult, RpcError> {
@@ -448,7 +478,20 @@ async fn terminal_send(core: Ctx<'_>, p: SendParams) -> Result<SendResult, RpcEr
     let timeout = wait_timeout(core, p.timeout)?; // checked before anything is typed
     let id = resolve(core, &p.terminal)?;
     let text = core.tagged(p.caller.as_deref(), id, &p.text, false);
-    let sent = core.send(id, &text, p.force, p.only_if.map(|w| word(&w)).as_deref()).await?;
+    // Ok: it went in. Err: it is held, not lost, and goes in when the program leaves `blocked`.
+    let sent = match core.send(id, &text, p.force, p.only_if.map(|w| word(&w)).as_deref()).await {
+        Ok(sent) => Ok(sent),
+        Err(e) if e.kind == "blocked" && p.only_if.is_none() && core.notes_on() => {
+            let turn = {
+                let mut st = core.lock();
+                st.held_notes.entry(id).or_default().push(text.clone());
+                st.reg.terminals.get(&id).map_or(0, |t| t.turn)
+            };
+            let _ = core.jobs.send(crate::notes::Job::Notes(id));
+            Err(turn)
+        }
+        Err(e) => return Err(e),
+    };
     if let Some(child) = p.caller.as_deref().and_then(crate::terminals::parse_id) {
         let mut st = core.lock();
         if let Some(c) = st
@@ -460,7 +503,7 @@ async fn terminal_send(core: Ctx<'_>, p: SendParams) -> Result<SendResult, RpcEr
             c.told_parent = true;
         }
     }
-    if sent.status.as_deref() == Some("working") {
+    if sent.as_ref().is_ok_and(|s| s.status.as_deref() == Some("working")) {
         let mut st = core.lock();
         let from = p
             .caller
@@ -474,25 +517,40 @@ async fn terminal_send(core: Ctx<'_>, p: SendParams) -> Result<SendResult, RpcEr
         core.changed.notify_waiters();
     }
     core.saw(p.caller.as_deref(), id);
-    if let Some(caller) = &p.caller {
+    if let (Some(caller), Ok(sent)) = (&p.caller, &sent) {
         core.lock().last_send.insert((caller.clone(), id), sent.turn);
     }
-    let wait = if p.wait && sent.started == Some(false) {
-        Some(core.wait_result(id, false, "not_started", None))
-    } else if p.wait {
-        let spec = WaitSpec { output: None, timeout, after_turn: Some(sent.turn) };
-        Some(watched(core, p.caller.clone(), id, spec).await)
-    } else {
-        None
+    let result = match sent {
+        // `--wait` has nothing to watch yet: a held send returns at once.
+        Err(turn) => SendResult {
+            status: Some("blocked".into()),
+            turn,
+            started: None,
+            waited_for_person: false,
+            queued: true,
+            wait: None,
+        },
+        Ok(sent) => {
+            let wait = if p.wait && sent.started == Some(false) {
+                Some(core.wait_result(id, false, "not_started", None))
+            } else if p.wait {
+                let spec = WaitSpec { output: None, timeout, after_turn: Some(sent.turn) };
+                Some(watched(core, p.caller.clone(), id, spec).await)
+            } else {
+                None
+            };
+            SendResult {
+                status: sent.status,
+                turn: sent.turn,
+                started: sent.started,
+                waited_for_person: sent.waited_for_person,
+                queued: false,
+                wait,
+            }
+        }
     };
     core.flush_saved().await?;
-    Ok(SendResult {
-        status: sent.status,
-        turn: sent.turn,
-        started: sent.started,
-        waited_for_person: sent.waited_for_person,
-        wait,
-    })
+    Ok(result)
 }
 
 async fn machine_exec(core: Ctx<'_>, p: ExecParams) -> Result<ExecResult, RpcError> {
@@ -546,7 +604,7 @@ async fn terminal_put(core: Ctx<'_>, p: PutParams) -> Result<PutResult, RpcError
 
 async fn terminal_keys(core: Ctx<'_>, p: KeysParams) -> Result<KeysResult, RpcError> {
     let id = resolve(core, &p.terminal)?;
-    let (status, turn) = core.keys(id, &p.keys).await?;
+    let (status, turn) = core.keys(id, &p.keys, p.force).await?;
     core.saw(p.caller.as_deref(), id);
     core.flush_saved().await?;
     Ok(KeysResult { status, turn })
@@ -556,7 +614,7 @@ async fn terminal_interrupt(core: Ctx<'_>, p: InterruptParams) -> Result<Interru
     use crate::input::Interrupted;
     let timeout = seconds(p.timeout)?.unwrap_or(Duration::from_secs(10));
     let id = resolve(core, &p.terminal)?;
-    let (outcome, key) = core.interrupt(id, timeout).await?;
+    let (outcome, key) = core.interrupt(id, timeout, p.force).await?;
     let outcome = match outcome {
         Interrupted::Stopped => "stopped",
         Interrupted::Exited => "exited",
@@ -739,4 +797,19 @@ async fn machine_rm(core: Ctx<'_>, p: MachineParams) -> Result<RemoveResult, Rpc
 
 async fn rpc_discover(_: Ctx<'_>, _: Empty) -> Result<serde_json::Value, RpcError> {
     Ok(openrpc())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scope_allows;
+
+    #[test]
+    fn a_scope_answers_only_for_the_terminal_it_belongs_to() {
+        assert!(scope_allows(Some("mine"), Some("mine")), "the terminal's own scope");
+        assert!(!scope_allows(Some("mine"), Some("another's")), "another terminal's");
+        assert!(!scope_allows(Some("mine"), Some("")), "an empty one is not it either");
+        assert!(scope_allows(Some("mine"), None), "no scope shown: a call from outside any terminal");
+        assert!(scope_allows(None, Some("whatever")), "a record with no scope has nothing to check");
+        assert!(scope_allows(None, None));
+    }
 }

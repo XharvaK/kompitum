@@ -237,6 +237,7 @@ pub fn explain_closed(paths: &Paths, err: RpcError) -> RpcError {
 
 /// One plain-mode call. Returns the result, the core's error, or `unavailable`.
 pub fn call(stream: &Stream, method: &str, params: Value) -> Result<Value, RpcError> {
+    let params = with_caller_scope(params);
     let lost = |e: std::io::Error| unavailable(format!("lost the core: {e}"));
     let req = json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params});
     (&*stream).write_all(format!("{req}\n").as_bytes()).map_err(lost)?;
@@ -250,6 +251,21 @@ pub fn call(stream: &Stream, method: &str, params: Value) -> Result<Value, RpcEr
         Some(err) => Err(RpcError::from_json(err)),
         None => Ok(reply["result"].clone()),
     }
+}
+
+/// A program in a terminal inherits its `LIMEN_SCOPE`, so a call that names its
+/// own terminal as caller proves it with the same token. A call from outside any
+/// terminal shows none and is taken at its word.
+fn with_caller_scope(mut params: Value) -> Value {
+    let Some(scope) = std::env::var(crate::sweep::VAR).ok().filter(|s| !s.is_empty()) else { return params };
+    let caller = params["caller"].as_str().map(String::from);
+    if caller.is_none() || caller != terminal_id() {
+        return params;
+    }
+    if let Some(obj) = params.as_object_mut() {
+        obj.insert("caller_scope".into(), scope.into());
+    }
+    params
 }
 
 /// The lc terminal we run in, if it belongs to the core we talk to: its id

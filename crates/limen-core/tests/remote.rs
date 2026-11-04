@@ -232,6 +232,41 @@ fn a_child_on_another_machine_reports_back_to_its_parent() {
 }
 
 #[test]
+fn a_machine_loses_its_reach_after_its_work_ends() {
+    let (rohan, s) = with_rohan_env(&[("LIMEN_QUIET_MS", "0"), ("LIMEN_REACH_MS", "500")]);
+    let (parent, child) = parent_with_child_on_rohan(&s, &script(&s, "r state=working; w go; sleep 0.4; exit 3"));
+    let parent_there = get(&rohan, "t1")["parent"].as_str().unwrap().to_string();
+    // While its child is live there, that machine may call back here.
+    wait_until("its child live", || {
+        let list = s.json(&["ls"]);
+        list["terminals"].as_array().unwrap().iter().any(|t| t["address"] == child.as_str() && t["state"] == "live")
+    });
+    let said = rohan.cmd().env("LIMEN_TERMINAL_ID", "t1").args(["send", &parent_there, "hi-parent"]).output().unwrap();
+    assert!(said.status.success(), "{}", String::from_utf8_lossy(&said.stderr));
+    wait_until("the child's message", || text(&s, &parent).contains(&format!("<lc from=\"{child}\">hi-parent</lc>")));
+
+    // Its work there is over, and the grace passes: the reach is gone.
+    touch(&s, "go");
+    wait_until("its child gone", || get(&s, &child)["state"] == "finished");
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let (_, refused) = rohan.err(&["--json", "send", &parent_there, "later"]);
+    assert_eq!(refused["error"]["kind"], "denied", "{refused}");
+    // A new run there reopens it.
+    let later = s
+        .cmd()
+        .env("LIMEN_TERMINAL_ID", &parent)
+        .args(["--json", "run", "--bg", "--on", "rohan", "sh", "-c", "sleep 100"])
+        .output()
+        .unwrap();
+    let started: Value = serde_json::from_slice(&later.stdout).unwrap();
+    assert_eq!(started["parent"], parent.as_str(), "{started}");
+    let reopened = started["address"].as_str().unwrap();
+    wait_until("its new child live", || get(&s, reopened)["state"] == "live");
+    let said = rohan.cmd().env("LIMEN_TERMINAL_ID", "t1").args(["send", &parent_there, "again"]).output().unwrap();
+    assert!(said.status.success(), "a new run there reopens its reach: {}", String::from_utf8_lossy(&said.stderr));
+}
+
+#[test]
 fn a_remote_templates_readiness_wait_leaves_its_child_able_to_report_back() {
     let mut rohan = Session::new();
     rohan.env.extend(

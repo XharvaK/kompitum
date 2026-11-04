@@ -11,7 +11,7 @@ pub const MAX_BYTES: usize = 8 << 20;
 const MAX_FILE: u64 = 64 << 20;
 
 pub fn read(p: FileReadParams, from_afar: bool) -> Result<FileReadResult, RpcError> {
-    let path = resolve(&p.at, from_afar);
+    let path = resolve(&p.at, from_afar)?;
     let text = text_of(&path)?;
     lines(&text, p.offset.unwrap_or(1), p.limit.unwrap_or(usize::MAX), MAX_BYTES)
 }
@@ -21,19 +21,103 @@ pub fn write(p: FileWriteParams, from_afar: bool) -> Result<FileResult, RpcError
     if bytes.len() > MAX_BYTES {
         return Err(RpcError::invalid_params(format!("at most {} MB per write", MAX_BYTES >> 20)));
     }
-    let path = resolve(&p.at, from_afar);
+    let path = resolve(&p.at, from_afar)?;
     swap_in(&path, &bytes)
 }
 
 pub fn edit(p: FileEditParams, from_afar: bool) -> Result<FileResult, RpcError> {
-    let path = resolve(&p.at, from_afar);
+    let path = resolve(&p.at, from_afar)?;
     let edited = apply(&text_of(&path)?, &p.edits)?;
     swap_in(&path, edited.as_bytes())
 }
 
-/// Relative paths start at `cwd`, as exec's programs do.
-fn resolve(at: &FileAt, from_afar: bool) -> PathBuf {
-    Path::new(&crate::exec::folder(at.cwd.as_deref(), from_afar)).join(&at.path)
+/// Relative paths start at `cwd`, as exec's programs do, and stay inside `root`:
+/// a path or link that leads out is refused.
+fn resolve(at: &FileAt, from_afar: bool) -> Result<PathBuf, RpcError> {
+    let start = PathBuf::from(crate::exec::folder(at.cwd.as_deref(), from_afar));
+    let path = start.join(&at.path);
+    let root = at.root.as_ref().map_or_else(|| start.clone(), |r| start.join(r));
+    if !real(&path)?.starts_with(real(&root)?) {
+        return Err(RpcError::new(
+            "outside_root",
+            format!("{} is outside {}", path.display(), root.display()),
+            "say where this call may reach with --root",
+        ));
+    }
+    Ok(path)
+}
+
+/// Where `path` really is: every link on the way followed, even one whose target isn't
+/// there yet, and `..` taken after the link before it, as the OS does. On Windows, case and
+/// short names are settled by canonicalizing the longest part that exists.
+fn real(path: &Path) -> Result<PathBuf, RpcError> {
+    /// One component, owned: a link's target is walked by the same rules.
+    enum Step {
+        Prefix(std::ffi::OsString),
+        Root,
+        Parent,
+        Name(std::ffi::OsString),
+    }
+    fn steps(path: &Path) -> Vec<Step> {
+        use std::path::Component;
+        path.components()
+            .filter_map(|c| match c {
+                Component::Prefix(p) => Some(Step::Prefix(p.as_os_str().to_os_string())),
+                Component::RootDir => Some(Step::Root),
+                Component::ParentDir => Some(Step::Parent),
+                Component::Normal(name) => Some(Step::Name(name.to_os_string())),
+                Component::CurDir => None,
+            })
+            .collect()
+    }
+    let mut resolved = PathBuf::new();
+    let mut todo = steps(path);
+    todo.reverse(); // pop takes them in path order
+    let mut links = 0;
+    while let Some(step) = todo.pop() {
+        match step {
+            Step::Prefix(prefix) => resolved.push(prefix),
+            Step::Root => resolved.push(std::path::MAIN_SEPARATOR.to_string()),
+            Step::Parent => drop(resolved.pop()),
+            Step::Name(name) => {
+                let next = resolved.join(name);
+                match std::fs::read_link(&next) {
+                    Ok(target) => {
+                        // A link's target is taken apart again: its own links, and its `..`.
+                        links += 1;
+                        if links > 40 {
+                            return Err(RpcError::invalid_params(format!(
+                                "too many links on the way to {}",
+                                path.display()
+                            )));
+                        }
+                        let mut rest = steps(&target);
+                        rest.reverse();
+                        todo.extend(rest);
+                    }
+                    Err(_) => resolved = next,
+                }
+            }
+        }
+    }
+    // Windows keeps case and short names as written until a file exists there.
+    let mut existing = resolved.clone();
+    let mut rest: Vec<std::ffi::OsString> = Vec::new();
+    loop {
+        if let Ok(mut settled) = existing.canonicalize() {
+            for part in rest.iter().rev() {
+                settled.push(part);
+            }
+            return Ok(settled);
+        }
+        match (existing.file_name(), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                rest.push(name.to_os_string());
+                existing = parent.to_path_buf();
+            }
+            _ => return Ok(resolved),
+        }
+    }
 }
 
 fn io(path: &Path, e: std::io::Error) -> RpcError {
@@ -215,5 +299,54 @@ mod tests {
         let r = lines("", 1, usize::MAX, 100).unwrap();
         assert_eq!((r.text.as_str(), r.first, r.last, r.lines), ("", 1, 0, 0));
         assert_eq!(lines("1\n", 3, 1, 100).err().map(|e| e.kind), Some("invalid_params".into()));
+    }
+
+    fn at(cwd: &Path, path: &str, root: Option<&Path>) -> FileAt {
+        FileAt {
+            path: path.into(),
+            on: None,
+            cwd: Some(cwd.display().to_string()),
+            root: root.map(|r| r.display().to_string()),
+        }
+    }
+
+    #[test]
+    fn a_file_call_stays_inside_its_root_and_may_say_where_that_is() {
+        let dir = std::env::temp_dir().join(format!("lc-files-{}", crate::platform::random_hex()));
+        let inside = dir.join("root").join("sub");
+        std::fs::create_dir_all(&inside).unwrap();
+        let kind = |path: &str, root: Option<&Path>| resolve(&at(&inside, path, root), false).err().map(|e| e.kind);
+
+        assert!(resolve(&at(&inside, "x.txt", None), false).is_ok(), "a path inside");
+        let absolute = inside.join("x.txt").display().to_string();
+        assert!(resolve(&at(&inside, &absolute, None), false).is_ok(), "an absolute path inside");
+        assert_eq!(kind("../out.txt", None).as_deref(), Some("outside_root"), ".. out");
+        assert_eq!(kind("sub/../../out.txt", None).as_deref(), Some("outside_root"), ".. after the folder");
+        let outside = dir.join("out.txt").display().to_string();
+        assert_eq!(kind(&outside, None).as_deref(), Some("outside_root"), "an absolute path outside");
+        assert_eq!(kind("..", None).as_deref(), Some("outside_root"), "the folder above");
+        assert!(resolve(&at(&inside, &outside, Some(&dir)), false).is_ok(), "--root reaches further");
+        assert_eq!(kind(&outside, Some(&inside)).as_deref(), Some("outside_root"), "a root of its own");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_out_is_refused_even_when_its_target_is_not_there() {
+        let dir = std::env::temp_dir().join(format!("lc-links-{}", crate::platform::random_hex()));
+        let inside = dir.join("root");
+        std::fs::create_dir_all(&inside).unwrap();
+        std::fs::create_dir_all(dir.join("elsewhere")).unwrap();
+        std::fs::write(dir.join("elsewhere/secret.txt"), "x").unwrap();
+        std::os::unix::fs::symlink(dir.join("elsewhere"), inside.join("out")).unwrap();
+        std::os::unix::fs::symlink(dir.join("gone"), inside.join("dangling")).unwrap();
+        std::os::unix::fs::symlink(inside.join("real.txt"), inside.join("within")).unwrap();
+        let kind = |path: &str| resolve(&at(&inside, path, None), false).err().map(|e| e.kind);
+
+        assert!(resolve(&at(&inside, "within", None), false).is_ok(), "a link within");
+        assert_eq!(kind("out/secret.txt").as_deref(), Some("outside_root"), "a link out");
+        assert_eq!(kind("out/new.txt").as_deref(), Some("outside_root"), "a link out, where nothing exists yet");
+        assert_eq!(kind("dangling").as_deref(), Some("outside_root"), "a dangling link out");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

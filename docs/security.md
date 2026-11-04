@@ -15,6 +15,18 @@ Templates are shell commands and opening instructions, not isolation rules.
 Do not run core as root or as an administrator unless you intend to give its clients that access.
 A status of blocked can prevent a normal send, but it is not an access boundary against another client.
 
+## What core refuses
+
+These stop accidents and wrong defaults, not a program set on getting past them: anything running as your account can reach the API.
+
+- A terminal started with `lc run --person` takes typing only from `lc attach`. `send`, `keys`, `interrupt` and notes are refused, `--force` included.
+- `send`, `keys` and `interrupt` refuse a blocked program, since typing could answer its dialog, unless told `--force`. A plain send is held and goes in when the program leaves `blocked`.
+- A program in a terminal can't name another terminal as its caller: its `LIMEN_SCOPE` gives it away. A call from outside any terminal is taken at its word.
+- `lc file` stays inside `--root`, by default `--cwd`, following links. What leads out is refused.
+- A machine reaches a terminal here only while that terminal has work there, and for a minute after, so the news of its end arrives. Forgetting the machine ends it at once.
+
+A status is only what a program's output said, and a file it prints can say it too. Read it as a hint about when to look, not as proof.
+
 ## Who can connect
 
 On Unix, core listens on a local Unix socket, not a public TCP port.

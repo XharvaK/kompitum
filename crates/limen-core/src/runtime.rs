@@ -87,8 +87,8 @@ pub struct State {
     /// Cores that dialed in, by id (kept), and the line to each while connected.
     pub peers: std::collections::BTreeMap<String, crate::remote::Peer>,
     pub peer_lines: HashMap<String, (usize, Arc<crate::remote::Line>)>,
-    /// Notes from other machines for parents here, until typed.
-    pub afar_notes: HashMap<u32, Vec<String>>,
+    /// Text waiting to go in as it is: notes from other machines, and sends that found the terminal blocked.
+    pub held_notes: HashMap<u32, Vec<String>>,
     /// What a machine must hear once its line is back (a parent here finished).
     pub machine_outbox: HashMap<String, Vec<serde_json::Value>>,
     /// When each holder was last reconnected to after our reading of it failed.

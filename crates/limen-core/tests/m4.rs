@@ -137,21 +137,35 @@ fn a_bad_timeout_is_refused_before_anything_is_typed() {
 }
 
 #[test]
-fn send_refuses_a_blocked_program_and_checks_status_atomically() {
+fn a_send_to_a_blocked_program_is_held_and_status_checks_are_atomic() {
     let s = session();
-    let agent =
-        run(&s, "r state=blocked:kind=permission; stty -echo; read -r l; echo answered:$l; r state=idle; sleep 100");
+    let agent = run(
+        &s,
+        "r state=blocked:kind=permission; stty -echo; sleep 3; r state=idle; \
+         while IFS= read -r l; do echo answered:$l; done",
+    );
     wait_until("blocked", || status(&s, &agent) == "blocked");
-    let (code, err) = s.err(&["send", &agent, "y"]);
-    assert_eq!((code, err["error"]["kind"].as_str()), (9, Some("blocked")));
-    assert!(err["error"]["message"].as_str().unwrap().contains("permission"));
-    s.json(&["send", "--force", &agent, "y"]);
-    shows(&s, &agent, "answered:y");
-
+    // Held, not lost: nothing is typed while the program is blocked.
+    let held = s.json(&["send", &agent, "first"]);
+    assert_eq!((held["queued"].as_bool(), held["status"].as_str()), (Some(true), Some("blocked")), "{held}");
+    assert!(!text(&s, &agent).contains("answered:first"), "typed while blocked");
+    // A status check on a blocked program is refused at once, and holds nothing.
+    let (code, err) = s.err(&["send", "--if", "idle", &agent, "checked"]);
+    assert_eq!((code, err["error"]["kind"].as_str()), (9, Some("blocked")), "{err}");
+    assert!(err["error"]["message"].as_str().unwrap().contains("permission"), "{err}");
+    // It leaves `blocked` on its own: the held text goes in then.
+    shows(&s, &agent, "answered:first");
     wait_until("idle", || status(&s, &agent) == "idle");
+    assert!(!text(&s, &agent).contains("checked"), "a refused status check was held too");
     let (code, err) = s.err(&["send", "--if", "working", &agent, "nope"]);
     assert_eq!((code, err["error"]["kind"].as_str()), (10, Some("status_mismatch")));
     assert!(!text(&s, &agent).contains("nope"));
+
+    // `--force` still types into a program that stays blocked.
+    let stuck = run(&s, "r state=blocked:kind=permission; stty -echo; while IFS= read -r l; do echo answered:$l; done");
+    wait_until("blocked", || status(&s, &stuck) == "blocked");
+    s.json(&["send", "--force", &stuck, "y"]);
+    shows(&s, &stuck, "answered:y");
 }
 
 #[test]

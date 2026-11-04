@@ -9,6 +9,9 @@ pub(super) async fn terminal_run(core: Ctx<'_>, mut p: RunParams) -> Result<RunR
         None => None,
     };
     let first = template.as_ref().map(|t| crate::templates::first_message(t, &p.argv[1..].join(" ")));
+    if p.person && first.as_ref().is_some_and(|text| !text.is_empty()) {
+        return Err(RpcError::invalid_params("a person's terminal takes no first message: nothing types into it"));
+    }
     match (&template, p.line.take(), p.argv.is_empty()) {
         // A shell line (VAR=value prefixes, quotes, ~); sh replaces itself with a single command.
         (Some(t), None, _) => p.argv = vec!["sh".into(), "-c".into(), t.command.clone()],
@@ -157,6 +160,7 @@ pub(super) async fn start(
             rm: p.rm,
             keep: p.keep,
             contain: p.contain,
+            person: p.person,
             name: p.name,
             labels: labels(&p.labels),
             argv: p.argv.clone(),

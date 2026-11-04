@@ -223,6 +223,15 @@ pub fn forget(core: &Core, st: &mut State, id: &str) {
     for (address, record) in st.mirrors.remove(id).unwrap_or_default() {
         core.deliver(st, "removed", &address, json!({}), &record, Some(&record));
     }
+    // Its reach ends at once: a machine forgotten here may not call back.
+    let mut touched = false;
+    for t in st.reg.terminals.values_mut() {
+        touched |= t.afar.remove(id);
+        touched |= t.afar_until.remove(id).is_some();
+    }
+    if touched {
+        core.save(st);
+    }
     st.lines.remove(id);
     if let Some(task) = st.line_tasks.remove(id) {
         task.abort();
@@ -419,6 +428,37 @@ fn mirror_replace(core: &Core, m: &Machine, terminals: Vec<Value>) {
         core.deliver(&mut st, "created", address, record.clone(), record, None);
     }
     st.mirrors.insert(m.id.clone(), fresh);
+    settle_reach(core, &mut st, &m.id);
+}
+
+/// How long a machine keeps its reach into a terminal after its last child there
+/// ended: a child's end and its note come on separate streams in no fixed order.
+fn reach_ms() -> u64 {
+    std::env::var("LIMEN_REACH_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(60_000)
+}
+
+/// Closes the reach of every terminal here whose work on `machine_id` is over.
+fn settle_reach(core: &Core, st: &mut State, machine_id: &str) {
+    let live: std::collections::BTreeSet<String> = st
+        .mirrors
+        .get(machine_id)
+        .into_iter()
+        .flatten()
+        .filter(|(_, record)| record["state"] == "live")
+        .filter_map(|(_, record)| record["parent"].as_str().map(String::from))
+        .collect();
+    let (now, grace) = (now_ms(), reach_ms());
+    let mut changed = false;
+    for t in st.reg.terminals.values_mut() {
+        if !t.afar.contains(machine_id) {
+            continue;
+        }
+        let child_live = live.contains(&t.address);
+        changed |= t.work_there(machine_id, child_live, now, grace);
+    }
+    if changed {
+        core.save(st);
+    }
 }
 
 pub fn rename_mirror(core: &Core, st: &mut State, id: &str, old: &str, new: &str) {
@@ -495,6 +535,9 @@ fn mirror_event(core: &Core, m: &Machine, p: Value) {
         }
     };
     core.deliver(&mut st, kind, address, data, &record, was.as_ref());
+    if matches!(kind, "created" | "restarted" | "finished" | "removed") {
+        settle_reach(core, &mut st, &m.id);
+    }
 }
 
 /// An event's change, applied to a terminal record (see schema/README.md).
@@ -532,11 +575,19 @@ async fn from_machine(core: Arc<Core>, m: Machine, line: Arc<Line>, message: Val
     let parent = params[key].as_str().and_then(|t| {
         let st = core.lock();
         let id = st.reg.resolve(crate::addr::local(t, &core.info.id, &core.info.name).ok()?).ok()?;
-        st.reg.terminals.get(&id).filter(|t| t.afar.contains(&m.id)).map(|_| id)
+        st.reg.terminals.get(&id).filter(|t| t.reachable_by(&m.id, now_ms())).map(|_| id)
     });
     if method == "notes" {
         if let (Some(id), Some(text)) = (parent, params["text"].as_str()) {
-            core.lock().afar_notes.entry(id).or_default().push(text.into());
+            if core.lock().reg.terminals.get(&id).is_some_and(|t| t.person) {
+                eprintln!(
+                    "core: {} sent a note for {}, a person's terminal: not typed; it hears of its children at its next lc wait",
+                    m.name,
+                    crate::terminals::address(id)
+                );
+                return;
+            }
+            core.lock().held_notes.entry(id).or_default().push(text.into());
             let _ = core.jobs.send(crate::notes::Job::Notes(id));
         }
         return;
@@ -927,7 +978,7 @@ async fn forward_waiting(core: &Core, m: &Machine, method: &str, mut params: Val
                 record["output"] = crate::api::tail(text.as_str().unwrap_or_default().to_string(), id).into();
                 record
             }
-            "terminal.send" => json!({"status": r["status"], "turn": r["turn"], "wait": r}),
+            "terminal.send" => json!({"status": r["status"], "turn": r["turn"], "queued": false, "wait": r}),
             _ => r,
         });
     }
@@ -947,6 +998,11 @@ async fn forward_once(core: &Core, m: &Machine, method: &str, mut params: Value)
     }
     let deadline = deadline_for(core, method, &params);
     let line = line(core, m).await?;
+    // A reply's `parent` is only believed when it is the request's own caller.
+    let caller = params["caller"]
+        .as_str()
+        .and_then(|c| c.strip_prefix(&format!("{}/", core.info.id)))
+        .and_then(crate::terminals::parse_id);
     // An older core would read no program as "nothing to run".
     let own_shell = params["argv"].as_array().is_none_or(Vec::is_empty) || params.get("line").is_some();
     if method == "terminal.run" && own_shell && !line.features.iter().any(|f| f == "shell") {
@@ -966,13 +1022,14 @@ async fn forward_once(core: &Core, m: &Machine, method: &str, mut params: Value)
     })?;
     // Document contents are opaque: address-shaped keys belong to the client.
     let reply = if method.starts_with("doc.") { reply } else { localize(core, &m.name, &[], reply) };
-    // It started work there: its child may now call back and send it notes.
+    // It started work there for this caller: its child may now call back and send it notes.
     if method == "terminal.run"
         && let Some(parent) = reply["parent"].as_str().and_then(crate::terminals::parse_id)
+        && caller == Some(parent)
     {
         let mut st = core.lock();
         if let Some(t) = st.reg.terminals.get_mut(&parent) {
-            t.afar.insert(m.id.clone());
+            t.reached(&m.id);
             core.save(&st);
         }
     }

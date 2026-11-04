@@ -272,6 +272,12 @@ pub struct RunParams {
     #[arg(long)]
     #[serde(default)]
     pub contain: bool,
+    /// A person works in this terminal: only `lc attach` types into it. `send`, `keys`,
+    /// `interrupt` and notes are refused, `--force` included. News of its children waits
+    /// for its next `lc wait`.
+    #[arg(long)]
+    #[serde(default)]
+    pub person: bool,
     /// Then wait until it is not working, like `terminal.wait`, and return its
     /// output (the CLI waits unless --bg).
     #[arg(skip)]
@@ -500,6 +506,9 @@ pub struct SendResult {
     pub started: Option<bool>,
     /// True when delivery was held for a person's unsent draft.
     pub waited_for_person: bool,
+    /// True when the program was blocked: the text is held and goes in when it leaves
+    /// `blocked`. A core restart loses it.
+    pub queued: bool,
     /// With `wait`: how that turn ended.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wait: Option<crate::wait::WaitResult>,
@@ -543,6 +552,10 @@ pub struct KeysParams {
     /// Key names: enter, esc, tab, up, ctrl+c, alt+x, f5, a, ...
     #[arg(required = true)]
     pub keys: Vec<String>,
+    /// Press them even if the program is blocked: that answers its dialog.
+    #[arg(long)]
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -559,6 +572,10 @@ pub struct InterruptParams {
     /// Seconds to watch for an effect (default 10).
     #[arg(long, value_parser = cli_seconds)]
     pub timeout: Option<f64>,
+    /// Interrupt even if the program is blocked: the key answers its dialog.
+    #[arg(long)]
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -662,6 +679,11 @@ pub struct FileAt {
     #[arg(long)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Stay inside this folder: a path or link that leads out is refused. Relative
+    /// ones start at `cwd`. Default: `cwd`.
+    #[arg(long)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
 }
 
 #[derive(clap::Args, Serialize, Deserialize, JsonSchema)]
