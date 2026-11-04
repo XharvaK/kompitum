@@ -5,15 +5,17 @@ use std::process::Command;
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let src = manifest
-        .join("../../vendor/ghostty")
+    // A git worktree has no submodules: LIMEN_GHOSTTY_SRC names a checkout elsewhere.
+    let src = std::env::var_os("LIMEN_GHOSTTY_SRC")
+        .map_or_else(|| manifest.join("../../vendor/ghostty"), PathBuf::from)
         .canonicalize()
-        .expect("vendor/ghostty missing: run `git submodule update --init --depth 1`");
+        .expect("vendor/ghostty missing: run `git submodule update --init --depth 1`, or set LIMEN_GHOSTTY_SRC");
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     for path in ["src", "build.zig", "build.zig.zon", "include"] {
         println!("cargo:rerun-if-changed={}", src.join(path).display());
     }
     println!("cargo:rerun-if-env-changed=ZIG");
+    println!("cargo:rerun-if-env-changed=LIMEN_GHOSTTY_SRC");
 
     let (target, host) = (std::env::var("TARGET").unwrap(), std::env::var("HOST").unwrap());
     let windows = target.contains("windows");

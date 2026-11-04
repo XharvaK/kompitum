@@ -102,6 +102,13 @@ layout or a workspace to return to, it does not belong in the core.
   gives the whole process tree a hidden console. A game may be running.
   `scripts/watch_windows.py` runs a command the same way and records every
   window that opens meanwhile, which is how to check the no-windows rule.
+- A worker's worktree has an empty `vendor/ghostty` and no build. On this PC
+  `.cargo\config.toml` in the folder above Limen's state sets `target-dir`, `ZIG`
+  and `LIMEN_GHOSTTY_SRC`, so a plain `cargo` works there. That build folder is
+  shared and Cargo judges freshness by file times, so two worktrees building at
+  once can run each other's binaries: one building worker at a time for now.
+  `scripts/check_windows.py` touches the crate roots, so a check always builds
+  its own worktree. It is `just check` for this PC, and the server's check here.
 - `LC_*` is the locale namespace and SSH configs forward it, so our
   environment is `LIMEN_*`. The Python Limen owns `LIMEN_VAULT`, `LIMEN_AGENT`,
   `LIMEN_POLL_SECONDS`, `LIMEN_SEEN_FILE`, `LIMEN_LISTEN` and `LIMEN_BELL_*`,
