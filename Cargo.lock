@@ -131,21 +131,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "herdr-core"
-version = "0.1.17"
-dependencies = [
- "clap",
- "ghostty-vt",
- "libc",
- "schemars",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "windows-sys",
-]
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -162,6 +147,21 @@ name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+
+[[package]]
+name = "limen-core"
+version = "0.1.17"
+dependencies = [
+ "clap",
+ "ghostty-vt",
+ "libc",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "windows-sys",
+]
 
 [[package]]
 name = "memchr"
