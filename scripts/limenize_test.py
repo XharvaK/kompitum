@@ -329,6 +329,16 @@ class CargoLockTest(unittest.TestCase):
         )
         self.assertEqual(limenize.rewrite_lock(source), expected)
 
+    def test_versions_sort_as_cargo_does(self):
+        def lock(versions, dependencies):
+            blocks = ['[[package]]\nname = "app"\nversion = "1.0.0"\ndependencies = [%s]\n' % dependencies]
+            blocks += ['[[package]]\nname = "foo"\nversion = "%s"\n' % version for version in versions]
+            return "version = 3\n\n" + "\n".join(blocks)
+
+        source = lock(("0.10.0", "0.9.0", "0.10.0-rc.1"), '"herdr-core", "foo 0.10.0", "foo 0.9.0"')
+        expected = lock(("0.9.0", "0.10.0-rc.1", "0.10.0"), '"foo 0.9.0", "foo 0.10.0", "limen-core"')
+        self.assertEqual(limenize.rewrite_lock(source), expected)
+
     def test_crlf_stays_crlf(self):
         source = LOCK_INPUT.replace("\n", "\r\n")
         expected = LOCK_OUTPUT.replace("\n", "\r\n")

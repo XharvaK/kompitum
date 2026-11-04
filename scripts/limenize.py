@@ -228,13 +228,27 @@ def rename_dependency(entry):
     return entry
 
 
+def version_key(version):
+    """Cargo's order: 0.9.0 before 0.10.0, and 1.0.0-rc.1 before 1.0.0."""
+    core, _, pre = version.partition("+")[0].partition("-")
+    numbers = tuple(int(part) if part.isdigit() else 0 for part in core.split("."))
+    if not pre:
+        return (numbers, 1, ())
+    return (numbers, 0, tuple((0, int(part), "") if part.isdigit() else (1, 0, part) for part in pre.split(".")))
+
+
+def dependency_key(entry):
+    name, _, rest = entry.partition(" ")
+    return (name, version_key(rest.partition(" ")[0]))
+
+
 def rewrite_dependencies(match):
     inner = match.group(1)[1:-1]
     entries = re.findall(r'"([^"]*)"', inner)
     renamed = [rename_dependency(entry) for entry in entries]
     if renamed == entries:
         return match.group(0)
-    ordered = sorted(renamed)
+    ordered = sorted(renamed, key=dependency_key)
     if "\n" in inner:
         body = "".join(' "%s",\n' % entry for entry in ordered)
         return "dependencies = [\n" + body + "]"
@@ -244,7 +258,7 @@ def rewrite_dependencies(match):
 def lock_key(block):
     name = re.search(r'(?m)^name = "(.*)"$', block)
     version = re.search(r'(?m)^version = "(.*)"$', block)
-    return (name.group(1) if name else "", version.group(1) if version else "")
+    return (name.group(1) if name else "", version_key(version.group(1) if version else ""))
 
 
 def rewrite_lock(text):
