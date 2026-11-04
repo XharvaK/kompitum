@@ -10,8 +10,9 @@ Limen's own parts still live in its Python repository and come over as [the plan
 
 ## Where it stands
 
-- The rename is done and it builds on Windows, debug and release, with no code changes. Clippy is clean on the Windows code and on the Linux code, and the tests that start nothing pass: the command reference, the schema, API compatibility and the skill.
-- No test that starts a real terminal has run since the rename. On Windows those are in `tests/windows.rs`. Most of the suite only compiles on Unix, and we have no Linux machine or CI for it yet.
+- The rename is done and it builds on Windows, debug and release, with no code changes. Clippy is clean on the Windows code and on the Linux code.
+- On Windows the whole suite passes, 156 tests with real cores and terminals among them, and none of it opened a window. One test is skipped because it writes to the real user environment.
+- The Unix suite, 273 tests and most of what checks the core's logic, has only been type-checked since the rename. We have no Linux machine or CI for it yet.
 - There are no releases. `lc update` and the install scripts point at `releases.limen.invalid`, a name that can never resolve, so they fail loudly and can never fetch upstream's build. Build from source and copy the binary.
 - macOS builds are not planned: Windows and Linux are what we run.
 

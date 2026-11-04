@@ -10,14 +10,19 @@ with backslashes: CreateProcess can't start one with forward slashes.
 import subprocess
 import sys
 
-log, cwd, *command = sys.argv[1:]
-with open(log, "ab") as out:
-    code = subprocess.run(
-        command,
-        cwd=cwd,
-        stdin=subprocess.DEVNULL,
-        stdout=out,
-        stderr=subprocess.STDOUT,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    ).returncode
-sys.exit(code)
+
+def run(log, cwd, command):
+    with open(log, "ab") as out:
+        return subprocess.run(
+            command,
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ).returncode
+
+
+if __name__ == "__main__":
+    log, cwd, *command = sys.argv[1:]
+    sys.exit(run(log, cwd, command))

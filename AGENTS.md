@@ -88,7 +88,8 @@ layout or a workspace to return to, it does not belong in the core.
 - `registry_changes_after_start_are_seen_by_each_new_terminal` in
   `tests/windows.rs` leaves its session: it writes a throwaway `LIMEN_ENV_*`
   value to the real `HKCU\Environment` and deletes it at the end. A killed run
-  leaves the value behind.
+  leaves the value behind, so skip it unless the Owner agrees:
+  `cargo test --locked -- --skip registry_changes_after_start_are_seen_by_each_new_terminal`.
 - On Windows most of the suite doesn't exist. Nearly every file in `tests/` is
   `#![cfg(unix)]`, so `cargo test --test m0` passes there by running nothing, and
   a Windows build compiles only the Windows half of the code. Check the other
@@ -99,6 +100,8 @@ layout or a workspace to return to, it does not belong in the core.
   meets a real build.
 - Builds and tests on the Owner's PC go through `scripts/hidden_run.py`, which
   gives the whole process tree a hidden console. A game may be running.
+  `scripts/watch_windows.py` runs a command the same way and records every
+  window that opens meanwhile, which is how to check the no-windows rule.
 - `LC_*` is the locale namespace and SSH configs forward it, so our
   environment is `LIMEN_*`. The Python Limen owns `LIMEN_VAULT`, `LIMEN_AGENT`,
   `LIMEN_POLL_SECONDS`, `LIMEN_SEEN_FILE`, `LIMEN_LISTEN` and `LIMEN_BELL_*`,
