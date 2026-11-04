@@ -4,7 +4,7 @@ description: "Use limen-core (its CLI is lc) whenever you want sub-agents, to ta
 ---
 
 This skill is for limen-core, whose command is `lc`. It is not `limen`,
-the older terminal multiplexer: that has its own `limen` command and skill.
+the older Python worker tool: that has its own `limen` command and skill.
 Use `lc` here, never `limen`.
 
 If `$LIMEN_TERMINAL_ID` is set, you're running inside limen-core: use lc.

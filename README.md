@@ -1,0 +1,136 @@
+# Limen
+
+`lc` runs programs and coding agents in terminals that stay alive after you leave.
+Agents can start other agents, send them work, and hear back; you can attach to any terminal and take over.
+
+Core draws nothing. Use it from your shell, an agent, or your own app.
+
+This is a fork of [herdr-core](https://github.com/herdrdev/herdr-core). So far it is herdr-core with new names.
+Limen's own parts still live in its Python repository and come over as [the plan](audit/SETTLE.md) says: the worker loop, the vault, the MCP front, and then the app.
+
+## Where it stands
+
+- The rename is done and checked by script, `cargo fmt` and `cargo metadata`. It has not been built yet.
+- There are no releases. `lc update` and the install scripts point at `releases.limen.invalid`, a name that can never resolve, so they fail loudly and can never fetch upstream's build. Build from source and copy the binary.
+- macOS builds are not planned: Windows and Linux are what we run.
+
+## Run it and come back
+
+```sh
+lc run cargo test                  # stream output and wait for it
+lc run --bg --name web bun dev     # start it and return
+lc ls                             # see live terminals
+lc attach web                     # take over; Ctrl+\ detaches
+lc read web --lines 100            # read without attaching
+```
+
+Closing your viewer does not end the program.
+A waiting run checks in after 180 seconds by default, leaving the program running.
+It prints the terminal's address so you can read it or wait again.
+
+For a terminal you want to keep even if its program is lost, use `lc run --keep`.
+Recovery starts a fresh shell, never reruns the task.
+A normal exit or an explicit kill still ends it.
+
+## Default shell
+
+With no program, `lc run --bg` starts the machine's shell: `$SHELL` (or
+`/bin/sh`) on Unix, PowerShell 7 on Windows if available, else Windows PowerShell.
+Override it in `~/.config/limen-core/config.toml` (Windows:
+`%APPDATA%\limen-core\config.toml`, or `$XDG_CONFIG_HOME/limen-core/config.toml`
+when set):
+
+```toml
+shell = ["nu"]
+# Windows Git Bash (literal strings keep backslashes):
+# shell = ['C:\Program Files\Git\bin\bash.exe', '--login', '-i']
+```
+
+The list is an executable followed by separate arguments, without extra path
+quoting. It must contain a nonempty executable. Changes apply to the next new
+shell or `keep` recovery, including recovery after a restart; no restart is
+needed. Running terminals, explicit programs, and quoted command lines keep
+their behavior. A bad setting reports a config error; a shell that cannot start
+reports `spawn_failed`. Recovery stays pending and retries, with errors in
+`core.log` (config) or `holder.log` (spawn); it never silently falls back to another shell.
+
+## Agents run agents
+
+Give an agent `lc --skill`. It prints the agent docs in one read, including how to delegate, wait, report back, and clean up.
+
+[Templates](docs/templates.md) give an agent a command and a role.
+After saving the reviewer example from that page:
+
+```sh
+lc templates
+lc run --bg --name review reviewer "Review src/x.rs. Read-only."
+lc send review "Focus on the error path."
+lc read review --lines 100
+```
+
+Agents started inside an lc terminal become its children.
+They can report back with `lc send` and wait for their children with `lc wait --children all`.
+The parent gets notes when a child needs attention or ends.
+Children end with their parent unless started with `--outlive-parent`.
+
+## Every machine
+
+```sh
+lc machine add my-ssh-host --name box
+lc run --on box --cwd /srv/app cargo test
+lc attach box/t3
+```
+
+Use the address returned by your run, not the example's `box/t3`.
+Programs and files stay on that machine. Your local core brings its terminals into the same list.
+[Machines](docs/machines.md) covers SSH, custom connections, remote files, and reconnecting.
+
+## Status comes from the program
+
+An agent can say it is working, done, blocked, or in error through OSC 7501, the Program Status Protocol.
+Core stores what it reports. It does not guess from screen text or recognize agent brands.
+A program that does not report status has none.
+
+Use `lc get review` for a snapshot or `lc events` to follow changes.
+
+## Build your own client
+
+`lc schema` prints the request/response API as OpenRPC with JSON Schema.
+[The API docs](schema/README.md) cover connecting, terminal streams, events, and status.
+Use `lc connect` to carry the protocol over stdin and stdout, including through SSH.
+
+## Docs
+
+- [Commands](docs/commands.md): generated from the binary's help.
+- [Machines](docs/machines.md): work across machines.
+- [Templates](docs/templates.md): reusable agent roles.
+- [Security](docs/security.md): access, state, and updates.
+- [API](schema/README.md): build a client.
+
+For a quick lookup, run `lc --help` or a command's help, such as `lc run --help`.
+For agents, use `lc --skill`.
+
+## Build from source
+
+You need Rust and Zig 0.16, and on Windows the MSVC C++ build tools. Upstream's CI pins Rust 1.95.0.
+
+```sh
+git submodule update --init --depth 1 vendor/ghostty
+cargo build --release --locked
+```
+
+The program is `target/release/limen-core` (`limen-core.exe` on Windows). The installers put it on your PATH as `lc`; until we have releases, copy it there yourself.
+On Windows it needs Microsoft's ConPTY in a `conpty` folder beside it, and the tests need the same in `target\debug`:
+
+```powershell
+powershell -File scripts/fetch-conpty.ps1 -Dest target\release
+powershell -File scripts/fetch-conpty.ps1 -Dest target\debug
+cargo test --locked
+```
+
+With [just](https://github.com/casey/just), `just check` runs the format check, clippy and the suite, `just docs` refreshes the command reference, and `just install` installs this checkout and restarts your core. Running terminals keep running.
+
+[FORK.md](FORK.md) says how this relates to upstream and how to take an upstream release. [AGENTS.md](AGENTS.md) holds the rules for working here.
+
+License: [Apache-2.0](LICENSE). `lc --licenses` prints the included third-party licenses.
+After a dependency change, regenerate them with `just notices`.

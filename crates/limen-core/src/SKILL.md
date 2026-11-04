@@ -1,7 +1,7 @@
 # lc manual (limen-core)
 
 The current manual for limen-core's CLI, `lc`. It is not `limen`, the older
-terminal multiplexer.
+Python worker tool.
 
 # lc: programs and agents that stay alive
 
