@@ -220,3 +220,44 @@ fn a_contained_terminal_is_refused_when_the_shell_is_missing() {
     let listed: Value = serde_json::from_slice(&list.stdout).unwrap();
     assert_eq!(listed["terminals"].as_array().map(Vec::len), Some(0), "a refused run left a terminal: {listed}");
 }
+
+/// The limits of the job a terminal's program sits in, as that program reads them.
+fn limits_of_its_job(s: &Session, contain: bool) -> u32 {
+    let written = s.root.join(format!("job-limits-{contain}.txt"));
+    let script = s.file(
+        &format!("job-limits-{contain}.ps1"),
+        &format!(
+            r#"Add-Type 'using System; using System.Runtime.InteropServices; public static class JobProbe {{
+            [DllImport("kernel32.dll")] public static extern bool QueryInformationJobObject(IntPtr job, int kind, byte[] info, int size, IntPtr got); }}'
+$info = New-Object byte[] 144
+if (-not [JobProbe]::QueryInformationJobObject([IntPtr]::Zero, 9, $info, 144, [IntPtr]::Zero)) {{ exit 1 }}
+[IO.File]::WriteAllText('{}', [BitConverter]::ToUInt32($info, 16).ToString())
+"#,
+            written.display()
+        ),
+    );
+    let mut args = vec!["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script.as_str()];
+    if contain {
+        args.insert(0, "--contain");
+    }
+    s.bg(&args);
+    let mut limits = 0;
+    wait_until("its job's limits", || {
+        std::fs::read_to_string(&written).is_ok_and(|text| text.trim().parse().map(|value| limits = value).is_ok())
+    });
+    limits
+}
+
+// The two tests above can't tell the terminals apart inside a job that forbids
+// leaving, as a worker's and Claude's app's do. This one reads the job itself.
+#[test]
+fn only_a_plain_terminal_lets_a_program_break_away() {
+    use windows_sys::Win32::System::JobObjects::{JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE};
+    let s = Session::new();
+    let plain = limits_of_its_job(&s, false);
+    let contained = limits_of_its_job(&s, true);
+    assert_ne!(plain & JOB_OBJECT_LIMIT_BREAKAWAY_OK, 0, "{plain:#x}");
+    assert_eq!(contained & JOB_OBJECT_LIMIT_BREAKAWAY_OK, 0, "{contained:#x}");
+    assert_ne!(plain & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 0, "{plain:#x}");
+    assert_ne!(contained & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, 0, "{contained:#x}");
+}
