@@ -10,7 +10,8 @@ Limen's own parts still live in its Python repository and come over as [the plan
 
 ## Where it stands
 
-- The rename is done and checked by script, `cargo fmt` and `cargo metadata`. It has not been built yet.
+- The rename is done and it builds on Windows, debug and release, with no code changes. Clippy is clean on the Windows code and on the Linux code, and the tests that start nothing pass: the command reference, the schema, API compatibility and the skill.
+- No test that starts a real terminal has run since the rename. On Windows those are in `tests/windows.rs`. Most of the suite only compiles on Unix, and we have no Linux machine or CI for it yet.
 - There are no releases. `lc update` and the install scripts point at `releases.limen.invalid`, a name that can never resolve, so they fail loudly and can never fetch upstream's build. Build from source and copy the binary.
 - macOS builds are not planned: Windows and Linux are what we run.
 
@@ -112,7 +113,7 @@ For agents, use `lc --skill`.
 
 ## Build from source
 
-You need Rust and Zig 0.16, and on Windows the MSVC C++ build tools. Upstream's CI pins Rust 1.95.0.
+You need Rust and Zig 0.16, and on Windows the MSVC C++ build tools. Upstream's CI pins Rust 1.95.0; 1.96 builds it too. If Zig isn't on your PATH, set `ZIG` to its full path.
 
 ```sh
 git submodule update --init --depth 1 vendor/ghostty
@@ -123,8 +124,8 @@ The program is `target/release/limen-core` (`limen-core.exe` on Windows). The in
 On Windows it needs Microsoft's ConPTY in a `conpty` folder beside it, and the tests need the same in `target\debug`:
 
 ```powershell
-powershell -File scripts/fetch-conpty.ps1 -Dest target\release
-powershell -File scripts/fetch-conpty.ps1 -Dest target\debug
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-conpty.ps1 -Dest target\release
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\fetch-conpty.ps1 -Dest target\debug
 cargo test --locked
 ```
 

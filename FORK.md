@@ -33,7 +33,7 @@ Run it from any branch but `upstream-renamed`. `check` in place of `sync` writes
 
 ## What the rename leaves open
 
-- **No CI yet.** `.github/` is left out, and ours comes once GitHub Actions can run on this account.
+- **No CI yet.** `.github/` is left out, and ours comes once GitHub Actions can run on this account. Until then the Unix suite, which is most of the tests, has only been type-checked since the rename.
 - **`tests/upgrade.rs`** needs a release of ours to upgrade from, so it can't pass across the rename until there is one.
 - **The app.** The manual, the skill and some error hints mention `limen-app` and "open Limen", and `api/run.rs` expects the app to set `TERM_PROGRAM=limen`. All of that means the desktop app, which arrives later (`audit/SETTLE.md`, step 8).
 - **macOS.** `platform/macos_bundle.rs` still checks upstream's Apple team id. We ship no macOS builds, so nothing here can pass that check, or needs to.

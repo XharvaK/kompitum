@@ -62,7 +62,8 @@ layout or a workspace to return to, it does not belong in the core.
 - One API; the CLI is one call per command. The schema is generated from one
   method table, so params and results in `api/types.rs` are also CLI args and
   the published schema. Change them and regenerate:
-  `LIMEN_UPDATE_SCHEMA=1 cargo test -p limen-core --test m0`.
+  `LIMEN_UPDATE_SCHEMA=1 cargo test -p limen-core --test m0`, or
+  `--test schema_file` on Windows.
 - Lean, KISS, always. Fewer lines, fewer files, fewer dependencies. No
   abstraction before a second real caller, no config for things nobody asked
   to configure.
@@ -84,6 +85,20 @@ layout or a workspace to return to, it does not belong in the core.
 - Tests and smokes run in isolated sessions (`LIMEN_SESSION`) with scratch XDG
   paths under `/var/tmp`. Never touch the machine's real core, the Python
   Limen or its running workers. Clean up scratch data.
+- `registry_changes_after_start_are_seen_by_each_new_terminal` in
+  `tests/windows.rs` leaves its session: it writes a throwaway `LIMEN_ENV_*`
+  value to the real `HKCU\Environment` and deletes it at the end. A killed run
+  leaves the value behind.
+- On Windows most of the suite doesn't exist. Nearly every file in `tests/` is
+  `#![cfg(unix)]`, so `cargo test --test m0` passes there by running nothing, and
+  a Windows build compiles only the Windows half of the code. Check the other
+  half with `ZIG` set to `scripts\zig-stub.cmd`'s full path and
+  `cargo clippy --locked --target x86_64-unknown-linux-musl --all-targets`, after
+  `rustup target add x86_64-unknown-linux-musl`. Give it its own
+  `CARGO_TARGET_DIR`, as `just lint` does, so the stub's empty library never
+  meets a real build.
+- Builds and tests on the Owner's PC go through `scripts/hidden_run.py`, which
+  gives the whole process tree a hidden console. A game may be running.
 - `LC_*` is the locale namespace and SSH configs forward it, so our
   environment is `LIMEN_*`. The Python Limen owns `LIMEN_VAULT`, `LIMEN_AGENT`,
   `LIMEN_POLL_SECONDS`, `LIMEN_SEEN_FILE`, `LIMEN_LISTEN` and `LIMEN_BELL_*`,
