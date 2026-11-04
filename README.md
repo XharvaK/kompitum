@@ -28,6 +28,7 @@ lc read web --lines 100            # read without attaching
 ```
 
 Closing your viewer does not end the program.
+`Ctrl+\` means the byte that chord sends, so where `\` needs AltGr it is another key: on Turkish Q, `Ctrl` with the key left of `Z`. Set `detach_key` in the config to use a different chord.
 A waiting run checks in after 180 seconds by default, leaving the program running.
 It prints the terminal's address so you can read it or wait again.
 
