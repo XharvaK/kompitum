@@ -4,9 +4,9 @@
 
 The command runs as in hidden_run.py. Each top-level window shown and each change of foreground
 window, from any program, is one JSON line in the report: seconds since the start, the event, the
-program, the window class and its size. A title is kept only for a suspect, meaning a console or a
-program the command might have started, so the Owner's other windows stay out of it. The summary
-goes to stdout and the exit code is the command's.
+program, the window class and its size. A title and the program's path are kept only for a suspect,
+meaning a console or a program the command might have started, so the Owner's other windows stay
+out of it. The summary goes to stdout and the exit code is the command's.
 
 --control first opens one minimized console for about a second and stops with exit code 3 if the
 watcher doesn't see it, since finding no windows means nothing from a watcher that can't see them.
@@ -37,10 +37,10 @@ SW_SHOWMINNOACTIVE = 7
 
 CONSOLE_CLASSES = {"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "PseudoConsoleWindow"}
 TREE_PROGRAMS = {
-    "bash.exe", "cargo.exe", "claude.exe", "cmd.exe", "conhost.exe", "git.exe", "lc.exe", "limen-core.exe",
-    "link.exe", "node.exe", "openconsole.exe", "ping.exe", "powershell.exe", "pwsh.exe", "python.exe", "reg.exe",
-    "rustc.exe", "scp.exe", "sh.exe", "ssh.exe", "tar.exe", "tasklist.exe", "timeout.exe", "whoami.exe",
-    "windowsterminal.exe", "zig.exe",
+    "bash.exe", "bun.exe", "cargo.exe", "claude.exe", "cmd.exe", "commandcode.exe", "conhost.exe", "git.exe", "lc.exe",
+    "limen-core.exe", "link.exe", "node.exe", "npx.exe", "opencode.exe", "openconsole.exe", "ping.exe",
+    "powershell.exe", "pwsh.exe", "python.exe", "reg.exe", "rustc.exe", "scp.exe", "sh.exe", "ssh.exe", "tar.exe",
+    "tasklist.exe", "timeout.exe", "uv.exe", "uvx.exe", "whoami.exe", "windowsterminal.exe", "zig.exe",
 }
 
 WinEventProc = ctypes.WINFUNCTYPE(None, w.HANDLE, w.DWORD, w.HWND, w.LONG, w.LONG, w.DWORD, w.DWORD)
@@ -61,7 +61,7 @@ kernel32.QueryFullProcessImageNameW.argtypes = (w.HANDLE, w.DWORD, w.LPWSTR, cty
 kernel32.CloseHandle.argtypes = (w.HANDLE,)
 
 
-def program_of(pid):
+def path_of(pid):
     process = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not process:
         return "?"
@@ -69,7 +69,7 @@ def program_of(pid):
         path = ctypes.create_unicode_buffer(1024)
         size = w.DWORD(len(path))
         if kernel32.QueryFullProcessImageNameW(process, 0, path, ctypes.byref(size)):
-            return os.path.basename(path.value)
+            return path.value
         return "?"
     finally:
         kernel32.CloseHandle(process)
@@ -95,7 +95,8 @@ class Watcher:
             return
         pid = w.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        program = program_of(pid.value)
+        path = path_of(pid.value)
+        program = os.path.basename(path)
         name = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(hwnd, name, len(name))
         rect = w.RECT()
@@ -114,6 +115,7 @@ class Watcher:
             title = ctypes.create_unicode_buffer(256)
             user32.GetWindowTextW(hwnd, title, len(title))
             row["title"] = title.value
+            row["path"] = path  # The Claude desktop app and the CLI are both claude.exe.
         self.rows.append(row)
         self.report.write(json.dumps(row) + "\n")
         self.report.flush()
