@@ -43,6 +43,9 @@ pub struct Spawn {
     pub cwd: String,
     pub cols: u16,
     pub rows: u16,
+    /// Nothing this program starts may leave its terminal (`lc run --contain`).
+    #[serde(default)]
+    pub contain: bool,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -161,6 +161,15 @@ mod nofile_tests {
     }
 }
 
+/// Unix programs have no console to open: nothing to do.
+pub fn no_console(_cmd: &mut Command) {}
+
+/// What a contained terminal adds to its program's environment: on Windows, a COMSPEC that
+/// keeps shells hidden. An error means the terminal must not start.
+pub fn contain_env(_state: &Path, _env: &mut std::collections::BTreeMap<String, String>) -> io::Result<()> {
+    Ok(())
+}
+
 /// Starts `cmd` in its own session (ending the terminal it was started from
 /// won't end it), stdin/stdout to /dev/null, stderr to `log`.
 pub fn spawn_detached(mut cmd: Command, log: std::fs::File) -> io::Result<()> {
@@ -555,6 +564,7 @@ pub fn spawn_pty(
     cwd: &str,
     cols: u16,
     rows: u16,
+    _contain: bool,
 ) -> io::Result<(Pty, Process)> {
     let program = argv.first().ok_or_else(|| io::Error::other("empty argv"))?;
     let (mut master, mut slave) = (0, 0);

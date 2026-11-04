@@ -79,7 +79,14 @@ impl Core {
             let Some(holder) = st.current() else { break };
             let instance = holder.instance.clone();
             let t = st.reg.terminals.get_mut(&id).expect("pending");
-            let env = crate::api::child_env(base_env.clone(), t.restart_env.clone());
+            let mut env = crate::api::child_env(base_env.clone(), t.restart_env.clone());
+            if t.contain
+                && let Err(e) = crate::platform::contain_env(&self.paths.state, &mut env)
+            {
+                // Like a bad shell setting: leave it pending, and try again.
+                eprintln!("core: kept terminal {} waiting for its hidden shell: {e}", t.address);
+                continue;
+            }
             let cwd = t
                 .last_cwd
                 .as_ref()
@@ -104,7 +111,7 @@ impl Core {
             t.submit = None;
             t.stop = None;
             t.paste_gap_ms = None;
-            let spawn = proto::Spawn { argv: t.argv.clone(), env, cwd, cols: t.cols, rows: t.rows };
+            let spawn = proto::Spawn { argv: t.argv.clone(), env, cwd, cols: t.cols, rows: t.rows, contain: t.contain };
             let mut screen = ghostty_vt::Terminal::new(t.cols, t.rows, self.history_bytes());
             screen.set_xtversion(&t.identity);
             st.screens.insert(id, screen);

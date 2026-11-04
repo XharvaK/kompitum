@@ -498,6 +498,7 @@ Options:
       --outlive-parent     Keep it running when its parent's program ends (by default it ends too)
       --rm                 Remove it right after it exits (once a waiting parent has the exit code)
       --keep               Replace lost programs with a shell in place, never re-run the original command
+      --contain            Nothing this program starts can leave its terminal: no breaking away from its job, and on Windows a shell started through COMSPEC stays hidden. Changes nothing on Unix, where everything carrying the terminal's mark ends with it
       --bg                 Start it and come back at once (a server, several workers)
       --timeout <TIMEOUT>  Seconds before a wait checks in, leaving it running (default: config `wait_timeout`, else 180)
   -h, --help               Print help

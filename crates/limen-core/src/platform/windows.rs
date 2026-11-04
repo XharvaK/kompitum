@@ -382,7 +382,7 @@ pub fn make_executable(_: &Path) -> io::Result<()> {
 }
 
 /// The files of a release, as they sit beside limen-core.exe.
-const RELEASE: [&str; 3] = ["limen-core.exe", r"conpty\conpty.dll", r"conpty\x64\OpenConsole.exe"];
+const RELEASE: [&str; 4] = ["limen-core.exe", r"conpty\conpty.dll", r"conpty\x64\OpenConsole.exe", "limen-shell.exe"];
 
 /// Puts the release whose limen-core.exe is `from` where `dest`'s folder
 /// is. Windows won't overwrite a running file but will rename one: every
@@ -416,7 +416,7 @@ pub fn swap_in(from: &Path, dest: &Path, works: impl Fn(&Path) -> bool) -> io::R
                     && hex.bytes().all(|b| b.is_ascii_hexdigit())
             })
         };
-        let ours = ["limen-core.exe", "conpty.dll", "openconsole.exe", "lc.exe"]
+        let ours = ["limen-core.exe", "limen-shell.exe", "conpty.dll", "openconsole.exe", "lc.exe"]
             .iter()
             .flat_map(|f| ["old", "new", "failed"].map(|w| format!("{f}.{w}-")))
             .any(|prefix| name.strip_prefix(&prefix).is_some_and(tagged));
@@ -522,6 +522,13 @@ pub fn file_identity(m: &std::fs::Metadata) -> String {
 }
 
 // --- Processes -------------------------------------------------------------
+
+/// Every program started without a console of its own gets none: a console
+/// program would otherwise make one, visible.
+pub fn no_console(cmd: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
 
 /// Starts `cmd` with no console (no new process group: that would turn off
 /// Ctrl+C for every program the holder starts), out of the job of
@@ -681,7 +688,7 @@ pub fn machine_id() -> Option<String> {
     use std::os::windows::process::CommandExt;
     let out = std::process::Command::new("reg")
         .args(["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"])
-        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -913,6 +920,7 @@ pub fn spawn_pty(
     cwd: &str,
     cols: u16,
     rows: u16,
+    contain: bool,
 ) -> io::Result<(Pty, Process)> {
     let mut cmd = command_line(argv, env)?;
     let mut block = env_block(env);
@@ -944,15 +952,18 @@ pub fn spawn_pty(
         let console = Arc::new(PseudoConsole(std::sync::Mutex::new(Some(hpc as usize))));
 
         // Everything it starts goes with it: killed when the job's last handle
-        // closes (us, or the holder dying). Breakaway lets lc's own core and
-        // holders, started from inside, outlive it.
+        // closes (us, or the holder dying). A plain terminal lets a program that
+        // asks to break away leave, which is also how lc's own core and holders
+        // outlive it; a contained terminal lets nothing leave, so a core started
+        // inside it ends with it.
         let job = CreateJobObjectW(null(), null());
         if job.is_null() {
             return Err(io::Error::last_os_error());
         }
         let job = OwnedHandle::from_raw_handle(job as RawHandle);
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+        limits.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | if contain { 0 } else { JOB_OBJECT_LIMIT_BREAKAWAY_OK };
         check(SetInformationJobObject(
             job.as_raw_handle() as HANDLE,
             JobObjectExtendedLimitInformation,
@@ -1001,8 +1012,18 @@ pub fn spawn_pty(
         check(started)?;
         let handle = OwnedHandle::from_raw_handle(pi.hProcess as RawHandle);
         let thread = OwnedHandle::from_raw_handle(pi.hThread as RawHandle);
-        AssignProcessToJobObject(job.as_raw_handle() as HANDLE, handle.as_raw_handle() as HANDLE);
-        ResumeThread(thread.as_raw_handle() as HANDLE);
+        // A program that misses the job runs uncontained, and one left
+        // suspended never ends: either way the spawn itself has failed.
+        if AssignProcessToJobObject(job.as_raw_handle() as HANDLE, handle.as_raw_handle() as HANDLE) == 0 {
+            let error = io::Error::last_os_error();
+            TerminateProcess(handle.as_raw_handle() as HANDLE, 1);
+            return Err(error);
+        }
+        if ResumeThread(thread.as_raw_handle() as HANDLE) == u32::MAX {
+            let error = io::Error::last_os_error();
+            TerminateProcess(handle.as_raw_handle() as HANDLE, 1);
+            return Err(error);
+        }
         // The console holds its own ends now.
         drop((in_r, out_w));
         let process = Process { pid: pi.dwProcessId, handle, console: console.clone() };

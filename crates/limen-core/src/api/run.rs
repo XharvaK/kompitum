@@ -110,7 +110,12 @@ pub(super) async fn start(
     // A caller on another machine has no folder here: home, then.
     let from_afar = p.caller.as_deref().is_some_and(|c| c.contains('/'));
     let cwd = crate::exec::folder(p.cwd.as_deref(), from_afar);
-    let env = child_env(crate::platform::program_env().await, p.env.clone());
+    let mut env = child_env(crate::platform::program_env().await, p.env.clone());
+    if p.contain {
+        // Before the record exists: a refused terminal leaves nothing behind.
+        crate::platform::contain_env(&core.paths.state, &mut env)
+            .map_err(|e| RpcError::new("refused", e.to_string(), ""))?;
+    }
     let identity = format!(
         "{} {}",
         env.get("TERM_PROGRAM").map_or("", String::as_str),
@@ -151,6 +156,7 @@ pub(super) async fn start(
             notify: !p.no_notify,
             rm: p.rm,
             keep: p.keep,
+            contain: p.contain,
             name: p.name,
             labels: labels(&p.labels),
             argv: p.argv.clone(),
@@ -171,7 +177,7 @@ pub(super) async fn start(
         let (tx, rx) = tokio::sync::oneshot::channel();
         st.pending.insert(id, tx);
         st.reg.terminals.get_mut(&id).expect("just created").restart_env = p.env;
-        let spawn = proto::Spawn { argv: p.argv, env, cwd, cols, rows };
+        let spawn = proto::Spawn { argv: p.argv, env, cwd, cols, rows, contain: p.contain };
         st.reg.terminals.get_mut(&id).expect("just created").holder = Some(instance);
         // Queue the snapshot before spawning; the next start kills any unrecorded spawn.
         core.save(&st);

@@ -675,6 +675,11 @@
             "minimum": 0,
             "type": "integer"
           },
+          "contain": {
+            "default": false,
+            "description": "Nothing it starts can leave its terminal (see `lc run --contain`).",
+            "type": "boolean"
+          },
           "created_ms": {
             "format": "uint64",
             "minimum": 0,
@@ -1159,6 +1164,11 @@
             "minimum": 0,
             "type": "integer"
           },
+          "contain": {
+            "default": false,
+            "description": "Nothing it starts can leave its terminal (see `lc run --contain`).",
+            "type": "boolean"
+          },
           "created_ms": {
             "format": "uint64",
             "minimum": 0,
@@ -1635,6 +1645,13 @@
             "kind": "config"
           },
           "message": "config"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "refused"
+          },
+          "message": "refused"
         }
       ],
       "name": "terminal.run",
@@ -1663,6 +1680,16 @@
               "string",
               "null"
             ]
+          }
+        },
+        {
+          "description": "Nothing this program starts can leave its terminal: no breaking away from\nits job, and on Windows a shell started through COMSPEC stays hidden. Changes\nnothing on Unix, where everything carrying the terminal's mark ends with it.",
+          "name": "contain",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Nothing this program starts can leave its terminal: no breaking away from\nits job, and on Windows a shell started through COMSPEC stays hidden. Changes\nnothing on Unix, where everything carrying the terminal's mark ends with it.",
+            "type": "boolean"
           }
         },
         {

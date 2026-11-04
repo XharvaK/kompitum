@@ -63,12 +63,8 @@ impl Reach<'_> {
             return cmd;
         }
         let mut cmd = ssh(paths, self.target, extra);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            // A pipe from the detached core must not open a console of its own.
-            cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
-        }
+        // A pipe from the detached core must not open a console of its own.
+        crate::platform::no_console(&mut cmd);
         if std::env::var_os("LIMEN_SSH").is_none() {
             cmd.arg("-T");
         }
@@ -537,7 +533,9 @@ fn install_payload(bin: &Path, scratch: &Path) -> Result<(Vec<u8>, bool), RpcErr
     let path = if bundled {
         let root = bin.parent().unwrap().parent().unwrap().parent().unwrap();
         let archive = scratch.join("core-bundle.tar");
-        let status = std::process::Command::new("tar")
+        let mut tar = std::process::Command::new("tar");
+        crate::platform::no_console(&mut tar);
+        let status = tar
             .arg("-cf")
             .arg(&archive)
             .arg("-C")
@@ -583,6 +581,7 @@ fn install_windows(paths: &crate::paths::Paths, target: &str, session: Option<&s
         .args(["-o", "ControlMaster=no"]);
     scp.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
     scp.arg(scratch.0.join("lc-install.zip")).arg(&script).arg(format!("{target}:"));
+    crate::platform::no_console(&mut scp);
     let to = Reach { target, via: false };
     let out = scp.output().map_err(|e| unreachable(to, &format!("cannot run scp: {e}")))?;
     if !out.status.success() {

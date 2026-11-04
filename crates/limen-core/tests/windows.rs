@@ -11,6 +11,10 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+// Limen's own tests, apart from upstream's, so a merge of this file stays small.
+#[path = "windows/contain.rs"]
+mod contain;
+
 const BIN: &str = env!("CARGO_BIN_EXE_limen-core");
 static LIVE: Mutex<Vec<(String, PathBuf)>> = Mutex::new(Vec::new());
 
@@ -114,12 +118,22 @@ fn cmd_at(exe: &Path, session: &str, root: &Path) -> Command {
         .env("XDG_STATE_HOME", root.join("state"))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("LIMEN_SETTLE_MS", "0")
+        // A worker's own COMSPEC is a hidden shell that can't be a terminal's
+        // first program; the real one is what a plain machine has.
+        .env("COMSPEC", real_cmd())
+        .env_remove("LIMEN_COMSPEC")
         .env_remove("LIMEN_TERMINAL_ID")
         .env_remove("LIMEN_SOCKET")
         .env_remove("SSH_CONNECTION")
         .env_remove("SSH_CLIENT")
         .env_remove("SSH_TTY");
     cmd
+}
+
+/// Windows' own cmd, not the hidden shell a worker's COMSPEC may name.
+fn real_cmd() -> String {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    Path::new(&root).join(r"System32\cmd.exe").display().to_string()
 }
 
 fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
@@ -708,7 +722,8 @@ fn configured_shell_uses_argv_and_is_read_live_for_new_and_recovered_terminals()
     let config = s.root.join("config/limen-core/config.toml");
     std::fs::create_dir_all(config.parent().unwrap()).unwrap();
     let exe = s.root.join("shell with spaces.exe");
-    std::fs::copy(std::env::var("COMSPEC").unwrap(), &exe).unwrap();
+    // A worker's own COMSPEC is a hidden shell, which can't be a terminal's first program.
+    std::fs::copy(real_cmd(), &exe).unwrap();
     let set_shell = |marker: &str| {
         let argv = serde_json::json!([exe, "/d", "/k", format!("echo {marker}")]);
         std::fs::write(&config, format!("shell = {argv}\n")).unwrap();

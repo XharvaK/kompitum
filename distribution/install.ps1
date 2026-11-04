@@ -76,7 +76,7 @@ try {
         if ($LASTEXITCODE) { Fail "updating $exe failed (see above)" }
         Write-Host "lc updated to $version."
     } else {
-        Copy-Item -Recurse -Force "$tmp\lc\limen-core.exe", "$tmp\lc\conpty" $dir
+        Copy-Item -Recurse -Force "$tmp\lc\limen-core.exe", "$tmp\lc\limen-shell.exe", "$tmp\lc\conpty" $dir
         Write-Host "lc $version installed into $dir."
     }
     Copy-Item -Recurse -Force "$tmp\lc\THIRD-PARTY-NOTICES" $dir -ErrorAction SilentlyContinue

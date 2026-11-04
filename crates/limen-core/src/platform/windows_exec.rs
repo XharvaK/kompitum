@@ -33,7 +33,9 @@ pub fn drop_unreachable_displays(_env: &mut std::collections::BTreeMap<String, S
 /// line itself (`/s`: verbatim between the outer quotes), so the line goes
 /// raw, never quoted as an argument.
 pub fn shell_line(line: &str) -> Vec<String> {
-    let cmd = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into());
+    // A contained terminal's COMSPEC is limen-shell, and a GUI program can't sit
+    // on a pseudo console: the real cmd is the one this line must start.
+    let cmd = std::env::var("LIMEN_COMSPEC").or_else(|_| std::env::var("COMSPEC")).unwrap_or_else(|_| "cmd.exe".into());
     vec![cmd, "/d".into(), "/s".into(), "/c".into(), line.into()]
 }
 

@@ -136,7 +136,11 @@ mod windows;
 #[cfg(windows)]
 pub use windows::*;
 #[cfg(windows)]
+mod windows_contain;
+#[cfg(windows)]
 mod windows_exec;
+#[cfg(windows)]
+pub use windows_contain::*;
 #[cfg(windows)]
 pub use windows_exec::*;
 #[cfg(windows)]

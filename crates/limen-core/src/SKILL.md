@@ -9,6 +9,7 @@ Python worker tool.
 It does not arrange windows; use `limen-app --skill` for that.
 `$LIMEN_TERMINAL_ID` is your address. Terminals you start are your children.
 They end when you end, unless started with `--outlive-parent`.
+What a program starts ends with its terminal, detached or not: a daemon gets a terminal of its own (`lc run --bg --no-parent`).
 `<t>` below means an ID (`t7`), a name (`review`), or `machine/t7`.
 Piped output is JSON except `run`, `exec`, `read`, and `file read` (text).
 Use `lc <command> --help` for exact arguments; `lc --help` lists commands.

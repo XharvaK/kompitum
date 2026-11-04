@@ -77,6 +77,13 @@ They can report back with `lc send` and wait for their children with `lc wait --
 The parent gets notes when a child needs attention or ends.
 Children end with their parent unless started with `--outlive-parent`.
 
+## What ends with a terminal
+
+Everything a program starts ends with its terminal, detached or not. To keep a daemon running, give it a terminal of its own: `lc run --bg --no-parent --name proxy node proxy.js`.
+On Windows a program can also leave by asking to break away from the terminal's job, which `detached` in Node and Bun does not do.
+
+`lc run --contain` shuts that door, for work where a kill must be total. Nothing can break away, and on Windows a shell started through `COMSPEC` gets a hidden console, so a detached program below it opens no window.
+
 ## Every machine
 
 ```sh
@@ -124,6 +131,7 @@ cargo build --release --locked
 ```
 
 The program is `target/release/limen-core` (`limen-core.exe` on Windows). The installers put it on your PATH as `lc`; until we have releases, copy it there yourself.
+`cargo build` puts `limen-shell.exe` beside it too. `lc run --contain` needs it on Windows, so copy it along.
 On Windows it needs Microsoft's ConPTY in a `conpty` folder beside it, and the tests need the same in `target\debug`:
 
 ```powershell

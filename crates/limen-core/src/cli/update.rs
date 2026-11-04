@@ -4,7 +4,9 @@ use super::*;
 
 /// What a binary says it is (`lc 0.2.0`), if it is a working lc.
 pub(super) fn version_of(path: &std::path::Path) -> Option<String> {
-    let out = std::process::Command::new(path).arg("--version").stdin(std::process::Stdio::null()).output().ok()?;
+    let mut cmd = std::process::Command::new(path);
+    crate::platform::no_console(&mut cmd);
+    let out = cmd.arg("--version").stdin(std::process::Stdio::null()).output().ok()?;
     let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (out.status.success() && v.starts_with("lc ")).then_some(v)
 }

@@ -124,3 +124,7 @@ layout or a workspace to return to, it does not belong in the core.
   is lint plus the whole suite. Run it before proposing a commit.
 - `docs/commands.md` is generated, and `tests/cli_docs.rs` checks every `lc`
   command and flag it finds in the README and `docs/`, in prose too.
+- A contained terminal's `COMSPEC` is `limen-shell`, which can't be a terminal's
+  first program, since a GUI program can't attach to a pseudo console.
+  `shell_line` reads `LIMEN_COMSPEC` first for that reason, and tests set the
+  real `COMSPEC` in `cmd_at` for when they run inside a worker.

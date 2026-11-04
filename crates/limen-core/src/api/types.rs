@@ -266,6 +266,12 @@ pub struct RunParams {
     #[arg(long)]
     #[serde(default)]
     pub keep: bool,
+    /// Nothing this program starts can leave its terminal: no breaking away from
+    /// its job, and on Windows a shell started through COMSPEC stays hidden. Changes
+    /// nothing on Unix, where everything carrying the terminal's mark ends with it.
+    #[arg(long)]
+    #[serde(default)]
+    pub contain: bool,
     /// Then wait until it is not working, like `terminal.wait`, and return its
     /// output (the CLI waits unless --bg).
     #[arg(skip)]

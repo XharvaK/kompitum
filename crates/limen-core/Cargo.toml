@@ -9,6 +9,10 @@ publish.workspace = true
 name = "limen-core"
 path = "src/main.rs"
 
+[[bin]]
+name = "limen-shell"
+path = "src/bin/limen-shell.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ghostty-vt = { path = "../ghostty-vt" }

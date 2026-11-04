@@ -21,6 +21,9 @@ pub struct Terminal {
     /// Replace a lost program with this machine’s shell, in place. Exit with a code and kill remain final.
     #[serde(default)]
     pub keep: bool,
+    /// Nothing it starts can leave its terminal (see `lc run --contain`).
+    #[serde(default)]
+    pub contain: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_cwd: Option<String>,
     /// Only caller overrides, never the inherited core environment.
@@ -224,6 +227,7 @@ pub struct NewTerminal {
     pub die_with_parent: bool,
     pub rm: bool,
     pub keep: bool,
+    pub contain: bool,
     pub name: Option<String>,
     pub labels: BTreeMap<String, String>,
     pub argv: Vec<String>,
@@ -265,6 +269,7 @@ impl Registry {
                 argv: new.argv,
                 cwd: new.cwd,
                 keep: new.keep,
+                contain: new.contain,
                 last_cwd: None,
                 restart_env: BTreeMap::new(),
                 restart_after_ms: 0,

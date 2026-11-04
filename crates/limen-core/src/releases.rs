@@ -35,7 +35,9 @@ fn unavailable(why: String) -> RpcError {
 
 fn curl(url: &str, to: &Path) -> Result<(), RpcError> {
     // Quiet: our error says what failed, and piped stderr is one JSON error.
-    let ok = Command::new("curl")
+    let mut cmd = Command::new("curl");
+    crate::platform::no_console(&mut cmd);
+    let ok = cmd
         .args(["-fsL", "--retry", "2", "--connect-timeout", "10", "-o"])
         .arg(to)
         .arg(url)
@@ -87,8 +89,9 @@ fn sha256(file: &Path) -> Option<String> {
 pub fn download(m: &Manifest, target: &str, scratch: &Path, bundle: bool) -> Result<PathBuf, RpcError> {
     let tar = fetch(m, target, scratch)?;
     let exe = if target.starts_with("windows") { "limen-core.exe" } else { "limen-core" };
-    let ok =
-        Command::new(tar_program()).arg("-xf").arg(&tar).arg("-C").arg(scratch).status().is_ok_and(|s| s.success());
+    let mut unpack = Command::new(tar_program());
+    crate::platform::no_console(&mut unpack);
+    let ok = unpack.arg("-xf").arg(&tar).arg("-C").arg(scratch).status().is_ok_and(|s| s.success());
     // Root executable remains in macOS archives for old updaters. New ones
     // carry the entire signed bundle through installation instead.
     let bundled = scratch.join("Limen Core.app/Contents/MacOS/limen-core");
