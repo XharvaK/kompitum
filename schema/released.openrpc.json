@@ -454,7 +454,7 @@
             "type": "string"
           },
           "session": {
-            "description": "The hc session there (null: its default).",
+            "description": "The lc session there (null: its default).",
             "type": [
               "string",
               "null"
@@ -466,11 +466,11 @@
           },
           "temporary": {
             "default": false,
-            "description": "Short-lived (a sandbox for a task): clients may show it apart from the\nmachines that stay. hc treats it like any other.",
+            "description": "Short-lived (a sandbox for a task): clients may show it apart from the\nmachines that stay. lc treats it like any other.",
             "type": "boolean"
           },
           "version": {
-            "description": "Its hc version when last seen.",
+            "description": "Its lc version when last seen.",
             "type": "string"
           },
           "via": {
@@ -518,7 +518,7 @@
             "type": "string"
           },
           "session": {
-            "description": "The hc session there (null: its default).",
+            "description": "The lc session there (null: its default).",
             "type": [
               "string",
               "null"
@@ -543,11 +543,11 @@
           },
           "temporary": {
             "default": false,
-            "description": "Short-lived (a sandbox for a task): clients may show it apart from the\nmachines that stay. hc treats it like any other.",
+            "description": "Short-lived (a sandbox for a task): clients may show it apart from the\nmachines that stay. lc treats it like any other.",
             "type": "boolean"
           },
           "version": {
-            "description": "Its hc version when last seen.",
+            "description": "Its lc version when last seen.",
             "type": "string"
           },
           "via": {
@@ -985,7 +985,7 @@
             "type": "array"
           },
           "installed_by": {
-            "description": "The package manager this hc came from (homebrew, nix, mise, or\nsystem package manager): it updates hc, `hc update` won't.\nNull for a replaceable plain install.",
+            "description": "The package manager this lc came from (homebrew, nix, mise, or\nsystem package manager): it updates lc, `lc update` won't.\nNull for a replaceable plain install.",
             "type": [
               "string",
               "null"
@@ -1389,11 +1389,11 @@
     }
   },
   "info": {
-    "description": "Terminal runtime for coding agents. JSON-RPC 2.0, one message per line on the hc socket (or framed after `hello`). Protocol generation 1. Errors carry a stable `data.kind`.",
+    "description": "Terminal runtime for coding agents. JSON-RPC 2.0, one message per line on the lc socket (or framed after `hello`). Protocol generation 1. Errors carry a stable `data.kind`.",
     "license": {
       "name": "Apache-2.0"
     },
-    "title": "herdr-core",
+    "title": "limen-core",
     "version": "0.1.17"
   },
   "methods": [
@@ -1600,11 +1600,11 @@
           }
         },
         {
-          "description": "Who is calling (`HC_TERMINAL_ID` inside a terminal).",
+          "description": "Who is calling (`LIMEN_TERMINAL_ID` inside a terminal).",
           "name": "caller",
           "required": false,
           "schema": {
-            "description": "Who is calling (`HC_TERMINAL_ID` inside a terminal).",
+            "description": "Who is calling (`LIMEN_TERMINAL_ID` inside a terminal).",
             "type": [
               "string",
               "null"
@@ -1612,11 +1612,11 @@
           }
         },
         {
-          "description": "Working directory (default: where hc runs; through the API, the core's;\nwith --on, that machine's home).",
+          "description": "Working directory (default: where lc runs; through the API, the core's;\nwith --on, that machine's home).",
           "name": "cwd",
           "required": false,
           "schema": {
-            "description": "Working directory (default: where hc runs; through the API, the core's;\nwith --on, that machine's home).",
+            "description": "Working directory (default: where lc runs; through the API, the core's;\nwith --on, that machine's home).",
             "type": [
               "string",
               "null"
@@ -1714,11 +1714,11 @@
           }
         },
         {
-          "description": "Run it on another machine (see `hc machine ls`); its address is `machine/t7`.",
+          "description": "Run it on another machine (see `lc machine ls`); its address is `machine/t7`.",
           "name": "on",
           "required": false,
           "schema": {
-            "description": "Run it on another machine (see `hc machine ls`); its address is `machine/t7`.",
+            "description": "Run it on another machine (see `lc machine ls`); its address is `machine/t7`.",
             "type": [
               "string",
               "null"
@@ -2202,12 +2202,12 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "description": "Who is calling (`HC_TERMINAL_ID` inside a terminal): never itself.",
+          "description": "Who is calling (`LIMEN_TERMINAL_ID` inside a terminal): never itself.",
           "name": "caller",
           "required": false,
           "schema": {
             "default": null,
-            "description": "Who is calling (`HC_TERMINAL_ID` inside a terminal): never itself.",
+            "description": "Who is calling (`LIMEN_TERMINAL_ID` inside a terminal): never itself.",
             "type": [
               "string",
               "null"
@@ -2374,11 +2374,11 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "description": "Who is sending (`HC_TERMINAL_ID`, else the calling process's parent), so a\nbare wait from the same caller waits for this send's turn.",
+          "description": "Who is sending (`LIMEN_TERMINAL_ID`, else the calling process's parent), so a\nbare wait from the same caller waits for this send's turn.",
           "name": "caller",
           "required": false,
           "schema": {
-            "description": "Who is sending (`HC_TERMINAL_ID`, else the calling process's parent), so a\nbare wait from the same caller waits for this send's turn.",
+            "description": "Who is sending (`LIMEN_TERMINAL_ID`, else the calling process's parent), so a\nbare wait from the same caller waits for this send's turn.",
             "type": [
               "string",
               "null"
@@ -2853,11 +2853,11 @@
           }
         },
         {
-          "description": "Working directory (default: where hc runs; through the API, the core's;\nwith --on, that machine's home).",
+          "description": "Working directory (default: where lc runs; through the API, the core's;\nwith --on, that machine's home).",
           "name": "cwd",
           "required": false,
           "schema": {
-            "description": "Working directory (default: where hc runs; through the API, the core's;\nwith --on, that machine's home).",
+            "description": "Working directory (default: where lc runs; through the API, the core's;\nwith --on, that machine's home).",
             "type": [
               "string",
               "null"
@@ -2902,11 +2902,11 @@
           }
         },
         {
-          "description": "Run it on another machine (see `hc machine ls`).",
+          "description": "Run it on another machine (see `lc machine ls`).",
           "name": "on",
           "required": false,
           "schema": {
-            "description": "Run it on another machine (see `hc machine ls`).",
+            "description": "Run it on another machine (see `lc machine ls`).",
             "type": [
               "string",
               "null"
@@ -2991,11 +2991,11 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "description": "Where a relative path starts (default: where hc runs; through the API,\nthe core's; with --on, that machine's home).",
+          "description": "Where a relative path starts (default: where lc runs; through the API,\nthe core's; with --on, that machine's home).",
           "name": "cwd",
           "required": false,
           "schema": {
-            "description": "Where a relative path starts (default: where hc runs; through the API,\nthe core's; with --on, that machine's home).",
+            "description": "Where a relative path starts (default: where lc runs; through the API,\nthe core's; with --on, that machine's home).",
             "type": [
               "string",
               "null"
@@ -3031,11 +3031,11 @@
           }
         },
         {
-          "description": "On another machine (see `hc machine ls`).",
+          "description": "On another machine (see `lc machine ls`).",
           "name": "on",
           "required": false,
           "schema": {
-            "description": "On another machine (see `hc machine ls`).",
+            "description": "On another machine (see `lc machine ls`).",
             "type": [
               "string",
               "null"
@@ -3102,11 +3102,11 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "description": "Where a relative path starts (default: where hc runs; through the API,\nthe core's; with --on, that machine's home).",
+          "description": "Where a relative path starts (default: where lc runs; through the API,\nthe core's; with --on, that machine's home).",
           "name": "cwd",
           "required": false,
           "schema": {
-            "description": "Where a relative path starts (default: where hc runs; through the API,\nthe core's; with --on, that machine's home).",
+            "description": "Where a relative path starts (default: where lc runs; through the API,\nthe core's; with --on, that machine's home).",
             "type": [
               "string",
               "null"
@@ -3123,11 +3123,11 @@
           }
         },
         {
-          "description": "On another machine (see `hc machine ls`).",
+          "description": "On another machine (see `lc machine ls`).",
           "name": "on",
           "required": false,
           "schema": {
-            "description": "On another machine (see `hc machine ls`).",
+            "description": "On another machine (see `lc machine ls`).",
             "type": [
               "string",
               "null"
@@ -3215,11 +3215,11 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "description": "Where a relative path starts (default: where hc runs; through the API,\nthe core's; with --on, that machine's home).",
+          "description": "Where a relative path starts (default: where lc runs; through the API,\nthe core's; with --on, that machine's home).",
           "name": "cwd",
           "required": false,
           "schema": {
-            "description": "Where a relative path starts (default: where hc runs; through the API,\nthe core's; with --on, that machine's home).",
+            "description": "Where a relative path starts (default: where lc runs; through the API,\nthe core's; with --on, that machine's home).",
             "type": [
               "string",
               "null"
@@ -3239,11 +3239,11 @@
           }
         },
         {
-          "description": "On another machine (see `hc machine ls`).",
+          "description": "On another machine (see `lc machine ls`).",
           "name": "on",
           "required": false,
           "schema": {
-            "description": "On another machine (see `hc machine ls`).",
+            "description": "On another machine (see `lc machine ls`).",
             "type": [
               "string",
               "null"
@@ -3491,7 +3491,7 @@
       }
     },
     {
-      "description": "Add another machine: dial it over ssh, check that hc answers there, and keep it under a name.",
+      "description": "Add another machine: dial it over ssh, check that lc answers there, and keep it under a name.",
       "errors": [
         {
           "code": -32602,
@@ -3524,9 +3524,9 @@
         {
           "code": -32000,
           "data": {
-            "kind": "hc_missing"
+            "kind": "lc_missing"
           },
-          "message": "hc_missing"
+          "message": "lc_missing"
         },
         {
           "code": -32000,
@@ -3552,11 +3552,11 @@
           }
         },
         {
-          "description": "The hc session on that machine (default: its default).",
+          "description": "The lc session on that machine (default: its default).",
           "name": "session",
           "required": false,
           "schema": {
-            "description": "The hc session on that machine (default: its default).",
+            "description": "The lc session on that machine (default: its default).",
             "type": [
               "string",
               "null"
@@ -3576,12 +3576,12 @@
           }
         },
         {
-          "description": "Mark it short-lived (a sandbox for a task), so clients can show it apart\nfrom machines that stay. hc treats it like any other; remove it with\n`hc machine rm`.",
+          "description": "Mark it short-lived (a sandbox for a task), so clients can show it apart\nfrom machines that stay. lc treats it like any other; remove it with\n`lc machine rm`.",
           "name": "temporary",
           "required": false,
           "schema": {
             "default": false,
-            "description": "Mark it short-lived (a sandbox for a task), so clients can show it apart\nfrom machines that stay. hc treats it like any other; remove it with\n`hc machine rm`.",
+            "description": "Mark it short-lived (a sandbox for a task), so clients can show it apart\nfrom machines that stay. lc treats it like any other; remove it with\n`lc machine rm`.",
             "type": "boolean"
           }
         },

@@ -4,17 +4,17 @@
 set -eu
 cd "$(dirname "$0")/.."
 nice -n 10 cargo build --release
-bin="${HC_INSTALL_DIR:-$HOME/.local/bin}"
+bin="${LIMEN_INSTALL_DIR:-$HOME/.local/bin}"
 mkdir -p "$bin"
 if [ "$(uname -s)" = Darwin ]; then
-  app="target/release/Herdr Core.app"
+  app="target/release/Limen Core.app"
   rm -rf "$app"
-  sh scripts/mac-bundle target/release/herdr-core "$app"
+  sh scripts/mac-bundle target/release/limen-core "$app"
   bash scripts/mac-sign "$app"
-  "$app/Contents/MacOS/herdr-core" --hc-install-bundle "$app/Contents/MacOS/herdr-core" "$bin/herdr-core"
+  "$app/Contents/MacOS/limen-core" --lc-install-bundle "$app/Contents/MacOS/limen-core" "$bin/limen-core"
 else
-  install -m 755 target/release/herdr-core "$bin/herdr-core.new"
-  mv -f "$bin/herdr-core.new" "$bin/herdr-core"
+  install -m 755 target/release/limen-core "$bin/limen-core.new"
+  mv -f "$bin/limen-core.new" "$bin/limen-core"
 fi
-[ -e "$bin/hc" ] || [ -L "$bin/hc" ] || ln -s herdr-core "$bin/hc"
-"$bin/herdr-core" server restart
+[ -e "$bin/lc" ] || [ -L "$bin/lc" ] || ln -s limen-core "$bin/lc"
+"$bin/limen-core" server restart
