@@ -67,11 +67,36 @@ pub fn read_state<T: serde::de::DeserializeOwned + Default>(path: &Path) -> io::
     }
 }
 
+/// The next temp name's number: two writers never share one.
+static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, bytes)?;
-    std::fs::OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
-    std::fs::rename(tmp, path)
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let n = TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp = path.with_file_name(format!("{name}.{}.{n}.tmp", std::process::id()));
+    let written = (|| {
+        std::fs::write(&tmp, bytes)?;
+        std::fs::OpenOptions::new().write(true).open(&tmp)?.sync_all()?;
+        // Windows: a reader (a scanner, an indexer) can hold the old file for a
+        // moment and refuse the replacement.
+        let start = std::time::Instant::now();
+        loop {
+            match std::fs::rename(&tmp, path) {
+                Ok(()) => return Ok(()),
+                Err(e)
+                    if e.kind() == io::ErrorKind::PermissionDenied
+                        && start.elapsed() < std::time::Duration::from_secs(2) =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 /// Hex digits in a holder's socket name.
@@ -105,6 +130,36 @@ mod tests {
         assert!(super::read_state::<Vec<u32>>(&dir.join("broken.json")).is_err());
         super::write_atomic(&dir.join("ok.json"), b"[1,2]").unwrap();
         assert_eq!(super::read_state::<Vec<u32>>(&dir.join("ok.json")).unwrap(), [1, 2]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn two_writers_of_one_path_always_leave_it_whole() {
+        let dir = std::env::temp_dir().join(format!("lc-atomic-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shared.json");
+        let bodies: Vec<Vec<u8>> = (0..2).map(|i| format!("\"{}\"", "x".repeat(20_000 + i)).into_bytes()).collect();
+        let (a_path, b_path) = (path.clone(), path.clone());
+        let (a_body, b_body) = (bodies[0].clone(), bodies[1].clone());
+        let a = std::thread::spawn(move || {
+            for _ in 0..200 {
+                super::write_atomic(&a_path, &a_body).unwrap();
+            }
+        });
+        let b = std::thread::spawn(move || {
+            for _ in 0..200 {
+                super::write_atomic(&b_path, &b_body).unwrap();
+            }
+        });
+        let start = std::time::Instant::now();
+        while !a.is_finished() || !b.is_finished() {
+            let got = std::fs::read(&path).unwrap_or_default();
+            assert!(got.is_empty() || bodies.contains(&got), "a partial file of {} bytes", got.len());
+            assert!(start.elapsed() < std::time::Duration::from_secs(60), "the writers stalled");
+        }
+        a.join().unwrap();
+        b.join().unwrap();
+        assert!(bodies.contains(&std::fs::read(&path).unwrap()));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

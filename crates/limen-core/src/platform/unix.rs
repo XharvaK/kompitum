@@ -220,6 +220,48 @@ pub fn exit_signal(status: &std::process::ExitStatus) -> Option<i32> {
     status.signal()
 }
 
+/// CPU time of everything else in the caller's session, in milliseconds: a
+/// terminal's program starts a session of its own, and its descendants stay in
+/// it unless they deliberately leave. The caller is left out, since on a busy
+/// machine this very reading could pass for activity. Elsewhere there is no
+/// cheap answer, so only output counts as activity there.
+#[cfg(target_os = "linux")]
+pub fn job_cpu_ms() -> Option<u64> {
+    let session = unsafe { libc::getsid(0) };
+    if session < 0 {
+        return None;
+    }
+    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if ticks <= 0 {
+        return None;
+    }
+    let own = std::process::id() as i32;
+    let mut total = 0u64;
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse::<i32>().ok()) else { continue };
+        if pid == own {
+            continue;
+        }
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+        // A process name may hold spaces and parentheses: the fields begin
+        // after the last `)`.
+        let Some((_, fields)) = stat.rsplit_once(')') else { continue };
+        let fields: Vec<&str> = fields.split_whitespace().collect();
+        if fields.get(3).and_then(|s| s.parse::<i32>().ok()) != Some(session) {
+            continue;
+        }
+        let utime = fields.get(11).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        let stime = fields.get(12).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+        total += utime + stime;
+    }
+    Some(total.saturating_mul(1000) / ticks as u64)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn job_cpu_ms() -> Option<u64> {
+    None
+}
+
 /// This machine's own shell, as a person here gets it.
 pub fn own_shell() -> Vec<String> {
     let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into());

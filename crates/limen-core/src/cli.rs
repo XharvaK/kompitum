@@ -15,10 +15,12 @@ use std::io::{IsTerminal, Read};
 mod file;
 mod machine;
 mod output;
+mod task;
 mod update;
 use file::*;
 use machine::*;
 use output::*;
+use task::*;
 use update::*;
 
 #[derive(Parser)]
@@ -78,6 +80,11 @@ enum Cmd {
         #[command(subcommand)]
         action: MachineCmd,
     },
+    /// Tasks: a worktree, a contained terminal and a worker, with a record.
+    Task {
+        #[command(subcommand)]
+        action: TaskCmd,
+    },
     /// Follow fact changes as they happen (one JSON line each when piped).
     Events(SubscribeParams),
     /// Templates you can run by name (~/.config/limen-core/templates).
@@ -112,6 +119,8 @@ enum Cmd {
         #[arg(long)]
         socket: std::path::PathBuf,
     },
+    #[command(hide = true, name = "run-logged")]
+    RunLogged(crate::task::runner::Args),
 }
 
 #[derive(Subcommand)]
@@ -327,7 +336,7 @@ fn identity_env() -> std::collections::BTreeMap<String, String> {
 /// program's argument that happens to read `--json`.
 fn run(cmd: Option<Cmd>, json: bool, asked: bool) -> Result<Option<Out>, RpcError> {
     let paths = Paths::from_env()?;
-    if !matches!(&cmd, Some(Cmd::Serve | Cmd::Hold { .. } | Cmd::Connect { .. })) {
+    if !matches!(&cmd, Some(Cmd::Serve | Cmd::Hold { .. } | Cmd::RunLogged(_) | Cmd::Connect { .. })) {
         crate::platform::legacy_bundle_notice(&paths.state);
     }
     let Some(cmd) = cmd else {
@@ -634,6 +643,11 @@ fn run(cmd: Option<Cmd>, json: bool, asked: bool) -> Result<Option<Out>, RpcErro
         }
         Cmd::Update { from: Some(from), force, .. } => update(&paths, &from, force)?,
         Cmd::Machine { action } => machine(&paths, action, call)?,
+        Cmd::Task { action } => match task(&paths, action, json, call)? {
+            Some(out) => out,
+            None => return Ok(None),
+        },
+        Cmd::RunLogged(args) => crate::task::runner::run(args),
         Cmd::File { action } => match file(action, asked, call)? {
             Some(out) => out,
             None => return Ok(None),
@@ -887,6 +901,12 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("machine login", "machine.connect"),
     ("machine rename", "machine.rename"),
     ("machine rm", "machine.rm"),
+    ("task start", "task.start"),
+    ("task ls", "task.list"),
+    ("task show", "task.get"),
+    ("task wait", "task.wait"),
+    ("task cancel", "task.cancel"),
+    ("task discard", "task.discard"),
 ];
 /// Client-only methods: handshake and opaque document storage.
 pub const API_ONLY: &[&str] = &["hello", "doc.get", "doc.set"];

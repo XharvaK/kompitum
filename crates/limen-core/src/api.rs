@@ -21,11 +21,13 @@ pub const IDENTITY_VARS: &[&str] = &["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSI
 
 mod doc;
 mod run;
+mod task;
 mod types;
 use doc::*;
 mod waiting;
 use run::*;
-pub(crate) use run::{child_env, not_stopping, tail, terminal_env};
+pub(crate) use run::{child_env, not_stopping, start as start_terminal, tail, terminal_env};
+use task::*;
 pub use types::*;
 use waiting::*;
 
@@ -146,6 +148,24 @@ methods! { Ctx<'_>;
     "machine.rm" => machine_rm, MachineParams => RemoveResult,
         "Forget a machine. Its terminals keep running there.",
         errors ["machine_unknown"];
+    "task.start" => task_start, TaskStartParams => TaskStartResult,
+        "Start a task: a worktree cut from HEAD, a contained terminal with a worker in it, and a record that ends when the worker's process exits. Checks everything first, writes the record, pumps once, and reports what it observed.",
+        errors ["invalid_params", "name_taken", "not_a_repo", "worker_missing", "unavailable", "config"];
+    "task.list" => task_list, TaskListParams => TaskListResult,
+        "Every task here as a wake line, with how many run and queue, the cap, and records the core could not read.",
+        errors [];
+    "task.get" => task_get, TaskParams => TaskView,
+        "One task: its whole record, its wake line, its folder, and its current turn's progress.",
+        errors ["not_found"];
+    "task.wait" => task_wait, TaskWaitParams => TaskWaitResult,
+        "Wait until every task ends, any ends badly, or with `first` any ends; returns at that change or the timeout. Unknown names are listed and do not count as ended.",
+        errors ["invalid_params"];
+    "task.cancel" => task_cancel, TaskParams => TaskCancelResult,
+        "Cancel a queued task, or kill a running one and return once it has ended. Its worktree stays, for reading.",
+        errors ["not_found", "finished"];
+    "task.discard" => task_discard, TaskDiscardParams => TaskDiscardResult,
+        "Remove a finished task's worktree and branch, keeping its folder and record. A queued or running task must be cancelled first.",
+        errors ["not_found", "running"];
     "rpc.discover" => rpc_discover, Empty => serde_json::Value,
         "The whole API as an OpenRPC document: every method with its params, result and errors in JSON Schema.",
         errors [];

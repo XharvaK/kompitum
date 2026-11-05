@@ -27,6 +27,17 @@ pub struct Config {
     /// timeout on top), and to send anything at all before its line is
     /// given up and dialed again (default 30).
     pub machine_timeout: Option<f64>,
+    /// The worker loop: how many run at once, and each worker CLI's argv prefix.
+    pub workers: Option<WorkersConfig>,
+}
+
+/// `[workers]`: the loop's cap and its CLI commands.
+#[derive(Deserialize, Default, Clone)]
+pub struct WorkersConfig {
+    /// How many tasks run at once (default 5).
+    pub cap: Option<usize>,
+    /// opencode's argv prefix, for a build not on PATH.
+    pub opencode: Option<Vec<String>>,
 }
 
 impl Config {
@@ -52,6 +63,14 @@ impl Config {
 
     pub fn history_bytes(&self) -> usize {
         (self.history_mb.unwrap_or(5.0).max(0.0) * 1024.0 * 1024.0) as usize
+    }
+
+    pub fn cap(&self) -> usize {
+        self.workers.as_ref().and_then(|w| w.cap).filter(|cap| *cap > 0).unwrap_or(5)
+    }
+
+    pub fn opencode(&self) -> Option<Vec<String>> {
+        self.workers.as_ref().and_then(|w| w.opencode.clone()).filter(|argv| !argv.is_empty())
     }
 }
 

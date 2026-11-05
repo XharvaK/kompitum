@@ -195,7 +195,7 @@ pub struct InitialSize {
     pub rows: u16,
 }
 
-#[derive(clap::Args, Serialize, Deserialize, JsonSchema)]
+#[derive(clap::Args, Serialize, Deserialize, JsonSchema, Default)]
 pub struct RunParams {
     /// Program and arguments, or a template name and its task. With neither
     /// argv nor line: that machine's own shell.

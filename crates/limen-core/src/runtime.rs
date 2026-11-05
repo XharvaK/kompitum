@@ -33,6 +33,8 @@ pub struct Core {
     /// Work for the runtime that the holder thread can't do itself.
     pub jobs: tokio::sync::mpsc::UnboundedSender<crate::notes::Job>,
     pub jobs_rx: Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<crate::notes::Job>>>,
+    /// The worker loop's records; the pump changes them one at a time.
+    pub tasks: crate::task::Store,
     /// Sweeps of lost terminals in flight: stop and restart wait for them.
     pub(crate) sweeps: Arc<std::sync::atomic::AtomicUsize>,
     /// Holder startup and goodbye cannot cross, or a stop could leave a new holder behind.
@@ -181,6 +183,7 @@ impl Core {
             stop: Notify::new(),
             restart: Default::default(),
             registry_writer: RegistryWriter::new(paths.state.join("terminals.json"))?,
+            tasks: crate::task::Store::load(&paths.state),
             paths,
             state: Mutex::new(State { reg, docs, machines, peers, ..Default::default() }),
             changed: Notify::new(),

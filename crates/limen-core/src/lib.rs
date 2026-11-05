@@ -29,6 +29,7 @@ pub mod server;
 pub mod status;
 pub mod stitch;
 pub mod sweep;
+pub mod task;
 pub mod templates;
 pub mod terminals;
 pub mod viewers;

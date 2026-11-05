@@ -603,6 +603,125 @@ Options:
   -h, --help  Print help
 ```
 
+## lc task
+
+```text
+Tasks: a worktree, a contained terminal and a worker, with a record
+
+Usage: lc task [OPTIONS] <COMMAND>
+
+Commands:
+  start    Start a task: a worktree, a contained terminal and a worker
+  ls       List tasks (--all includes discarded)
+  show     Show one task: its record, progress, changes and report
+  wait     Wait for tasks; prints one JSON line each and a summary, at the end
+  cancel   Cancel a queued or running task
+  discard  Remove a finished task's worktree and branch
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --json  JSON output even in a terminal
+  -h, --help  Print help
+```
+
+## lc task cancel
+
+```text
+Cancel a queued or running task
+
+Usage: lc task cancel [OPTIONS] <TASK>
+
+Arguments:
+  <TASK>  The task's name
+
+Options:
+      --json  JSON output even in a terminal
+  -h, --help  Print help
+```
+
+## lc task discard
+
+```text
+Remove a finished task's worktree and branch
+
+Usage: lc task discard [OPTIONS] <TASK>
+
+Arguments:
+  <TASK>  The task's name
+
+Options:
+      --json             JSON output even in a terminal
+      --review <REVIEW>  What the review decided, kept with the record
+  -h, --help             Print help
+```
+
+## lc task ls
+
+```text
+List tasks (--all includes discarded)
+
+Usage: lc task ls [OPTIONS]
+
+Options:
+      --all   Include discarded tasks
+      --json  JSON output even in a terminal
+  -h, --help  Print help
+```
+
+## lc task show
+
+```text
+Show one task: its record, progress, changes and report
+
+Usage: lc task show [OPTIONS] <TASK>
+
+Arguments:
+  <TASK>  The task's name
+
+Options:
+      --json  JSON output even in a terminal
+  -h, --help  Print help
+```
+
+## lc task start
+
+```text
+Start a task: a worktree, a contained terminal and a worker
+
+Usage: lc task start [OPTIONS] --brief <FILE> <NAME>
+
+Arguments:
+  <NAME>  The task's name (1-32 of a-z 0-9 - _ ., starting with a letter or digit)
+
+Options:
+      --brief <FILE>       The brief's file, or - for stdin
+      --json               JSON output even in a terminal
+      --in <FOLDER>        The folder in the repository (default: where lc runs)
+      --scope <GLOB>       Paths the task may change (repeatable); none means the whole repository
+      --worker <WORKER>    The worker: go or free [possible values: go, free]
+      --idle <IDLE>        Seconds without output or CPU before the turn is cut (default 900)
+      --timeout <TIMEOUT>  Seconds the turn may run (default 3600)
+  -h, --help               Print help
+```
+
+## lc task wait
+
+```text
+Wait for tasks; prints one JSON line each and a summary, at the end
+
+Usage: lc task wait [OPTIONS] <NAMES>...
+
+Arguments:
+  <NAMES>...  The tasks to wait for
+
+Options:
+      --first              Return at the first task that ends, however it ended
+      --json               JSON output even in a terminal
+      --timeout <TIMEOUT>  Seconds to wait (default: as long as it takes)
+      --grace <GRACE>      Seconds a name not known yet stays pending, for a start still on its way (default 30) [default: 30]
+  -h, --help               Print help
+```
+
 ## lc templates
 
 ```text

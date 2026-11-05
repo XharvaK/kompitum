@@ -657,6 +657,23 @@ pub fn exit_signal(_: &std::process::ExitStatus) -> Option<i32> {
     None
 }
 
+/// CPU time of this process's job, in milliseconds. A terminal's program and
+/// everything it starts sit in one job, so a compiler in silence still counts
+/// as activity. Null's job is the caller's own (Windows 8 and later).
+pub fn job_cpu_ms() -> Option<u64> {
+    let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
+    let ok = unsafe {
+        QueryInformationJobObject(
+            null_mut(),
+            JobObjectBasicAccountingInformation,
+            (&raw mut info).cast(),
+            size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+            null_mut(),
+        )
+    };
+    (ok != 0).then(|| (info.TotalUserTime.saturating_add(info.TotalKernelTime).max(0) as u64) / 10_000)
+}
+
 pub fn random_bytes(bytes: &mut [u8]) {
     use windows_sys::Win32::Security::Cryptography::{BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom};
     let status =

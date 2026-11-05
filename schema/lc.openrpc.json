@@ -29,6 +29,31 @@
         ],
         "type": "object"
       },
+      "ChangedFile": {
+        "properties": {
+          "added": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "in_scope": {
+            "default": false,
+            "type": "boolean"
+          },
+          "path": {
+            "default": "",
+            "type": "string"
+          },
+          "removed": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "Children": {
         "enum": [
           "any",
@@ -138,6 +163,15 @@
           "new"
         ],
         "type": "object"
+      },
+      "Ending": {
+        "description": "Why the loop is ending the current turn.",
+        "enum": [
+          "cancel",
+          "idle",
+          "wall"
+        ],
+        "type": "string"
       },
       "ExecResult": {
         "properties": {
@@ -1116,6 +1150,558 @@
         ],
         "type": "object"
       },
+      "Task": {
+        "properties": {
+          "base": {
+            "default": "",
+            "description": "The commit it was cut from.",
+            "type": "string"
+          },
+          "branch": {
+            "default": "",
+            "description": "The branch it was cut from, \"HEAD\" when detached.",
+            "type": "string"
+          },
+          "changed": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChangedFile"
+            },
+            "type": "array"
+          },
+          "created_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ended_ms": {
+            "default": null,
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Ending"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Why the loop is ending the current turn."
+          },
+          "error": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "idle_s": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "default": "",
+            "type": "string"
+          },
+          "repo": {
+            "default": "",
+            "description": "git's toplevel.",
+            "type": "string"
+          },
+          "review": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "default": [],
+            "description": "Empty: the whole repo.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "seq": {
+            "default": 0,
+            "description": "The queue's order: lower starts first.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "started_by": {
+            "default": null,
+            "description": "The caller's terminal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_ms": {
+            "default": null,
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "default": "queued"
+          },
+          "task_branch": {
+            "default": "",
+            "type": "string"
+          },
+          "turns": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Turn"
+            },
+            "type": "array"
+          },
+          "waiting": {
+            "default": null,
+            "description": "Why it is still queued, in words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wall_s": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "worker": {
+            "default": "",
+            "description": "\"go\" or \"free\" in this part.",
+            "type": "string"
+          },
+          "worktree": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "TaskCancelResult": {
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state once it has ended."
+          },
+          "survivors": {
+            "description": "Processes carrying the turn's scope that outlived the kill.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "survivors"
+        ],
+        "type": "object"
+      },
+      "TaskDiscardResult": {
+        "properties": {
+          "left": {
+            "description": "What could not be removed, in words.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "removed": {
+            "description": "Whether its worktree was removed.",
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state now: discarded."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "removed",
+          "left"
+        ],
+        "type": "object"
+      },
+      "TaskLine": {
+        "description": "The wake and the result: one task, small enough to read in one line of tools.",
+        "properties": {
+          "changed": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cost_usd": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "error": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "default": null,
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ok": {
+            "default": false,
+            "description": "Done, and nothing changed outside the scope.",
+            "type": "boolean"
+          },
+          "out_of_scope": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "default": "queued"
+          },
+          "task": {
+            "default": "",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "description": "The last turn's report; the wait cuts it to 1500 characters.",
+            "type": "string"
+          },
+          "turns": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "cache_read": 0,
+              "cache_write": 0,
+              "cost_usd": 0.0,
+              "input": 0,
+              "largest_request": 0,
+              "output": 0,
+              "reasoning": 0,
+              "steps": 0
+            }
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "worker": {
+            "default": null,
+            "description": "The label of the worker that really did the last turn: \"opencode Go\".",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workers": {
+            "default": [],
+            "description": "Every turn's worker key, in order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "TaskListResult": {
+        "properties": {
+          "cap": {
+            "description": "How many may run at once.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "problems": {
+            "description": "Records the core could not read when it started.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "queued": {
+            "description": "How many wait in the queue.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "running": {
+            "description": "How many tasks run now.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tasks": {
+            "description": "One wake per task, its report cut as in `task.wait`.",
+            "items": {
+              "$ref": "#/components/schemas/TaskLine"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tasks",
+          "running",
+          "queued",
+          "cap",
+          "problems"
+        ],
+        "type": "object"
+      },
+      "TaskProgress": {
+        "properties": {
+          "cost_usd": {
+            "description": "What the turn has cost so far.",
+            "format": "double",
+            "type": "number"
+          },
+          "out_bytes": {
+            "description": "Bytes the worker has printed.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "peak": {
+            "description": "The largest request so far: input plus cache read plus cache write.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seconds_since_event": {
+            "description": "How long the runner has been silent.",
+            "format": "double",
+            "type": "number"
+          },
+          "steps": {
+            "description": "Steps finished so far.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tools": {
+            "description": "The last five tools, oldest first.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "steps",
+          "tools",
+          "cost_usd",
+          "peak",
+          "out_bytes",
+          "seconds_since_event"
+        ],
+        "type": "object"
+      },
+      "TaskStartResult": {
+        "properties": {
+          "error": {
+            "description": "Why it failed, when the start already went wrong.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next": {
+            "description": "The command that waits for it.",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state right after the pump looked at it."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          },
+          "terminal": {
+            "description": "The worker's terminal (`t7`), or null while it is still queued.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting": {
+            "description": "Why it is still queued, in words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warnings": {
+            "description": "Things worth knowing before the worker runs, like uncommitted files.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "worker": {
+            "description": "The worker's label (\"opencode Go\").",
+            "type": "string"
+          },
+          "worktree": {
+            "description": "Where its worktree is, once there is one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "worker",
+          "warnings",
+          "next"
+        ],
+        "type": "object"
+      },
+      "TaskState": {
+        "enum": [
+          "queued",
+          "running",
+          "done",
+          "failed",
+          "timed_out",
+          "cancelled",
+          "discarded"
+        ],
+        "type": "string"
+      },
+      "TaskView": {
+        "properties": {
+          "folder": {
+            "description": "Its folder: the brief, each turn's files, and result.json.",
+            "type": "string"
+          },
+          "line": {
+            "$ref": "#/components/schemas/TaskLine",
+            "description": "The same task as a wake."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The current turn's heartbeat, when there is one."
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task",
+            "description": "The whole record."
+          }
+        },
+        "required": [
+          "task",
+          "line",
+          "folder"
+        ],
+        "type": "object"
+      },
+      "TaskWaitResult": {
+        "properties": {
+          "lines": {
+            "description": "Known tasks, in the order asked for.",
+            "items": {
+              "$ref": "#/components/schemas/TaskLine"
+            },
+            "type": "array"
+          },
+          "over": {
+            "description": "Every task has ended (or, with `first`, one has), and none is unknown.",
+            "type": "boolean"
+          },
+          "unfinished": {
+            "description": "Known tasks that have not ended.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "unknown": {
+            "description": "Names no task here uses.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines",
+          "unfinished",
+          "unknown",
+          "over"
+        ],
+        "type": "object"
+      },
       "TemplateInfo": {
         "properties": {
           "command": {
@@ -1400,6 +1986,145 @@
           "cols",
           "rows"
         ],
+        "type": "object"
+      },
+      "Turn": {
+        "properties": {
+          "ended_ms": {
+            "default": null,
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "default": null,
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "n": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "scope_token": {
+            "default": null,
+            "description": "The terminal's `LIMEN_SCOPE` token: everything the turn started carries it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session": {
+            "default": null,
+            "description": "The session the worker reported, once it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "survivors": {
+            "default": 0,
+            "description": "Processes carrying the scope token that outlived the kill.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminal": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "default": "",
+            "description": "The last report it wrote, whole; the wake cuts it.",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "cache_read": 0,
+              "cache_write": 0,
+              "cost_usd": 0.0,
+              "input": 0,
+              "largest_request": 0,
+              "output": 0,
+              "reasoning": 0,
+              "steps": 0
+            }
+          },
+          "worker": {
+            "default": "",
+            "description": "The worker key (`go`, `free`).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Usage": {
+        "properties": {
+          "cache_read": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cache_write": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cost_usd": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "input": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "largest_request": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "output": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasoning": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "WaitResult": {
@@ -3981,6 +4706,365 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/RemoveResult"
+        }
+      }
+    },
+    {
+      "description": "Start a task: a worktree cut from HEAD, a contained terminal with a worker in it, and a record that ends when the worker's process exits. Checks everything first, writes the record, pumps once, and reports what it observed.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "name_taken"
+          },
+          "message": "name_taken"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_a_repo"
+          },
+          "message": "not_a_repo"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "worker_missing"
+          },
+          "message": "worker_missing"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "config"
+          },
+          "message": "config"
+        }
+      ],
+      "name": "task.start",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "The brief the worker is given, at most 200000 characters.",
+          "name": "brief",
+          "required": true,
+          "schema": {
+            "description": "The brief the worker is given, at most 200000 characters.",
+            "type": "string"
+          }
+        },
+        {
+          "description": "The caller's terminal.",
+          "name": "caller",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The caller's terminal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The folder inside the repository (default: the core's own folder).",
+          "name": "folder",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The folder inside the repository (default: the core's own folder).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Seconds without output or CPU before the turn is cut (default 900).",
+          "name": "idle",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Seconds without output or CPU before the turn is cut (default 900).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Paths the task may change; empty means the whole repository.",
+          "name": "scope",
+          "required": false,
+          "schema": {
+            "default": [],
+            "description": "Paths the task may change; empty means the whole repository.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "description": "The task's name, using the terminal name rules (1-32 of a-z 0-9 - _ ., starting with a letter or digit).",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name, using the terminal name rules (1-32 of a-z 0-9 - _ ., starting with a letter or digit).",
+            "type": "string"
+          }
+        },
+        {
+          "description": "Seconds the turn may run (default 3600).",
+          "name": "timeout",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Seconds the turn may run (default 3600).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The worker: go (the default) or free.",
+          "name": "worker",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The worker: go (the default) or free.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskStartResult"
+        }
+      }
+    },
+    {
+      "description": "Every task here as a wake line, with how many run and queue, the cap, and records the core could not read.",
+      "errors": [],
+      "name": "task.list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Include discarded tasks too.",
+          "name": "all",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Include discarded tasks too.",
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskListResult"
+        }
+      }
+    },
+    {
+      "description": "One task: its whole record, its wake line, its folder, and its current turn's progress.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        }
+      ],
+      "name": "task.get",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskView"
+        }
+      }
+    },
+    {
+      "description": "Wait until every task ends, any ends badly, or with `first` any ends; returns at that change or the timeout. Unknown names are listed and do not count as ended.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        }
+      ],
+      "name": "task.wait",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Return at the first task that ends, however it ended.",
+          "name": "first",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Return at the first task that ends, however it ended.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "The tasks to wait for.",
+          "name": "tasks",
+          "required": true,
+          "schema": {
+            "description": "The tasks to wait for.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "description": "Seconds before it checks in (default 60, at most 300).",
+          "name": "timeout",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Seconds before it checks in (default 60, at most 300).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskWaitResult"
+        }
+      }
+    },
+    {
+      "description": "Cancel a queued task, or kill a running one and return once it has ended. Its worktree stays, for reading.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "finished"
+          },
+          "message": "finished"
+        }
+      ],
+      "name": "task.cancel",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskCancelResult"
+        }
+      }
+    },
+    {
+      "description": "Remove a finished task's worktree and branch, keeping its folder and record. A queued or running task must be cancelled first.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "running"
+          },
+          "message": "running"
+        }
+      ],
+      "name": "task.discard",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "What the review decided, kept with the record.",
+          "name": "review",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "What the review decided, kept with the record.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskDiscardResult"
         }
       }
     },

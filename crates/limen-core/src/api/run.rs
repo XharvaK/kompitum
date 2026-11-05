@@ -91,7 +91,7 @@ pub(crate) fn not_stopping(st: &crate::runtime::State) -> Result<(), RpcError> {
     }
 }
 
-pub(super) async fn start(
+pub(crate) async fn start(
     core: &Arc<Core>,
     p: RunParams,
     template: Option<crate::templates::Template>,

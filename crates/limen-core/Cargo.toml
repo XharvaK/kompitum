@@ -13,6 +13,10 @@ path = "src/main.rs"
 name = "limen-shell"
 path = "src/bin/limen-shell.rs"
 
+[[bin]]
+name = "limen-test-worker"
+path = "src/bin/limen-test-worker.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ghostty-vt = { path = "../ghostty-vt" }
@@ -50,6 +54,10 @@ windows-sys = { version = "0.61", features = [
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
+
+# The Unix end-to-end test asks whether a pid is still there.
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
 
 [lints]
 workspace = true
