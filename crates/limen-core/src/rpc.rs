@@ -65,6 +65,7 @@ impl RpcError {
             "status_mismatch" => 10,
             "finished" => 11,
             "cancelled" => 130,
+            "worker_refused" => 1,
             _ => 1,
         }
     }

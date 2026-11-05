@@ -119,6 +119,10 @@ pub fn make_executable(path: &Path) -> io::Result<()> {
     std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
 }
 
+/// A worker's PATH needs `python`/`python3` shims only on Windows, where the
+/// Store's alias answers `python` with an advert. Unix has its own python.
+pub const PYTHON_SHIMS: bool = false;
+
 /// Same file, same build: device, inode, mtime, size.
 pub fn file_identity(m: &std::fs::Metadata) -> String {
     use std::os::unix::fs::MetadataExt;

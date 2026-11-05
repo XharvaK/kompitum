@@ -381,6 +381,11 @@ pub fn make_executable(_: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// A worker's PATH starts with `python`/`python3` shims for a real interpreter:
+/// on Windows `python` on PATH is the Store's alias, which prints an advert and
+/// exits 49, and workers lost time to it.
+pub const PYTHON_SHIMS: bool = true;
+
 /// The files of a release, as they sit beside limen-core.exe.
 const RELEASE: [&str; 4] = ["limen-core.exe", r"conpty\conpty.dll", r"conpty\x64\OpenConsole.exe", "limen-shell.exe"];
 

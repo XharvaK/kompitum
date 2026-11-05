@@ -242,6 +242,9 @@ pub(crate) fn child_env(base: BTreeMap<String, String>, extra: BTreeMap<String, 
         .filter(|(k, _)| {
             !IDENTITY_VARS.contains(&k.as_str())
                 && !["LIMEN_TERMINAL_ID", crate::sweep::VAR, crate::sweep::RUNTIME].contains(&k.as_str())
+                // A core started inside a worker's shell is not a worker, and
+                // must not mark every terminal it starts.
+                && !["LIMEN_WORKER", "LIMEN_PROTECTED"].contains(&k.as_str())
         })
         .collect();
     crate::platform::merge_env(&mut env, extra);

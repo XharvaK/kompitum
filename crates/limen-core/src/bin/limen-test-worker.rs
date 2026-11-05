@@ -145,6 +145,33 @@ fn act(action: &Value, script: &str) {
                 let _ = std::fs::write(dest, bytes);
             }
         }
+        "copy" => {
+            let from = value.get(0).and_then(Value::as_str).unwrap_or_default();
+            let to = value.get(1).and_then(Value::as_str).unwrap_or_default();
+            if let Ok(bytes) = std::fs::read(from) {
+                if let Some(parent) = Path::new(to).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(to, bytes);
+            }
+        }
+        // A program the turn runs, and what it said, for a test to look at:
+        // `exit=<code>` first, then its output, both streams together.
+        "run" => {
+            let words: Vec<&str> = value.as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let Some((to_file, rest)) = words.split_first() else { return };
+            let program = rest.first().copied().unwrap_or_default();
+            let mut command = std::process::Command::new(program);
+            command.args(rest.get(1..).unwrap_or_default()).stdin(std::process::Stdio::null());
+            let (code, output) = match command.output() {
+                Ok(out) => (
+                    out.status.code().unwrap_or(-1),
+                    format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+                ),
+                Err(e) => (127, format!("cannot run {program}: {e}\n")),
+            };
+            let _ = std::fs::write(to_file, format!("exit={code}\n{output}"));
+        }
         "exit" => std::process::exit(value.as_i64().unwrap_or(0) as i32),
         _ => {}
     }

@@ -38,6 +38,9 @@ pub struct Args {
     /// The program and its arguments, after `--`.
     #[arg(last = true, required = true, allow_hyphen_values = true)]
     pub program: Vec<String>,
+    /// A folder to put first on the worker's PATH, for a real Python.
+    #[arg(long, hide = true)]
+    pub path_first: Option<PathBuf>,
 }
 
 #[derive(Default)]
@@ -55,6 +58,24 @@ struct Shared {
 
 fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+}
+
+/// The environment a worker gets: the core's launcher leftovers gone, and the
+/// turn's own folder first on PATH. The worker's CLI and the route check both
+/// go through this.
+fn prepare_child(cmd: &mut Command, path_first: Option<&Path>) {
+    for key in crate::task::setup::to_remove(crate::platform::utf8_vars()) {
+        cmd.env_remove(key);
+    }
+    if let Some(dir) = path_first {
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let mut folders = vec![dir.to_path_buf()];
+        folders.extend(std::env::split_paths(&inherited));
+        // A folder that can't be written as PATH is left to the worker's own.
+        if let Ok(path) = std::env::join_paths(folders) {
+            cmd.env("PATH", path);
+        }
+    }
 }
 
 /// When the turn began: a line on the screen says how far in it is. std gives
@@ -151,7 +172,7 @@ fn beat_loop(shared: Arc<Mutex<Shared>>, path: PathBuf, done: Arc<AtomicBool>) {
 }
 
 /// One export, at most 60 s: its stdout, or the words of its failure.
-fn export_once(prefix: &[String], session: &str, cwd: &Path) -> Result<String, String> {
+fn export_once(prefix: &[String], session: &str, cwd: &Path, path_first: Option<&Path>) -> Result<String, String> {
     let mut cmd = Command::new(&prefix[0]);
     cmd.args(&prefix[1..])
         .args(["session", "export", "--sanitize", session])
@@ -159,6 +180,7 @@ fn export_once(prefix: &[String], session: &str, cwd: &Path) -> Result<String, S
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    prepare_child(&mut cmd, path_first);
     // No `no_console`: like the worker, it shares this terminal's hidden console.
     let mut child = cmd.spawn().map_err(|e| format!("cannot run the export: {e}"))?;
     let mut stdout = child.stdout.take().expect("piped stdout");
@@ -201,10 +223,18 @@ fn export_once(prefix: &[String], session: &str, cwd: &Path) -> Result<String, S
 
 /// `verify_model`'s tries: a structurally incomplete export is fetched again,
 /// a complete one that names another route fails at once.
-fn verify_route(prefix: &[String], session: &str, route: &str, cwd: &Path, dir: &Path, turn: u32) -> RouteCheck {
+fn verify_route(
+    prefix: &[String],
+    session: &str,
+    route: &str,
+    cwd: &Path,
+    dir: &Path,
+    turn: u32,
+    path_first: Option<&Path>,
+) -> RouteCheck {
     let mut check = RouteCheck::default();
     for attempt in 1..=4u32 {
-        match export_once(prefix, session, cwd) {
+        match export_once(prefix, session, cwd, path_first) {
             Err(message) => {
                 check = RouteCheck {
                     status: "error".into(),
@@ -290,6 +320,7 @@ pub fn run(args: Args) -> ! {
     // terminal's own job already covers. It must not get a second one.
     let mut cmd = Command::new(&args.program[0]);
     cmd.args(&args.program[1..]).stdout(Stdio::piped()).stderr(Stdio::piped());
+    prepare_child(&mut cmd, args.path_first.as_deref());
     match prompt_file {
         Some(file) => cmd.stdin(Stdio::from(file)),
         None => cmd.stdin(Stdio::null()),
@@ -388,7 +419,15 @@ pub fn run(args: Args) -> ! {
             && let Some(session) = outcome.session.as_deref()
         {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let check = verify_route(&args.program[..prefix_len], session, route, &cwd, &args.dir, args.turn);
+            let check = verify_route(
+                &args.program[..prefix_len],
+                session,
+                route,
+                &cwd,
+                &args.dir,
+                args.turn,
+                args.path_first.as_deref(),
+            );
             let shown = match &check.message {
                 Some(message) => format!("model route {}: {message}", check.status),
                 None => format!("model route {}", check.status),

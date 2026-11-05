@@ -334,9 +334,89 @@ fn identity_env() -> std::collections::BTreeMap<String, String> {
     std::env::vars().filter(|(k, _)| crate::api::IDENTITY_VARS.contains(&k.as_str())).collect()
 }
 
+/// The command a worker typed, as clap names it: `task start`, `workers`, `kill`.
+fn tried_words() -> String {
+    use clap::CommandFactory;
+    let mut cmd = Cli::command();
+    let mut words: Vec<String> = Vec::new();
+    for arg in std::env::args_os().skip(1) {
+        let Ok(arg) = arg.into_string() else { break };
+        // A global flag before the command, like --json.
+        if arg.starts_with('-') {
+            continue;
+        }
+        let Some(next) = cmd.find_subcommand(&arg) else { break };
+        words.push(arg);
+        cmd = next.clone();
+    }
+    words.join(" ")
+}
+
+fn worker_refused() -> RpcError {
+    let words = tried_words();
+    let what = if words.is_empty() { "with no command".to_string() } else { words };
+    RpcError::new(
+        "worker_refused",
+        format!("a worker may only look: lc {what} is refused here"),
+        "say what you need in your report",
+    )
+}
+
+/// A worker's `lc` may only look: everything else is refused before it reaches
+/// the core, so a worker told to tidy up cannot stop what everything runs in.
+/// No `_` arm, here or on an inner command, on purpose: a new command has to
+/// choose its side.
+fn as_a_worker(cmd: Option<&Cmd>) -> Result<(), RpcError> {
+    fn deny() -> Result<(), RpcError> {
+        Err(worker_refused())
+    }
+    match cmd {
+        None => deny(),
+        Some(Cmd::Ls(_) | Cmd::Get(_) | Cmd::Read(_) | Cmd::Events(_) | Cmd::Schema) => Ok(()),
+        // The runner runs under the mark, and the first lc call may start a core.
+        Some(Cmd::RunLogged(_) | Cmd::Serve | Cmd::Hold { .. }) => Ok(()),
+        Some(Cmd::Server { action }) => match action {
+            ServerCmd::Status => Ok(()),
+            ServerCmd::Start | ServerCmd::Stop | ServerCmd::Restart => deny(),
+        },
+        Some(Cmd::Task { action }) => match action {
+            TaskCmd::Ls(_) | TaskCmd::Show(_) | TaskCmd::Wait(_) => Ok(()),
+            TaskCmd::Start(_) | TaskCmd::Cancel(_) | TaskCmd::Discard(_) => deny(),
+        },
+        // `lc workers` with no setting looks; any setting changes the chain.
+        Some(Cmd::Workers(a)) => {
+            if a.mode.is_none() && a.block.is_none() && a.until.is_none() && a.reason.is_none() && a.clear.is_none() {
+                Ok(())
+            } else {
+                deny()
+            }
+        }
+        Some(Cmd::Run(_) | Cmd::Kill(_) | Cmd::Rm(_) | Cmd::Label(_) | Cmd::Keep(_) | Cmd::Send(_) | Cmd::Wait(_)) => {
+            deny()
+        }
+        Some(Cmd::Keys(_) | Cmd::Interrupt(_) | Cmd::Attach(_) | Cmd::Put(_) | Cmd::Exec(_)) => deny(),
+        Some(Cmd::File { action }) => match action {
+            FileCmd::Read(_) | FileCmd::Write(_) | FileCmd::Edit(_) => deny(),
+        },
+        Some(Cmd::Machine { action }) => match action {
+            MachineCmd::Add(_)
+            | MachineCmd::Ls
+            | MachineCmd::Login(_)
+            | MachineCmd::Update(_)
+            | MachineCmd::Rename(_)
+            | MachineCmd::Rm(_) => deny(),
+        },
+        Some(Cmd::Templates | Cmd::Update { .. } | Cmd::Connect { .. }) => deny(),
+    }
+}
+
 /// `json`: print JSON (asked, or piped). `asked`: `--json` itself, not a
 /// program's argument that happens to read `--json`.
 fn run(cmd: Option<Cmd>, json: bool, asked: bool) -> Result<Option<Out>, RpcError> {
+    // Under a worker's mark, lc only looks, and says so before the core hears of it.
+    if std::env::var("LIMEN_WORKER").is_ok_and(|mark| !mark.is_empty()) {
+        as_a_worker(cmd.as_ref())?;
+    }
     let paths = Paths::from_env()?;
     if !matches!(&cmd, Some(Cmd::Serve | Cmd::Hold { .. } | Cmd::RunLogged(_) | Cmd::Connect { .. })) {
         crate::platform::legacy_bundle_notice(&paths.state);
