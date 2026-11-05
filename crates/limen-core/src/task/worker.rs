@@ -93,7 +93,14 @@ fn on_path(names: &[String]) -> Option<PathBuf> {
 }
 
 fn python() -> Option<Vec<String>> {
-    on_path(&[program("python3"), program("python")]).map(|path| vec![path.display().to_string()])
+    // The Windows Store's alias is a file on PATH that only prints an advert.
+    let names = [program("python3"), program("python")];
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .filter(|dir| !dir.to_string_lossy().trim_end_matches('\\').to_ascii_lowercase().ends_with("\\windowsapps"))
+        .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+        .find(|candidate| candidate.is_file())
+        .map(|path| vec![path.display().to_string()])
 }
 
 fn node() -> Option<PathBuf> {

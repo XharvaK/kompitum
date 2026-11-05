@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """`just check` for a Windows PC without `just`: format, clippy on both systems, the Windows suite.
 
+With --focused, the task tests and the docs' stand in for the suite: what a worker runs beside other workers,
+each on its own build folder, since several whole suites at once slow each other into failing.
+
 Run it in a hidden console: a worker's, or through scripts/hidden_run.py on the Owner's PC. It runs every
 step even after a failure, then repeats the end of each failed step and prints unittest-shaped lines,
 which is what Limen's checks read.
@@ -66,15 +69,26 @@ def main() -> int:
     # Linux code doesn't compile on Windows, so it gets a type check, with Zig stubbed and a build folder
     # of its own so the stub's empty library never meets a real build.
     linux = dict(os.environ, ZIG=str(ROOT / "scripts" / "zig-stub.cmd"), CARGO_TARGET_DIR=str(target / "lint-linux"))
+    # A test binary's watchdog is set for a quiet PC. On a busy one it aborts a healthy run, and the abort
+    # loses the words of any failure that run had already found.
+    patient = dict(os.environ, LIMEN_TEST_WATCHDOG_S="300")
+    if "--focused" in sys.argv:
+        tests = [
+            ("the worker loop's unit tests",
+             ["cargo", "test", "--locked", "-p", "limen-core", "--lib", "--no-fail-fast", "--", "task::"], patient),
+            ("the worker loop's tests",
+             ["cargo", "test", "--locked", "-p", "limen-core", "--test", "task", "--no-fail-fast"], patient),
+            ("the docs and the schema",
+             ["cargo", "test", "--locked", "-p", "limen-core", "--test", "cli_docs", "--test", "schema_file"], None),
+        ]
+    else:
+        tests = [("the Windows suite", ["cargo", "test", "--locked", "--no-fail-fast", "--", "--skip", SKIP], patient)]
     steps = [
         ("format", ["cargo", "fmt", "--all", "--", "--check"], None),
         ("clippy for Windows", ["cargo", "clippy", "--locked", "--all-targets", "--", "-D", "warnings"], None),
         ("clippy for Linux", ["cargo", "clippy", "--locked", "--target", "x86_64-unknown-linux-musl",
                               "--all-targets", "--", "-D", "warnings"], linux),
-        # A test binary's watchdog is set for a quiet PC. On a busy one it aborts a healthy run, and the abort
-        # loses the words of any failure that run had already found.
-        ("the Windows suite", ["cargo", "test", "--locked", "--no-fail-fast", "--", "--skip", SKIP],
-         dict(os.environ, LIMEN_TEST_WATCHDOG_S="300")),
+        *tests,
     ]
     results = [(name, *step(name, argv, env)) for name, argv, env in steps]
     bad = [result for result in results if not result[1]]

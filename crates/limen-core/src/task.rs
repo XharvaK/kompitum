@@ -2,6 +2,8 @@
 //! One pump changes tasks one at a time; the terminal runs the runner, which
 //! runs the worker, and the process's exit is what ends a turn.
 
+pub mod brief;
+pub mod checks;
 pub mod clock;
 pub mod commandcode;
 pub mod decide;
@@ -9,6 +11,7 @@ pub mod git;
 pub mod opencode;
 pub mod quota;
 pub mod runner;
+pub mod setup;
 pub mod types;
 pub mod worker;
 pub mod workers;
@@ -444,6 +447,12 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
             *core.tasks.workers.lock().unwrap_or_else(|p| p.into_inner()) = file;
         }
     }
+    // Before the diff, so what the turn was given never counts as a change.
+    if let Some(worktree) = task.worktree.as_deref()
+        && let Err(words) = setup::after_turn(&folder, worktree, worker, n)
+    {
+        task.warnings.push(words);
+    }
     let changed = match task.worktree.as_deref() {
         Some(worktree) => match git::changed_files(worktree, &task.base, &task.scope).await {
             Ok(changed) => changed,
@@ -519,6 +528,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     let worktree = worktree_path(&core.paths.state, &task.name).display().to_string();
     git::add_worktree(&task.repo, &worktree, &task.task_branch, &task.base).await?;
     update(core, &task.name, |task| task.worktree = Some(worktree.clone()));
+    let prepared = setup::prepare(core, task, worker, &worktree, 1).await?;
     let session = task.turns.last().and_then(|turn| turn.session.clone());
     let command = worker::turn_command(worker, &prefix, &task.name, &prompt.display().to_string(), session.as_deref());
     let exe = std::env::current_exe().map_err(|e| unavailable(format!("cannot find this lc: {e}")))?;
@@ -546,21 +556,36 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
             argv.push(prefix_len.to_string());
         }
     }
+    if let Some(first) = &prepared.path_first {
+        argv.push("--path-first".into());
+        argv.push(first.clone());
+    }
     argv.push("--".into());
     argv.extend(command.argv);
+    let mut env = command.env;
+    env.extend(prepared.env);
     let params = RunParams {
         argv,
-        cwd: Some(worktree),
+        cwd: Some(worktree.clone()),
         name: Some(task.name.clone()),
         labels: vec![Label("task".into(), task.name.clone()), Label("worker".into(), worker.key().into())],
         contain: true,
         no_parent: true,
         no_notify: true,
         outlive_parent: true,
-        env: command.env,
+        env,
         ..Default::default()
     };
-    let started = crate::api::start_terminal(core, params, None).await?;
+    let started = match crate::api::start_terminal(core, params, None).await {
+        Ok(started) => started,
+        Err(error) => {
+            // No turn will end to do this.
+            if let Err(words) = setup::after_turn(&folder, &worktree, worker, 1) {
+                update(core, &task.name, |task| task.warnings.push(words));
+            }
+            return Err(error);
+        }
+    };
     let now = now_ms();
     let turn = Turn {
         n: 1,
@@ -575,6 +600,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
         task.started_ms = Some(now);
         task.waiting = None;
         task.worker = worker.key().into();
+        task.warnings.extend(prepared.warnings);
         task.turns.push(turn);
     });
     core.changed.notify_waiters();
