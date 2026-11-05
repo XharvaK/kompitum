@@ -2,8 +2,10 @@
 //! queued task start, is it time to cut a turn, and how did that turn end.
 //! Pure: no IO, no processes, so every rule is a unit test.
 
+use crate::task::opencode::RouteCheck;
+use crate::task::quota::{self, Refusal};
 use crate::task::types::{Beat, Ending, Task, TaskLine, TaskState};
-use crate::task::worker::TurnOutcome;
+use crate::task::worker::{TurnOutcome, Worker};
 
 /// A `*` crosses `/`, as Python's `fnmatch` does: `src/*` admits `src/a/b.rs`.
 fn glob_match(pattern: &str, text: &str) -> bool {
@@ -178,79 +180,199 @@ pub fn step(task: &Task, terminal: Option<&TerminalNow>, beat: Option<&Beat>, no
     Step::Wait
 }
 
+/// How a turn ended: its state, the words for it, and a quota refusal when
+/// the worker named one.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TurnEnd {
+    pub state: TaskState,
+    pub error: Option<String>,
+    pub refusal: Option<Refusal>,
+}
+
+impl TurnEnd {
+    fn failed(message: impl Into<String>) -> TurnEnd {
+        TurnEnd { state: TaskState::Failed, error: Some(message.into()), refusal: None }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 /// The end of a turn, in the order `execute_turn` uses in the Python: an
-/// explicit end first, then what the terminal said, then the stream's facts.
+/// explicit end first, then what the terminal said, then the stream's facts,
+/// and at last the route the worker really used.
 pub fn turn_end(
     task: &Task,
     terminal: Option<&TerminalNow>,
     exit_file_code: Option<i32>,
     outcome: &TurnOutcome,
-) -> (TaskState, Option<String>) {
+    route: Option<&RouteCheck>,
+    stderr_tail: &str,
+    now_ms: u64,
+    offset_min: i32,
+) -> TurnEnd {
     match task.ending {
-        Some(Ending::Cancel) => return (TaskState::Cancelled, None),
+        Some(Ending::Cancel) => return TurnEnd { state: TaskState::Cancelled, error: None, refusal: None },
         Some(Ending::Idle) => {
             let tool = outcome.tools.last().cloned().unwrap_or_else(|| "none".into());
-            return (
-                TaskState::TimedOut,
-                Some(format!(
+            return TurnEnd {
+                state: TaskState::TimedOut,
+                error: Some(format!(
                     "no output and no CPU for {} s (idle limit {} s), last tool: {tool}",
                     task.idle_s, task.idle_s
                 )),
-            );
+                refusal: None,
+            };
         }
         Some(Ending::Wall) => {
-            return (TaskState::TimedOut, Some(format!("ran past its {} s limit", task.wall_s)));
+            return TurnEnd {
+                state: TaskState::TimedOut,
+                error: Some(format!("ran past its {} s limit", task.wall_s)),
+                refusal: None,
+            };
         }
         None => {}
     }
     let code = terminal.and_then(|terminal| terminal.exit_code).or(exit_file_code);
     match terminal {
-        None if code.is_none() => return (TaskState::Failed, Some("the core stopped while it ran".into())),
+        None if code.is_none() => return TurnEnd::failed("the core stopped while it ran"),
         Some(terminal) if terminal.reason.as_deref().is_some_and(|reason| reason != "exited") => {
             let words = match terminal.reason.as_deref().unwrap_or_default() {
                 "killed" => "its terminal was killed",
                 "server_stop" | "stopped_by_restart" => "the core stopped while it ran",
                 _ => "its terminal was lost",
             };
-            return (TaskState::Failed, Some(words.into()));
+            return TurnEnd::failed(words);
         }
         Some(terminal) if !terminal.live && code.is_none() => {
-            return (TaskState::Failed, Some("its terminal was lost".into()));
+            return TurnEnd::failed("its terminal was lost");
         }
         _ => {}
     }
+    let worker = task.turns.last().map(|turn| turn.worker.as_str()).unwrap_or_default();
+    match Worker::from_key(worker) {
+        Ok(Worker::Cc) => command_code_end(task, code, outcome, stderr_tail, now_ms, offset_min),
+        _ => opencode_end(task, code, outcome, route, stderr_tail, now_ms),
+    }
+}
+
+fn session_end(task: &Task, outcome: &TurnOutcome) -> Option<TurnEnd> {
+    let expected = task.turns.iter().rev().skip(1).find_map(|turn| turn.session.clone());
+    match &outcome.session {
+        None => Some(TurnEnd::failed("worker did not report a session id")),
+        Some(session) if expected.as_deref().is_some_and(|expected| expected != session) => {
+            Some(TurnEnd::failed("session mismatch: worker returned an unexpected session id"))
+        }
+        _ if outcome.sessions.len() > 1 => Some(TurnEnd::failed("worker reported multiple session ids")),
+        _ => None,
+    }
+}
+
+fn opencode_end(
+    task: &Task,
+    code: Option<i32>,
+    outcome: &TurnOutcome,
+    route: Option<&RouteCheck>,
+    stderr_tail: &str,
+    now_ms: u64,
+) -> TurnEnd {
+    // Only a turn that went wrong can be a refusal: a limit named on stderr must
+    // not block a worker that finished its work.
+    let went_wrong = !outcome.errors.is_empty() || code != Some(0) || outcome.text.is_empty();
+    if went_wrong && let Some(refusal) = quota::opencode_refusal(&outcome.raw_errors, stderr_tail, now_ms) {
+        return TurnEnd { state: TaskState::Failed, error: Some(refusal.message.clone()), refusal: Some(refusal) };
+    }
     if !outcome.errors.is_empty() {
         // Before the exit code: OpenCode v2 exits 0 after an error event.
-        return (TaskState::Failed, Some(format!("worker reported an error event: {}", outcome.errors[0])));
+        return TurnEnd::failed(format!("worker reported an error event: {}", outcome.errors[0]));
     }
     if code != Some(0) {
         let words = match code {
             Some(code) => format!("worker exited with code {code}"),
             None => "worker exited without an exit code".into(),
         };
-        return (TaskState::Failed, Some(words));
+        return TurnEnd::failed(words);
     }
     if outcome.parse_errors > 0 {
-        return (
-            TaskState::Failed,
-            Some(format!("worker stream contained {} unparseable lines", outcome.parse_errors)),
-        );
+        return TurnEnd::failed(format!("worker stream contained {} unparseable lines", outcome.parse_errors));
     }
-    let expected = task.turns.iter().rev().skip(1).find_map(|turn| turn.session.clone());
-    match &outcome.session {
-        None => return (TaskState::Failed, Some("worker did not report a session id".into())),
-        Some(session) if expected.as_deref().is_some_and(|expected| expected != session) => {
-            return (TaskState::Failed, Some("session mismatch: worker returned an unexpected session id".into()));
-        }
-        _ if outcome.sessions.len() > 1 => {
-            return (TaskState::Failed, Some("worker reported multiple session ids".into()));
-        }
-        _ => {}
+    if let Some(end) = session_end(task, outcome) {
+        return end;
     }
     if outcome.text.is_empty() {
-        return (TaskState::Failed, Some("worker produced no final text".into()));
+        return TurnEnd::failed("worker produced no final text");
     }
-    (TaskState::Done, None)
+    match route {
+        None => TurnEnd::failed("model verification error: the runner wrote no route check"),
+        Some(check) if check.status == "verified" => TurnEnd { state: TaskState::Done, error: None, refusal: None },
+        Some(check) => TurnEnd::failed(match &check.message {
+            Some(message) if !message.is_empty() => format!("model verification {}: {message}", check.status),
+            _ => format!("model verification {}", check.status),
+        }),
+    }
+}
+
+fn command_code_end(
+    task: &Task,
+    code: Option<i32>,
+    outcome: &TurnOutcome,
+    stderr_tail: &str,
+    now_ms: u64,
+    offset_min: i32,
+) -> TurnEnd {
+    if outcome.parse_errors > 0 {
+        return TurnEnd::failed("worker stream contained unparseable lines");
+    }
+    let Some(reported) = &outcome.reported else {
+        return TurnEnd::failed("worker stream ended without a result line");
+    };
+    let subtype = reported.subtype.to_lowercase();
+    if subtype != "success" || code != Some(0) {
+        // The CLI reports limits on stderr and in the result's error, never
+        // only in the worker's own reply: reading the reply would let a failed
+        // run that mentions "rate limit" block the worker.
+        let blob = if reported.error.is_empty() {
+            stderr_tail.to_string()
+        } else {
+            format!("{}\n{stderr_tail}", reported.error)
+        };
+        if let Some(refusal) = quota::command_code_refusal(&blob, true, now_ms, offset_min) {
+            return TurnEnd { state: TaskState::Failed, error: Some(refusal.message.clone()), refusal: Some(refusal) };
+        }
+        if subtype == "max_turns" || code == Some(8) {
+            return TurnEnd::failed("max_turns: Command Code stopped at --max-turns 200 before a final answer");
+        }
+        let detail = crate::task::types::cut(reported.error.trim(), 1000);
+        let words = match code {
+            Some(code) => format!("worker exited with code {code}"),
+            None => "worker exited without an exit code".into(),
+        };
+        return TurnEnd::failed(if detail.is_empty() { words } else { format!("{words}: {detail}") });
+    }
+    if let Some(end) = session_end(task, outcome) {
+        return end;
+    }
+    if outcome.text.is_empty() {
+        return TurnEnd::failed("worker produced no final text");
+    }
+    let (model, _) = crate::task::commandcode::route(Worker::Cc.route());
+    if outcome.models.is_empty() {
+        return TurnEnd::failed("model verification unverifiable");
+    }
+    if let Some(seen) = outcome.models.iter().find(|seen| **seen != model) {
+        return TurnEnd::failed(format!("model verification mismatch: {seen}"));
+    }
+    TurnEnd { state: TaskState::Done, error: None, refusal: None }
+}
+
+/// Command Code rewrites its config as it starts, so its starts are at least
+/// 8 s apart. The last start is kept in memory by the pump.
+pub fn start_slot(worker: Worker, last_cc_start_ms: Option<u64>, now_ms: u64) -> Result<(), String> {
+    if worker != Worker::Cc {
+        return Ok(());
+    }
+    match last_cc_start_ms {
+        Some(last) if now_ms.saturating_sub(last) < 8_000 => Err("waiting for Command Code's start slot".into()),
+        _ => Ok(()),
+    }
 }
 
 /// The wait ends when every task has, when any ended badly (UPGRADES #51),
@@ -362,8 +484,24 @@ mod tests {
         }
     }
 
+    fn verified() -> RouteCheck {
+        RouteCheck {
+            status: "verified".into(),
+            expected: "opencode-go/deepseek-v4.1-flash#max".into(),
+            ..Default::default()
+        }
+    }
+
+    fn judge(t: &Task, terminal: Option<&TerminalNow>, code: Option<i32>, outcome: &TurnOutcome) -> TurnEnd {
+        turn_end(t, terminal, code, outcome, Some(&verified()), "", 1_000, 0)
+    }
+
     fn ended(state: TaskState, error: Option<&str>) -> (TaskState, Option<String>) {
         (state, error.map(String::from))
+    }
+
+    fn result(end: TurnEnd) -> (TaskState, Option<String>) {
+        (end.state, end.error)
     }
 
     #[test]
@@ -374,67 +512,100 @@ mod tests {
         t.wall_s = 10;
         let exited = TerminalNow { live: false, exit_code: Some(0), reason: Some("exited".into()) };
         let good = outcome();
-        assert_eq!(turn_end(&t, Some(&exited), Some(0), &good), ended(TaskState::Done, None));
+        assert_eq!(result(judge(&t, Some(&exited), Some(0), &good)), ended(TaskState::Done, None));
 
         t.ending = Some(Ending::Cancel);
-        assert_eq!(turn_end(&t, Some(&exited), Some(0), &good), ended(TaskState::Cancelled, None));
+        assert_eq!(result(judge(&t, Some(&exited), Some(0), &good)), ended(TaskState::Cancelled, None));
         t.ending = Some(Ending::Idle);
         assert_eq!(
-            turn_end(&t, Some(&exited), Some(0), &good),
+            result(judge(&t, Some(&exited), Some(0), &good)),
             ended(TaskState::TimedOut, Some("no output and no CPU for 2 s (idle limit 2 s), last tool: none"))
         );
         t.ending = Some(Ending::Wall);
         assert_eq!(
-            turn_end(&t, Some(&exited), Some(0), &good),
+            result(judge(&t, Some(&exited), Some(0), &good)),
             ended(TaskState::TimedOut, Some("ran past its 10 s limit"))
         );
         t.ending = None;
 
         let killed = TerminalNow { live: false, exit_code: None, reason: Some("killed".into()) };
-        assert_eq!(turn_end(&t, Some(&killed), None, &good), ended(TaskState::Failed, Some("its terminal was killed")));
-        assert_eq!(turn_end(&t, None, None, &good), ended(TaskState::Failed, Some("the core stopped while it ran")));
         assert_eq!(
-            turn_end(&t, None, Some(3), &good),
+            result(judge(&t, Some(&killed), None, &good)),
+            ended(TaskState::Failed, Some("its terminal was killed"))
+        );
+        assert_eq!(
+            result(judge(&t, None, None, &good)),
+            ended(TaskState::Failed, Some("the core stopped while it ran"))
+        );
+        assert_eq!(
+            result(judge(&t, None, Some(3), &good)),
             ended(TaskState::Failed, Some("worker exited with code 3")),
             "a terminal gone with an exit file still reports the code"
         );
 
+        // OpenCode, in the order `execute_turn` uses.
+        let mut quota = good.clone();
+        quota.errors = vec!["ProviderError (429): quota".into()];
+        quota.raw_errors = vec![serde_json::json!({
+            "name": "ProviderError", "status": 429, "message": "reached your weekly usage limit"})];
+        let end = turn_end(&t, Some(&exited), Some(3), &quota, Some(&verified()), "", 1_000, 0);
+        assert_eq!(end.state, TaskState::Failed);
+        assert_eq!(end.refusal.as_ref().unwrap().window, "weekly");
+        assert_eq!(
+            end.error.as_deref(),
+            Some("reached your weekly usage limit"),
+            "a refusal comes before the error event"
+        );
         let mut errors = good.clone();
         errors.errors = vec!["ProviderError (429): quota".into()];
         assert_eq!(
-            turn_end(&t, Some(&exited), Some(0), &errors),
+            result(judge(&t, Some(&exited), Some(0), &errors)),
             ended(TaskState::Failed, Some("worker reported an error event: ProviderError (429): quota"))
         );
         let no_code = TerminalNow { live: false, exit_code: None, reason: Some("exited".into()) };
         assert_eq!(
-            turn_end(&t, Some(&no_code), Some(3), &good),
+            result(judge(&t, Some(&no_code), Some(3), &good)),
             ended(TaskState::Failed, Some("worker exited with code 3")),
             "the exit file speaks when the terminal has no code"
         );
         let mut parse = good.clone();
         parse.parse_errors = 2;
         assert_eq!(
-            turn_end(&t, Some(&exited), Some(0), &parse),
+            result(judge(&t, Some(&exited), Some(0), &parse)),
             ended(TaskState::Failed, Some("worker stream contained 2 unparseable lines"))
         );
         let mut no_session = good.clone();
         no_session.session = None;
         assert_eq!(
-            turn_end(&t, Some(&exited), Some(0), &no_session),
+            result(judge(&t, Some(&exited), Some(0), &no_session)),
             ended(TaskState::Failed, Some("worker did not report a session id"))
         );
         let mut two = good.clone();
         two.sessions.push("ses_2".into());
         assert_eq!(
-            turn_end(&t, Some(&exited), Some(0), &two),
+            result(judge(&t, Some(&exited), Some(0), &two)),
             ended(TaskState::Failed, Some("worker reported multiple session ids"))
         );
         let mut no_text = good.clone();
         no_text.text.clear();
         assert_eq!(
-            turn_end(&t, Some(&exited), Some(0), &no_text),
+            result(judge(&t, Some(&exited), Some(0), &no_text)),
             ended(TaskState::Failed, Some("worker produced no final text"))
         );
+        let no_route = turn_end(&t, Some(&exited), Some(0), &good, None, "", 1_000, 0);
+        assert_eq!(
+            result(no_route),
+            ended(TaskState::Failed, Some("model verification error: the runner wrote no route check"))
+        );
+        let mismatch = RouteCheck {
+            status: "mismatch".into(),
+            expected: "opencode-go/deepseek-v4.1-flash#max".into(),
+            message: Some("asked for opencode-go/deepseek-v4.1-flash#max, the export says opencode/other".into()),
+            ..Default::default()
+        };
+        let end = turn_end(&t, Some(&exited), Some(0), &good, Some(&mismatch), "", 1_000, 0);
+        assert_eq!(end.state, TaskState::Failed);
+        assert!(end.error.unwrap().starts_with("model verification mismatch: asked for"));
 
         // Continuing now expects the session the previous turn reported.
         t.turns[0].session = Some("ses_1".into());
@@ -443,9 +614,135 @@ mod tests {
         other.session = Some("ses_2".into());
         other.sessions = vec!["ses_2".into()];
         assert_eq!(
-            turn_end(&t, Some(&exited), Some(0), &other),
+            result(judge(&t, Some(&exited), Some(0), &other)),
             ended(TaskState::Failed, Some("session mismatch: worker returned an unexpected session id"))
         );
+    }
+
+    #[test]
+    fn a_limit_named_on_stderr_counts_only_when_the_turn_went_wrong() {
+        let mut t = task("a", TaskState::Running, 1, &[]);
+        t.turns = vec![turn(0)];
+        let exited = TerminalNow { live: false, exit_code: Some(0), reason: Some("exited".into()) };
+        let stale = r#"{"type":"error","error":{"type":"FreeUsageLimitError"}}"#;
+        let clean = turn_end(&t, Some(&exited), Some(0), &outcome(), Some(&verified()), stale, 1_000, 0);
+        assert_eq!((clean.state, clean.refusal), (TaskState::Done, None));
+        let no_text = TurnOutcome { text: String::new(), ..outcome() };
+        let refused = turn_end(&t, Some(&exited), Some(0), &no_text, Some(&verified()), stale, 1_000, 0);
+        assert_eq!(refused.state, TaskState::Failed);
+        assert!(refused.refusal.is_some());
+    }
+
+    fn cc_task() -> Task {
+        let mut t = task("a", TaskState::Running, 1, &[]);
+        t.turns = vec![Turn { worker: "cc".into(), ..turn(0) }];
+        t
+    }
+
+    fn cc_outcome() -> TurnOutcome {
+        TurnOutcome {
+            session: Some("s1".into()),
+            sessions: vec!["s1".into()],
+            text: "DONE".into(),
+            reported: Some(crate::task::worker::Reported {
+                subtype: "success".into(),
+                error: String::new(),
+                final_text: "DONE".into(),
+            }),
+            models: vec!["deepseek/deepseek-v4.1-flash".into()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_command_code_turn_ends_in_the_python_order() {
+        let t = cc_task();
+        let exited = TerminalNow { live: false, exit_code: Some(0), reason: Some("exited".into()) };
+        let good = cc_outcome();
+        assert_eq!(result(judge(&t, Some(&exited), Some(0), &good)), ended(TaskState::Done, None));
+
+        let mut parse = good.clone();
+        parse.parse_errors = 1;
+        assert_eq!(
+            result(judge(&t, Some(&exited), Some(0), &parse)),
+            ended(TaskState::Failed, Some("worker stream contained unparseable lines"))
+        );
+        let mut no_result = good.clone();
+        no_result.reported = None;
+        assert_eq!(
+            result(judge(&t, Some(&exited), Some(0), &no_result)),
+            ended(TaskState::Failed, Some("worker stream ended without a result line"))
+        );
+        let mut refused = good.clone();
+        refused.reported = Some(crate::task::worker::Reported {
+            subtype: "error".into(),
+            error: "You have insufficient credits to make this request.".into(),
+            final_text: String::new(),
+        });
+        let end = turn_end(&t, Some(&exited), Some(1), &refused, None, "", 1_000, 0);
+        assert_eq!(end.state, TaskState::Failed);
+        assert_eq!(end.refusal.as_ref().unwrap().window, "credits");
+        let mut max_turns = good.clone();
+        max_turns.reported = Some(crate::task::worker::Reported {
+            subtype: "max_turns".into(),
+            error: String::new(),
+            final_text: "partial".into(),
+        });
+        assert_eq!(
+            result(judge(&t, Some(&exited), Some(0), &max_turns)),
+            ended(TaskState::Failed, Some("max_turns: Command Code stopped at --max-turns 200 before a final answer"))
+        );
+        let mut failed = good.clone();
+        failed.reported = Some(crate::task::worker::Reported {
+            subtype: "error".into(),
+            error: "the tool exploded".into(),
+            final_text: String::new(),
+        });
+        let exited3 = TerminalNow { live: false, exit_code: Some(3), reason: Some("exited".into()) };
+        assert_eq!(
+            result(judge(&t, Some(&exited3), Some(3), &failed)),
+            ended(TaskState::Failed, Some("worker exited with code 3: the tool exploded"))
+        );
+        let mut no_session = good.clone();
+        no_session.session = None;
+        assert_eq!(
+            result(judge(&t, Some(&exited), Some(0), &no_session)),
+            ended(TaskState::Failed, Some("worker did not report a session id"))
+        );
+        let mut two = good.clone();
+        two.sessions.push("s2".into());
+        assert_eq!(
+            result(judge(&t, Some(&exited), Some(0), &two)),
+            ended(TaskState::Failed, Some("worker reported multiple session ids"))
+        );
+        let mut no_text = good.clone();
+        no_text.text.clear();
+        assert_eq!(
+            result(judge(&t, Some(&exited), Some(0), &no_text)),
+            ended(TaskState::Failed, Some("worker produced no final text"))
+        );
+        let mut no_model = good.clone();
+        no_model.models.clear();
+        assert_eq!(
+            result(judge(&t, Some(&exited), Some(0), &no_model)),
+            ended(TaskState::Failed, Some("model verification unverifiable"))
+        );
+        let mut other_model = good;
+        other_model.models = vec!["deepseek/other".into()];
+        assert_eq!(
+            result(judge(&t, Some(&exited), Some(0), &other_model)),
+            ended(TaskState::Failed, Some("model verification mismatch: deepseek/other"))
+        );
+    }
+
+    #[test]
+    fn command_codes_starts_are_eight_seconds_apart() {
+        assert!(start_slot(Worker::Go, Some(1_000), 1_001).is_ok());
+        assert!(start_slot(Worker::Cc, None, 1_000).is_ok());
+        assert!(start_slot(Worker::Cc, Some(1_000), 8_999).is_err());
+        assert_eq!(start_slot(Worker::Cc, Some(1_000), 8_999), Err("waiting for Command Code's start slot".into()));
+        assert!(start_slot(Worker::Cc, Some(1_000), 9_000).is_ok());
+        assert!(start_slot(Worker::Cc, Some(1_000), 30_000).is_ok());
     }
 
     fn line(name: &str, state: TaskState) -> TaskLine {

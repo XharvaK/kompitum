@@ -1,11 +1,12 @@
 //! The only place that knows a worker CLI by name: how to find it, how to ask
-//! its version, how to tell it to run a turn, and how to read its output.
+//! its version, how to tell it to run a turn, and where its reader lives.
+//! The streams themselves are in `opencode.rs` and `commandcode.rs`.
 
 use crate::config::Config;
 use crate::rpc::RpcError;
 use crate::task::types::Usage;
 use serde_json::Value;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Mutex;
@@ -13,6 +14,7 @@ use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Worker {
+    Cc,
     Go,
     Free,
 }
@@ -23,8 +25,11 @@ pub fn label_of(key: &str) -> String {
 }
 
 impl Worker {
+    pub const ALL: [Worker; 3] = [Worker::Cc, Worker::Go, Worker::Free];
+
     pub fn key(self) -> &'static str {
         match self {
+            Worker::Cc => "cc",
             Worker::Go => "go",
             Worker::Free => "free",
         }
@@ -32,6 +37,7 @@ impl Worker {
 
     pub fn label(self) -> &'static str {
         match self {
+            Worker::Cc => "Command Code",
             Worker::Go => "opencode Go",
             Worker::Free => "opencode free",
         }
@@ -39,6 +45,7 @@ impl Worker {
 
     pub fn route(self) -> &'static str {
         match self {
+            Worker::Cc => "commandcode/deepseek/deepseek-v4.1-flash#max",
             Worker::Go => "opencode-go/deepseek-v4.1-flash#max",
             Worker::Free => "opencode/deepseek-v4.1-flash-free#max",
         }
@@ -46,27 +53,28 @@ impl Worker {
 
     pub fn from_key(key: &str) -> Result<Worker, RpcError> {
         match key {
+            "cc" => Ok(Worker::Cc),
             "go" => Ok(Worker::Go),
             "free" => Ok(Worker::Free),
-            other => Err(RpcError::invalid_params(format!("unknown worker {other:?}: use go or free"))),
+            other => Err(RpcError::invalid_params(format!("unknown worker {other:?}: use cc, go or free"))),
         }
     }
 }
 
-fn worker_missing(message: impl Into<String>) -> RpcError {
+fn worker_missing(cli: &str, key: &str, message: impl Into<String>) -> RpcError {
     RpcError::new(
         "worker_missing",
         message,
-        "install OpenCode v2, or set [workers] opencode in ~/.config/limen-core/config.toml",
+        format!("install {cli}, or set [workers] {key} in ~/.config/limen-core/config.toml"),
     )
 }
 
 /// A shell shim can't be spawned without a shell, and the real executable's
 /// output is what the loop reads: refuse it by name, as the Python does.
-fn check_shim(exe: &str) -> Result<(), RpcError> {
+fn check_shim(cli: &str, key: &str, exe: &str) -> Result<(), RpcError> {
     let lower = exe.to_ascii_lowercase();
     if [".cmd", ".bat", ".ps1"].iter().any(|ext| lower.ends_with(ext)) {
-        return Err(worker_missing(format!("{exe:?} is a shell shim: give the opencode executable itself")));
+        return Err(worker_missing(cli, key, format!("{exe:?} is a shell shim: give the {cli} executable itself")));
     }
     Ok(())
 }
@@ -88,18 +96,48 @@ fn python() -> Option<Vec<String>> {
     on_path(&[program("python3"), program("python")]).map(|path| vec![path.display().to_string()])
 }
 
+fn node() -> Option<PathBuf> {
+    on_path(&[program("node")])
+}
+
+/// An explicit command is installed when its program is a file or on PATH.
+fn require_program(cli: &str, key: &str, exe: &str) -> Result<(), RpcError> {
+    if Path::new(exe).is_file() || on_path(&[program(exe), exe.to_string()]).is_some() {
+        return Ok(());
+    }
+    Err(worker_missing(cli, key, format!("{cli} was not found: {exe:?} is not a file or on PATH")))
+}
+
+/// An explicit argv, run through python or node when it is a script, never
+/// through a shell shim.
+fn command_program(cli: &str, key: &str, mut argv: Vec<String>) -> Result<Vec<String>, RpcError> {
+    let Some(exe) = argv.first().cloned() else {
+        return Err(worker_missing(cli, key, format!("[workers] {key} is an empty command")));
+    };
+    check_shim(cli, key, &exe)?;
+    require_program(cli, key, &exe)?;
+    let lower = exe.to_ascii_lowercase();
+    if lower.ends_with(".py") {
+        let mut python =
+            python().ok_or_else(|| worker_missing(cli, key, format!("no python to run {cli}'s script")))?;
+        python.append(&mut argv);
+        return Ok(python);
+    }
+    if lower.ends_with(".mjs") || lower.ends_with(".js") {
+        let node = node().ok_or_else(|| worker_missing(cli, key, format!("no node to run {cli}'s script")))?;
+        let mut out = vec![node.display().to_string()];
+        out.append(&mut argv);
+        return Ok(out);
+    }
+    Ok(argv)
+}
+
 /// `opencode`'s argv prefix: `[workers] opencode` when the config gives one,
 /// else the executable on PATH (or the npm fallback on Windows), as
 /// `command_prefix` does in the Python.
-pub fn opencode_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
-    if let Some(mut argv) = config.opencode() {
-        check_shim(&argv[0])?;
-        if argv[0].to_ascii_lowercase().ends_with(".py") {
-            let mut python = python().ok_or_else(|| worker_missing("no python to run OpenCode's script"))?;
-            python.append(&mut argv);
-            return Ok(python);
-        }
-        return Ok(argv);
+fn opencode_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
+    if let Some(argv) = config.opencode() {
+        return command_program("OpenCode v2", "opencode", argv);
     }
     let found = on_path(&[program("opencode")]).or_else(|| {
         let appdata = std::env::var_os("APPDATA")?;
@@ -114,7 +152,38 @@ pub fn opencode_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
     });
     match found {
         Some(found) => Ok(vec![found.display().to_string()]),
-        None => Err(worker_missing("OpenCode was not found on PATH")),
+        None => Err(worker_missing("OpenCode v2", "opencode", "OpenCode was not found on PATH")),
+    }
+}
+
+/// `commandcode_prefix`: an explicit argv, else the npm install under node,
+/// else `cmdc`, then `commandcode`, on PATH.
+fn commandcode_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
+    if let Some(argv) = config.commandcode() {
+        return command_program("Command Code", "commandcode", argv);
+    }
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let candidate =
+            PathBuf::from(appdata).join("npm").join("node_modules").join("command-code").join("dist").join("index.mjs");
+        if candidate.is_file()
+            && let Some(node) = node()
+        {
+            return Ok(vec![node.display().to_string(), candidate.display().to_string()]);
+        }
+    }
+    for name in ["cmdc", "commandcode"] {
+        if let Some(found) = on_path(&[program(name)]) {
+            return Ok(vec![found.display().to_string()]);
+        }
+    }
+    Err(worker_missing("Command Code", "commandcode", "Command Code was not found on PATH"))
+}
+
+/// The argv prefix that starts a worker CLI.
+pub fn prefix(worker: Worker, config: &Config) -> Result<Vec<String>, RpcError> {
+    match worker {
+        Worker::Cc => commandcode_prefix(config),
+        Worker::Go | Worker::Free => opencode_prefix(config),
     }
 }
 
@@ -170,8 +239,16 @@ pub async fn check_version(prefix: &[String]) -> Result<(), RpcError> {
     cmd.kill_on_drop(true);
     let out = match tokio::time::timeout(Duration::from_secs(30), cmd.output()).await {
         Ok(Ok(out)) => out,
-        Ok(Err(e)) => return Err(worker_missing(format!("cannot run {} --version: {e}", prefix[0]))),
-        Err(_) => return Err(worker_missing(format!("{} --version did not answer within 30 s", prefix[0]))),
+        Ok(Err(e)) => {
+            return Err(worker_missing("OpenCode v2", "opencode", format!("cannot run {} --version: {e}", prefix[0])));
+        }
+        Err(_) => {
+            return Err(worker_missing(
+                "OpenCode v2",
+                "opencode",
+                format!("{} --version did not answer within 30 s", prefix[0]),
+            ));
+        }
     };
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     match first_version(&text) {
@@ -181,15 +258,19 @@ pub async fn check_version(prefix: &[String]) -> Result<(), RpcError> {
         }
         _ => {
             let found = crate::task::types::cut(text.trim(), 120);
-            Err(worker_missing(format!(
-                "lc requires OpenCode v2.x; found: {}",
-                if found.is_empty() { "nothing".into() } else { found }
-            )))
+            Err(worker_missing(
+                "OpenCode v2",
+                "opencode",
+                format!(
+                    "lc requires OpenCode v2.x; found: {}",
+                    if found.is_empty() { "nothing".into() } else { found }
+                ),
+            ))
         }
     }
 }
 
-/// The whole command for one turn. `session` means continue that conversation.
+/// The whole command for one OpenCode turn. `session` means continue that conversation.
 pub fn opencode_command(
     prefix: &[String],
     worker: Worker,
@@ -218,132 +299,134 @@ pub fn opencode_command(
     argv
 }
 
+/// Everything the runner needs to start one turn.
+pub struct TurnCommand {
+    pub argv: Vec<String>,
+    /// The file the program reads as stdin. None: stdin is closed.
+    pub stdin: Option<String>,
+    pub env: BTreeMap<String, String>,
+    /// OpenCode only: how many of argv's first items are the CLI itself, for the route check.
+    pub prefix_len: Option<usize>,
+}
+
+pub fn turn_command(
+    worker: Worker,
+    prefix: &[String],
+    task: &str,
+    prompt_path: &str,
+    session: Option<&str>,
+) -> TurnCommand {
+    match worker {
+        Worker::Cc => {
+            let (model, effort) = crate::task::commandcode::route(worker.route());
+            let mut argv = prefix.to_vec();
+            argv.extend(
+                [
+                    "-p",
+                    "--output-format",
+                    "json",
+                    "-m",
+                    &model,
+                    "--effort",
+                    &effort,
+                    "--yolo",
+                    "--skip-onboarding",
+                    "-t",
+                    "--no-auto-update",
+                    "--max-turns",
+                    "200",
+                ]
+                .map(String::from),
+            );
+            if let Some(session) = session {
+                argv.extend(["--resume".to_string(), session.to_string()]);
+            } else {
+                argv.extend(["-n".to_string(), format!("limen-{task}")]);
+            }
+            TurnCommand {
+                argv,
+                stdin: Some(prompt_path.to_string()),
+                env: BTreeMap::from([("COMMANDCODE_SKIP_UPDATES".to_string(), "1".to_string())]),
+                prefix_len: None,
+            }
+        }
+        Worker::Go | Worker::Free => TurnCommand {
+            argv: opencode_command(prefix, worker, task, prompt_path, session),
+            stdin: None,
+            env: BTreeMap::new(),
+            prefix_len: Some(prefix.len()),
+        },
+    }
+}
+
 /// What a reader sees while a turn runs: steps, the last tools, the cost so far.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Progress {
     pub steps: u64,
     pub tools: Vec<String>,
     pub cost_usd: f64,
     pub peak: u64,
+    pub(crate) worker: Worker,
     /// The worktree: a tool's path inside it is shown relative to it.
-    root: Option<PathBuf>,
-    seen: BTreeSet<String>,
+    pub(crate) root: Option<PathBuf>,
+    pub(crate) seen: BTreeSet<String>,
 }
 
-fn text_at<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
-}
-
-fn part_text<'a>(part: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
-    part.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
-}
-
-fn whole(value: Option<&Value>) -> u64 {
-    value.and_then(Value::as_u64).unwrap_or(0)
-}
-
-/// One step's numbers, from its `step-finish` part.
-fn step_usage(part: &serde_json::Map<String, Value>) -> Usage {
-    let tokens = part.get("tokens").and_then(Value::as_object);
-    let cache = tokens.and_then(|t| t.get("cache")).and_then(Value::as_object);
-    let input = whole(tokens.and_then(|t| t.get("input")));
-    let cache_read = whole(cache.and_then(|c| c.get("read")));
-    let cache_write = whole(cache.and_then(|c| c.get("write")));
-    Usage {
-        steps: 1,
-        input,
-        output: whole(tokens.and_then(|t| t.get("output"))),
-        reasoning: whole(tokens.and_then(|t| t.get("reasoning"))),
-        cache_read,
-        cache_write,
-        largest_request: input + cache_read + cache_write,
-        cost_usd: part.get("cost").and_then(Value::as_f64).unwrap_or(0.0),
+impl Default for Progress {
+    fn default() -> Progress {
+        Progress::new(Worker::Go, None)
     }
 }
 
-/// `summarize_tool`: name and status, never the tool's input or output.
-fn summarize_tool(event: &Value) -> Option<String> {
-    let part = event.get("part").and_then(Value::as_object);
-    let tool = part.and_then(|p| p.get("tool")).or_else(|| event.get("tool"))?;
-    let (name, status) = match tool.as_object() {
-        Some(tool) => {
-            (tool.get("name").or_else(|| tool.get("tool")).and_then(Value::as_str), part_text(tool, "status"))
+impl Progress {
+    /// For a turn running in this folder.
+    pub fn new(worker: Worker, root: Option<PathBuf>) -> Progress {
+        Progress { steps: 0, tools: Vec::new(), cost_usd: 0.0, peak: 0, worker, root, seen: BTreeSet::new() }
+    }
+
+    /// One output line in, one line for the screen out (or nothing to show).
+    pub fn feed(&mut self, line: &str) -> Option<String> {
+        match self.worker {
+            Worker::Cc => crate::task::commandcode::progress(self, line),
+            Worker::Go | Worker::Free => crate::task::opencode::progress(self, line),
         }
-        None => {
-            let state = part.and_then(|p| p.get("state")).and_then(Value::as_object);
-            (tool.as_str(), state.and_then(|s| part_text(s, "status")))
-        }
-    };
-    let name = name?;
-    let line = match status {
-        Some(status) => format!("{name}:{status}"),
-        None => name.to_string(),
-    };
-    Some(crate::task::types::cut(&line, 120))
+    }
+}
+
+pub(crate) fn text_at<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+pub(crate) fn part_text<'a>(part: &'a serde_json::Map<String, Value>, key: &str) -> Option<&'a str> {
+    part.get(key).and_then(Value::as_str).filter(|s| !s.is_empty())
+}
+
+pub(crate) fn whole(value: Option<&Value>) -> u64 {
+    value.and_then(Value::as_u64).unwrap_or(0)
 }
 
 /// The keys a tool's input names what it works on under, most telling first.
-const TARGET_KEYS: [&str; 7] = ["filePath", "path", "file_path", "pattern", "url", "command", "query"];
+pub(crate) const TARGET_KEYS: [&str; 7] = ["filePath", "path", "file_path", "pattern", "url", "command", "query"];
 
 /// What a tool works on, for someone watching: the first line of its input's
 /// target, relative to the worktree when it lies inside. It goes on the screen
 /// and in the beat, never in the task's record: a tool's input can say anything.
-fn tool_target(event: &Value, root: Option<&Path>) -> Option<String> {
-    let input = event.get("part")?.get("state")?.get("input")?.as_object()?;
+pub(crate) fn target_in(input: &serde_json::Map<String, Value>, root: Option<&Path>) -> Option<String> {
     let text = TARGET_KEYS.iter().find_map(|key| part_text(input, key))?;
     let first = text.lines().next().unwrap_or_default();
     let inside = root.and_then(|root| Path::new(first).strip_prefix(root).ok());
     Some(inside.map_or_else(|| first.to_string(), |path| path.display().to_string().replace('\\', "/")))
 }
 
-impl Progress {
-    /// For a turn running in this folder.
-    pub fn in_folder(root: Option<PathBuf>) -> Progress {
-        Progress { root, ..Default::default() }
+pub(crate) fn push_list(tools: &mut Vec<String>, shown: String) {
+    tools.push(shown);
+    while tools.len() > 5 {
+        tools.remove(0);
     }
+}
 
-    /// One output line in, one line for the screen out (or nothing to show).
-    pub fn feed(&mut self, line: &str) -> Option<String> {
-        let value: Value = serde_json::from_str(line.trim()).ok()?;
-        let event = value.as_object()?;
-        let part = event.get("part").and_then(Value::as_object);
-        let part_type = part.and_then(|p| part_text(p, "type"));
-        if part_type == Some("step-finish") {
-            let step = step_usage(part?);
-            self.steps += 1;
-            self.peak = self.peak.max(step.largest_request);
-            self.cost_usd += step.cost_usd;
-            return Some(format!(
-                "step {}: {} in, {} out, ${:.4}",
-                self.steps,
-                step.input + step.cache_read,
-                step.output + step.reasoning,
-                self.cost_usd
-            ));
-        }
-        if text_at(&value, "type") == Some("tool_use") || part_type == Some("tool") {
-            let part = part?;
-            let id = part_text(part, "partID").or_else(|| part_text(part, "id"));
-            if let Some(id) = id
-                && !self.seen.insert(id.to_string())
-            {
-                return None;
-            }
-            let tool = summarize_tool(&value)?;
-            // "completed" on nearly every line says nothing to someone watching.
-            let tool = tool.strip_suffix(":completed").unwrap_or(&tool);
-            let shown = match tool_target(&value, self.root.as_deref()) {
-                Some(target) => crate::task::types::cut(&format!("{tool} {target}"), 120),
-                None => tool.to_string(),
-            };
-            self.tools.push(shown.clone());
-            while self.tools.len() > 5 {
-                self.tools.remove(0);
-            }
-            return Some(shown);
-        }
-        None
-    }
+pub(crate) fn push_tool(progress: &mut Progress, shown: String) {
+    push_list(&mut progress.tools, shown);
 }
 
 /// Everything a finished turn's output says, read once, away from the core thread.
@@ -363,103 +446,32 @@ pub struct TurnOutcome {
     pub tools: Vec<String>,
     /// Non-empty lines that were not JSON objects.
     pub parse_errors: u32,
+    /// Command Code's result line, when it wrote one.
+    pub reported: Option<Reported>,
+    /// Command Code's model_request_start models, distinct and in order.
+    pub models: Vec<String>,
+    /// The raw error payloads, at most five, for the quota check.
+    pub raw_errors: Vec<Value>,
 }
 
-fn summarize_error(raw: &Value) -> String {
-    let Some(object) = raw.as_object() else { return "error".into() };
-    let data = object.get("data").and_then(Value::as_object);
-    let name = object
-        .get("name")
-        .or_else(|| object.get("type"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .unwrap_or("error");
-    let code = data
-        .and_then(|d| d.get("code"))
-        .or_else(|| object.get("code"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty());
-    let message = data
-        .and_then(|d| d.get("message"))
-        .or_else(|| object.get("message"))
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty());
-    let mut out = name.to_string();
-    if let Some(code) = code {
-        out.push_str(&format!(" ({code})"));
-    }
-    if let Some(message) = message {
-        out.push_str(&format!(": {message}"));
-    }
-    crate::task::types::cut(&out, 300)
+/// Command Code's result line: how the run says it ended.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Reported {
+    pub subtype: String,
+    pub error: String,
+    pub final_text: String,
 }
 
 impl TurnOutcome {
-    pub fn from_lines(lines: impl IntoIterator<Item = String>) -> TurnOutcome {
-        let mut out = TurnOutcome::default();
-        for line in lines {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            let Ok(value) = serde_json::from_str::<Value>(line) else {
-                out.parse_errors += 1;
-                continue;
-            };
-            let Some(event) = value.as_object() else {
-                out.parse_errors += 1;
-                continue;
-            };
-            let mut candidates = vec![event.get("sessionID"), event.get("session_id")];
-            if let Some(part) = event.get("part") {
-                candidates.push(part.get("sessionID"));
-            }
-            if let Some(properties) = event.get("properties") {
-                candidates.push(properties.get("sessionID"));
-            }
-            for id in candidates.into_iter().flatten().filter_map(Value::as_str).filter(|s| !s.is_empty()) {
-                if !out.sessions.iter().any(|seen| seen == id) {
-                    out.sessions.push(id.to_string());
-                }
-                if out.session.is_none() {
-                    out.session = Some(id.to_string());
-                }
-            }
-            let kind = text_at(&value, "type").unwrap_or("?");
-            let part = event.get("part").and_then(Value::as_object);
-            if kind == "text"
-                && let Some(text) = part.and_then(|p| p.get("text")).and_then(Value::as_str)
-            {
-                out.text = text.to_string();
-            }
-            if let Some(part) = part.filter(|p| part_text(p, "type") == Some("step-finish")) {
-                let step = step_usage(part);
-                out.usage.steps += step.steps;
-                out.usage.input += step.input;
-                out.usage.output += step.output;
-                out.usage.reasoning += step.reasoning;
-                out.usage.cache_read += step.cache_read;
-                out.usage.cache_write += step.cache_write;
-                out.usage.largest_request = out.usage.largest_request.max(step.largest_request);
-                out.usage.cost_usd += step.cost_usd;
-            }
-            if kind == "error" {
-                out.errors.push(summarize_error(event.get("error").unwrap_or(&value)));
-            }
-            if (kind == "tool_use" || part.and_then(|p| part_text(p, "type")) == Some("tool"))
-                && let Some(tool) = summarize_tool(&value)
-            {
-                out.tools.push(tool);
-                while out.tools.len() > 5 {
-                    out.tools.remove(0);
-                }
-            }
+    pub fn from_lines(worker: Worker, lines: impl IntoIterator<Item = String>) -> TurnOutcome {
+        match worker {
+            Worker::Cc => crate::task::commandcode::read(lines),
+            Worker::Go | Worker::Free => crate::task::opencode::read(lines),
         }
-        out
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> TurnOutcome {
-        TurnOutcome::from_lines(String::from_utf8_lossy(bytes).lines().map(String::from))
+    pub fn from_bytes(worker: Worker, bytes: &[u8]) -> TurnOutcome {
+        TurnOutcome::from_lines(worker, String::from_utf8_lossy(bytes).lines().map(String::from))
     }
 }
 
@@ -467,105 +479,23 @@ impl TurnOutcome {
 mod tests {
     use super::*;
 
-    const SESSION: &str = "ses_5glfJCtnAmRo1vsz02KjZlOl0B";
-
-    fn line(text: &str) -> String {
-        text.to_string()
-    }
-
-    fn stream() -> Vec<String> {
-        vec![
-            line(&format!(
-                r#"{{"type":"step_start","timestamp":1793798531666,"sessionID":"{SESSION}","part":{{"id":"prt_1","type":"step-start"}}}}"#
-            )),
-            line(&format!(
-                r#"{{"type":"text","timestamp":1793798532015,"sessionID":"{SESSION}","part":{{"id":"prt_2","type":"text","text":"I'll start by reading the task brief."}}}}"#
-            )),
-            line(&format!(
-                r#"{{"type":"tool_use","timestamp":1793798532046,"sessionID":"{SESSION}","part":{{"partID":"prt_3","type":"tool","id":"call_1","tool":"read","state":{{"status":"completed","input":{{"path":"src/lib.rs"}},"output":"Read file"}}}}}}"#
-            )),
-            line(&format!(
-                r#"{{"type":"step_finish","timestamp":1793798532155,"sessionID":"{SESSION}","part":{{"id":"prt_4","type":"step-finish","cost":0.001723308,"tokens":{{"input":11142,"output":79,"reasoning":2,"cache":{{"read":1536,"write":8}}}}}}}}"#
-            )),
-            line(&format!(
-                r#"{{"type":"text","timestamp":1793798532300,"sessionID":"{SESSION}","part":{{"id":"prt_5","type":"text","text":"All done."}}}}"#
-            )),
-        ]
-    }
-
-    #[test]
-    fn a_real_stream_gives_its_session_text_usage_and_no_errors() {
-        let outcome = TurnOutcome::from_lines(stream());
-        assert_eq!(outcome.session.as_deref(), Some(SESSION));
-        assert_eq!(outcome.sessions, [SESSION]);
-        assert_eq!(outcome.text, "All done.");
-        assert_eq!(outcome.usage.steps, 1);
-        assert_eq!(outcome.usage.input, 11142);
-        assert_eq!(outcome.usage.output, 79);
-        assert_eq!(outcome.usage.reasoning, 2);
-        assert_eq!(outcome.usage.cache_read, 1536);
-        assert_eq!(outcome.usage.cache_write, 8);
-        assert_eq!(outcome.usage.largest_request, 11142 + 1536 + 8);
-        assert!((outcome.usage.cost_usd - 0.001723308).abs() < 1e-12);
-        assert!(outcome.errors.is_empty() && outcome.parse_errors == 0);
-    }
-
-    #[test]
-    fn error_events_and_unparseable_lines_are_kept_as_their_own_facts() {
-        let lines = vec![
-            line(
-                r#"{"type":"error","sessionID":"s1","error":{"name":"ProviderError","data":{"code":"429","message":"quota"}}}"#,
-            ),
-            line("not json"),
-            line("[1,2]"),
-            line(""),
-        ];
-        let outcome = TurnOutcome::from_lines(lines);
-        assert_eq!(outcome.errors, ["ProviderError (429): quota"]);
-        assert_eq!(outcome.parse_errors, 2);
-        assert_eq!(outcome.session.as_deref(), Some("s1"));
-        assert_eq!(outcome.text, "");
-    }
-
-    #[test]
-    fn progress_counts_steps_once_and_keeps_the_last_five_tools() {
-        let mut progress = Progress::default();
-        let feed: Vec<_> = stream().iter().filter_map(|l| progress.feed(l)).collect();
-        assert_eq!(progress.steps, 1);
-        assert_eq!(progress.peak, 11142 + 1536 + 8);
-        assert!((progress.cost_usd - 0.001723308).abs() < 1e-12);
-        assert_eq!(feed, ["read src/lib.rs", "step 1: 12678 in, 81 out, $0.0017"]);
-        // The same part twice is one tool.
-        assert_eq!(progress.feed(&stream()[2]), None);
-        for n in 0..6 {
-            let tool = format!(
-                r#"{{"type":"tool_use","part":{{"partID":"p{n}","type":"tool","tool":"bash","state":{{"status":"running"}}}}}}"#
-            );
-            assert_eq!(progress.feed(&tool).as_deref(), Some("bash:running"));
+    fn config(cc: Option<&str>, oc: Option<&str>) -> Config {
+        Config {
+            workers: Some(crate::config::WorkersConfig {
+                cap: None,
+                opencode: oc.map(|p| vec![p.to_string()]),
+                commandcode: cc.map(|p| vec![p.to_string()]),
+            }),
+            ..Default::default()
         }
-        assert_eq!(progress.tools.len(), 5);
-        assert_eq!(progress.tools[0], "bash:running");
     }
 
     #[test]
-    fn a_tool_line_says_what_the_tool_works_on_relative_to_the_worktree() {
-        let root = std::env::temp_dir().join("worktree");
-        let inside = root.join("src").join("lib.rs").display().to_string();
-        let mut progress = Progress::in_folder(Some(root));
-        let mut feed = |tool: &str, status: &str, input: Value| {
-            let id = format!("{tool}-{status}");
-            let event = serde_json::json!({"type": "tool_use", "part": {
-                "partID": id, "type": "tool", "tool": tool, "state": {"status": status, "input": input}}});
-            progress.feed(&event.to_string())
-        };
-        let read = feed("read", "completed", serde_json::json!({"path": inside}));
-        assert_eq!(read.as_deref(), Some("read src/lib.rs"));
-        let bash = feed("bash", "running", serde_json::json!({"command": "cargo test\nnext line"}));
-        assert_eq!(bash.as_deref(), Some("bash:running cargo test"));
-        let outside = feed("grep", "error", serde_json::json!({"pattern": "x"}));
-        assert_eq!(outside.as_deref(), Some("grep:error x"));
-        let nothing = feed("list", "completed", serde_json::json!({}));
-        assert_eq!(nothing.as_deref(), Some("list"));
+    fn a_version_is_found_wherever_it_sits_and_must_be_v2() {
+        assert_eq!(first_version("v2.0.0"), Some((2, 0, 0)));
+        assert_eq!(first_version("opencode 1.2.3\n"), Some((1, 2, 3)));
+        assert_eq!(first_version("nothing here"), None);
+        assert_eq!(first_version("path 9/2.0.0"), Some((2, 0, 0)));
     }
 
     #[test]
@@ -588,10 +518,47 @@ mod tests {
     }
 
     #[test]
-    fn a_version_is_found_wherever_it_sits_and_must_be_v2() {
-        assert_eq!(first_version("v2.0.0"), Some((2, 0, 0)));
-        assert_eq!(first_version("opencode 1.2.3\n"), Some((1, 2, 3)));
-        assert_eq!(first_version("nothing here"), None);
-        assert_eq!(first_version("path 9/2.0.0"), Some((2, 0, 0)));
+    fn the_brief_goes_on_stdin_and_not_in_the_arguments() {
+        let prefix = vec!["node".to_string(), "index.mjs".to_string()];
+        let command = turn_command(Worker::Cc, &prefix, "fix-1", "C:/t/prompt.md", None);
+        assert_eq!(command.stdin.as_deref(), Some("C:/t/prompt.md"));
+        assert!(!command.argv.iter().any(|arg| arg.contains("prompt")), "{:?}", command.argv);
+        assert_eq!(command.argv[..2], ["node", "index.mjs"]);
+        assert!(command.argv.windows(2).any(|w| w == ["-n", "limen-fix-1"]), "{:?}", command.argv);
+        assert_eq!(command.env.get("COMMANDCODE_SKIP_UPDATES").map(String::as_str), Some("1"));
+        assert_eq!(command.prefix_len, None);
+        let continued = turn_command(Worker::Cc, &prefix, "fix-1", "p", Some("ses_1"));
+        assert!(continued.argv.windows(2).any(|w| w == ["--resume", "ses_1"]), "{:?}", continued.argv);
+        assert!(!continued.argv.iter().any(|arg| arg == "-n"));
+        let opencode = turn_command(Worker::Go, &["opencode".into()], "fix-1", "p", None);
+        assert_eq!(opencode.stdin, None);
+        assert_eq!(opencode.prefix_len, Some(1));
+    }
+
+    #[test]
+    fn a_program_that_does_not_exist_is_not_installed() {
+        let missing = std::env::temp_dir().join("limen-no-such-worker-2419").display().to_string();
+        let error = prefix(Worker::Cc, &config(Some(&missing), None)).unwrap_err();
+        assert_eq!(error.kind, "worker_missing");
+        assert!(error.message.contains("Command Code"), "{}", error.message);
+        assert!(error.hint.contains("[workers] commandcode"), "{}", error.hint);
+        let error = prefix(Worker::Go, &config(None, Some(&missing))).unwrap_err();
+        assert_eq!(error.kind, "worker_missing");
+        assert!(error.hint.contains("[workers] opencode"), "{}", error.hint);
+        let shim = std::env::temp_dir().join("limen-worker-2419.cmd").display().to_string();
+        let error = prefix(Worker::Cc, &config(Some(&shim), None)).unwrap_err();
+        assert!(error.message.contains("shell shim"), "{}", error.message);
+    }
+
+    #[test]
+    fn the_command_code_route_splits_into_a_model_and_an_effort() {
+        assert_eq!(
+            crate::task::commandcode::route("commandcode/deepseek/deepseek-v4.1-flash#max"),
+            ("deepseek/deepseek-v4.1-flash".into(), "max".into())
+        );
+        assert_eq!(
+            crate::task::commandcode::route("commandcode/deepseek/deepseek-v4.1-flash"),
+            ("deepseek/deepseek-v4.1-flash".into(), "max".into())
+        );
     }
 }

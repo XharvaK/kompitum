@@ -71,7 +71,10 @@ def main() -> int:
         ("clippy for Windows", ["cargo", "clippy", "--locked", "--all-targets", "--", "-D", "warnings"], None),
         ("clippy for Linux", ["cargo", "clippy", "--locked", "--target", "x86_64-unknown-linux-musl",
                               "--all-targets", "--", "-D", "warnings"], linux),
-        ("the Windows suite", ["cargo", "test", "--locked", "--no-fail-fast", "--", "--skip", SKIP], None),
+        # A test binary's watchdog is set for a quiet PC. On a busy one it aborts a healthy run, and the abort
+        # loses the words of any failure that run had already found.
+        ("the Windows suite", ["cargo", "test", "--locked", "--no-fail-fast", "--", "--skip", SKIP],
+         dict(os.environ, LIMEN_TEST_WATCHDOG_S="300")),
     ]
     results = [(name, *step(name, argv, env)) for name, argv, env in steps]
     bad = [result for result in results if not result[1]]

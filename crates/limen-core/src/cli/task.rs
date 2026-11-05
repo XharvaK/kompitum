@@ -34,8 +34,8 @@ pub(super) struct StartArgs {
     /// Paths the task may change (repeatable); none means the whole repository.
     #[arg(long = "scope", value_name = "GLOB")]
     pub scope: Vec<String>,
-    /// The worker: go or free.
-    #[arg(long, value_parser = ["go", "free"])]
+    /// Which workers to use, in order: auto is Command Code then opencode Go, free is opencode free then both. Default: what lc workers shows
+    #[arg(long, value_parser = ["auto", "cc", "go", "free"])]
     pub worker: Option<String>,
     /// Seconds without output or CPU before the turn is cut (default 900).
     #[arg(long)]
@@ -72,6 +72,25 @@ pub(super) struct WaitArgs {
     /// Seconds a name not known yet stays pending, for a start still on its way (default 30).
     #[arg(long, default_value_t = 30.0)]
     pub grace: f64,
+}
+
+#[derive(clap::Args)]
+pub(super) struct WorkersArgs {
+    /// Which workers new tasks use, in order: auto is Command Code then opencode Go, free is opencode free then both
+    #[arg(long, value_parser = ["auto", "cc", "go", "free"])]
+    pub mode: Option<String>,
+    /// Mark this worker as out
+    #[arg(long, value_parser = ["cc", "go", "free"], requires = "until")]
+    pub block: Option<String>,
+    /// When it is back: 2026-11-23, 2026-11-23 15:36, or a span such as 3h or 2d
+    #[arg(long, requires = "block")]
+    pub until: Option<String>,
+    /// Why, in your words
+    #[arg(long, requires = "block")]
+    pub reason: Option<String>,
+    /// Say this worker is back now
+    #[arg(long, value_parser = ["cc", "go", "free"])]
+    pub clear: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -256,6 +275,72 @@ pub(super) fn task(
     }))
 }
 
+fn money(value: &Value) -> String {
+    format!("${:.2}", value.as_f64().unwrap_or(0.0))
+}
+
+fn workers_human(r: &Value) -> String {
+    let workers = r["workers"].as_array().cloned().unwrap_or_default();
+    let by_key = |key: &str| workers.iter().find(|worker| worker["key"].as_str() == Some(key)).cloned();
+    let labels: Vec<String> = r["chain"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(&by_key)
+        .filter_map(|worker| worker["label"].as_str().map(String::from))
+        .collect();
+    let mut out = format!("Mode {}: {}. ", r["mode"].as_str().unwrap_or("auto"), labels.join(", then "));
+    match r["next"].as_str().and_then(&by_key).and_then(|worker| worker["label"].as_str().map(String::from)) {
+        Some(label) => out.push_str(&format!("The next task goes to {label}.")),
+        None => out.push_str(r["all_out"].as_str().unwrap_or("No worker can take a task.")),
+    }
+    out.push('\n');
+    for worker in &workers {
+        let label = worker["label"].as_str().unwrap_or("?");
+        let tail = match worker["state"].as_str() {
+            Some("out") => {
+                let sentence = worker["sentence"].as_str().unwrap_or_default();
+                let rest = sentence.strip_prefix(label).map(str::trim_start).unwrap_or_default();
+                rest.strip_prefix("is ").unwrap_or(rest)
+            }
+            Some("not_installed") => "not installed",
+            _ => "ready",
+        };
+        out.push_str(&format!("\n{label:<14} {tail}"));
+    }
+    out.push_str(&format!("\n\n{:<14} {:<11}{:<11}{}", "Spent", "5 hours", "week", "month"));
+    for worker in &workers {
+        let spend = &worker["spend"];
+        out.push_str(&format!(
+            "\n{:<14} {:<11}{:<11}{}",
+            worker["label"].as_str().unwrap_or("?"),
+            money(&spend["five_hours"]["cost_usd"]),
+            money(&spend["week"]["cost_usd"]),
+            money(&spend["month"]["cost_usd"])
+        ));
+    }
+    for warning in r["warnings"].as_array().into_iter().flatten() {
+        out.push_str(&format!("\nproblem: {}", warning.as_str().unwrap_or_default()));
+    }
+    out
+}
+
+/// `lc workers`: what can take a task, or change the order and the blocks.
+pub(super) fn workers(a: WorkersArgs, call: impl Fn(&str, Value) -> Result<Value, RpcError>) -> Result<Out, RpcError> {
+    let setting = a.mode.is_some() || a.block.is_some() || a.clear.is_some();
+    let r = if setting {
+        let block = match (&a.block, &a.until) {
+            (Some(worker), Some(until)) => Some(json!({"worker": worker, "until": until, "reason": a.reason})),
+            _ => None,
+        };
+        call("workers.set", json!({"mode": a.mode, "block": block, "clear": a.clear}))?
+    } else {
+        call("workers.show", json!({}))?
+    };
+    Ok(Out { json: r.clone(), human: workers_human(&r) })
+}
+
 /// The wait's contract: nothing until the end, one JSON line per task, then
 /// a summary. Exit 0 when all are ok, 1 on any problem, 2 on its own timeout.
 fn wait(a: &WaitArgs, call: &impl Fn(&str, Value) -> Result<Value, RpcError>) -> Result<(), RpcError> {
@@ -332,5 +417,45 @@ fn wait(a: &WaitArgs, call: &impl Fn(&str, Value) -> Result<Value, RpcError>) ->
             };
             std::process::exit(code);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_workers_table_is_the_documented_shape() {
+        let r = json!({
+            "mode": "auto", "chain": ["cc", "go"], "next": "go", "all_out": null, "warnings": [],
+            "workers": [
+                {"key": "cc", "label": "Command Code", "state": "out", "until_ms": 1, "source": "person",
+                 "window": "", "message": "monthly credits dead", "refusals": 0,
+                 "sentence": "Command Code is out by a person's word (monthly credits dead), back on Mon 23 Nov at 00:00.",
+                 "spend": {"five_hours": {"runs": 0, "cost_usd": 0.0}, "week": {"runs": 0, "cost_usd": 0.0},
+                           "month": {"runs": 0, "cost_usd": 1.2}}},
+                {"key": "go", "label": "opencode Go", "state": "ready", "until_ms": 0, "source": null,
+                 "window": "", "message": "", "sentence": "", "refusals": 0,
+                 "spend": {"five_hours": {"runs": 1, "cost_usd": 0.39}, "week": {"runs": 2, "cost_usd": 1.96},
+                           "month": {"runs": 3, "cost_usd": 3.1}}},
+                {"key": "free", "label": "opencode free", "state": "not_installed", "until_ms": 0, "source": null,
+                 "window": "", "message": "", "sentence": "", "refusals": 0,
+                 "spend": {"five_hours": {"runs": 0, "cost_usd": 0.0}, "week": {"runs": 0, "cost_usd": 0.0},
+                           "month": {"runs": 0, "cost_usd": 0.0}}}
+            ]
+        });
+        assert_eq!(
+            workers_human(&r),
+            "Mode auto: Command Code, then opencode Go. The next task goes to opencode Go.\n\
+             \n\
+             Command Code   out by a person's word (monthly credits dead), back on Mon 23 Nov at 00:00.\n\
+             opencode Go    ready\n\
+             opencode free  not installed\n\
+             \n\
+             Spent          5 hours    week       month\n\
+             Command Code   $0.00      $0.00      $1.20\n\
+             opencode Go    $0.39      $1.96      $3.10\n\
+             opencode free  $0.00      $0.00      $0.00"
+        );
     }
 }

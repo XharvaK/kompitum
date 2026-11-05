@@ -631,6 +631,23 @@ fn job_kills_on_close() -> bool {
     }
 }
 
+/// The local offset from UTC now, in minutes east (a person's calendar).
+pub fn utc_offset_minutes() -> i32 {
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+    // windows-sys 0.61 names only the invalid value; the API's own daylights are 2.
+    const TIME_ZONE_ID_DAYLIGHT: u32 = 2;
+    let mut zone: TIME_ZONE_INFORMATION = unsafe { zeroed() };
+    match unsafe { GetTimeZoneInformation(&mut zone) } {
+        TIME_ZONE_ID_DAYLIGHT => -(zone.Bias + zone.DaylightBias),
+        _ => -(zone.Bias + zone.StandardBias),
+    }
+}
+
+/// This machine's home folder, for a CLI's own state.
+pub fn home_dir() -> PathBuf {
+    std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\"))
+}
+
 pub fn parent_pid() -> u32 {
     use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
     unsafe {

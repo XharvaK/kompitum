@@ -7,7 +7,7 @@
 //! beside it says which turn runs next, and the last turn is repeated after.
 
 use serde_json::Value;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,24 @@ fn main() {
         eprintln!("limen-test-worker: a script path is required");
         std::process::exit(2);
     };
+    // The runner's route check: an export, never a turn, so the counter stays.
+    if args.get(1).map(String::as_str) == Some("session") && args.get(2).map(String::as_str) == Some("export") {
+        let value = std::fs::read_to_string(&script).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        if let Some(ms) = value.as_ref().and_then(|value| value.get("export_sleep_ms")).and_then(Value::as_u64) {
+            std::thread::sleep(Duration::from_millis(ms));
+        }
+        let export = value
+            .as_ref()
+            .and_then(|value| value.get("export"))
+            .and_then(Value::as_str)
+            .map(String::from)
+            .unwrap_or_else(|| {
+                r#"{"messages":[{"model":{"providerID":"opencode-go","id":"deepseek-v4.1-flash","variant":"max"}}]}"#
+                    .into()
+            });
+        println!("{export}");
+        return;
+    }
     match args.get(1).map(String::as_str) {
         Some("--version") => {
             println!("v2.0.0");
@@ -98,6 +116,12 @@ fn act(action: &Value, script: &str) {
                 text.push_str(&arg);
                 text.push('\n');
             }
+            let _ = std::fs::write(path, text);
+        }
+        "stdin_to" => {
+            let path = value.as_str().unwrap_or_default();
+            let mut text = String::new();
+            let _ = std::io::stdin().read_to_string(&mut text);
             let _ = std::fs::write(path, text);
         }
         "env_to" => {

@@ -123,8 +123,10 @@ pub struct Task {
     pub worktree: Option<String>,
     /// Empty: the whole repo.
     pub scope: Vec<String>,
-    /// "go" or "free" in this part.
+    /// The key of the current or last turn's worker, empty until one is picked.
     pub worker: String,
+    /// The worker keys `task.start` fixed, in the order to try them.
+    pub chain: Vec<String>,
     pub idle_s: u64,
     pub wall_s: u64,
     /// The caller's terminal.

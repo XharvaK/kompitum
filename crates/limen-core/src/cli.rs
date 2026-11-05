@@ -85,6 +85,8 @@ enum Cmd {
         #[command(subcommand)]
         action: TaskCmd,
     },
+    /// See which workers can take a task, change the order, or say when one is back.
+    Workers(WorkersArgs),
     /// Follow fact changes as they happen (one JSON line each when piped).
     Events(SubscribeParams),
     /// Templates you can run by name (~/.config/limen-core/templates).
@@ -647,6 +649,7 @@ fn run(cmd: Option<Cmd>, json: bool, asked: bool) -> Result<Option<Out>, RpcErro
             Some(out) => out,
             None => return Ok(None),
         },
+        Cmd::Workers(a) => workers(a, call)?,
         Cmd::RunLogged(args) => crate::task::runner::run(args),
         Cmd::File { action } => match file(action, asked, call)? {
             Some(out) => out,
@@ -907,6 +910,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("task wait", "task.wait"),
     ("task cancel", "task.cancel"),
     ("task discard", "task.discard"),
+    ("workers", "workers.show"),
+    ("workers", "workers.set"),
 ];
 /// Client-only methods: handshake and opaque document storage.
 pub const API_ONLY: &[&str] = &["hello", "doc.get", "doc.set"];

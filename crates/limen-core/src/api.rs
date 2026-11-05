@@ -166,6 +166,12 @@ methods! { Ctx<'_>;
     "task.discard" => task_discard, TaskDiscardParams => TaskDiscardResult,
         "Remove a finished task's worktree and branch, keeping its folder and record. A queued or running task must be cancelled first.",
         errors ["not_found", "running"];
+    "workers.show" => workers_show, Empty => WorkersView,
+        "Which workers can take a task, the order new tasks try them, and what each has spent.",
+        errors [];
+    "workers.set" => workers_set, WorkersSetParams => WorkersView,
+        "Change the order, mark a worker out until a time, or say one is back now.",
+        errors ["invalid_params"];
     "rpc.discover" => rpc_discover, Empty => serde_json::Value,
         "The whole API as an OpenRPC document: every method with its params, result and errors in JSON Schema.",
         errors [];

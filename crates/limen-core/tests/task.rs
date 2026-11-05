@@ -9,6 +9,10 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
+// Limen's worker-loop tests that need more than part A, apart from upstream's file.
+#[path = "task/workers.rs"]
+mod workers;
+
 const BIN: &str = env!("CARGO_BIN_EXE_limen-core");
 const TEST_WORKER: &str = env!("CARGO_BIN_EXE_limen-test-worker");
 static LIVE: Mutex<Vec<(String, PathBuf)>> = Mutex::new(Vec::new());
@@ -16,6 +20,8 @@ static LIVE: Mutex<Vec<(String, PathBuf)>> = Mutex::new(Vec::new());
 struct Session {
     name: String,
     root: PathBuf,
+    /// Environment this session's core gets on top of the inherited one.
+    envs: Mutex<Vec<(String, String)>>,
 }
 
 impl Session {
@@ -26,7 +32,12 @@ impl Session {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         LIVE.lock().unwrap().push((name.clone(), root.clone()));
-        Session { name, root }
+        Session { name, root, envs: Mutex::new(Vec::new()) }
+    }
+
+    /// Set an environment value for this session's core (a replacement, not a default).
+    fn env(&self, key: &str, value: impl AsRef<std::ffi::OsStr>) {
+        self.envs.lock().unwrap().push((key.to_string(), value.as_ref().to_string_lossy().into_owned()));
     }
 
     fn cmd(&self) -> Command {
@@ -36,6 +47,7 @@ impl Session {
             .env("XDG_STATE_HOME", self.root.join("state"))
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             .env("LIMEN_SETTLE_MS", "0")
+            .env("LIMEN_CC_PROJECTS", self.root.join("cc-projects"))
             .env_remove("LIMEN_TERMINAL_ID")
             .env_remove("LIMEN_SCOPE")
             .env_remove("LIMEN_SOCKET")
@@ -46,6 +58,9 @@ impl Session {
             .env_remove("SSH_TTY");
         #[cfg(windows)]
         cmd.env("COMSPEC", real_cmd());
+        for (key, value) in self.envs.lock().unwrap().iter() {
+            cmd.env(key, value);
+        }
         no_window(&mut cmd);
         cmd
     }
@@ -75,14 +90,27 @@ impl Session {
         self.root.join("state").join("limen-core").join(&self.name)
     }
 
-    /// The config the core reads: one worker CLI, the test worker behind a script.
+    /// The config the core reads: both worker CLIs, the test worker behind one script.
     fn config(&self, script: &Path, extra: &str) {
+        self.config_for(script, script, extra);
+    }
+
+    /// Both keys, each naming its own script. A test that wants no Command Code
+    /// names a path that does not exist.
+    fn config_for(&self, opencode: &Path, commandcode: &Path, extra: &str) {
         let dir = self.root.join("config").join("limen-core");
         std::fs::create_dir_all(&dir).unwrap();
         let worker = serde_json::to_string(TEST_WORKER).unwrap();
-        let script = serde_json::to_string(script.to_str().unwrap()).unwrap();
-        let text = format!("[workers]\n{extra}opencode = [{worker}, {script}]\n");
+        let opencode = serde_json::to_string(opencode.to_str().unwrap()).unwrap();
+        let commandcode = serde_json::to_string(commandcode.to_str().unwrap()).unwrap();
+        let text =
+            format!("[workers]\n{extra}opencode = [{worker}, {opencode}]\ncommandcode = [{worker}, {commandcode}]\n");
         std::fs::write(dir.join("config.toml"), text).unwrap();
+    }
+
+    /// A path under the session that names no program.
+    fn missing_cc(&self) -> PathBuf {
+        self.root.join("no-command-code.mjs")
     }
 
     fn script(&self, name: &str, turns: Value) -> PathBuf {
@@ -217,7 +245,7 @@ fn a_task_runs_in_a_worktree_and_reports() {
     actions.extend(say(&stream(session, &report)));
     let script = s.script("one", json!([actions]));
     s.config(&script, "");
-    let started = s.start("fix-1", "write made.txt", &repo, &[]);
+    let started = s.start("fix-1", "write made.txt", &repo, &["--worker", "go"]);
     assert_eq!(started["state"], "running", "{started}");
     let (exit, rows, summary) = s.wait(&["fix-1"], &["--timeout", "30"]);
     assert_eq!(exit, 0, "{rows:?} {summary}");
@@ -254,11 +282,11 @@ fn a_failed_worker_wakes_a_wait_for_several_at_once() {
     let bad = json!([{"out": stream("ses_bad", "never")[0]}, {"exit": 3}]);
     let script = s.script("two", json!([slow, bad]));
     s.config(&script, "");
-    s.start("slow", "sleep", &repo, &["--scope", "src/**"]);
+    s.start("slow", "sleep", &repo, &["--worker", "go", "--scope", "src/**"]);
     wait_until("the first worker took its turn", || {
         std::fs::read_to_string(format!("{}.count", script.display())).is_ok_and(|c| c.trim() == "1")
     });
-    s.start("bad", "exit 3", &repo, &["--scope", "docs/**"]);
+    s.start("bad", "exit 3", &repo, &["--worker", "go", "--scope", "docs/**"]);
     let start = Instant::now();
     let (exit, rows, summary) = s.wait(&["bad", "slow"], &["--timeout", "20"]);
     assert!(start.elapsed() < Duration::from_secs(10), "a bad end wakes at once");
@@ -285,7 +313,7 @@ fn an_error_event_fails_a_turn_that_exits_0() {
     let script =
         s.script("error", json!([[{"out": error.to_string()}, {"out": stream("ses_error", "text")[3]}, {"exit": 0}]]));
     s.config(&script, "");
-    s.start("fix-3", "error", &repo, &[]);
+    s.start("fix-3", "error", &repo, &["--worker", "go"]);
     let (exit, rows, _) = s.wait(&["fix-3"], &["--timeout", "30"]);
     assert_eq!(exit, 1, "{rows:?}");
     assert_eq!(rows[0]["state"], "failed", "{rows:?}");
@@ -298,7 +326,7 @@ fn a_silent_worker_is_cut_at_its_idle_limit() {
     let repo = s.repo();
     let script = s.script("silent", json!([[{"sleep_ms": 60000}]]));
     s.config(&script, "");
-    s.start("fix-4", "silent", &repo, &["--idle", "2"]);
+    s.start("fix-4", "silent", &repo, &["--worker", "go", "--idle", "2"]);
     let (exit, rows, _) = s.wait(&["fix-4"], &["--timeout", "60"]);
     assert_eq!(exit, 1, "{rows:?}");
     assert_eq!(rows[0]["state"], "timed_out", "{rows:?}");
@@ -309,11 +337,11 @@ fn a_silent_worker_is_cut_at_its_idle_limit() {
 fn a_quiet_worker_using_cpu_is_not_idle() {
     let s = Session::new();
     let repo = s.repo();
-    let mut actions = vec![json!({"burn_ms": 5000})];
+    let mut actions = vec![json!({"burn_ms": 8000})];
     actions.extend(say(&stream("ses_burn", "all done")));
     let script = s.script("burn", json!([actions]));
     s.config(&script, "");
-    s.start("fix-5", "burn", &repo, &["--idle", "2"]);
+    s.start("fix-5", "burn", &repo, &["--worker", "go", "--idle", "4"]);
     let (exit, rows, _) = s.wait(&["fix-5"], &["--timeout", "60"]);
     assert_eq!(exit, 0, "{rows:?}");
     assert_eq!(rows[0]["state"], "done", "{rows:?}");
@@ -325,7 +353,7 @@ fn a_worker_past_its_time_is_cut() {
     let repo = s.repo();
     let script = s.script("wall", json!([[{"sleep_ms": 60000}]]));
     s.config(&script, "");
-    s.start("fix-6", "sleep past its time", &repo, &["--timeout", "2"]);
+    s.start("fix-6", "sleep past its time", &repo, &["--worker", "go", "--timeout", "2"]);
     let (exit, rows, _) = s.wait(&["fix-6"], &["--timeout", "60"]);
     assert_eq!(exit, 1, "{rows:?}");
     assert_eq!(rows[0]["state"], "timed_out", "{rows:?}");
@@ -340,7 +368,7 @@ fn cancel_ends_the_worker_and_what_it_started() {
     let pidfile = pidfile.display().to_string();
     let script = s.script("child", json!([[{"child": pidfile}, {"sleep_ms": 60000}]]));
     s.config(&script, "");
-    s.start("fix-7", "start a child", &repo, &[]);
+    s.start("fix-7", "start a child", &repo, &["--worker", "go"]);
     let pid_path = s.root.join("grandchild.pid");
     wait_until("the grandchild's pid", || std::fs::read_to_string(&pid_path).is_ok_and(|text| !text.trim().is_empty()));
     let pid: u64 = std::fs::read_to_string(&pid_path).unwrap().trim().parse().unwrap();
@@ -358,7 +386,7 @@ fn a_task_survives_a_core_restart() {
     actions.extend(say(&stream("ses_restart", "still here")));
     let script = s.script("restart", json!([actions]));
     s.config(&script, "");
-    s.start("fix-8", "survive a restart", &repo, &[]);
+    s.start("fix-8", "survive a restart", &repo, &["--worker", "go"]);
     std::thread::sleep(Duration::from_millis(1500));
     let (code, _, err) = s.out(&["server", "restart"]);
     assert_eq!(code, 0, "{err}");
@@ -378,11 +406,11 @@ fn the_cap_and_overlapping_scopes_queue_in_order() {
     short.extend(say(&stream("ses_b", "b done")));
     let script = s.script("queue", json!([long, short, short]));
     s.config(&script, "cap = 2\n");
-    s.start("a", "long", &repo, &["--scope", "src/**"]);
-    let b = s.start("b", "overlapping", &repo, &["--scope", "src/x/**"]);
+    s.start("a", "long", &repo, &["--worker", "go", "--scope", "src/**"]);
+    let b = s.start("b", "overlapping", &repo, &["--worker", "go", "--scope", "src/x/**"]);
     assert_eq!(b["state"], "queued", "{b}");
     assert!(b["waiting"].as_str().unwrap().contains("a"), "{b}");
-    let c = s.start("c", "disjoint", &repo, &["--scope", "docs/**"]);
+    let c = s.start("c", "disjoint", &repo, &["--worker", "go", "--scope", "docs/**"]);
     assert_eq!(c["state"], "running", "{c}");
     let (exit, rows, _) = s.wait(&["a"], &["--timeout", "30"]);
     assert_eq!(exit, 0, "{rows:?}");
@@ -402,7 +430,7 @@ fn a_change_outside_the_scope_is_marked() {
     actions.extend(say(&stream("ses_scope", "done")));
     let script = s.script("scope", json!([actions]));
     s.config(&script, "");
-    s.start("fix-10", "leave the scope", &repo, &["--scope", "src/**"]);
+    s.start("fix-10", "leave the scope", &repo, &["--worker", "go", "--scope", "src/**"]);
     let (exit, rows, _) = s.wait(&["fix-10"], &["--timeout", "30"]);
     assert_eq!(exit, 1, "a change outside the scope is not ok: {rows:?}");
     assert_eq!(rows[0]["state"], "done", "{rows:?}");
@@ -416,7 +444,7 @@ fn discard_removes_the_worktree_and_branch() {
     let repo = s.repo();
     let script = s.script("discard", json!([[{"sleep_ms": 60000}]]));
     s.config(&script, "");
-    s.start("fix-11", "discard me", &repo, &[]);
+    s.start("fix-11", "discard me", &repo, &["--worker", "go"]);
     let worktree = s.task("fix-11")["task"]["worktree"].as_str().unwrap().to_string();
     let (_, _, err) = s.out(&["task", "discard", "fix-11"]);
     let error: Value = serde_json::from_str(err.trim()).unwrap();
@@ -440,7 +468,7 @@ fn a_taken_or_bad_name_and_a_folder_without_git_are_refused() {
     let error: Value = serde_json::from_str(err.trim()).unwrap();
     assert_eq!(error["error"]["kind"], "invalid_params", "{error}");
 
-    s.start("same", "first", &repo, &[]);
+    s.start("same", "first", &repo, &["--worker", "go"]);
     let (_, _, err) = s.out(&["task", "start", "same", "--brief", &first_brief, "--in", repo.to_str().unwrap()]);
     let error: Value = serde_json::from_str(err.trim()).unwrap();
     assert_eq!(error["error"]["kind"], "name_taken", "{error}");
@@ -456,8 +484,8 @@ fn a_taken_or_bad_name_and_a_folder_without_git_are_refused() {
 
 /// Every other test names its worker in the config, which is how this hid: with
 /// no config the worker comes from PATH, and on Windows npm leaves a shell script
-/// called `opencode` beside the real program. Finding the worker and asking its
-/// version both come before the check for a repo, so `not_a_repo` proves them.
+/// called `opencode` beside the real program. Finding the worker comes before the
+/// check for a repo, so `not_a_repo` proves it.
 #[test]
 fn a_worker_on_path_is_found_past_a_shell_script_of_the_same_name() {
     let s = Session::new();
@@ -490,7 +518,7 @@ fn a_broken_record_costs_one_task() {
     actions.extend(say(&stream("ses_good", "good")));
     let script = s.script("broken", json!([actions]));
     s.config(&script, "");
-    s.start("good", "fine", &repo, &[]);
+    s.start("good", "fine", &repo, &["--worker", "go"]);
     let (exit, _, _) = s.wait(&["good"], &["--timeout", "30"]);
     assert_eq!(exit, 0);
     s.out(&["server", "stop"]);
@@ -523,7 +551,7 @@ fn a_wait_can_reach_the_core_before_the_start() {
         .spawn()
         .unwrap();
     std::thread::sleep(Duration::from_millis(500));
-    s.start("fix-14", "arrive late", &repo, &[]);
+    s.start("fix-14", "arrive late", &repo, &["--worker", "go"]);
     let out = wait.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
     let text = String::from_utf8_lossy(&out.stdout);

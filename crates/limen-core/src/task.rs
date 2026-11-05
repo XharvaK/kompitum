@@ -2,18 +2,24 @@
 //! One pump changes tasks one at a time; the terminal runs the runner, which
 //! runs the worker, and the process's exit is what ends a turn.
 
+pub mod clock;
+pub mod commandcode;
 pub mod decide;
 pub mod git;
+pub mod opencode;
+pub mod quota;
 pub mod runner;
 pub mod types;
 pub mod worker;
+pub mod workers;
 
 use crate::api::{Label, RunParams};
 use crate::rpc::RpcError;
 use crate::runtime::{Core, now_ms};
 use crate::task::decide::{Step, TerminalNow};
+use crate::task::opencode::RouteCheck;
 use crate::task::types::{Beat, Ending, Task, TaskLine, TaskState, Turn};
-use crate::task::worker::TurnOutcome;
+use crate::task::worker::{TurnOutcome, Worker};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -36,6 +42,12 @@ pub struct Store {
     pub lock: tokio::sync::Mutex<()>,
     /// Records that could not be read when the core started, one line each.
     pub problems: Vec<String>,
+    /// The worker chain's mode and blocks, written on each change.
+    pub workers: std::sync::Mutex<workers::WorkersFile>,
+    /// Why `workers.json` could not be read, when it could not.
+    pub worker_problem: Option<String>,
+    /// Command Code's last start, kept in memory only, for its 8 s slot.
+    pub last_cc_start_ms: std::sync::Mutex<Option<u64>>,
 }
 
 impl Store {
@@ -74,12 +86,38 @@ impl Store {
                 }
             }
         }
+        let workers_path = state.join("workers.json");
+        let mut worker_file = workers::WorkersFile::default();
+        let mut worker_problem = None;
+        match std::fs::read(&workers_path) {
+            Ok(bytes) => match serde_json::from_slice::<workers::WorkersFile>(&bytes) {
+                Ok(file) => worker_file = file,
+                Err(e) => {
+                    // A damaged file is a warning, never a reason to stop the core.
+                    eprintln!("core: workers.json: cannot read it; moved to workers.broken.json: {e}");
+                    let broken = state.join("workers.broken.json");
+                    let _ = std::fs::remove_file(&broken);
+                    let _ = std::fs::rename(&workers_path, &broken);
+                    worker_problem = Some(format!("workers.json: {e}"));
+                }
+            },
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => worker_problem = Some(format!("workers.json: {e}")),
+        }
         Store {
             tasks: std::sync::Mutex::new(tasks),
             seq: std::sync::atomic::AtomicU64::new(highest + 1),
             lock: tokio::sync::Mutex::new(()),
             problems,
+            workers: std::sync::Mutex::new(worker_file),
+            worker_problem,
+            last_cc_start_ms: std::sync::Mutex::new(None),
         }
+    }
+
+    /// The mode and blocks as the pump last saw them.
+    pub fn workers(&self) -> workers::WorkersFile {
+        self.workers.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     pub fn next_seq(&self) -> u64 {
@@ -135,6 +173,12 @@ fn save(state: &Path, task: &Task) {
     {
         eprintln!("core: task {}: cannot save its record: {e}", task.name);
     }
+}
+
+/// The worker file changes rarely; each change lands whole.
+pub fn save_workers(state: &Path, file: &workers::WorkersFile) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(file).map_err(std::io::Error::other)?;
+    crate::paths::write_atomic(&state.join("workers.json"), &bytes)
 }
 
 fn write_result(state: &Path, task: &Task) {
@@ -242,8 +286,37 @@ async fn pump_queued(core: &Arc<Core>, task: Task) {
             }
         }
         Ok(()) => {
-            if let Err(error) = start_task(core, &task).await {
-                fail_start(core, &task, error).await;
+            let now = now_ms();
+            let config = match crate::config::load(&core.paths.config) {
+                Ok(config) => config,
+                Err(error) => return fail_start(core, &task, error).await,
+            };
+            let file = core.tasks.workers();
+            let installed = |worker: Worker| worker::prefix(worker, &config).is_ok();
+            let chain: Vec<Worker> = task.chain.iter().filter_map(|key| Worker::from_key(key).ok()).collect();
+            let chain = if chain.is_empty() { workers::chain(workers::Mode::Auto) } else { chain };
+            let worker = match workers::pick(&chain, &file, installed, now, crate::platform::utc_offset_minutes()) {
+                Ok(worker) => worker,
+                Err(words) => {
+                    let error = RpcError::new("worker_out", words, "see `lc workers`");
+                    return fail_start(core, &task, error).await;
+                }
+            };
+            let last = *core.tasks.last_cc_start_ms.lock().unwrap_or_else(|p| p.into_inner());
+            if let Err(waiting) = decide::start_slot(worker, last, now) {
+                if task.waiting.as_deref() != Some(waiting.as_str()) {
+                    update(core, &task.name, |task| task.waiting = Some(waiting));
+                    core.changed.notify_waiters();
+                }
+                return;
+            }
+            match start_task(core, &task, worker).await {
+                Ok(()) => {
+                    if worker == Worker::Cc {
+                        *core.tasks.last_cc_start_ms.lock().unwrap_or_else(|p| p.into_inner()) = Some(now_ms());
+                    }
+                }
+                Err(error) => fail_start(core, &task, error).await,
             }
         }
     }
@@ -281,6 +354,13 @@ async fn sweep_survivors(token: Option<String>) -> u32 {
     crate::sweep::members(&tokens).len() as u32
 }
 
+/// The last bytes of a turn's stderr, which is where a CLI puts its limits.
+fn read_tail(path: &Path, max: usize) -> String {
+    let Ok(bytes) = std::fs::read(path) else { return String::new() };
+    let start = bytes.len().saturating_sub(max);
+    String::from_utf8_lossy(&bytes[start..]).into_owned()
+}
+
 /// The turn ended: read what it wrote, judge it, keep the diff and the result.
 async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&TerminalNow>) {
     if stopping(core) {
@@ -289,15 +369,37 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     let Some(mut task) = core.tasks.snapshot(name) else { return };
     let Some(index) = task.turns.iter().position(|turn| turn.n == n) else { return };
     let folder = task_folder(&core.paths.state, name);
+    let key = task.turns[index].worker.clone();
+    let worker = Worker::from_key(&key).unwrap_or(Worker::Go);
     let path = folder.join(format!("turn-{n}.jsonl"));
-    let outcome = tokio::task::spawn_blocking(move || match std::fs::read(&path) {
-        Ok(bytes) => TurnOutcome::from_bytes(&bytes),
-        Err(_) => TurnOutcome::default(),
+    let err_path = folder.join(format!("turn-{n}.err"));
+    let route_path = folder.join(format!("turn-{n}.route.json"));
+    let (outcome, warning, route, stderr_tail) = tokio::task::spawn_blocking(move || {
+        let mut outcome = match std::fs::read(&path) {
+            Ok(bytes) => TurnOutcome::from_bytes(worker, &bytes),
+            Err(_) => TurnOutcome::default(),
+        };
+        let mut warning = None;
+        if worker == Worker::Cc {
+            match outcome.session.as_deref().and_then(crate::task::commandcode::session_cost) {
+                Some(cost) => outcome.usage.cost_usd = cost,
+                None => {
+                    if let Some(session) = outcome.session.clone() {
+                        warning = Some(format!(
+                            "Command Code's transcript for session {session} was not found, so this turn's cost is unknown"
+                        ));
+                    }
+                }
+            }
+        }
+        let route = std::fs::read(&route_path).ok().and_then(|bytes| serde_json::from_slice::<RouteCheck>(&bytes).ok());
+        (outcome, warning, route, read_tail(&err_path, 8 * 1024))
     })
     .await
     .unwrap_or_default();
     let code = terminal.and_then(|terminal| terminal.exit_code).or_else(|| read_exit(&core.paths.state, name, n));
     let ended = now_ms();
+    let offset = crate::platform::utc_offset_minutes();
     {
         let turn = &mut task.turns[index];
         turn.session = outcome.session.clone();
@@ -306,7 +408,42 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         turn.exit_code = code;
         turn.ended_ms = Some(ended);
     }
-    let (state, error) = decide::turn_end(&task, terminal, code, &outcome);
+    if let Some(warning) = warning {
+        task.warnings.push(warning);
+    }
+    let end = decide::turn_end(&task, terminal, code, &outcome, route.as_ref(), &stderr_tail, ended, offset);
+    let mut error = end.error;
+    if let Some(refusal) = &end.refusal {
+        let before = core.tasks.workers();
+        let mut file = before.clone();
+        let current = file.blocks.get(&key).cloned();
+        let new = workers::after_refusal(current.as_ref(), refusal, Some(&task.name), ended);
+        if let Some(block) = &new {
+            file.blocks.insert(key.clone(), block.clone());
+        }
+        let block = new.or_else(|| file.blocks.get(&key).filter(|block| block.until_ms > ended).cloned());
+        if let Some(block) = block {
+            error =
+                Some(format!("QUOTA EXHAUSTED: {}", workers::sentence(&worker::label_of(&key), &block, ended, offset)));
+        }
+        if file != before {
+            if let Err(e) = save_workers(&core.paths.state, &file) {
+                task.warnings.push(format!("cannot save workers.json: {e}"));
+            }
+            *core.tasks.workers.lock().unwrap_or_else(|p| p.into_inner()) = file;
+        }
+    }
+    if end.state == TaskState::Done {
+        let before = core.tasks.workers();
+        let mut file = before.clone();
+        workers::after_good_turn(&mut file, &key);
+        if file != before {
+            if let Err(e) = save_workers(&core.paths.state, &file) {
+                task.warnings.push(format!("cannot save workers.json: {e}"));
+            }
+            *core.tasks.workers.lock().unwrap_or_else(|p| p.into_inner()) = file;
+        }
+    }
     let changed = match task.worktree.as_deref() {
         Some(worktree) => match git::changed_files(worktree, &task.base, &task.scope).await {
             Ok(changed) => changed,
@@ -317,7 +454,7 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         },
         None => Vec::new(),
     };
-    task.state = state;
+    task.state = end.state;
     task.error = error;
     task.changed = changed;
     task.ended_ms = Some(ended);
@@ -365,11 +502,13 @@ async fn fail_start(core: &Arc<Core>, task: &Task, error: RpcError) {
     core.changed.notify_waiters();
 }
 
-async fn start_task(core: &Arc<Core>, task: &Task) -> Result<(), RpcError> {
+async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(), RpcError> {
     let config = crate::config::load(&core.paths.config)?;
-    let worker = worker::Worker::from_key(&task.worker)?;
-    let prefix = worker::opencode_prefix(&config)?;
-    worker::check_version(&prefix).await?;
+    let prefix = worker::prefix(worker, &config)?;
+    // The version check is OpenCode's alone.
+    if worker != Worker::Cc {
+        worker::check_version(&prefix).await?;
+    }
     let folder = task_folder(&core.paths.state, &task.name);
     std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
     let brief = std::fs::read_to_string(folder.join("brief.md"))
@@ -380,7 +519,8 @@ async fn start_task(core: &Arc<Core>, task: &Task) -> Result<(), RpcError> {
     let worktree = worktree_path(&core.paths.state, &task.name).display().to_string();
     git::add_worktree(&task.repo, &worktree, &task.task_branch, &task.base).await?;
     update(core, &task.name, |task| task.worktree = Some(worktree.clone()));
-    let command = worker::opencode_command(&prefix, worker, &task.name, &prompt.display().to_string(), None);
+    let session = task.turns.last().and_then(|turn| turn.session.clone());
+    let command = worker::turn_command(worker, &prefix, &task.name, &prompt.display().to_string(), session.as_deref());
     let exe = std::env::current_exe().map_err(|e| unavailable(format!("cannot find this lc: {e}")))?;
     let mut argv = vec![
         exe.display().to_string(),
@@ -392,26 +532,39 @@ async fn start_task(core: &Arc<Core>, task: &Task) -> Result<(), RpcError> {
         "--turn".into(),
         "1".into(),
         "--worker".into(),
-        task.worker.clone(),
-        "--".into(),
+        worker.key().into(),
     ];
-    argv.extend(command);
+    if let Some(stdin) = &command.stdin {
+        argv.push("--stdin".into());
+        argv.push(stdin.clone());
+    }
+    if worker != Worker::Cc {
+        argv.push("--route".into());
+        argv.push(worker.route().into());
+        if let Some(prefix_len) = command.prefix_len {
+            argv.push("--prefix-len".into());
+            argv.push(prefix_len.to_string());
+        }
+    }
+    argv.push("--".into());
+    argv.extend(command.argv);
     let params = RunParams {
         argv,
         cwd: Some(worktree),
         name: Some(task.name.clone()),
-        labels: vec![Label("task".into(), task.name.clone()), Label("worker".into(), task.worker.clone())],
+        labels: vec![Label("task".into(), task.name.clone()), Label("worker".into(), worker.key().into())],
         contain: true,
         no_parent: true,
         no_notify: true,
         outlive_parent: true,
+        env: command.env,
         ..Default::default()
     };
     let started = crate::api::start_terminal(core, params, None).await?;
     let now = now_ms();
     let turn = Turn {
         n: 1,
-        worker: task.worker.clone(),
+        worker: worker.key().into(),
         terminal: Some(started.address.clone()),
         scope_token: started.scope,
         started_ms: now,
@@ -421,6 +574,7 @@ async fn start_task(core: &Arc<Core>, task: &Task) -> Result<(), RpcError> {
         task.state = TaskState::Running;
         task.started_ms = Some(now);
         task.waiting = None;
+        task.worker = worker.key().into();
         task.turns.push(turn);
     });
     core.changed.notify_waiters();

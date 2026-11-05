@@ -212,6 +212,24 @@ pub fn swap_in(from: &Path, dest: &Path, works: impl Fn(&Path) -> bool) -> io::R
     std::fs::rename(&tmp, dest)
 }
 
+/// The local offset from UTC now, in minutes east (a person's calendar).
+#[allow(deprecated)] // libc deprecated the time_t alias; localtime_r still takes it.
+pub fn utc_offset_minutes() -> i32 {
+    let now =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as libc::time_t);
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: `tm` is a valid writable tm; localtime_r fills it and leaves errno alone.
+    if unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
+        return 0;
+    }
+    (tm.tm_gmtoff / 60) as i32
+}
+
+/// This machine's home folder, for a CLI's own state.
+pub fn home_dir() -> PathBuf {
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/".into()))
+}
+
 pub fn parent_pid() -> u32 {
     std::os::unix::process::parent_id()
 }

@@ -4,8 +4,10 @@
 
 use super::*;
 use crate::task::TEXT_LIMIT;
+use crate::task::quota::Source;
 use crate::task::types::{Task, TaskLine, TaskState};
 use crate::task::worker::Worker;
+use crate::task::workers::{self, Mode, Spend};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -21,7 +23,7 @@ pub struct TaskStartParams {
     /// Paths the task may change; empty means the whole repository.
     #[serde(default)]
     pub scope: Vec<String>,
-    /// The worker: go (the default) or free.
+    /// The worker: auto (the default), cc, go or free. With none, the mode `lc workers` shows.
     #[serde(default)]
     pub worker: Option<String>,
     /// Seconds without output or CPU before the turn is cut (default 900).
@@ -45,8 +47,8 @@ pub struct TaskStartResult {
     pub worktree: Option<String>,
     /// The worker's terminal (`t7`), or null while it is still queued.
     pub terminal: Option<String>,
-    /// The worker's label ("opencode Go").
-    pub worker: String,
+    /// The worker's label ("opencode Go"), once one is picked.
+    pub worker: Option<String>,
     /// Why it is still queued, in words.
     pub waiting: Option<String>,
     /// Why it failed, when the start already went wrong.
@@ -185,11 +187,28 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
     {
         return Err(crate::task::name_taken(&p.task));
     }
-    let key = p.worker.clone().unwrap_or_else(|| "go".into());
-    let worker = Worker::from_key(&key)?;
+    let file = core.tasks.workers();
+    let mode = match p.worker.as_deref() {
+        None => file.mode,
+        Some(key) => Mode::from_key(key)
+            .ok_or_else(|| RpcError::invalid_params(format!("unknown worker {key:?}: use auto, cc, go or free")))?,
+    };
+    let chain = workers::chain(mode);
     let config = crate::config::load(&core.paths.config)?;
-    let prefix = crate::task::worker::opencode_prefix(&config)?;
-    crate::task::worker::check_version(&prefix).await?;
+    let installed = |worker: Worker| crate::task::worker::prefix(worker, &config).is_ok();
+    if !chain.iter().any(|worker| installed(*worker)) {
+        let mut words: Vec<String> = chain
+            .iter()
+            .filter_map(|worker| crate::task::worker::prefix(*worker, &config).err())
+            .map(|e| format!("{}.", e.message.trim_end_matches('.')))
+            .collect();
+        words.dedup();
+        return Err(RpcError::new(
+            "worker_missing",
+            words.join(" "),
+            "install a worker CLI, or set [workers] commandcode or [workers] opencode in ~/.config/limen-core/config.toml",
+        ));
+    }
     let folder = p.folder.clone().or_else(|| std::env::current_dir().ok().map(|p| p.display().to_string()));
     let Some(folder) = folder else { return Err(unavailable("cannot read the core's own folder")) };
     let (repo, branch, base) = crate::task::git::locate(&folder).await?;
@@ -216,7 +235,8 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         task_branch: format!("task/{}", p.task),
         worktree: None,
         scope: p.scope,
-        worker: key,
+        worker: String::new(),
+        chain: chain.iter().map(|worker| worker.key().to_string()).collect(),
         idle_s: idle,
         wall_s: wall,
         started_by: p.caller,
@@ -238,7 +258,7 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         state: task.state,
         worktree: task.worktree.clone(),
         terminal: task.turns.first().and_then(|turn| turn.terminal.clone()),
-        worker: worker.label().into(),
+        worker: Worker::from_key(&task.worker).ok().map(|worker| worker.label().to_string()),
         waiting: task.waiting.clone(),
         error: task.error.clone(),
         warnings: task.warnings.clone(),
@@ -336,4 +356,165 @@ pub(super) async fn task_cancel(core: Ctx<'_>, p: TaskParams) -> Result<TaskCanc
 pub(super) async fn task_discard(core: Ctx<'_>, p: TaskDiscardParams) -> Result<TaskDiscardResult, RpcError> {
     let (state, removed, left) = crate::task::discard(core.core, &p.task, p.review).await?;
     Ok(TaskDiscardResult { task: p.task, state, removed, left })
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct WorkersBlockParam {
+    /// The worker to mark: cc, go or free.
+    pub worker: String,
+    /// When it is back: a date, a date and clock, or a span such as 3h.
+    #[serde(default)]
+    pub until: Option<String>,
+    /// Why, in your words.
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+pub struct WorkersSetParams {
+    /// The mode new tasks use: auto, cc, go or free.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Mark a worker out until a time.
+    #[serde(default)]
+    pub block: Option<WorkersBlockParam>,
+    /// Say this worker is back now.
+    #[serde(default)]
+    pub clear: Option<String>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct WorkersView {
+    /// The mode new tasks use.
+    pub mode: Mode,
+    /// The worker keys this mode tries, in order.
+    pub chain: Vec<String>,
+    /// The key of the worker the next task would use, or null when all are out.
+    pub next: Option<String>,
+    /// Why every worker is out, when every one is.
+    pub all_out: Option<String>,
+    /// Things worth knowing, like a damaged workers.json.
+    pub warnings: Vec<String>,
+    pub workers: Vec<WorkerView>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct WorkerView {
+    pub key: String,
+    pub label: String,
+    /// ready, out or not_installed.
+    pub state: String,
+    /// When its block ends, or 0.
+    pub until_ms: u64,
+    /// Who set the block: person, named or estimate.
+    pub source: Option<Source>,
+    pub window: String,
+    pub message: String,
+    /// The block in words, as `lc workers` shows it.
+    pub sentence: String,
+    /// Credits refusals in a row.
+    pub refusals: u32,
+    pub spend: Spend,
+}
+
+fn workers_view(core: &Core) -> WorkersView {
+    let file = core.tasks.workers();
+    let mut warnings = Vec::new();
+    let config = crate::config::load(&core.paths.config).unwrap_or_else(|e| {
+        warnings.push(format!("cannot read the config: {}", e.message));
+        Default::default()
+    });
+    let now = now_ms();
+    let offset = crate::platform::utc_offset_minutes();
+    let installed = |worker: Worker| crate::task::worker::prefix(worker, &config).is_ok();
+    let chain = workers::chain(file.mode);
+    let (next, all_out) = match workers::pick(&chain, &file, installed, now, offset) {
+        Ok(worker) => (Some(worker.key().to_string()), None),
+        Err(words) => (None, Some(words)),
+    };
+    let spend = workers::spend(&core.tasks.all(), now);
+    let workers = Worker::ALL
+        .iter()
+        .map(|worker| {
+            let block = file.blocks.get(worker.key()).filter(|block| block.until_ms > now);
+            let missing = crate::task::worker::prefix(*worker, &config).err();
+            let state = if missing.is_some() {
+                "not_installed"
+            } else if block.is_some() {
+                "out"
+            } else {
+                "ready"
+            };
+            WorkerView {
+                key: worker.key().into(),
+                label: worker.label().into(),
+                state: state.into(),
+                until_ms: block.map_or(0, |block| block.until_ms),
+                source: block.map(|block| block.source),
+                window: block.map_or(String::new(), |block| block.window.clone()),
+                message: match (&missing, block) {
+                    (Some(missing), _) => missing.message.clone(),
+                    (None, Some(block)) => block.message.clone(),
+                    (None, None) => String::new(),
+                },
+                sentence: block.map_or(String::new(), |block| workers::sentence(worker.label(), block, now, offset)),
+                refusals: block.map_or(0, |block| block.refusals),
+                spend: spend.get(worker.key()).cloned().unwrap_or_default(),
+            }
+        })
+        .collect();
+    if let Some(problem) = &core.tasks.worker_problem {
+        warnings.push(problem.clone());
+    }
+    WorkersView {
+        mode: file.mode,
+        chain: chain.iter().map(|worker| worker.key().into()).collect(),
+        next,
+        all_out,
+        warnings,
+        workers,
+    }
+}
+
+pub(super) async fn workers_show(core: Ctx<'_>, _: Empty) -> Result<WorkersView, RpcError> {
+    Ok(workers_view(core.core))
+}
+
+pub(super) async fn workers_set(core: Ctx<'_>, p: WorkersSetParams) -> Result<WorkersView, RpcError> {
+    let serial = core.tasks.lock.lock().await;
+    let now = now_ms();
+    let offset = crate::platform::utc_offset_minutes();
+    let mut file = core.tasks.workers();
+    if let Some(mode) = p.mode.as_deref() {
+        file.mode = Mode::from_key(mode)
+            .ok_or_else(|| RpcError::invalid_params(format!("unknown mode {mode:?}: use auto, cc, go or free")))?;
+    }
+    if let Some(block) = p.block {
+        let worker = Worker::from_key(&block.worker)?;
+        let Some(until) = block.until else {
+            return Err(RpcError::invalid_params("a block needs --until"));
+        };
+        let until_ms = crate::task::clock::parse_when(&until, now, offset).map_err(RpcError::invalid_params)?;
+        file.blocks.insert(
+            worker.key().into(),
+            workers::Block {
+                until_ms,
+                window: String::new(),
+                source: Source::Person,
+                message: block.reason.unwrap_or_default(),
+                task: None,
+                refusals: 0,
+                set_ms: now,
+            },
+        );
+    }
+    if let Some(clear) = p.clear.as_deref() {
+        let worker = Worker::from_key(clear)?;
+        file.blocks.remove(worker.key());
+    }
+    crate::task::save_workers(&core.paths.state, &file)
+        .map_err(|e| unavailable(format!("cannot save workers.json: {e}")))?;
+    *core.tasks.workers.lock().unwrap_or_else(|p| p.into_inner()) = file;
+    drop(serial);
+    Ok(workers_view(core.core))
 }

@@ -29,6 +29,24 @@
         ],
         "type": "object"
       },
+      "Bucket": {
+        "properties": {
+          "cost_usd": {
+            "format": "double",
+            "type": "number"
+          },
+          "runs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runs",
+          "cost_usd"
+        ],
+        "type": "object"
+      },
       "ChangedFile": {
         "properties": {
           "added": {
@@ -634,6 +652,16 @@
         ],
         "type": "object"
       },
+      "Mode": {
+        "description": "Which workers a new task may use, in order.",
+        "enum": [
+          "auto",
+          "cc",
+          "go",
+          "free"
+        ],
+        "type": "string"
+      },
       "PutResult": {
         "properties": {
           "bytes": {
@@ -1004,6 +1032,35 @@
         ],
         "type": "object"
       },
+      "Source": {
+        "description": "Who set a block's time. `Named`: the worker's own message gave it.",
+        "enum": [
+          "person",
+          "named",
+          "estimate"
+        ],
+        "type": "string"
+      },
+      "Spend": {
+        "description": "What one worker spent over the last 5 hours, 7 days and 30 days.",
+        "properties": {
+          "five_hours": {
+            "$ref": "#/components/schemas/Bucket"
+          },
+          "month": {
+            "$ref": "#/components/schemas/Bucket"
+          },
+          "week": {
+            "$ref": "#/components/schemas/Bucket"
+          }
+        },
+        "required": [
+          "five_hours",
+          "week",
+          "month"
+        ],
+        "type": "object"
+      },
       "Status": {
         "description": "One 7501 record. Words are the program's own; nothing is translated.",
         "properties": {
@@ -1162,6 +1219,14 @@
             "description": "The branch it was cut from, \"HEAD\" when detached.",
             "type": "string"
           },
+          "chain": {
+            "default": [],
+            "description": "The worker keys `task.start` fixed, in the order to try them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "changed": {
             "default": [],
             "items": {
@@ -1295,7 +1360,7 @@
           },
           "worker": {
             "default": "",
-            "description": "\"go\" or \"free\" in this part.",
+            "description": "The key of the current or last turn's worker, empty until one is picked.",
             "type": "string"
           },
           "worktree": {
@@ -1601,8 +1666,11 @@
             "type": "array"
           },
           "worker": {
-            "description": "The worker's label (\"opencode Go\").",
-            "type": "string"
+            "description": "The worker's label (\"opencode Go\"), once one is picked.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "worktree": {
             "description": "Where its worktree is, once there is one.",
@@ -1615,7 +1683,6 @@
         "required": [
           "task",
           "state",
-          "worker",
           "warnings",
           "next"
         ],
@@ -2187,6 +2254,145 @@
           "reason",
           "turn",
           "children"
+        ],
+        "type": "object"
+      },
+      "WorkerView": {
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "refusals": {
+            "description": "Credits refusals in a row.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sentence": {
+            "description": "The block in words, as `lc workers` shows it.",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Source"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who set the block: person, named or estimate."
+          },
+          "spend": {
+            "$ref": "#/components/schemas/Spend"
+          },
+          "state": {
+            "description": "ready, out or not_installed.",
+            "type": "string"
+          },
+          "until_ms": {
+            "description": "When its block ends, or 0.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "state",
+          "until_ms",
+          "window",
+          "message",
+          "sentence",
+          "refusals",
+          "spend"
+        ],
+        "type": "object"
+      },
+      "WorkersBlockParam": {
+        "properties": {
+          "reason": {
+            "default": null,
+            "description": "Why, in your words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "default": null,
+            "description": "When it is back: a date, a date and clock, or a span such as 3h.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "worker": {
+            "description": "The worker to mark: cc, go or free.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker"
+        ],
+        "type": "object"
+      },
+      "WorkersView": {
+        "properties": {
+          "all_out": {
+            "description": "Why every worker is out, when every one is.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "chain": {
+            "description": "The worker keys this mode tries, in order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Mode",
+            "description": "The mode new tasks use."
+          },
+          "next": {
+            "description": "The key of the worker the next task would use, or null when all are out.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warnings": {
+            "description": "Things worth knowing, like a damaged workers.json.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode",
+          "chain",
+          "warnings",
+          "workers"
         ],
         "type": "object"
       }
@@ -4846,12 +5052,12 @@
           }
         },
         {
-          "description": "The worker: go (the default) or free.",
+          "description": "The worker: auto (the default), cc, go or free. With none, the mode `lc workers` shows.",
           "name": "worker",
           "required": false,
           "schema": {
             "default": null,
-            "description": "The worker: go (the default) or free.",
+            "description": "The worker: auto (the default), cc, go or free. With none, the mode `lc workers` shows.",
             "type": [
               "string",
               "null"
@@ -5065,6 +5271,83 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/TaskDiscardResult"
+        }
+      }
+    },
+    {
+      "description": "Which workers can take a task, the order new tasks try them, and what each has spent.",
+      "errors": [],
+      "name": "workers.show",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/WorkersView"
+        }
+      }
+    },
+    {
+      "description": "Change the order, mark a worker out until a time, or say one is back now.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        }
+      ],
+      "name": "workers.set",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Mark a worker out until a time.",
+          "name": "block",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkersBlockParam"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mark a worker out until a time."
+          }
+        },
+        {
+          "description": "Say this worker is back now.",
+          "name": "clear",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Say this worker is back now.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The mode new tasks use: auto, cc, go or free.",
+          "name": "mode",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The mode new tasks use: auto, cc, go or free.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/WorkersView"
         }
       }
     },

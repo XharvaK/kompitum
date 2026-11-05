@@ -698,7 +698,7 @@ Options:
       --json               JSON output even in a terminal
       --in <FOLDER>        The folder in the repository (default: where lc runs)
       --scope <GLOB>       Paths the task may change (repeatable); none means the whole repository
-      --worker <WORKER>    The worker: go or free [possible values: go, free]
+      --worker <WORKER>    Which workers to use, in order: auto is Command Code then opencode Go, free is opencode free then both. Default: what lc workers shows [possible values: auto, cc, go, free]
       --idle <IDLE>        Seconds without output or CPU before the turn is cut (default 900)
       --timeout <TIMEOUT>  Seconds the turn may run (default 3600)
   -h, --help               Print help
@@ -779,4 +779,21 @@ Options:
 
   -h, --help
           Print help (see a summary with '-h')
+```
+
+## lc workers
+
+```text
+See which workers can take a task, change the order, or say when one is back
+
+Usage: lc workers [OPTIONS]
+
+Options:
+      --json             JSON output even in a terminal
+      --mode <MODE>      Which workers new tasks use, in order: auto is Command Code then opencode Go, free is opencode free then both [possible values: auto, cc, go, free]
+      --block <BLOCK>    Mark this worker as out [possible values: cc, go, free]
+      --until <UNTIL>    When it is back: 2026-11-23, 2026-11-23 15:36, or a span such as 3h or 2d
+      --reason <REASON>  Why, in your words
+      --clear <CLEAR>    Say this worker is back now [possible values: cc, go, free]
+  -h, --help             Print help
 ```
