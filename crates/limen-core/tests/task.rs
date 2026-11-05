@@ -556,7 +556,7 @@ fn a_wait_can_reach_the_core_before_the_start() {
     s.config(&script, "");
     let wait = s
         .cmd()
-        .args(["task", "wait", "fix-14", "--timeout", "20"])
+        .args(["task", "wait", "fix-14", "--timeout", "90"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

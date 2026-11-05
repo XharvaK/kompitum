@@ -304,6 +304,23 @@ fn a_stranded_task_goes_on_when_a_block_lapses_or_is_cleared() {
 }
 
 #[test]
+fn a_stranded_task_fails_when_nothing_can_come_back() {
+    let s = Session::new();
+    let repo = s.repo();
+    let script = s.script("gone", json!([go_good(None)]));
+    s.config(&script, "");
+    s.json(&["workers", "--block", "go", "--until", &in_seconds(8_000), "--reason", "short"]);
+    let started = s.start("gone", "brief", &repo, &["--worker", "go"]);
+    assert_eq!(started["state"], "stranded", "{started}");
+    // Its only worker goes away while it waits, so the block's end brings nothing back.
+    s.config_for(&s.missing_cc(), &s.missing_cc(), "");
+    let (exit, rows, _) = s.wait(&["gone"], &["--while-stranded", "--timeout", "40"]);
+    assert_eq!(exit, 1, "{rows:?}");
+    assert_eq!(rows[0]["state"], "failed", "{rows:?}");
+    assert!(rows[0]["error"].as_str().is_some_and(|words| !words.is_empty()), "it says why: {rows:?}");
+}
+
+#[test]
 fn a_stranded_task_can_be_cancelled_and_keeps_its_work() {
     let s = Session::new();
     let repo = s.repo();

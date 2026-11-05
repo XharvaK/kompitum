@@ -10,7 +10,8 @@ pub enum TaskState {
     #[default]
     Queued,
     Running,
-    /// It wants a worker and every one of its chain is out.
+    // It wants a worker and every one of its chain is out. A plain comment: a doc
+    // comment on one variant turns the schema's enum into a `oneOf`.
     Stranded,
     Done,
     Failed,
@@ -20,7 +21,7 @@ pub enum TaskState {
 }
 
 impl TaskState {
-    /// No longer running: queued and stranded are the states that haven't ended.
+    /// Over: queued, running and stranded are the states that haven't ended.
     pub fn ended(self) -> bool {
         !matches!(self, TaskState::Queued | TaskState::Running | TaskState::Stranded)
     }

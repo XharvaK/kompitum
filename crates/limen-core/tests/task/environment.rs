@@ -26,6 +26,8 @@ fn the_workers_environment_is_clean() {
     for key in hidden {
         s.env(key, format!("leftover-{key}"));
     }
+    // The control: set the same way, and no rule takes it out.
+    s.env("A_PLAIN_VARIABLE", "reaches the worker");
     let env = s.root.join("env.txt");
     let mut actions = vec![json!({"env_to": env.display().to_string()})];
     actions.extend(say(&stream("ses_clean", "looked")));
@@ -40,11 +42,21 @@ fn the_workers_environment_is_clean() {
     for key in hidden {
         assert!(env_value(&text, key).is_none(), "{key} must not reach the worker: {text}");
     }
+    assert_eq!(env_value(&text, "A_PLAIN_VARIABLE").as_deref(), Some("reaches the worker"), "{text}");
     assert_eq!(env_value(&text, "LIMEN_WORKER").as_deref(), Some("1"), "the mark is the worker's own: {text}");
     assert!(
         env_value(&text, "LIMEN_SCOPE").is_some_and(|scope| !scope.is_empty()),
         "the scope travels with the turn: {text}"
     );
+    // Where it found a real Python, the shims come first on the worker's PATH.
+    let view = s.task("clean-1");
+    let warnings = view["task"]["warnings"].as_array().unwrap();
+    let no_python = warnings.iter().any(|warning| warning.as_str().unwrap().starts_with("no real Python"));
+    if limen_core::platform::PYTHON_SHIMS && !no_python {
+        let path = env_value(&text, "PATH").unwrap();
+        let first = std::env::split_paths(&path).next().unwrap();
+        assert!(first.join("python.cmd").is_file() && first.join("python").is_file(), "{path}");
+    }
 }
 
 /// An `lc` run as a worker's own: the mark is on the command, everything else is the session's.

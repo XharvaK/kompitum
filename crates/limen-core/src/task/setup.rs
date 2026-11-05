@@ -104,15 +104,15 @@ fn guard_hooks(state: &Path) -> Result<PathBuf, RpcError> {
 /// The repository's common git dir, as the hook compares it: absolute, lower
 /// case, forward slashes. A `git` that cannot say fails the start, loudly.
 async fn protected_git_dir(repo: &str) -> Result<String, RpcError> {
-    let out = super::git::git(repo, &["rev-parse", "--git-common-dir"])
+    let out = super::git::git(repo, &["rev-parse", "--path-format=absolute", "--git-common-dir"])
         .await
         .map_err(|e| guard_failed(format!("cannot read the git dir of {repo}: {}", e.message)))?;
     let dir = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if dir.is_empty() {
         return Err(guard_failed(format!("git could not say where the git dir of {repo} is")));
     }
-    // A main checkout says `.git`; a worktree says the main repository's, absolute.
-    Ok(guard_path(&Path::new(repo).join(dir)))
+    // The hook asks git the same question, so a repo path spelled another way still matches.
+    Ok(guard_path(Path::new(&dir)))
 }
 
 /// The files a worker must not read: `worker_config`'s globs, and the same
@@ -381,6 +381,10 @@ pub fn after_turn(folder: &Path, worktree: &str, _worker: Worker, n: u32) -> Res
     let made = settings_marker(folder, n, "made");
     if kept.is_file() {
         let bytes = std::fs::read(&kept).map_err(|e| format!("cannot read {}: {e}", kept.display()))?;
+        // The worker may have removed the folder along with the file.
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+        }
         std::fs::write(&path, bytes).map_err(|e| format!("cannot put {} back: {e}", path.display()))?;
         std::fs::remove_file(&kept).map_err(|e| format!("cannot remove {}: {e}", kept.display()))?;
     } else if made.is_file() {
@@ -404,6 +408,24 @@ pub fn after_turn(folder: &Path, worktree: &str, _worker: Worker, n: u32) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kept_settings_go_back_even_when_the_worker_removed_their_folder() {
+        let scratch = std::env::temp_dir().join(format!("lc-after-turn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let folder = scratch.join("task");
+        let worktree = scratch.join("worktree");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(settings_marker(&folder, 1, "kept"), b"mine").unwrap();
+
+        after_turn(&folder, &worktree.display().to_string(), Worker::Cc, 1).unwrap();
+
+        let back = std::fs::read(worktree.join(".commandcode").join("settings.local.json")).unwrap();
+        assert_eq!(back, b"mine");
+        assert!(!settings_marker(&folder, 1, "kept").exists(), "the kept copy is gone");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
 
     fn vars(pairs: &[(&str, &str)]) -> impl Iterator<Item = (String, String)> {
         let pairs: Vec<(String, String)> = pairs.iter().map(|(k, v)| ((*k).to_string(), (*v).to_string())).collect();

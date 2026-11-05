@@ -519,7 +519,8 @@ fn exec_returns_exact_bytes_and_ends_what_it_started_at_its_timeout() {
     let pid_file = s.root.join("exec-pid.txt");
     let child =
         s.file("exec.ps1", &format!("$PID | Out-File -Encoding ascii '{}'; Start-Sleep 60", pid_file.display()));
-    let (code, _) = s.out(&["exec", "--timeout", "5", "cmd", "/c", &format!("powershell -NoProfile -File {child}")]);
+    // PowerShell alone can take most of 5 s to start on a busy PC.
+    let (code, _) = s.out(&["exec", "--timeout", "15", "cmd", "/c", &format!("powershell -NoProfile -File {child}")]);
     assert_eq!(code, 124);
     let pid: u64 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
     wait_until("grandchild gone", || !alive(pid));

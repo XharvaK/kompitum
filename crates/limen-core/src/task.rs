@@ -278,19 +278,22 @@ async fn pump_stranded(core: &Arc<Core>, task: Task) {
     let installed = |worker: Worker| worker::prefix(worker, &config).is_ok();
     let chain: Vec<Worker> = task.chain.iter().filter_map(|key| Worker::from_key(key).ok()).collect();
     let chain = if chain.is_empty() { workers::chain(workers::Mode::Auto) } else { chain };
-    match workers::pick(&chain, &file, installed, now_ms(), crate::platform::utc_offset_minutes()) {
-        Ok(_) => {
+    let now = now_ms();
+    match workers::pick(&chain, &file, installed, now, crate::platform::utc_offset_minutes()) {
+        Err(words) if workers::may_come_back(&chain, &file, now) => {
+            if task.error.as_deref() != Some(words.as_str()) {
+                update(core, &task.name, |task| task.error = Some(words));
+                core.changed.notify_waiters();
+            }
+        }
+        // A worker is back, or nothing can come back any more: the queue starts
+        // it or fails it, in words.
+        _ => {
             update(core, &task.name, |task| {
                 task.state = TaskState::Queued;
                 task.error = None;
             });
             core.changed.notify_waiters();
-        }
-        Err(words) => {
-            if task.error.as_deref() != Some(words.as_str()) {
-                update(core, &task.name, |task| task.error = Some(words));
-                core.changed.notify_waiters();
-            }
         }
     }
 }
@@ -673,7 +676,12 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
     let brief = std::fs::read_to_string(folder.join("brief.md"))
         .map_err(|e| unavailable(format!("cannot read the task's brief: {e}")))?;
-    let note = std::fs::read(folder.join(format!("turn-{n}.note.md"))).ok();
+    let note_path = folder.join(format!("turn-{n}.note.md"));
+    let note = match std::fs::read(&note_path) {
+        Ok(bytes) => Some(bytes),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+        Err(e) => return Err(unavailable(format!("cannot read {}: {e}", note_path.display()))),
+    };
     let prompt = folder.join(format!("turn-{n}.prompt.md"));
     let mut text = note.clone().unwrap_or_default();
     text.extend_from_slice(brief.as_bytes());

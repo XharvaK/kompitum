@@ -1705,25 +1705,17 @@
         "type": "object"
       },
       "TaskState": {
-        "oneOf": [
-          {
-            "enum": [
-              "queued",
-              "running",
-              "done",
-              "failed",
-              "timed_out",
-              "cancelled",
-              "discarded"
-            ],
-            "type": "string"
-          },
-          {
-            "const": "stranded",
-            "description": "It wants a worker and every one of its chain is out.",
-            "type": "string"
-          }
-        ]
+        "enum": [
+          "queued",
+          "running",
+          "stranded",
+          "done",
+          "failed",
+          "timed_out",
+          "cancelled",
+          "discarded"
+        ],
+        "type": "string"
       },
       "TaskView": {
         "properties": {
