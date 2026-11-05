@@ -233,28 +233,30 @@ fn a_credits_refusal_blocks_the_worker_and_the_next_task_goes_on_with_go() {
     let started = s.start("cc-out", "brief", &repo, &[]);
     assert_eq!(started["worker"], "Command Code", "{started}");
     let (exit, rows, _) = s.wait(&["cc-out"], &["--timeout", "60"]);
-    assert_eq!(exit, 1, "{rows:?}");
-    let error = rows[0]["error"].as_str().unwrap();
-    assert!(error.starts_with("QUOTA EXHAUSTED: "), "{error}");
-    assert!(error.contains("out of credits"), "{error}");
-    assert!(error.contains("reset unknown"), "{error}");
-    assert!(error.contains("next try"), "{error}");
+    assert_eq!(exit, 0, "the refused task goes on with Go: {rows:?}");
+    assert_eq!(rows[0]["state"], "done", "{rows:?}");
+    assert_eq!(rows[0]["worker"], "opencode Go", "{rows:?}");
+    assert_eq!(rows[0]["workers"], json!(["cc", "go"]), "{rows:?}");
 
     let workers = s.json(&["workers"]);
     assert_eq!(workers["next"], "go", "{workers}");
     assert_eq!(workers["workers"][0]["state"], "out", "{workers}");
     assert_eq!(workers["workers"][0]["window"], "credits", "{workers}");
     let sentence = workers["workers"][0]["sentence"].as_str().unwrap().to_string();
-    assert_eq!(error, format!("QUOTA EXHAUSTED: {sentence}"));
+    assert!(sentence.contains("out of credits"), "{sentence}");
+    assert!(sentence.contains("reset unknown"), "{sentence}");
+    assert!(sentence.contains("next try"), "{sentence}");
 
     let second = s.start("auto-next", "brief", &repo, &[]);
-    assert_eq!(second["worker"], "opencode Go", "{second}");
+    assert_ne!(second["state"], "failed", "{second}");
     let (exit, rows, _) = s.wait(&["auto-next"], &["--timeout", "60"]);
     assert_eq!(exit, 0, "{rows:?}");
     assert_eq!(rows[0]["state"], "done", "{rows:?}");
+    assert_eq!(rows[0]["worker"], "opencode Go", "{rows:?}");
 
+    // Command Code is still out, so the task waits for it to come back.
     let blocked = s.start("cc-again", "brief", &repo, &["--worker", "cc"]);
-    assert_eq!(blocked["state"], "failed", "{blocked}");
+    assert_eq!(blocked["state"], "stranded", "{blocked}");
     assert_eq!(blocked["error"], format!("QUOTA EXHAUSTED: {sentence}"), "{blocked}");
 }
 
@@ -314,15 +316,17 @@ fn a_persons_block_survives_a_core_restart_and_clear_ends_it() {
     let cleared = s.json(&["workers", "--clear", "cc"]);
     assert_eq!(cleared["workers"][0]["state"], "ready", "{cleared}");
     assert_eq!(cleared["next"], "cc", "{cleared}");
+    // The stranded task goes first, then this one; both are Command Code's now.
     let back = s.start("cc-back", "brief", &repo, &[]);
-    assert_eq!(back["worker"], "Command Code", "{back}");
+    assert_ne!(back["state"], "failed", "{back}");
     let (exit, rows, _) = s.wait(&["cc-back"], &["--timeout", "60"]);
     assert_eq!(exit, 0, "{rows:?}");
     assert_eq!(rows[0]["state"], "done", "{rows:?}");
+    assert_eq!(rows[0]["worker"], "Command Code", "{rows:?}");
 }
 
 #[test]
-fn every_worker_out_fails_the_start_and_names_each_reset() {
+fn every_worker_out_strands_the_start_and_names_each_reset() {
     let s = Session::new();
     let repo = s.repo();
     let script = s.script("out", json!([cc_actions("s-never", MODEL, "never")]));
@@ -333,7 +337,7 @@ fn every_worker_out_fails_the_start_and_names_each_reset() {
     assert!(workers["next"].is_null(), "{workers}");
     assert!(workers["all_out"].as_str().unwrap().starts_with("ALL WORKERS OUT:"), "{workers}");
     let started = s.start("nothing", "brief", &repo, &[]);
-    assert_eq!(started["state"], "failed", "{started}");
+    assert_eq!(started["state"], "stranded", "{started}");
     let error = started["error"].as_str().unwrap();
     assert!(error.starts_with("ALL WORKERS OUT: "), "{error}");
     assert!(error.contains("Command Code is out by a person's word (a), back on"), "{error}");
@@ -447,7 +451,7 @@ fn two_command_code_tasks_start_eight_seconds_apart() {
     s.start("sp-1", "one", &repo, &["--worker", "cc", "--scope", "src/**"]);
     let second = s.start("sp-2", "two", &repo, &["--worker", "cc", "--scope", "docs/**"]);
     assert_eq!(second["state"], "queued", "{second}");
-    assert_eq!(second["waiting"], "waiting for Command Code's start slot", "{second}");
+    assert_eq!(second["waiting"], "waiting for a start slot: workers start 8 s apart", "{second}");
     let (exit, rows, summary) = s.wait(&["sp-1", "sp-2"], &["--timeout", "60"]);
     assert_eq!(exit, 0, "{rows:?} {summary}");
     let first = s.task("sp-1");

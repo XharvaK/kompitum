@@ -3,7 +3,10 @@
 //! so `worker.rs` only has to know which CLI it is talking to.
 
 use crate::task::types::Usage;
-use crate::task::worker::{Progress, TurnOutcome, part_text, push_list, push_tool, target_in, text_at, whole};
+use crate::task::worker::{
+    Progress, REASONING_TAIL, TurnOutcome, end_bytes, part_text, push_list, push_read, push_reasoning, push_tool,
+    target_in, text_at, whole,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -159,6 +162,22 @@ pub(crate) fn read(lines: impl IntoIterator<Item = String>) -> TurnOutcome {
         {
             out.text = text.to_string();
         }
+        if kind == "reasoning"
+            && let Some(text) = part.and_then(|p| p.get("text")).and_then(Value::as_str)
+        {
+            push_reasoning(&mut out.reasoning_tail, text);
+        }
+        if kind == "tool_use"
+            && part.and_then(|p| p.get("tool")).and_then(Value::as_str) == Some("read")
+            && let Some(input) = part
+                .and_then(|p| p.get("state"))
+                .and_then(Value::as_object)
+                .and_then(|state| state.get("input"))
+                .and_then(Value::as_object)
+            && let Some(path) = part_text(input, "path").or_else(|| part_text(input, "filePath"))
+        {
+            push_read(&mut out.files_read, path);
+        }
         if let Some(part) = part.filter(|p| part_text(p, "type") == Some("step-finish")) {
             let step = step_usage(part);
             out.usage.steps += step.steps;
@@ -183,6 +202,7 @@ pub(crate) fn read(lines: impl IntoIterator<Item = String>) -> TurnOutcome {
             push_list(&mut out.tools, tool);
         }
     }
+    out.reasoning_tail = end_bytes(&out.reasoning_tail, REASONING_TAIL);
     out
 }
 
@@ -365,6 +385,41 @@ mod tests {
         assert_eq!(outcome.session.as_deref(), Some("s1"));
         assert_eq!(outcome.text, "");
         assert_eq!(outcome.raw_errors.len(), 1);
+    }
+
+    #[test]
+    fn a_turn_remembers_what_it_read_once_each() {
+        let read_tool = |path: &str, field: &str| {
+            let mut input = serde_json::Map::new();
+            input.insert(field.into(), Value::String(path.into()));
+            serde_json::json!({"type": "tool_use", "part": {"type": "tool", "tool": "read",
+                "state": {"status": "completed", "input": input}}})
+            .to_string()
+        };
+        let lines = vec![
+            read_tool("src/a.rs", "path"),
+            read_tool("src/b.rs", "filePath"),
+            read_tool("src/a.rs", "path"),
+            serde_json::json!({"type": "tool_use", "part": {"type": "tool", "tool": "write",
+                "state": {"status": "completed", "input": {"filePath": "made.txt"}}}})
+            .to_string(),
+        ];
+        let outcome = read(lines);
+        assert_eq!(outcome.files_read, ["src/a.rs", "src/b.rs"]);
+    }
+
+    #[test]
+    fn a_turn_keeps_only_the_end_of_its_reasoning() {
+        let head = "a".repeat(100);
+        let crossing = format!("€{}", "b".repeat(8190));
+        let reasoning = |text: &str| {
+            serde_json::json!({"type": "reasoning", "part": {"type": "reasoning", "text": text}}).to_string()
+        };
+        let outcome = read(vec![reasoning(&head), reasoning(&crossing)]);
+        assert_eq!(outcome.reasoning_tail, "b".repeat(8190));
+
+        let kept = read(vec![reasoning(&"x".repeat(20 * 1024))]);
+        assert_eq!(kept.reasoning_tail.len(), 8192);
     }
 
     #[test]

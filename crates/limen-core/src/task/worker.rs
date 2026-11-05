@@ -459,6 +459,48 @@ pub struct TurnOutcome {
     pub models: Vec<String>,
     /// The raw error payloads, at most five, for the quota check.
     pub raw_errors: Vec<Value>,
+    /// The files the worker read with its read tool, deduped, first read first.
+    pub files_read: Vec<String>,
+    /// The last of the worker's reasoning, at most 8 KB.
+    pub reasoning_tail: String,
+}
+
+/// How much reasoning a reader holds while the turn runs, and what it keeps.
+pub(crate) const REASONING_HOLD: usize = 16 * 1024;
+pub(crate) const REASONING_TAIL: usize = 8 * 1024;
+/// A turn's read list stops here; anything more is not a hand-off note.
+pub(crate) const FILES_READ_LIMIT: usize = 2000;
+
+/// At most `max` bytes from the end of `text`, moved forward to a character
+/// boundary so a multi-byte character is never cut.
+pub(crate) fn end_bytes(text: &str, max: usize) -> String {
+    if text.len() <= max {
+        return text.to_string();
+    }
+    let mut start = text.len().saturating_sub(max);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    text.get(start..).unwrap_or_default().to_string()
+}
+
+/// Keep the end of a worker's reasoning, never more than `REASONING_HOLD`.
+pub(crate) fn push_reasoning(tail: &mut String, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    tail.push_str(text);
+    if tail.len() > REASONING_HOLD {
+        *tail = end_bytes(tail, REASONING_HOLD);
+    }
+}
+
+/// One file read, once, in first-read order.
+pub(crate) fn push_read(files: &mut Vec<String>, path: &str) {
+    if path.is_empty() || files.len() >= FILES_READ_LIMIT || files.iter().any(|seen| seen == path) {
+        return;
+    }
+    files.push(path.to_string());
 }
 
 /// Command Code's result line: how the run says it ended.

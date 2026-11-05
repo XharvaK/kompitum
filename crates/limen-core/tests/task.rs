@@ -293,7 +293,8 @@ fn a_failed_worker_wakes_a_wait_for_several_at_once() {
     s.start("bad", "exit 3", &repo, &["--worker", "go", "--scope", "docs/**"]);
     let start = Instant::now();
     let (exit, rows, summary) = s.wait(&["bad", "slow"], &["--timeout", "20"]);
-    assert!(start.elapsed() < Duration::from_secs(10), "a bad end wakes at once");
+    // The second start waits out its 8 s slot before it can fail; the slow worker sleeps for 30.
+    assert!(start.elapsed() < Duration::from_secs(20), "a bad end wakes at once");
     assert_eq!(exit, 1, "{rows:?} {summary}");
     let bad_row = rows.iter().find(|row| row["task"] == "bad").unwrap();
     assert_eq!(bad_row["state"], "failed", "{bad_row}");
@@ -404,7 +405,8 @@ fn a_task_survives_a_core_restart() {
 fn the_cap_and_overlapping_scopes_queue_in_order() {
     let s = Session::new();
     let repo = s.repo();
-    let mut long = vec![json!({"sleep_ms": 4000})];
+    // Long enough that the third task can take the second place after its 8 s slot.
+    let mut long = vec![json!({"sleep_ms": 12000})];
     long.extend(say(&stream("ses_a", "a done")));
     let mut short = vec![json!({"sleep_ms": 1000})];
     short.extend(say(&stream("ses_b", "b done")));
@@ -415,7 +417,12 @@ fn the_cap_and_overlapping_scopes_queue_in_order() {
     assert_eq!(b["state"], "queued", "{b}");
     assert!(b["waiting"].as_str().unwrap().contains("a"), "{b}");
     let c = s.start("c", "disjoint", &repo, &["--worker", "go", "--scope", "docs/**"]);
-    assert_eq!(c["state"], "running", "{c}");
+    assert_eq!(c["state"], "queued", "the start slot holds it, not b's scope: {c}");
+    assert!(c["waiting"].as_str().unwrap().contains("start slot"), "{c}");
+    wait_until("the third task took the second place", || {
+        matches!(s.task("c")["task"]["state"].as_str().unwrap(), "running" | "done")
+    });
+    assert_eq!(s.task("a")["task"]["state"], "running", "the cap lets two run at once");
     let (exit, rows, _) = s.wait(&["a"], &["--timeout", "30"]);
     assert_eq!(exit, 0, "{rows:?}");
     wait_until("the queued task started on its own", || {

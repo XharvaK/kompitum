@@ -2,7 +2,10 @@
 //! event itself, and the last is `{"type":"result",…}`. A real turn is mostly
 //! `thinking_delta`, so only a tool, a denial and a finished request show.
 
-use crate::task::worker::{Progress, Reported, TurnOutcome, push_list, push_tool, target_in, text_at, whole};
+use crate::task::worker::{
+    Progress, REASONING_TAIL, Reported, TurnOutcome, end_bytes, part_text, push_list, push_read, push_reasoning,
+    push_tool, target_in, text_at, whole,
+};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -87,7 +90,18 @@ pub(crate) fn read(lines: impl IntoIterator<Item = String>) -> TurnOutcome {
                 out.usage.cache_write += cache_write;
                 out.usage.largest_request = out.usage.largest_request.max(input);
             }
+            "thinking_end" => {
+                if let Some(text) = event.get("text").and_then(Value::as_str) {
+                    push_reasoning(&mut out.reasoning_tail, text);
+                }
+            }
             "tool_queued" => {
+                if tool_name(event) == Some("read_file")
+                    && let Some(path) =
+                        event.get("input").and_then(Value::as_object).and_then(|input| part_text(input, "file_path"))
+                {
+                    push_read(&mut out.files_read, path);
+                }
                 if let Some(shown) = tool_line(event, None) {
                     push_list(&mut out.tools, shown);
                 }
@@ -103,6 +117,7 @@ pub(crate) fn read(lines: impl IntoIterator<Item = String>) -> TurnOutcome {
     if let Some(reported) = &out.reported {
         out.text = reported.final_text.clone();
     }
+    out.reasoning_tail = end_bytes(&out.reasoning_tail, REASONING_TAIL);
     out
 }
 
@@ -286,6 +301,37 @@ mod tests {
         for id in ["../secret", "a/b", "a\\b", ".."] {
             assert_eq!(session_cost(id), None, "{id}");
         }
+    }
+
+    #[test]
+    fn a_turn_remembers_what_it_read_once_each() {
+        let lines = vec![
+            event(serde_json::json!({"type": "tool_queued", "toolName": "read_file",
+                "input": {"file_path": "src/a.rs"}})),
+            event(serde_json::json!({"type": "tool_queued", "toolName": "read_file",
+                "input": {"file_path": "src/b.rs"}})),
+            event(serde_json::json!({"type": "tool_queued", "toolName": "read_file",
+                "input": {"file_path": "src/a.rs"}})),
+            event(serde_json::json!({"type": "tool_queued", "toolName": "write_file",
+                "input": {"file_path": "made.txt", "content": "x"}})),
+        ];
+        assert_eq!(read(lines).files_read, ["src/a.rs", "src/b.rs"]);
+    }
+
+    #[test]
+    fn a_turn_keeps_only_the_end_of_its_reasoning() {
+        // 100 + 3 + 8190 bytes: the 8 KB cut lands inside the three-byte character.
+        let head = "a".repeat(100);
+        let crossing = format!("€{}", "b".repeat(8190));
+        let outcome = read(vec![
+            event(serde_json::json!({"type": "thinking_end", "text": head})),
+            event(serde_json::json!({"type": "thinking_end", "text": crossing})),
+        ]);
+        assert_eq!(outcome.reasoning_tail, "b".repeat(8190));
+
+        let long = event(serde_json::json!({"type": "thinking_end", "text": "x".repeat(20 * 1024)}));
+        let kept = read(vec![long]);
+        assert_eq!(kept.reasoning_tail.len(), 8192);
     }
 
     #[test]

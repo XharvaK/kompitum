@@ -66,6 +66,9 @@ pub(super) struct WaitArgs {
     /// Return at the first task that ends, however it ended.
     #[arg(long)]
     pub first: bool,
+    /// Keep waiting while every worker is out; the task goes on by itself when one comes back
+    #[arg(long)]
+    pub while_stranded: bool,
     /// Seconds to wait (default: as long as it takes).
     #[arg(long)]
     pub timeout: Option<f64>,
@@ -219,7 +222,7 @@ pub(super) fn task(
                 human.push_str(&format!("\nworktree {worktree}"));
             }
             if let Some(terminal) =
-                task["turns"].as_array().and_then(|turns| turns.first()).and_then(|turn| turn["terminal"].as_str())
+                task["turns"].as_array().and_then(|turns| turns.last()).and_then(|turn| turn["terminal"].as_str())
             {
                 human.push_str(&format!("\nterminal {terminal}: lc read {name}"));
             }
@@ -231,6 +234,9 @@ pub(super) fn task(
             }
             if let Some(error) = task["error"].as_str() {
                 human.push_str(&format!("\nerror: {error}"));
+            }
+            for sentence in line["handoffs"].as_array().into_iter().flatten() {
+                human.push_str(&format!("\n{}", sentence.as_str().unwrap_or_default()));
             }
             if let Some(changed) = task["changed"].as_array() {
                 if !changed.is_empty() {
@@ -356,7 +362,7 @@ fn wait(a: &WaitArgs, call: &impl Fn(&str, Value) -> Result<Value, RpcError>) ->
             Some(deadline) => checkin.min(deadline.saturating_duration_since(Instant::now()).as_secs_f64()),
             None => checkin,
         };
-        let params = json!({"tasks": names, "first": a.first, "timeout": checkin});
+        let params = json!({"tasks": names, "first": a.first, "while_stranded": a.while_stranded, "timeout": checkin});
         let asked = Instant::now();
         let result = loop {
             match call("task.wait", params.clone()) {
@@ -388,10 +394,13 @@ fn wait(a: &WaitArgs, call: &impl Fn(&str, Value) -> Result<Value, RpcError>) ->
                 .filter(|line| ended_badly(state(line)) || (ended(state(line)) && line["ok"] == false))
                 .collect();
             let unfinished: Vec<&serde_json::Value> = lines.iter().filter(|line| !ended(state(line))).collect();
+            let stranded: Vec<&serde_json::Value> = lines.iter().filter(|line| state(line) == "stranded").collect();
             let problem_names: Vec<String> =
                 problems.iter().filter_map(|line| line["task"].as_str()).map(String::from).collect();
             let unfinished_names: Vec<String> =
                 unfinished.iter().filter_map(|line| line["task"].as_str()).map(String::from).collect();
+            let stranded_names: Vec<String> =
+                stranded.iter().filter_map(|line| line["task"].as_str()).map(String::from).collect();
             let mut bad_names = BTreeSet::new();
             bad_names.extend(problem_names.iter().cloned());
             bad_names.extend(unfinished_names.iter().cloned());
@@ -402,12 +411,14 @@ fn wait(a: &WaitArgs, call: &impl Fn(&str, Value) -> Result<Value, RpcError>) ->
                 "ok": total.saturating_sub(bad_names.len()),
                 "problems": problem_names,
                 "unfinished": unfinished_names,
+                "stranded": stranded_names,
                 "unknown": unknown,
             }});
             println!("{summary}");
             let code = if timed_out {
                 2
             } else if !problems.is_empty()
+                || !stranded_names.is_empty()
                 || (!a.first && !unfinished.is_empty())
                 || !(unknown.is_empty() || (a.first && any_ended))
             {

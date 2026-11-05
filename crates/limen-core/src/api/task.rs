@@ -121,6 +121,9 @@ pub struct TaskWaitParams {
     /// Return at the first task that ends, however it ended.
     #[serde(default)]
     pub first: bool,
+    /// Keep waiting while every worker is out; the task goes on by itself when one comes back.
+    #[serde(default)]
+    pub while_stranded: bool,
     /// Seconds before it checks in (default 60, at most 300).
     #[serde(default)]
     pub timeout: Option<f64>,
@@ -134,7 +137,8 @@ pub struct TaskWaitResult {
     pub unfinished: Vec<String>,
     /// Names no task here uses.
     pub unknown: Vec<String>,
-    /// Every task has ended (or, with `first`, one has), and none is unknown.
+    /// Every task has ended (or, with `first`, one has), and none is unknown;
+    /// a stranded task ends it too unless `while_stranded` was asked for.
     pub over: bool,
 }
 
@@ -237,6 +241,7 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         scope: p.scope,
         worker: String::new(),
         chain: chain.iter().map(|worker| worker.key().to_string()).collect(),
+        handoffs: Vec::new(),
         idle_s: idle,
         wall_s: wall,
         started_by: p.caller,
@@ -257,7 +262,7 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         task: p.task.clone(),
         state: task.state,
         worktree: task.worktree.clone(),
-        terminal: task.turns.first().and_then(|turn| turn.terminal.clone()),
+        terminal: task.turns.last().and_then(|turn| turn.terminal.clone()),
         worker: Worker::from_key(&task.worker).ok().map(|worker| worker.label().to_string()),
         waiting: task.waiting.clone(),
         error: task.error.clone(),
@@ -302,7 +307,7 @@ pub(super) async fn task_get(core: Ctx<'_>, p: TaskParams) -> Result<TaskView, R
     })
 }
 
-fn wait_snapshot(core: &Core, names: &[String], first: bool) -> TaskWaitResult {
+fn wait_snapshot(core: &Core, names: &[String], first: bool, while_stranded: bool) -> TaskWaitResult {
     let now = now_ms();
     let mut lines = Vec::new();
     let mut unfinished = Vec::new();
@@ -318,7 +323,7 @@ fn wait_snapshot(core: &Core, names: &[String], first: bool) -> TaskWaitResult {
             None => unknown.push(name.clone()),
         }
     }
-    let over = unknown.is_empty() && crate::task::decide::wait_over(&lines, first);
+    let over = unknown.is_empty() && crate::task::decide::wait_over(&lines, first, while_stranded);
     TaskWaitResult { lines, unfinished, unknown, over }
 }
 
@@ -336,7 +341,7 @@ pub(super) async fn task_wait(core: Ctx<'_>, p: TaskWaitParams) -> Result<TaskWa
         let notified = core.changed.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
-        let result = wait_snapshot(core.core, &p.tasks, p.first);
+        let result = wait_snapshot(core.core, &p.tasks, p.first, p.while_stranded);
         if result.over {
             return Ok(result);
         }
@@ -516,5 +521,7 @@ pub(super) async fn workers_set(core: Ctx<'_>, p: WorkersSetParams) -> Result<Wo
         .map_err(|e| unavailable(format!("cannot save workers.json: {e}")))?;
     *core.tasks.workers.lock().unwrap_or_else(|p| p.into_inner()) = file;
     drop(serial);
+    // A stranded task must hear about a cleared block at once, not at the next pass.
+    core.changed.notify_waiters();
     Ok(workers_view(core.core))
 }

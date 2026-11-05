@@ -139,6 +139,12 @@ pub fn pick(
     Err(format!("ALL WORKERS OUT: {}", reasons.join(" ")))
 }
 
+/// Whether a worker of this chain is out only until a time: a stranded task
+/// with one may go on by itself when that block lapses.
+pub fn may_come_back(chain: &[Worker], file: &WorkersFile, now_ms: u64) -> bool {
+    chain.iter().any(|worker| file.blocks.get(worker.key()).is_some_and(|block| block.until_ms > now_ms))
+}
+
 /// The block a refusal makes, in the trust order person, named, estimate.
 /// None means nothing changes.
 pub fn after_refusal(current: Option<&Block>, refusal: &Refusal, task: Option<&str>, now_ms: u64) -> Option<Block> {
@@ -289,6 +295,16 @@ mod tests {
         let file = workers_file(&[("cc", block(Source::Named, "weekly", now - 1))]);
         assert_eq!(pick(&chain(Mode::Auto), &file, |_| true, now, 0), Ok(Worker::Cc));
         assert!(file.blocks.contains_key("cc"), "a lapsed block stays for its refusals");
+    }
+
+    #[test]
+    fn a_stranded_chain_comes_back_only_while_a_block_is_live() {
+        let now = now();
+        let live = workers_file(&[("cc", block(Source::Named, "weekly", now + 1))]);
+        assert!(may_come_back(&chain(Mode::Auto), &live, now));
+        let lapsed = workers_file(&[("cc", block(Source::Named, "weekly", now - 1))]);
+        assert!(!may_come_back(&chain(Mode::Auto), &lapsed, now));
+        assert!(!may_come_back(&chain(Mode::Auto), &WorkersFile::default(), now));
     }
 
     #[test]

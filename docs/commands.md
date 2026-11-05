@@ -717,6 +717,7 @@ Arguments:
 Options:
       --first              Return at the first task that ends, however it ended
       --json               JSON output even in a terminal
+      --while-stranded     Keep waiting while every worker is out; the task goes on by itself when one comes back
       --timeout <TIMEOUT>  Seconds to wait (default: as long as it takes)
       --grace <GRACE>      Seconds a name not known yet stays pending, for a start still on its way (default 30) [default: 30]
   -h, --help               Print help

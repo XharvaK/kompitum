@@ -1268,6 +1268,14 @@
               "null"
             ]
           },
+          "handoffs": {
+            "default": [],
+            "description": "One sentence per hand-off, in the order they happened.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "idle_s": {
             "default": 0,
             "format": "uint64",
@@ -1455,6 +1463,14 @@
               "integer",
               "null"
             ]
+          },
+          "handoffs": {
+            "default": [],
+            "description": "What each hand-off did, one sentence each.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "ok": {
             "default": false,
@@ -1689,16 +1705,25 @@
         "type": "object"
       },
       "TaskState": {
-        "enum": [
-          "queued",
-          "running",
-          "done",
-          "failed",
-          "timed_out",
-          "cancelled",
-          "discarded"
-        ],
-        "type": "string"
+        "oneOf": [
+          {
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "failed",
+              "timed_out",
+              "cancelled",
+              "discarded"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "stranded",
+            "description": "It wants a worker and every one of its chain is out.",
+            "type": "string"
+          }
+        ]
       },
       "TaskView": {
         "properties": {
@@ -1743,7 +1768,7 @@
             "type": "array"
           },
           "over": {
-            "description": "Every task has ended (or, with `first`, one has), and none is unknown.",
+            "description": "Every task has ended (or, with `first`, one has), and none is unknown;\na stranded task ends it too unless `while_stranded` was asked for.",
             "type": "boolean"
           },
           "unfinished": {
@@ -2057,6 +2082,11 @@
       },
       "Turn": {
         "properties": {
+          "died_at_start": {
+            "default": false,
+            "description": "The worker exited with an error before it began; it was started again.",
+            "type": "boolean"
+          },
           "ended_ms": {
             "default": null,
             "format": "uint64",
@@ -2079,6 +2109,22 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "refused": {
+            "default": null,
+            "description": "The window of the refusal that ended this turn, kept for the hand-off.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resumes": {
+            "default": null,
+            "description": "The session this turn was started to continue; None starts fresh.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "scope_token": {
             "default": null,
@@ -5175,6 +5221,16 @@
               "number",
               "null"
             ]
+          }
+        },
+        {
+          "description": "Keep waiting while every worker is out; the task goes on by itself when one comes back.",
+          "name": "while_stranded",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Keep waiting while every worker is out; the task goes on by itself when one comes back.",
+            "type": "boolean"
           }
         }
       ],

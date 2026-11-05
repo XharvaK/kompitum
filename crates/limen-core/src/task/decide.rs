@@ -132,7 +132,9 @@ pub fn may_start(task: &Task, others: &[&Task], cap: usize) -> Result<(), String
         if other.name == task.name || other.repo != task.repo {
             continue;
         }
-        let earlier = other.state == TaskState::Running || (other.state == TaskState::Queued && other.seq < task.seq);
+        // A stranded task holds its work in a worktree too, so it goes first.
+        let earlier = other.state == TaskState::Running
+            || (matches!(other.state, TaskState::Queued | TaskState::Stranded) && other.seq < task.seq);
         if earlier && scopes_overlap(&task.scope, &other.scope) {
             return Err(if other.state == TaskState::Running {
                 format!("waiting for {}: its scope overlaps", other.name)
@@ -255,7 +257,7 @@ pub fn turn_end(
 }
 
 fn session_end(task: &Task, outcome: &TurnOutcome) -> Option<TurnEnd> {
-    let expected = task.turns.iter().rev().skip(1).find_map(|turn| turn.session.clone());
+    let expected = task.turns.last().and_then(|turn| turn.resumes.clone());
     match &outcome.session {
         None => Some(TurnEnd::failed("worker did not report a session id")),
         Some(session) if expected.as_deref().is_some_and(|expected| expected != session) => {
@@ -363,23 +365,27 @@ fn command_code_end(
     TurnEnd { state: TaskState::Done, error: None, refusal: None }
 }
 
-/// Command Code rewrites its config as it starts, so its starts are at least
-/// 8 s apart. The last start is kept in memory by the pump.
-pub fn start_slot(worker: Worker, last_cc_start_ms: Option<u64>, now_ms: u64) -> Result<(), String> {
-    if worker != Worker::Cc {
-        return Ok(());
-    }
-    match last_cc_start_ms {
-        Some(last) if now_ms.saturating_sub(last) < 8_000 => Err("waiting for Command Code's start slot".into()),
+/// Workers starting together collide (Command Code rewrites its config as it
+/// starts, and OpenCode dies on a shared server): every start is at least 8 s
+/// after the last one. The last start is kept in memory by the pump.
+pub fn start_slot(last_start_ms: Option<u64>, now_ms: u64) -> Result<(), String> {
+    match last_start_ms {
+        Some(last) if now_ms.saturating_sub(last) < 8_000 => {
+            Err("waiting for a start slot: workers start 8 s apart".into())
+        }
         _ => Ok(()),
     }
 }
 
 /// The wait ends when every task has, when any ended badly (UPGRADES #51),
-/// or, with `first`, at the first one that ended.
-pub fn wait_over(lines: &[TaskLine], first: bool) -> bool {
+/// or, with `first`, at the first one that ended. A stranded task ends the
+/// wait at once unless the caller asked to wait while every worker is out.
+pub fn wait_over(lines: &[TaskLine], first: bool, while_stranded: bool) -> bool {
     if lines.is_empty() {
         return false;
+    }
+    if !while_stranded && lines.iter().any(|line| line.state == TaskState::Stranded) {
+        return true;
     }
     if lines.iter().any(|line| line.state.ended_badly()) {
         return true;
@@ -453,6 +459,9 @@ mod tests {
         assert!(may_start(&disjoint, &[&earlier, &run], 5).is_ok());
         let other_repo = Task { repo: "/elsewhere".into(), ..task("a", TaskState::Running, 1, &["src/**"]) };
         assert!(may_start(&third, &[&other_repo], 5).is_ok(), "another repo never overlaps");
+        let stranded = task("s", TaskState::Stranded, 1, &["src/**"]);
+        assert_eq!(may_start(&queued, &[&stranded], 5), Err("queued behind s: its scope overlaps".into()));
+        assert_eq!(may_start(&disjoint, &[&stranded], 5), Ok(()), "stranded is not running");
     }
 
     #[test]
@@ -607,10 +616,28 @@ mod tests {
         assert_eq!(end.state, TaskState::Failed);
         assert!(end.error.unwrap().starts_with("model verification mismatch: asked for"));
 
-        // Continuing now expects the session the previous turn reported.
-        t.turns[0].session = Some("ses_1".into());
-        t.turns.push(turn(0));
+        // A turn that resumes a session expects exactly that one.
+        t.turns.push(Turn { resumes: Some("ses_1".to_string()), ..turn(0) });
         let mut other = good;
+        other.session = Some("ses_2".into());
+        other.sessions = vec!["ses_2".into()];
+        assert_eq!(
+            result(judge(&t, Some(&exited), Some(0), &other)),
+            ended(TaskState::Failed, Some("session mismatch: worker returned an unexpected session id"))
+        );
+    }
+
+    #[test]
+    fn a_session_mismatch_counts_only_for_a_turn_that_resumed() {
+        let exited = TerminalNow { live: false, exit_code: Some(0), reason: Some("exited".into()) };
+        let mut t = task("a", TaskState::Running, 1, &[]);
+        t.turns = vec![turn(0)];
+        let fresh = outcome();
+        assert_eq!(result(judge(&t, Some(&exited), Some(0), &fresh)), ended(TaskState::Done, None));
+
+        t.turns.push(Turn { resumes: Some("ses_1".to_string()), ..turn(0) });
+        assert_eq!(result(judge(&t, Some(&exited), Some(0), &fresh)), ended(TaskState::Done, None));
+        let mut other = fresh;
         other.session = Some("ses_2".into());
         other.sessions = vec!["ses_2".into()];
         assert_eq!(
@@ -736,13 +763,12 @@ mod tests {
     }
 
     #[test]
-    fn command_codes_starts_are_eight_seconds_apart() {
-        assert!(start_slot(Worker::Go, Some(1_000), 1_001).is_ok());
-        assert!(start_slot(Worker::Cc, None, 1_000).is_ok());
-        assert!(start_slot(Worker::Cc, Some(1_000), 8_999).is_err());
-        assert_eq!(start_slot(Worker::Cc, Some(1_000), 8_999), Err("waiting for Command Code's start slot".into()));
-        assert!(start_slot(Worker::Cc, Some(1_000), 9_000).is_ok());
-        assert!(start_slot(Worker::Cc, Some(1_000), 30_000).is_ok());
+    fn every_workers_start_is_eight_seconds_after_the_last() {
+        assert!(start_slot(None, 1_000).is_ok());
+        assert!(start_slot(Some(1_000), 1_001).is_err());
+        assert_eq!(start_slot(Some(1_000), 8_999), Err("waiting for a start slot: workers start 8 s apart".into()));
+        assert!(start_slot(Some(1_000), 9_000).is_ok());
+        assert!(start_slot(Some(1_000), 30_000).is_ok());
     }
 
     fn line(name: &str, state: TaskState) -> TaskLine {
@@ -752,15 +778,20 @@ mod tests {
     #[test]
     fn a_wait_ends_when_all_end_a_bad_end_or_with_first_any_end() {
         let running = [line("a", TaskState::Running), line("b", TaskState::Running)];
-        assert!(!wait_over(&running, false) && !wait_over(&running, true));
-        assert!(!wait_over(&[], false), "nothing known is not everything ended");
+        assert!(!wait_over(&running, false, false) && !wait_over(&running, true, false));
+        assert!(!wait_over(&[], false, false), "nothing known is not everything ended");
         let first_done = [line("a", TaskState::Done), line("b", TaskState::Running)];
-        assert!(!wait_over(&first_done, false));
-        assert!(wait_over(&first_done, true));
+        assert!(!wait_over(&first_done, false, false));
+        assert!(wait_over(&first_done, true, false));
         let bad = [line("a", TaskState::Failed), line("b", TaskState::Running)];
-        assert!(wait_over(&bad, false), "a bad end wakes at once (UPGRADES #51)");
+        assert!(wait_over(&bad, false, false), "a bad end wakes at once (UPGRADES #51)");
         let all = [line("a", TaskState::Done), line("b", TaskState::TimedOut)];
-        assert!(wait_over(&all, false));
+        assert!(wait_over(&all, false, false));
+        let stranded = [line("a", TaskState::Stranded), line("b", TaskState::Running)];
+        assert!(wait_over(&stranded, false, false), "stranded ends the wait unless asked to stay");
+        assert!(wait_over(&stranded, true, false));
+        assert!(!wait_over(&stranded, false, true), "while stranded, the task goes on by itself");
+        assert!(!wait_over(&stranded, true, true));
     }
 
     #[test]

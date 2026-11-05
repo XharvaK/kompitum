@@ -10,6 +10,8 @@ pub enum TaskState {
     #[default]
     Queued,
     Running,
+    /// It wants a worker and every one of its chain is out.
+    Stranded,
     Done,
     Failed,
     TimedOut,
@@ -18,9 +20,9 @@ pub enum TaskState {
 }
 
 impl TaskState {
-    /// No longer running: queued is the only state that hasn't begun.
+    /// No longer running: queued and stranded are the states that haven't ended.
     pub fn ended(self) -> bool {
-        !matches!(self, TaskState::Queued | TaskState::Running)
+        !matches!(self, TaskState::Queued | TaskState::Running | TaskState::Stranded)
     }
 
     /// An end nobody may accept: a failure, a cut-off, or a cancel.
@@ -32,6 +34,7 @@ impl TaskState {
         match self {
             TaskState::Queued => "queued",
             TaskState::Running => "running",
+            TaskState::Stranded => "stranded",
             TaskState::Done => "done",
             TaskState::Failed => "failed",
             TaskState::TimedOut => "timed_out",
@@ -99,6 +102,15 @@ pub struct Turn {
     pub exit_code: Option<i32>,
     /// The session the worker reported, once it did.
     pub session: Option<String>,
+    /// The session this turn was started to continue; None starts fresh.
+    #[serde(default)]
+    pub resumes: Option<String>,
+    /// The window of the refusal that ended this turn, kept for the hand-off.
+    #[serde(default)]
+    pub refused: Option<String>,
+    /// The worker exited with an error before it began; it was started again.
+    #[serde(default)]
+    pub died_at_start: bool,
     /// The last report it wrote, whole; the wake cuts it.
     pub text: String,
     pub usage: Usage,
@@ -127,6 +139,9 @@ pub struct Task {
     pub worker: String,
     /// The worker keys `task.start` fixed, in the order to try them.
     pub chain: Vec<String>,
+    /// One sentence per hand-off, in the order they happened.
+    #[serde(default)]
+    pub handoffs: Vec<String>,
     pub idle_s: u64,
     pub wall_s: u64,
     /// The caller's terminal.
@@ -157,6 +172,9 @@ pub struct TaskLine {
     pub worker: Option<String>,
     /// Every turn's worker key, in order.
     pub workers: Vec<String>,
+    /// What each hand-off did, one sentence each.
+    #[serde(default)]
+    pub handoffs: Vec<String>,
     pub turns: u32,
     pub seconds: f64,
     pub cost_usd: f64,
@@ -189,6 +207,7 @@ impl TaskLine {
             ok: task.state == TaskState::Done && out_of_scope.is_empty(),
             worker: last.map(|t| crate::task::worker::label_of(&t.worker)),
             workers: task.turns.iter().map(|t| t.worker.clone()).collect(),
+            handoffs: task.handoffs.clone(),
             turns: task.turns.len() as u32,
             seconds,
             cost_usd: usage.cost_usd,
@@ -288,6 +307,8 @@ mod tests {
     #[test]
     fn state_words_are_what_the_api_and_files_use() {
         assert_eq!(TaskState::TimedOut.word(), "timed_out");
+        assert_eq!(TaskState::Stranded.word(), "stranded");
+        assert!(!TaskState::Stranded.ended() && !TaskState::Stranded.ended_badly());
         assert!(TaskState::Cancelled.ended_badly() && TaskState::Done.ended() && !TaskState::Running.ended());
     }
 }
