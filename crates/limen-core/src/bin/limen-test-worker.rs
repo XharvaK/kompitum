@@ -24,6 +24,11 @@ fn main() {
     };
     // The runner's route check: an export, never a turn, so the counter stays.
     if args.get(1).map(String::as_str) == Some("session") && args.get(2).map(String::as_str) == Some("export") {
+        // The real CLI's failure when it reaches for a managed service it can't use.
+        if !args.iter().any(|arg| arg == "--standalone") {
+            eprintln!("Error: Managed service port 49374 on 127.0.0.1 is already in use by another process.");
+            std::process::exit(1);
+        }
         let value = std::fs::read_to_string(&script).ok().and_then(|text| serde_json::from_str::<Value>(&text).ok());
         if let Some(ms) = value.as_ref().and_then(|value| value.get("export_sleep_ms")).and_then(Value::as_u64) {
             std::thread::sleep(Duration::from_millis(ms));

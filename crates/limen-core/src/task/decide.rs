@@ -304,12 +304,26 @@ fn opencode_end(
     }
     match route {
         None => TurnEnd::failed("model verification error: the runner wrote no route check"),
-        Some(check) if check.status == "verified" => TurnEnd { state: TaskState::Done, error: None, refusal: None },
+        Some(check) if check.status == "verified" || route_unchecked(Some(check)).is_some() => {
+            TurnEnd { state: TaskState::Done, error: None, refusal: None }
+        }
         Some(check) => TurnEnd::failed(match &check.message {
             Some(message) if !message.is_empty() => format!("model verification {}: {message}", check.status),
             _ => format!("model verification {}", check.status),
         }),
     }
+}
+
+/// What a finished turn's route check could not say. An export that failed or came
+/// back cut off is no evidence about the route, so the work stays done and the line
+/// says it wasn't checked. A complete export naming another route still fails the task.
+pub fn route_unchecked(route: Option<&RouteCheck>) -> Option<String> {
+    let check = route?;
+    if check.status != "error" && check.status != "unverifiable" {
+        return None;
+    }
+    let words = check.message.as_deref().filter(|message| !message.is_empty()).unwrap_or(check.status.as_str());
+    Some(format!("which model ran could not be checked: {words}"))
 }
 
 fn command_code_end(
@@ -615,6 +629,21 @@ mod tests {
         let end = turn_end(&t, Some(&exited), Some(0), &good, Some(&mismatch), "", 1_000, 0);
         assert_eq!(end.state, TaskState::Failed);
         assert!(end.error.unwrap().starts_with("model verification mismatch: asked for"));
+        assert_eq!(route_unchecked(Some(&mismatch)), None);
+
+        // A check that could not run says nothing about the route, and the work is there.
+        for status in ["error", "unverifiable"] {
+            let unknown =
+                RouteCheck { status: status.into(), message: Some("export timed out".into()), ..Default::default() };
+            let end = turn_end(&t, Some(&exited), Some(0), &good, Some(&unknown), "", 1_000, 0);
+            assert_eq!(end.state, TaskState::Done, "{status}");
+            assert_eq!(end.error, None, "{status}");
+            assert_eq!(
+                route_unchecked(Some(&unknown)).as_deref(),
+                Some("which model ran could not be checked: export timed out")
+            );
+        }
+        assert_eq!(route_unchecked(None), None);
 
         // A turn that resumes a session expects exactly that one.
         t.turns.push(Turn { resumes: Some("ses_1".to_string()), ..turn(0) });

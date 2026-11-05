@@ -489,6 +489,9 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     }
     let refused_words = error.clone().unwrap_or_default();
     if end.state == TaskState::Done {
+        if let Some(words) = decide::route_unchecked(route.as_ref()) {
+            task.warnings.push(words);
+        }
         let before = core.tasks.workers();
         let mut file = before.clone();
         workers::after_good_turn(&mut file, &key);

@@ -174,8 +174,10 @@ fn beat_loop(shared: Arc<Mutex<Shared>>, path: PathBuf, done: Arc<AtomicBool>) {
 /// One export, at most 60 s: its stdout, or the words of its failure.
 fn export_once(prefix: &[String], session: &str, cwd: &Path, path_first: Option<&Path>) -> Result<String, String> {
     let mut cmd = Command::new(&prefix[0]);
+    // `--standalone`, as the turn itself runs: without it OpenCode reaches for its
+    // managed service, starts one that outlives the task, and fails if the port is taken.
     cmd.args(&prefix[1..])
-        .args(["session", "export", "--sanitize", session])
+        .args(["session", "export", "--standalone", "--sanitize", session])
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

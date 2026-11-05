@@ -483,18 +483,37 @@ fn a_route_that_differs_fails_the_turn() {
 }
 
 #[test]
-fn a_failed_export_fails_the_turn_in_words() {
+fn an_export_that_cannot_say_leaves_the_work_done_and_says_so() {
     let s = Session::new();
     let repo = s.repo();
     let opencode = script_with(&s, "oc-bad-export", json!([say(&stream("ses_bad_export", "done"))]), Some("not json"));
     s.config_for(&opencode, &s.missing_cc(), "");
     s.start("oc-bad-export", "brief", &repo, &["--worker", "go"]);
     let (exit, rows, _) = s.wait(&["oc-bad-export"], &["--timeout", "60"]);
-    assert_eq!(exit, 1, "{rows:?}");
-    let error = rows[0]["error"].as_str().unwrap();
-    assert!(error.starts_with("model verification error: "), "{error}");
-    assert!(error.contains("export was not JSON"), "{error}");
-    assert!(error.contains("4 export attempts"), "{error}");
+    assert_eq!(exit, 0, "{rows:?}");
+    assert_eq!(rows[0]["state"], "done", "{rows:?}");
+    let warnings = rows[0]["warnings"].as_array().unwrap();
+    let words = warnings
+        .iter()
+        .filter_map(|warning| warning.as_str())
+        .find(|warning| warning.starts_with("which model ran could not be checked: "))
+        .unwrap_or_else(|| panic!("no warning in {rows:?}"));
+    assert!(words.contains("export was not JSON"), "{words}");
+    assert!(words.contains("4 export attempts"), "{words}");
+}
+
+#[test]
+fn the_model_check_starts_no_background_service() {
+    // Without `--standalone` the test worker fails the export as the real CLI does.
+    let s = Session::new();
+    let repo = s.repo();
+    let opencode = script_with(&s, "oc-export-flag", json!([say(&stream("ses_export_flag", "done"))]), None);
+    s.config_for(&opencode, &s.missing_cc(), "");
+    s.start("oc-export-flag", "brief", &repo, &["--worker", "go"]);
+    let (exit, rows, _) = s.wait(&["oc-export-flag"], &["--timeout", "60"]);
+    assert_eq!(exit, 0, "{rows:?}");
+    let warnings = rows[0]["warnings"].to_string();
+    assert!(!warnings.contains("could not be checked"), "{warnings}");
 }
 
 #[test]
