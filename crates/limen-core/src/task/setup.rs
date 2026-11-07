@@ -41,15 +41,18 @@ pub fn to_remove(vars: impl Iterator<Item = (String, String)>) -> Vec<String> {
     // wrong standard library.
     let stub = vars.iter().any(|(key, value)| key.eq_ignore_ascii_case("UV_INTERNAL__PYTHONHOME") && !value.is_empty());
     vars.into_iter()
-        .map(|(key, _)| key)
-        .filter(|key| {
+        .filter(|(key, value)| {
             let key = key.to_ascii_uppercase();
             key == "OLDPWD"
                 || (stub && (key == "PYTHONHOME" || key == "UV_INTERNAL__PYTHONHOME"))
                 || key.starts_with("CLAUDE")
                 || key.starts_with("ANTHROPIC")
                 || (key.starts_with("LIMEN_") && !KEEP.contains(&key.as_str()))
+                // A core started inside an OpenCode worker carries its switch; an empty
+                // value is a Command Code turn saying its worker must not get it.
+                || (key == "OPENCODE_DISABLE_PROJECT_CONFIG" && value.is_empty())
         })
+        .map(|(key, _)| key)
         .collect()
 }
 
@@ -135,8 +138,9 @@ const BASH_DENY: [&str; 9] = [
 /// `worker_config`: OpenCode's permission map, so a tool that would read a
 /// secret or commit is not a tool this worker has at all. Denied by
 /// permission, never by asking: a worker routes around a tool that fails, but
-/// cannot use one it doesn't have.
-fn opencode_config() -> String {
+/// cannot use one it doesn't have. The tools nobody calls are gone too; a task
+/// that asked for the web keeps its two.
+fn opencode_config(web: bool) -> String {
     let mut read = serde_json::Map::new();
     read.insert("*".into(), serde_json::json!("allow"));
     for glob in SECRET_GLOBS.iter().chain(SECRET_DEEP.iter()) {
@@ -148,8 +152,19 @@ fn opencode_config() -> String {
         bash.insert(glob.to_string(), serde_json::json!("deny"));
     }
     let edit = serde_json::json!({"*": "allow", "*.env": "deny", "**/.env": "deny", "*.pem": "deny"});
-    let config = serde_json::json!({"permission": {"read": read, "bash": bash, "edit": edit}});
-    config.to_string()
+    let mut permission = serde_json::Map::new();
+    permission.insert("read".into(), read.into());
+    permission.insert("bash".into(), bash.into());
+    permission.insert("edit".into(), edit);
+    for tool in ["skill", "subagent", "question", "execute"] {
+        permission.insert(tool.into(), serde_json::json!("deny"));
+    }
+    if !web {
+        for tool in ["webfetch", "websearch"] {
+            permission.insert(tool.into(), serde_json::json!("deny"));
+        }
+    }
+    serde_json::json!({"permission": permission}).to_string()
 }
 
 /// `CC_DENY`: Command Code's own spellings of the same refusals.
@@ -353,7 +368,13 @@ pub async fn prepare(
     prepared.env.insert("GIT_CONFIG_KEY_0".into(), "core.hooksPath".into());
     prepared.env.insert("GIT_CONFIG_VALUE_0".into(), forward_slashes(&hooks));
     prepared.env.insert("LIMEN_PROTECTED".into(), protected);
-    prepared.env.insert("OPENCODE_CONFIG_CONTENT".into(), opencode_config());
+    prepared.env.insert("OPENCODE_CONFIG_CONTENT".into(), opencode_config(task.asked.web));
+    // OpenCode would read the repository's and the home folder's AGENTS.md by itself; the prompt
+    // carries the committed one instead. Command Code's settings stay as they are: what it
+    // carries is unmeasured until its credits return. Its empty value tells the runner to take
+    // away a switch the core may itself have inherited from an OpenCode worker.
+    let project_config = if worker == Worker::Cc { "" } else { "1" };
+    prepared.env.insert("OPENCODE_DISABLE_PROJECT_CONFIG".into(), project_config.into());
     if crate::platform::PYTHON_SHIMS {
         match real_python().await {
             Some(exe) => prepared.path_first = Some(python_shims(&core.paths.state, &exe)?.display().to_string()),
@@ -447,6 +468,8 @@ mod tests {
             ("LIMEN_WORKER", "1"),
             ("LIMEN_SCOPE", "abc"),
             ("HOME", "/home"),
+            ("OPENCODE_DISABLE_PROJECT_CONFIG", ""),
+            ("opencode_disable_project_config", "1"),
         ]));
         assert_eq!(
             removed,
@@ -457,6 +480,7 @@ mod tests {
                 "CLAUDE_CODE_ENTRYPOINT",
                 "anthropic_api_key",
                 "LIMEN_POLL_SECONDS",
+                "OPENCODE_DISABLE_PROJECT_CONFIG",
             ]
         );
         assert!(

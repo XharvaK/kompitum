@@ -294,3 +294,44 @@ fn opencode_gets_its_denied_tools() {
         "{config}"
     );
 }
+
+#[test]
+fn a_go_worker_carries_only_what_it_uses() {
+    let s = Session::new();
+    let repo = s.repo();
+    let plain = s.root.join("plain-env.txt");
+    let web = s.root.join("web-env.txt");
+    let cc = s.root.join("cc-env.txt");
+    let mut turn = vec![json!({"env_to": plain.display().to_string()})];
+    turn.extend(say(&stream("ses_plain", "looked")));
+    let mut with_web = vec![json!({"env_to": web.display().to_string()})];
+    with_web.extend(say(&stream("ses_web", "looked")));
+    let mut command_code = vec![json!({"env_to": cc.display().to_string()})];
+    command_code.extend(say(&cc_says("s-env", "looked")));
+    let script = s.script("uses", json!([turn, with_web, command_code]));
+    s.config(&script, "");
+    s.start("uses-1", "look at the tools", &repo, &["--worker", "go"]);
+    s.start("uses-web", "look at the tools", &repo, &["--worker", "go", "--web"]);
+    s.start("uses-cc", "look at the tools", &repo, &["--worker", "cc"]);
+    let (exit, rows, summary) = s.wait(&["uses-1", "uses-web", "uses-cc"], &["--timeout", "120"]);
+    assert_eq!(exit, 0, "{rows:?} {summary}");
+
+    let text = std::fs::read_to_string(&plain).unwrap();
+    assert_eq!(env_value(&text, "OPENCODE_DISABLE_PROJECT_CONFIG").as_deref(), Some("1"), "{text}");
+    let config: Value = serde_json::from_str(&env_value(&text, "OPENCODE_CONFIG_CONTENT").unwrap()).unwrap();
+    for tool in ["skill", "subagent", "question", "execute", "webfetch", "websearch"] {
+        assert_eq!(config["permission"][tool], "deny", "{tool}: {config}");
+    }
+
+    let text = std::fs::read_to_string(&web).unwrap();
+    let config: Value = serde_json::from_str(&env_value(&text, "OPENCODE_CONFIG_CONTENT").unwrap()).unwrap();
+    for tool in ["skill", "subagent", "question", "execute"] {
+        assert_eq!(config["permission"][tool], "deny", "{tool}: {config}");
+    }
+    for tool in ["webfetch", "websearch"] {
+        assert_ne!(config["permission"][tool], "deny", "{tool} stays with --web: {config}");
+    }
+
+    let text = std::fs::read_to_string(&cc).unwrap();
+    assert!(env_value(&text, "OPENCODE_DISABLE_PROJECT_CONFIG").is_none(), "Command Code's own settings: {text}");
+}

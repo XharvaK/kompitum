@@ -183,7 +183,10 @@ fn a_command_code_turn_gets_its_brief_on_stdin_and_ends_done() {
         assert!(argv.lines().any(|line| line == flag), "{flag} in {argv}");
     }
     assert!(!argv.contains("the brief"), "the brief must not be on argv: {argv}");
-    assert_eq!(std::fs::read_to_string(&stdin).unwrap(), "the brief");
+    let prompt = std::fs::read_to_string(&stdin).unwrap();
+    assert!(prompt.starts_with("the brief"), "{prompt}");
+    assert!(prompt.contains("# Limits on this task (added by Limen)"), "{prompt}");
+    assert!(!prompt.contains("You are taking over from another worker"), "no note: {prompt}");
     assert!(std::fs::read_to_string(&env).unwrap().lines().any(|line| line == "COMMANDCODE_SKIP_UPDATES=1"));
 
     let view = s.task("cc-1");

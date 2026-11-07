@@ -29,7 +29,7 @@ fn refused_at_once() -> Vec<Value> {
 }
 
 /// A Command Code turn that writes a file, reads one and thinks, then is refused.
-fn refused_after_work() -> Vec<Value> {
+pub(super) fn refused_after_work() -> Vec<Value> {
     let mut actions = vec![json!({"write": ["made.txt", "hello"]})];
     actions.extend(say(&[
         event(json!({"type": "run_start", "sessionId": "s-handoff"})),
@@ -73,7 +73,7 @@ fn free_refused_after_work() -> Vec<Value> {
     actions
 }
 
-fn go_good(kept: Option<&Path>) -> Vec<Value> {
+pub(super) fn go_good(kept: Option<&Path>) -> Vec<Value> {
     let mut actions = Vec::new();
     if let Some(path) = kept {
         actions.push(json!({"file_arg_to": path.display().to_string()}));
@@ -141,7 +141,7 @@ fn a_refused_turn_hands_off_to_the_next_worker_with_a_note() {
     assert!(!prompt.contains("opencode free"), "{prompt}");
     assert!(prompt.contains("Command Code ran out of credits after 1 step and $0.13."), "{prompt}");
     let after = &prompt[prompt.find("THE BRIEF FOLLOWS.").expect("the note says where the brief is")..];
-    assert!(after.contains(brief), "{after}");
+    assert!(after.contains(brief.trim_end()), "{after}");
     let folder = Path::new(view["folder"].as_str().unwrap());
     assert!(folder.join("turn-2.note.md").is_file(), "the note is on disk");
 }
@@ -163,7 +163,10 @@ fn a_worker_refused_at_once_restarts_with_no_note() {
         json!(["Command Code refused it at once, so opencode Go started it fresh."]),
         "{rows:?}"
     );
-    assert_eq!(std::fs::read_to_string(&kept).unwrap(), brief, "no note: the prompt is the brief");
+    let prompt = std::fs::read_to_string(&kept).unwrap();
+    assert!(prompt.starts_with(brief.trim_end()), "no note, so it starts with the brief: {prompt}");
+    assert!(prompt.contains("# Limits on this task (added by Limen)"), "{prompt}");
+    assert!(!prompt.contains("You are taking over from another worker"), "no note: {prompt}");
 }
 
 #[test]
