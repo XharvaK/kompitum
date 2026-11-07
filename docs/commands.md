@@ -617,6 +617,18 @@ Options:
   -h, --help  Print help
 ```
 
+## lc status
+
+```text
+Everything at one glance: agents, tasks, workers and Claude's limits
+
+Usage: lc status [OPTIONS]
+
+Options:
+      --json  JSON output even in a terminal
+  -h, --help  Print help
+```
+
 ## lc task
 
 ```text
@@ -839,6 +851,34 @@ Options:
       --version <X.Y.Z>  At least this release (`0.1.4`): nothing changes when this lc is already that or newer
       --force            Allow an older version (saved state only moves forward), or a release of another protocol generation
   -h, --help             Print help
+```
+
+## lc vault
+
+```text
+Notes between agents in the shared vault: read, post, mark, find
+
+Usage: lc vault [OPTIONS] <COMMAND>
+
+Commands:
+  ls    The notes in the vault
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+      --json  JSON output even in a terminal
+  -h, --help  Print help
+```
+
+## lc vault ls
+
+```text
+The notes in the vault
+
+Usage: lc vault ls [OPTIONS]
+
+Options:
+      --json  JSON output even in a terminal
+  -h, --help  Print help
 ```
 
 ## lc wait

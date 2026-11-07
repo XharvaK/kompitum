@@ -14,12 +14,16 @@ use std::io::{IsTerminal, Read};
 
 mod file;
 mod machine;
+mod vault;
 mod output;
+mod status;
 mod task;
 mod update;
 use file::*;
 use machine::*;
+use vault::*;
 use output::*;
+use status::*;
 use task::*;
 use update::*;
 
@@ -89,6 +93,13 @@ enum Cmd {
     Workers(WorkersArgs),
     /// Worker runs: one row per accepted or discarded task, with what it cost.
     Ledger(LedgerArgs),
+    /// Notes between agents in the shared vault: read, post, mark, find.
+    Vault {
+        #[command(subcommand)]
+        action: VaultCmd,
+    },
+    /// Everything at one glance: agents, tasks, workers and Claude's limits.
+    Status(StatusArgs),
     /// Follow fact changes as they happen (one JSON line each when piped).
     Events(SubscribeParams),
     /// Templates you can run by name (~/.config/limen-core/templates).
@@ -374,7 +385,10 @@ fn as_a_worker(cmd: Option<&Cmd>) -> Result<(), RpcError> {
     }
     match cmd {
         None => deny(),
-        Some(Cmd::Ls(_) | Cmd::Get(_) | Cmd::Read(_) | Cmd::Events(_) | Cmd::Schema | Cmd::Ledger(_)) => Ok(()),
+        Some(Cmd::Ls(_) | Cmd::Get(_) | Cmd::Read(_) | Cmd::Events(_) | Cmd::Schema | Cmd::Ledger(_) | Cmd::Status(_)) => {
+            Ok(())
+        }
+        Some(Cmd::Vault { action }) => vault_as_a_worker(action),
         // The runner runs under the mark, and the first lc call may start a core.
         Some(Cmd::RunLogged(_) | Cmd::Serve | Cmd::Hold { .. }) => Ok(()),
         Some(Cmd::Server { action }) => match action {
@@ -741,6 +755,11 @@ fn run(cmd: Option<Cmd>, json: bool, asked: bool) -> Result<Option<Out>, RpcErro
             Some(out) => out,
             None => return Ok(None),
         },
+        Cmd::Vault { action } => match vault_cmd(action, asked)? {
+            Some(out) => out,
+            None => return Ok(None),
+        },
+        Cmd::Status(a) => status_cmd(a, asked, call)?,
         Cmd::RunLogged(args) => crate::task::runner::run(args),
         Cmd::File { action } => match file(action, asked, call)? {
             Some(out) => out,
