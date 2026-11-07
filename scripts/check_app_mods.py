@@ -7,6 +7,7 @@ main checkout's debug build, or LIMEN_APP_EXE.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -31,9 +32,13 @@ def main() -> int:
     flags = NO_WINDOW if os.name == "nt" else 0
     failed = 0
     for folder in folders:
-        path = Path(folder)
-        if not path.is_absolute():
-            path = Path.cwd() / path
+        source = Path(folder)
+        if not source.is_absolute():
+            source = Path.cwd() / source
+        # The check writes type files beside a mod, so it checks a copy, not the repo's folder.
+        path = HOME / "copies" / source.name
+        shutil.rmtree(path, ignore_errors=True)
+        shutil.copytree(source, path)
         done = subprocess.run([str(exe), "check", str(path)], env=env, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=120, creationflags=flags)
         said = (done.stdout + done.stderr).strip()
