@@ -1,0 +1,2 @@
+# The app keeps upstream's formatting: rustfmt's defaults, not the settings of
+# the core's rustfmt.toml above this folder.

@@ -1,0 +1,5 @@
+# The core above this folder puts the C runtime inside its exe. The app links
+# it the way upstream builds it. Cargo joins the two lists, and this one comes
+# last, so it wins.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=-crt-static"]
