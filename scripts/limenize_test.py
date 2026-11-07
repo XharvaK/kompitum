@@ -4,8 +4,10 @@ Run with: python -B -m unittest scripts/limenize_test.py
 """
 
 import atexit
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -114,6 +116,56 @@ name = "zzz"
 version = "2.0.0"
 """
 
+APP_LOCK_INPUT = """version = 4
+
+[[package]]
+name = "libc"
+version = "0.2.0"
+
+[[package]]
+name = "herdr-app"
+version = "0.1.0"
+dependencies = [
+ "herdr-core",
+ "libc",
+ "zzz",
+]
+
+[[package]]
+name = "herdr-core"
+version = "0.1.17"
+
+[[package]]
+name = "zzz"
+version = "1.0.0"
+"""
+
+APP_LOCK_OUTPUT = """version = 4
+
+[[package]]
+name = "libc"
+version = "0.2.0"
+
+[[package]]
+name = "limen-app"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "limen-core",
+ "zzz",
+]
+
+[[package]]
+name = "limen-core"
+version = "0.1.17"
+
+[[package]]
+name = "zzz"
+version = "1.0.0"
+"""
+
+APP_NOTICES = "Herdr third-party notices\n=========================\nRegenerate.\n"
+
 
 class Repo:
     def __init__(self, root):
@@ -205,6 +257,33 @@ def make_repo(files):
 
 def add_upstream_ref(repo):
     repo.git("update-ref", "refs/heads/upstream/master", "HEAD")
+
+
+def add_app_ref(repo):
+    repo.git("update-ref", "refs/heads/upstream-app/master", "HEAD")
+
+
+def make_app(extra=None, notices=None, gitlink=False):
+    files = {
+        "Cargo.toml": '[package]\nname = "herdr-app"\nversion = "0.1.0"\n',
+        "Cargo.lock": APP_LOCK_INPUT,
+        "THIRD-PARTY-NOTICES": APP_NOTICES if notices is None else notices,
+        "docs/keep.txt": "nothing to rename\n",
+    }
+    if extra:
+        files.update(extra)
+    repo, root = make_repo(files)
+    if gitlink:
+        target = repo.git("rev-parse", "HEAD").stdout.decode().strip()
+        repo.git(
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000,%s,vendor/ghostty" % target,
+        )
+        repo.git("commit", "-q", "-m", "gitlink")
+    add_app_ref(repo)
+    return repo, root
 
 
 def make_minimal(extra=None):
@@ -754,6 +833,323 @@ class SyncTest(unittest.TestCase):
         result = run_script(repo, "check", cwd=nested)
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertEqual(last_json(result)["problems_total"], 0)
+
+
+def reference_lock_inputs(lock, workspace_names):
+    packages = []
+    for package in lock.split("[[package]]")[1:]:
+        def field(key):
+            for line in package.splitlines():
+                if line.startswith(key):
+                    rest = line[len(key):]
+                    if rest.startswith(' = "') and rest.endswith('"'):
+                        return rest[4:-1]
+            return None
+
+        name = field("name")
+        version = field("version")
+        source = field("source") or ""
+        checksum = field("checksum") or ""
+        if source == "" and name in workspace_names:
+            continue
+        packages.append("%s\t%s\t%s\t%s" % (name, version, source, checksum))
+    packages.sort()
+    return "\n".join(packages)
+
+
+def reference_manifest_inputs(manifest):
+    lines = []
+    in_package = False
+    for line in manifest.split("\n"):
+        if line.startswith("["):
+            in_package = line == "[package]"
+        if in_package and line.startswith("version = "):
+            lines.append('version = "<workspace version>"')
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def reference_notices_hash(path, data, workspace_names):
+    text = data.decode("utf-8").replace("\r\n", "\n")
+    if path == "Cargo.lock":
+        text = reference_lock_inputs(text, workspace_names)
+    elif path == "Cargo.toml":
+        text = reference_manifest_inputs(text)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class AppTest(unittest.TestCase):
+    def check(self, repo):
+        result = run_script(repo, "check", "--app")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        return last_json(result)
+
+    def test_paths_go_under_app_and_gitlink_moves(self):
+        repo, root = make_app(gitlink=True)
+        upstream_gitlink = (
+            repo.git("ls-tree", "upstream-app/master", "vendor/ghostty")
+            .stdout.decode()
+            .split()[2]
+        )
+        payload = self.check(repo)
+        tree = tree_map(repo, payload["tree"])
+        self.assertTrue(tree)
+        for path in tree:
+            self.assertTrue(path.startswith("app/"), path)
+        self.assertEqual(tree["app/vendor/ghostty"][0], "160000")
+        self.assertEqual(tree["app/vendor/ghostty"][1], "commit")
+        self.assertEqual(tree["app/vendor/ghostty"][2], upstream_gitlink)
+        self.assertEqual(payload["ref"], "upstream-app/master")
+
+    def test_drops_only_top_level_files(self):
+        repo, root = make_app(
+            {
+                ".github/workflows/ci.yml": "Herdr\n",
+                ".gitmodules": "[submodule]\n",
+                "README.md": "Herdr\n",
+                "AGENTS.md": "Herdr\n",
+                "SECURITY.md": "Herdr\n",
+                "CONTRIBUTING.md": "Herdr\n",
+                "defaults/AGENTS.md": "Herdr\n",
+                "docs/README.md": "Herdr\n",
+                "CHANGELOG.md": "Herdr\n",
+            }
+        )
+        payload = self.check(repo)
+        tree = tree_map(repo, payload["tree"])
+        for path in (
+            ".github/workflows/ci.yml",
+            ".gitmodules",
+            "README.md",
+            "AGENTS.md",
+            "SECURITY.md",
+            "CONTRIBUTING.md",
+        ):
+            self.assertNotIn("app/" + path, tree)
+        self.assertEqual(
+            repo.read(payload["tree"], "app/defaults/AGENTS.md"), b"Limen\n"
+        )
+        self.assertEqual(repo.read(payload["tree"], "app/docs/README.md"), b"Limen\n")
+        self.assertEqual(repo.read(payload["tree"], "app/CHANGELOG.md"), b"Limen\n")
+        self.assertEqual(payload["counts"]["dropped"], 6)
+
+    def test_keeps_licences_and_fonts_verbatim(self):
+        repo, root = make_app(
+            {
+                "LICENSE": "Herdr\n",
+                "licenses/x.txt": "herdr\n",
+                "assets/fonts/f.ttf": "herdr\n",
+                "defaults/icons/LICENSE-x.txt": "herdr\n",
+                "defaults/mods/win98/fonts/LICENSE-x.txt": "herdr\n",
+                "vendor/pkg/LICENSE.txt": "herdr\n",
+                "vendor/pkg/NOTICE.md": "herdr\n",
+                "vendor/pkg/other.txt": "herdr\n",
+            }
+        )
+        payload = self.check(repo)
+        tree = payload["tree"]
+        self.assertEqual(repo.read(tree, "app/LICENSE"), b"Herdr\n")
+        for path in (
+            "licenses/x.txt",
+            "assets/fonts/f.ttf",
+            "defaults/icons/LICENSE-x.txt",
+            "defaults/mods/win98/fonts/LICENSE-x.txt",
+            "vendor/pkg/LICENSE.txt",
+            "vendor/pkg/NOTICE.md",
+        ):
+            self.assertEqual(repo.read(tree, "app/" + path), b"herdr\n", path)
+        self.assertEqual(repo.read(tree, "app/vendor/pkg/other.txt"), b"limen\n")
+        self.assertEqual(payload["counts"]["verbatim"], 7)
+
+    def test_vendor_text_uses_only_the_herdr_rules(self):
+        repo, root = make_app(
+            {
+                "vendor/pkg/x.rs": (
+                    "// Herdr HERDR herdr https://telemetry.herdr.dev hc HC_SCOPE lc\n"
+                    "fn main(){let x=1;}\n"
+                )
+            }
+        )
+        payload = self.check(repo)
+        self.assertEqual(
+            repo.read(payload["tree"], "app/vendor/pkg/x.rs"),
+            b"// Limen LIMEN limen https://telemetry.limen.invalid hc HC_SCOPE lc\n"
+            b"fn main(){let x=1;}\n",
+        )
+
+    def test_lock_renames_the_app_package_in_sorted_place(self):
+        repo, root = make_app()
+        payload = self.check(repo)
+        self.assertEqual(
+            repo.read(payload["tree"], "app/Cargo.lock"), APP_LOCK_OUTPUT.encode()
+        )
+
+    def test_hosts_become_limen_invalid(self):
+        repo, root = make_app(
+            {"docs/net.txt": "herdr.dev telemetry.herdr.dev releases.herdr.dev.\n"}
+        )
+        payload = self.check(repo)
+        self.assertEqual(
+            repo.read(payload["tree"], "app/docs/net.txt"),
+            b"limen.invalid telemetry.limen.invalid releases.limen.invalid.\n",
+        )
+
+    def test_upstream_github_address_stays(self):
+        address = "https://github.com/herdrdev/herdr-app#build-from-source"
+        core = "https://github.com/herdrdev/herdr-core"
+        repo, root = make_app({"docs/address.txt": address + " " + core + "\n"})
+        payload = self.check(repo)
+        self.assertEqual(
+            repo.read(payload["tree"], "app/docs/address.txt"),
+            (address + " " + core + "\n").encode(),
+        )
+
+    def test_allow_table(self):
+        repo, root = make_app(
+            {
+                "src/core_bin.rs": (
+                    "fn main() {\n"
+                    '    let _ = std::process::Command::new("sh")'
+                    '.args(["-lc", "true"]);\n'
+                    "}\n"
+                ),
+                "defaults/programs.json": '{"ghci": {"match": ["ghc"]}}\n',
+            },
+            notices=(
+                "Herdr third-party notices\n"
+                "=========================\n"
+                "https://github.com/yaahc/displaydoc\n"
+            ),
+        )
+        payload = self.check(repo)
+        self.assertIn(b"-lc", repo.read(payload["tree"], "app/src/core_bin.rs"))
+        self.assertEqual(
+            repo.read(payload["tree"], "app/defaults/programs.json"),
+            b'{"ghci": {"match": ["ghc"]}}\n',
+        )
+        self.assertIn(
+            "https://github.com/yaahc/displaydoc",
+            repo.read(payload["tree"], "app/THIRD-PARTY-NOTICES").decode(),
+        )
+
+    def test_notices_line_and_hashes(self):
+        zero = "0" * 64
+        notices = (
+            "Herdr third-party notices\n"
+            "=========================\n"
+            "Herdr body\n\n"
+            "Input-SHA256: " + zero + " Cargo.lock\n"
+            "Input-SHA256: " + zero + " Cargo.toml\n"
+            "Input-SHA256: " + zero + " licenses/inventory.json\n"
+            "Input-SHA256: " + zero + " assets/fonts/OFL.txt\n"
+        )
+        repo, root = make_app(
+            {
+                "licenses/inventory.json": '{"name": "Herdr logo"}\n',
+                "assets/fonts/OFL.txt": "herdr\n",
+            },
+            notices=notices,
+        )
+        payload = self.check(repo)
+        text = repo.read(payload["tree"], "app/THIRD-PARTY-NOTICES").decode()
+        self.assertTrue(
+            text.startswith(
+                "Limen third-party notices\n"
+                "=========================\n"
+                "limen-app is Apache-2.0, a modified fork of herdr-app "
+                "(https://github.com/herdrdev/herdr-app).\n"
+                "Limen body\n\n"
+            ),
+            text[:200],
+        )
+        hashes = {
+            path: digest
+            for digest, path in re.findall(
+                r"(?m)^Input-SHA256: ([0-9a-f]{64}) ([^\r\n]+)$", text
+            )
+        }
+        workspace = {"limen-app"}
+        for path in (
+            "Cargo.lock",
+            "Cargo.toml",
+            "licenses/inventory.json",
+            "assets/fonts/OFL.txt",
+        ):
+            self.assertIn(path, hashes)
+            expected = reference_notices_hash(
+                path, repo.read(payload["tree"], "app/" + path), workspace
+            )
+            self.assertEqual(hashes[path], expected, path)
+        self.assertNotIn(zero, text)
+
+    def test_formula_reproduces_upstream_notices(self):
+        top = subprocess.run(
+            ["git", "-C", HERE, "rev-parse", "--show-toplevel"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=NO_WINDOW,
+            env=BASE_ENV,
+        )
+        if top.returncode:
+            self.skipTest("not inside a git repository")
+        root = top.stdout.decode().strip()
+        found = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--verify", "upstream-app/master^{commit}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=NO_WINDOW,
+            env=BASE_ENV,
+        )
+        if found.returncode:
+            self.skipTest("upstream-app/master is not fetched")
+
+        def show(path):
+            result = subprocess.run(
+                ["git", "-C", root, "show", "upstream-app/master:" + path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=NO_WINDOW,
+                env=BASE_ENV,
+            )
+            return None if result.returncode else result.stdout
+
+        notices = show("THIRD-PARTY-NOTICES")
+        self.assertIsNotNone(notices)
+        workspace = {"herdr-app", "ghostty-sys"}
+        checked = 0
+        for line in notices.decode().replace("\r\n", "\n").splitlines():
+            match = re.match(r"Input-SHA256: ([0-9a-f]{64}) ([^\r\n]+)$", line)
+            if not match:
+                continue
+            expected, path = match.groups()
+            if path.startswith("vendor/ghostty/"):
+                continue
+            data = show(path)
+            self.assertIsNotNone(data, path)
+            self.assertEqual(limenize.notices_hash(path, data, workspace), expected, path)
+            checked += 1
+        self.assertGreater(checked, 0)
+
+    def test_sync_uses_the_app_defaults(self):
+        repo, root = make_app()
+        upstream = (
+            repo.git("rev-parse", "upstream-app/master").stdout.decode().strip()
+        )
+        result = run_script(repo, "sync", "--app")
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        payload = last_json(result)
+        self.assertEqual(payload["ref"], "upstream-app/master")
+        self.assertEqual(payload["branch"]["name"], "upstream-app-renamed")
+        parents = (
+            repo.git("rev-list", "--parents", "-n", "1", "upstream-app-renamed")
+            .stdout.decode()
+            .split()
+        )
+        self.assertEqual(parents[1:], [upstream])
+        self.assertTrue(
+            all(path.startswith("app/") for path in tree_map(repo, payload["tree"]))
+        )
 
 
 if __name__ == "__main__":

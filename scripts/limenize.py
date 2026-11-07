@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Build Limen's renamed tree from an upstream herdr-core commit.
+"""Build Limen's renamed tree from an upstream herdr-core or herdr-app commit.
 
-    python scripts/limenize.py check [--ref REF] [--report PATH]
-    python scripts/limenize.py sync  [--ref REF] [--branch NAME] [--trailer TEXT]... [--report PATH]
+    python scripts/limenize.py check [--app] [--ref REF] [--report PATH]
+    python scripts/limenize.py sync  [--app] [--ref REF] [--branch NAME] [--trailer TEXT]... [--report PATH]
 
 Both commands read git objects only: the working tree, the real index, HEAD and
 every ref except ``refs/heads/<branch>`` are never touched.
+
+With ``--app`` the app's files go under ``app/``, ``--ref`` defaults to
+``upstream-app/master`` and ``--branch`` to ``upstream-app-renamed``.
 
 ``counts.files`` counts the entries in REF's tree; ``dropped`` is the subset
 left out. Problems that are not tied to a line (a path, a missing licence
@@ -16,6 +19,7 @@ line, a failed rustfmt) report line 0. In JSON, ``branch`` is
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
@@ -35,6 +39,15 @@ DROP = (
     "crates/herdr-core/tests/macos_distribution.rs",
 )
 
+APP_DROP = (
+    ".github/",
+    ".gitmodules",
+    "README.md",
+    "AGENTS.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+)
+
 VERBATIM = (
     "CHANGELOG.md",
     "LICENSE",
@@ -48,11 +61,23 @@ NEW_LICENSE = (
     "lc (limen-core) is Apache-2.0, a modified fork of herdr-core "
     "(https://github.com/herdrdev/herdr-core)."
 )
+APP_LICENSE_LINE = (
+    "limen-app is Apache-2.0, a modified fork of herdr-app "
+    "(https://github.com/herdrdev/herdr-app)."
+)
 
 EDGE = r"(?:(?<![A-Za-z0-9])|(?<=\\[nrt]))"
 
+# herdr.dev and every subdomain of it. A plain herdr -> limen rule would make
+# limen.dev, a domain we do not own.
+HOST_RULE = (
+    r"(?<![A-Za-z0-9.-])((?:[A-Za-z0-9-]+\.)*)herdr\.dev"
+    r"(?![A-Za-z0-9-]|\.[A-Za-z0-9-])",
+    r"\1limen.invalid",
+)
+
 TEXT_RULES = (
-    (r"releases\.herdr\.dev", "releases.limen.invalid"),
+    HOST_RULE,
     (r"herdr", "limen"),
     (r"Herdr", "Limen"),
     (r"HERDR", "LIMEN"),
@@ -63,6 +88,15 @@ TEXT_RULES = (
     (EDGE + r"HC(?![A-Za-z0-9_])", "LC"),
 )
 
+# Vendored code has its own words starting with hc, so only our own name
+# changes there. It is not ours to format either.
+VENDOR_TEXT_RULES = (
+    HOST_RULE,
+    (r"herdr", "limen"),
+    (r"Herdr", "Limen"),
+    (r"HERDR", "LIMEN"),
+)
+
 PATH_RULES = TEXT_RULES[1:4] + TEXT_RULES[5:7]
 
 LEFTOVER = (
@@ -71,6 +105,8 @@ LEFTOVER = (
     r"[A-Za-z0-9]hc(?![A-Za-z0-9])",
     r"(?<![A-Za-z0-9])HC(?![A-Za-z0-9])",
 )
+
+VENDOR_LEFTOVER = (r"(?i)herdr",)
 
 COLLISION = (
     r"(?<![A-Za-z0-9])lcs?(?![A-Za-z0-9])",
@@ -88,9 +124,28 @@ RESERVED = (
     "LIMEN_BELL_",
 )
 
+# Words outside vendor/ that the scans would flag but that are not our names.
+# The second item is the exact token around the match, not the line.
+ALLOWED = (
+    # A shell's own "-lc" flag, not the lc command.
+    ("src/core_bin.rs", "-lc"),
+    # The Haskell compiler ghc, in the program list that picks an icon.
+    ("defaults/programs.json", "ghc"),
+    # yaahc is a GitHub user in a dependency's repository URL.
+    ("THIRD-PARTY-NOTICES", "https://github.com/yaahc/displaydoc"),
+)
+
+# github.com/herdrdev/ and the path after it is upstream's own address, used
+# in attributions and build-from-source links. It stays as written and is not
+# a leftover.
+UPSTREAM_ADDRESS = re.compile(r"github\.com/herdrdev/[^\s\"'<>()\[\]{}]*")
+ADDRESS_MARK = "\x02address-%d\x02"
+
 _TEXT_RULES = tuple((re.compile(p), r) for p, r in TEXT_RULES)
+_VENDOR_RULES = tuple((re.compile(p), r) for p, r in VENDOR_TEXT_RULES)
 _PATH_RULES = tuple((re.compile(p), r) for p, r in PATH_RULES)
 _LEFTOVER = tuple(re.compile(p) for p in LEFTOVER)
+_VENDOR_LEFTOVER = tuple(re.compile(p) for p in VENDOR_LEFTOVER)
 _COLLISION = tuple(re.compile(p) for p in COLLISION)
 _WRONG = tuple(re.compile(p) for p in WRONG)
 
@@ -146,9 +201,29 @@ def token_bounds(text, start, end):
     return start, end
 
 
-def apply_text(text, tokens=None):
+def protect_addresses(text):
+    """Set upstream's own GitHub addresses aside while the rules run."""
+    addresses = []
+
+    def take(match):
+        addresses.append(match.group(0))
+        return ADDRESS_MARK % (len(addresses) - 1)
+
+    return UPSTREAM_ADDRESS.sub(take, text), addresses
+
+
+def restore_addresses(text, addresses):
+    for index, address in enumerate(addresses):
+        text = text.replace(ADDRESS_MARK % index, address)
+    return text
+
+
+def apply_text(text, tokens=None, rules=None):
     """Apply the text rules in order, optionally counting surrounding tokens."""
-    for pattern, replacement in _TEXT_RULES:
+    if rules is None:
+        rules = _TEXT_RULES
+    text, addresses = protect_addresses(text)
+    for pattern, replacement in rules:
         if tokens is not None:
             for match in pattern.finditer(text):
                 start, end = token_bounds(text, match.start(), match.end())
@@ -156,12 +231,12 @@ def apply_text(text, tokens=None):
                 context = text[start - 1:start]
                 entry = tokens.get(token)
                 if entry is None:
-                    new = apply_text(context + token)[len(context):]
+                    new = apply_text(context + token, rules=rules)[len(context):]
                     entry = {"new": new, "count": 0}
                     tokens[token] = entry
                 entry["count"] += 1
         text = pattern.sub(replacement, text)
-    return text
+    return restore_addresses(text, addresses)
 
 
 def rename_path(path):
@@ -180,8 +255,8 @@ def is_text(data):
     return True
 
 
-def is_dropped(path):
-    for item in DROP:
+def is_dropped(path, app=False):
+    for item in APP_DROP if app else DROP:
         if item.endswith("/"):
             if path == item[:-1] or path.startswith(item):
                 return True
@@ -192,6 +267,40 @@ def is_dropped(path):
 
 def is_verbatim(path):
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in VERBATIM)
+
+
+def is_app_verbatim(path):
+    if path == "LICENSE" or fnmatch.fnmatchcase(path, "licenses/*.txt"):
+        return True
+    if fnmatch.fnmatchcase(path, "assets/fonts/*"):
+        return True
+    if fnmatch.fnmatchcase(path, "defaults/icons/LICENSE*"):
+        return True
+    if fnmatch.fnmatchcase(path, "defaults/mods/win98/fonts/LICENSE*"):
+        return True
+    if path.startswith("vendor/"):
+        name = path.rsplit("/", 1)[-1]
+        if name.startswith("LICENSE") or name.startswith("NOTICE"):
+            return True
+    return False
+
+
+def is_vendor(path):
+    return path.startswith("vendor/")
+
+
+def allowed(path, text, match):
+    """Whether this match is a word the allow table names for this path."""
+    if path.startswith("app/"):
+        path = path[len("app/"):]
+    start, end = token_bounds(text, match.start(), match.end())
+    return (path, text[start:end]) in ALLOWED
+
+
+def allowed_word(path, word):
+    if path.startswith("app/"):
+        path = path[len("app/"):]
+    return (path, word) in ALLOWED
 
 
 def same_line_endings(original, formatted):
@@ -206,7 +315,7 @@ def line_problems(path, text, patterns, label):
     for number, line in enumerate(text.splitlines(), 1):
         for pattern in patterns:
             match = pattern.search(line)
-            if match:
+            if match and not allowed(path, line, match):
                 problems.append("%s:%d: %s %r" % (path, number, label, match.group(0)))
                 break
     return problems
@@ -216,15 +325,17 @@ def reserved_problems(path, text):
     problems = []
     for number, line in enumerate(text.splitlines(), 1):
         for word in RESERVED:
-            if word in line:
+            if word in line and not allowed_word(path, word):
                 problems.append("%s:%d: reserved %r" % (path, number, word))
                 break
     return problems
 
 
-def rename_dependency(entry):
+def rename_dependency(entry, app=False):
     if entry == "herdr-core" or entry.startswith("herdr-core "):
         return "limen-core" + entry[len("herdr-core"):]
+    if app and (entry == "herdr-app" or entry.startswith("herdr-app ")):
+        return "limen-app" + entry[len("herdr-app"):]
     return entry
 
 
@@ -242,10 +353,10 @@ def dependency_key(entry):
     return (name, version_key(rest.partition(" ")[0]))
 
 
-def rewrite_dependencies(match):
+def rewrite_dependencies(match, app=False):
     inner = match.group(1)[1:-1]
     entries = re.findall(r'"([^"]*)"', inner)
-    renamed = [rename_dependency(entry) for entry in entries]
+    renamed = [rename_dependency(entry, app) for entry in entries]
     if renamed == entries:
         return match.group(0)
     ordered = sorted(renamed, key=dependency_key)
@@ -261,7 +372,7 @@ def lock_key(block):
     return (name.group(1) if name else "", version_key(version.group(1) if version else ""))
 
 
-def rewrite_lock(text):
+def rewrite_lock(text, app=False):
     newline = "\n"
     if "\r\n" in text and "\n" not in text.replace("\r\n", ""):
         newline = "\r\n"
@@ -276,10 +387,74 @@ def rewrite_lock(text):
     for block in blocks:
         body = block.rstrip("\n")
         body = re.sub(r'(?m)^name = "herdr-core"$', 'name = "limen-core"', body)
-        body = DEPENDENCIES.sub(rewrite_dependencies, body)
+        if app:
+            body = re.sub(r'(?m)^name = "herdr-app"$', 'name = "limen-app"', body)
+        body = DEPENDENCIES.sub(lambda match: rewrite_dependencies(match, app), body)
         fixed.append(body)
     fixed.sort(key=lock_key)
     return (header + "\n\n".join(fixed) + "\n").replace("\n", newline)
+
+
+def lock_inputs(lock, workspace_names):
+    """What upstream's tests/notices.rs hashes for Cargo.lock."""
+    packages = []
+    for package in lock.split("[[package]]")[1:]:
+        def field(key):
+            for line in package.splitlines():
+                if line.startswith(key):
+                    rest = line[len(key):]
+                    if rest.startswith(' = "') and rest.endswith('"'):
+                        return rest[4:-1]
+            return None
+
+        name = field("name")
+        version = field("version")
+        source = field("source") or ""
+        checksum = field("checksum") or ""
+        if source == "" and name in workspace_names:
+            continue
+        packages.append("%s\t%s\t%s\t%s" % (name, version, source, checksum))
+    packages.sort()
+    return "\n".join(packages)
+
+
+def manifest_inputs(manifest):
+    """What upstream's tests/notices.rs hashes for Cargo.toml."""
+    lines = []
+    in_package = False
+    for line in manifest.split("\n"):
+        if line.startswith("["):
+            in_package = line == "[package]"
+        if in_package and line.startswith("version = "):
+            lines.append('version = "<workspace version>"')
+        else:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def package_name(manifest):
+    section = None
+    for line in manifest.splitlines():
+        if line.startswith("["):
+            section = line.strip()
+        elif section == "[package]":
+            match = re.match(r'\s*name = "([^"]+)"', line)
+            if match:
+                return match.group(1)
+    return None
+
+
+def notices_hash(path, data, workspace_names):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    text = text.replace("\r\n", "\n")
+    if path == "Cargo.lock":
+        text = lock_inputs(text, workspace_names)
+    elif path == "Cargo.toml":
+        text = manifest_inputs(text)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def read_tree(sha):
@@ -336,9 +511,10 @@ def write_tree(entries):
 
 
 class Renamer:
-    def __init__(self, sha, rustfmt_dir):
+    def __init__(self, sha, rustfmt_dir, app=False):
         self.sha = sha
         self.rustfmt_dir = rustfmt_dir
+        self.app = app
         self.problems = []
         self.counts = dict.fromkeys(
             ("files", "changed", "moved", "dropped", "verbatim", "binary", "formatted"), 0
@@ -346,6 +522,10 @@ class Renamer:
         self.tokens = {}
         self.entries = []
         self.seen_paths = {}
+        self.notice_inputs = set()
+        self.notice_outputs = {}
+        self.manifests = {}
+        self.notices_text = None
 
     def problem(self, path, line, text):
         self.problems.append("%s:%d: %s" % (path, line, text))
@@ -355,17 +535,32 @@ class Renamer:
         blobs = read_blobs(
             [oid for mode, kind, oid, path in tree if kind != "commit"]
         )
+        if self.app:
+            self.read_notice_inputs(tree, blobs)
         for mode, kind, oid, raw_path in tree:
             self.add(mode, kind, oid, raw_path, blobs)
+        if self.app:
+            self.finalize_notices()
         return write_tree(self.entries)
+
+    def read_notice_inputs(self, tree, blobs):
+        for mode, kind, oid, raw_path in tree:
+            if decode_path(raw_path) == "THIRD-PARTY-NOTICES" and kind != "commit":
+                text = blobs[oid].decode("utf-8", "replace")
+                self.notice_inputs = set(
+                    re.findall(r"(?m)^Input-SHA256: [0-9a-f]{64} ([^\r\n]+)$", text)
+                )
+                return
 
     def add(self, mode, kind, oid, raw_path, blobs):
         path = decode_path(raw_path)
         self.counts["files"] += 1
-        if is_dropped(path):
+        if is_dropped(path, self.app):
             self.counts["dropped"] += 1
             return
         new_path = path if kind == "commit" else rename_path(path)
+        if self.app:
+            new_path = "app/" + new_path
         self.scan_path(new_path)
         if new_path in self.seen_paths:
             self.problem(
@@ -378,40 +573,51 @@ class Renamer:
         if kind == "commit":
             self.entries.append((mode, oid, new_path))
             return
-        if new_path != path:
+        if new_path != ("app/" + path if self.app else path):
             self.counts["moved"] += 1
         data = blobs[oid]
         new_data = data
-        if is_verbatim(path):
+        verbatim = is_app_verbatim(path) if self.app else is_verbatim(path)
+        if verbatim:
             self.counts["verbatim"] += 1
         elif path == "Cargo.lock":
             new_data = self.rewrite_lock_file(new_path, data)
-        elif path in LICENSE_FILES:
+        elif not self.app and path in LICENSE_FILES:
             new_data = self.rewrite_licence_file(path, new_path, data)
+        elif self.app and path == "THIRD-PARTY-NOTICES":
+            new_data = self.rewrite_notices_file(new_path, data)
         elif is_text(data):
-            new_data = self.rewrite_text_file(new_path, data)
+            new_data = self.rewrite_text_file(path, new_path, data)
         else:
             self.counts["binary"] += 1
             if b"herdr" in data:
                 self.problem(new_path, 0, "binary contains 'herdr'")
+        if self.app:
+            relative = new_path[len("app/"):]
+            if path in self.notice_inputs:
+                self.notice_outputs[relative] = new_data
+            if path.endswith("Cargo.toml") and not is_vendor(path):
+                self.manifests[relative] = new_data
         if new_data != data:
             self.counts["changed"] += 1
             oid = write_blob(new_data)
         self.entries.append((mode, oid, new_path))
 
     def scan_path(self, path):
-        for pattern in _LEFTOVER:
+        relative = path[len("app/"):] if path.startswith("app/") else path
+        patterns = _VENDOR_LEFTOVER if is_vendor(relative) else _LEFTOVER
+        for pattern in patterns:
             match = pattern.search(path)
-            if match:
+            if match and not allowed(path, path, match):
                 self.problem(path, 0, "leftover %r" % match.group(0))
                 return
         for pattern in _WRONG:
             match = pattern.search(path)
-            if match:
+            if match and not allowed(path, path, match):
                 self.problem(path, 0, "wrong mapping %r" % match.group(0))
                 return
         for word in RESERVED:
-            if word in path:
+            if word in path and not allowed_word(path, word):
                 self.problem(path, 0, "reserved %r" % word)
                 return
 
@@ -419,30 +625,103 @@ class Renamer:
         for number, line in enumerate(text.splitlines(), 1):
             for pattern in _COLLISION:
                 match = pattern.search(line)
-                if match:
+                if match and not allowed(path, line, match):
                     self.problem(path, number, "collision %r" % match.group(0))
                     break
 
-    def scan_post(self, path, text):
+    def scan_post(self, path, text, vendor=False):
         scan = text.replace(NEW_LICENSE, "")
-        for problem in line_problems(path, scan, _LEFTOVER, "leftover"):
+        scan = UPSTREAM_ADDRESS.sub("", scan)
+        patterns = _VENDOR_LEFTOVER if vendor else _LEFTOVER
+        for problem in line_problems(path, scan, patterns, "leftover"):
             self.problems.append(problem)
         for problem in line_problems(path, scan, _WRONG, "wrong mapping"):
             self.problems.append(problem)
         for problem in reserved_problems(path, scan):
             self.problems.append(problem)
 
-    def rewrite_text_file(self, path, data):
+    def rewrite_text_file(self, path, new_path, data):
+        text = data.decode("utf-8")
+        vendor = self.app and is_vendor(path)
+        if not vendor:
+            self.scan_collisions(new_path, text)
+        rules = _VENDOR_RULES if vendor else _TEXT_RULES
+        new_text = apply_text(text, self.tokens, rules)
+        self.scan_post(new_path, new_text, vendor)
+        new_data = new_text.encode("utf-8")
+        if path.endswith(".rs") and new_data != data and not vendor:
+            formatted = self.run_rustfmt(new_path, new_data)
+            if formatted is not None:
+                new_data = same_line_endings(data, formatted)
+        return new_data
+
+    def rewrite_notices_file(self, path, data):
+        if not is_text(data):
+            self.problem(path, 0, "not valid UTF-8")
+            return data
         text = data.decode("utf-8")
         self.scan_collisions(path, text)
         new_text = apply_text(text, self.tokens)
         self.scan_post(path, new_text)
-        new_data = new_text.encode("utf-8")
-        if path.endswith(".rs") and new_data != data:
-            formatted = self.run_rustfmt(path, new_data)
-            if formatted is not None:
-                new_data = same_line_endings(data, formatted)
-        return new_data
+        newline = "\n"
+        if "\r\n" in new_text and "\n" not in new_text.replace("\r\n", ""):
+            newline = "\r\n"
+        match = re.search(r"(?m)^=+\r?\n", new_text)
+        if match:
+            new_text = (
+                new_text[: match.end()]
+                + APP_LICENSE_LINE
+                + newline
+                + new_text[match.end():]
+            )
+        else:
+            self.problem(path, 0, "third-party notices has no title underline")
+        self.notices_text = new_text
+        return new_text.encode("utf-8")
+
+    def workspace_names(self):
+        names = set()
+        for path, data in self.manifests.items():
+            if is_vendor(path):
+                continue
+            try:
+                name = package_name(data.decode("utf-8"))
+            except UnicodeDecodeError:
+                name = None
+            if name:
+                names.add(name)
+        return names
+
+    def finalize_notices(self):
+        if self.notices_text is None:
+            return
+        workspace = self.workspace_names()
+
+        def replace(match):
+            path = match.group(1)
+            data = self.notice_outputs.get(path)
+            if data is None:
+                if path.startswith("vendor/ghostty/"):
+                    # The submodule's bytes are not part of this tree and do
+                    # not change, so upstream's line still holds.
+                    return match.group(0)
+                self.problem("app/THIRD-PARTY-NOTICES", 0, "missing notice input %r" % path)
+                return match.group(0)
+            digest = notices_hash(path, data, workspace)
+            if digest is None:
+                self.problem("app/THIRD-PARTY-NOTICES", 0, "notice input %r is not UTF-8" % path)
+                return match.group(0)
+            return "Input-SHA256: %s %s" % (digest, path)
+
+        new_text = re.sub(
+            r"(?m)^Input-SHA256: [0-9a-f]{64} ([^\r\n]+)$", replace, self.notices_text
+        )
+        if new_text == self.notices_text:
+            return
+        for index, (mode, oid, entry_path) in enumerate(self.entries):
+            if entry_path == "app/THIRD-PARTY-NOTICES":
+                self.entries[index] = (mode, write_blob(new_text.encode("utf-8")), entry_path)
+                return
 
     def rewrite_licence_file(self, path, new_path, data):
         if not is_text(data):
@@ -466,7 +745,7 @@ class Renamer:
         if not is_text(data):
             self.problem(path, 0, "not valid UTF-8")
             return data
-        new_text = rewrite_lock(data.decode("utf-8"))
+        new_text = rewrite_lock(data.decode("utf-8"), self.app)
         for number, line in enumerate(new_text.splitlines(), 1):
             if "herdr" in line:
                 self.problem(path, number, "leftover 'herdr'")
@@ -547,11 +826,17 @@ def parse_args(argv):
     check = commands.add_parser("check", help="build and report, move no ref")
     sync = commands.add_parser("sync", help="build and record a commit on a branch")
     for command in (check, sync):
-        command.add_argument("--ref", default="upstream/master")
+        command.add_argument("--app", action="store_true", help="rename upstream's app under app/")
+        command.add_argument("--ref")
         command.add_argument("--report")
-    sync.add_argument("--branch", default="upstream-renamed")
+    sync.add_argument("--branch")
     sync.add_argument("--trailer", action="append", default=[])
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.ref is None:
+        args.ref = "upstream-app/master" if args.app else "upstream/master"
+    if args.command == "sync" and args.branch is None:
+        args.branch = "upstream-app-renamed" if args.app else "upstream-renamed"
+    return args
 
 
 def summary(args, sha, tree, counts, problems, up_to_date, commit):
@@ -583,7 +868,7 @@ def run_command(args):
 
     config_dir = rustfmt_config_dir(args.ref)
     try:
-        renamer = Renamer(sha, config_dir)
+        renamer = Renamer(sha, config_dir, app=args.app)
         tree = renamer.build()
     finally:
         shutil.rmtree(config_dir, ignore_errors=True)
