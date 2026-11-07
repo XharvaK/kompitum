@@ -1,6 +1,57 @@
 {
   "components": {
     "schemas": {
+      "Asked": {
+        "description": "What `task.start` asked of the checks and the worker, on top of the repository's committed file.",
+        "properties": {
+          "forbid": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "qa_rounds": {
+            "default": null,
+            "description": "How many times failed checks go back to the worker; null takes the repository's.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "require": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "test": {
+            "default": null,
+            "description": "The test command, replacing the repository's.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warn": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "web": {
+            "default": false,
+            "description": "The worker may use the web.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "AttachResult": {
         "properties": {
           "automatic_input": {
@@ -66,6 +117,140 @@
           "removed": {
             "default": 0,
             "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "CheckReport": {
+        "description": "What the checks found after one turn.",
+        "properties": {
+          "checks_file_changed": {
+            "default": false,
+            "description": "The worker changed the repository's checks file, which fails the task.",
+            "type": "boolean"
+          },
+          "errors": {
+            "default": [],
+            "description": "What could not be checked, in words.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "forbid_checked": {
+            "default": 0,
+            "description": "How many forbid entries were checked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "forbid_hits": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Hit"
+            },
+            "type": "array"
+          },
+          "ok": {
+            "default": false,
+            "type": "boolean"
+          },
+          "require_checked": {
+            "default": 0,
+            "description": "How many require entries were checked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "require_missing": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "test": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TestRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "turn": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "warn_hits": {
+            "default": [],
+            "description": "Lines flagged for the review; these never fail a task.",
+            "items": {
+              "$ref": "#/components/schemas/WarnHit"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "CheckRun": {
+        "description": "A check whose test is running, kept on the record so a restarted core can finish it.",
+        "properties": {
+          "cmd": {
+            "default": "",
+            "type": "string"
+          },
+          "report": {
+            "$ref": "#/components/schemas/CheckReport",
+            "default": {
+              "checks_file_changed": false,
+              "errors": [],
+              "forbid_checked": 0,
+              "forbid_hits": [],
+              "ok": false,
+              "require_checked": 0,
+              "require_missing": [],
+              "seconds": 0.0,
+              "test": null,
+              "turn": 0,
+              "warn_hits": []
+            },
+            "description": "The report so far: the patterns' half."
+          },
+          "started_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminal": {
+            "default": null,
+            "description": "The test's terminal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeout_s": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "turn": {
+            "default": 0,
+            "format": "uint32",
             "minimum": 0,
             "type": "integer"
           }
@@ -394,6 +579,32 @@
         ],
         "type": "object"
       },
+      "Hit": {
+        "description": "A line a forbid pattern matched, as the review shows it.",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern",
+          "file",
+          "line",
+          "text"
+        ],
+        "type": "object"
+      },
       "HolderInfo": {
         "properties": {
           "current": {
@@ -487,6 +698,212 @@
         "required": [
           "turn"
         ],
+        "type": "object"
+      },
+      "LedgerResult": {
+        "properties": {
+          "parent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParentUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The orchestrator's own requests for `task`, read from its transcript."
+          },
+          "problems": {
+            "description": "Lines of the ledger that could not be read.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "description": "The rows, oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/LedgerRow"
+            },
+            "type": "array"
+          },
+          "table": {
+            "description": "The rows as a Markdown table, with their totals and any parent usage.",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/Usage",
+            "description": "What the rows add up to."
+          }
+        },
+        "required": [
+          "rows",
+          "table",
+          "totals",
+          "problems"
+        ],
+        "type": "object"
+      },
+      "LedgerRow": {
+        "description": "One task's row, written when it is accepted or discarded and kept for good.",
+        "properties": {
+          "at_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "changed": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "checks": {
+            "default": null,
+            "description": "The last checks in a few words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handoffs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "out_of_scope": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "outcome": {
+            "default": "",
+            "description": "accepted or discarded.",
+            "type": "string"
+          },
+          "qa_rounds": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "repo": {
+            "default": "",
+            "type": "string"
+          },
+          "report": {
+            "default": "",
+            "description": "The worker's last report.",
+            "type": "string"
+          },
+          "review": {
+            "default": null,
+            "description": "What the review decided.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "default": "",
+            "description": "What the row was for: worker, reader, scout or suite.",
+            "type": "string"
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "task": {
+            "default": "",
+            "type": "string"
+          },
+          "turns": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/LedgerTurn"
+            },
+            "type": "array"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "cache_read": 0,
+              "cache_write": 0,
+              "cost_usd": 0.0,
+              "input": 0,
+              "largest_request": 0,
+              "output": 0,
+              "reasoning": 0,
+              "steps": 0
+            }
+          },
+          "workers": {
+            "default": [],
+            "description": "Every turn's worker key, in order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "LedgerTurn": {
+        "description": "One turn in a ledger row.",
+        "properties": {
+          "n": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "refused": {
+            "default": null,
+            "description": "The window of the refusal that ended it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "default": "",
+            "description": "worker, qa or redo.",
+            "type": "string"
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "cache_read": 0,
+              "cache_write": 0,
+              "cost_usd": 0.0,
+              "input": 0,
+              "largest_request": 0,
+              "output": 0,
+              "reasoning": 0,
+              "steps": 0
+            }
+          },
+          "worker": {
+            "default": "",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "ListResult": {
@@ -661,6 +1078,57 @@
           "free"
         ],
         "type": "string"
+      },
+      "ParentUsage": {
+        "description": "What the orchestrator itself spent on one task, read from its transcript.",
+        "properties": {
+          "cache_read": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cache_write": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "closed": {
+            "default": false,
+            "description": "The transcript also holds the task's accept or discard, so the window is whole.",
+            "type": "boolean"
+          },
+          "fresh": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "output": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "peak": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "requests": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "transcript": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
       },
       "PutResult": {
         "properties": {
@@ -1032,7 +1500,24 @@
         ],
         "type": "object"
       },
+      "Side": {
+        "description": "Which side of a diff a line is on. `+` is what the worker added.",
+        "enum": [
+          "added",
+          "removed"
+        ],
+        "type": "string"
+      },
       "Source": {
+        "description": "Where a warn rule came from, so a review can say whose lesson it is.",
+        "enum": [
+          "builtin",
+          "file",
+          "call"
+        ],
+        "type": "string"
+      },
+      "Source2": {
         "description": "Who set a block's time. `Named`: the worker's own message gave it.",
         "enum": [
           "person",
@@ -1209,6 +1694,18 @@
       },
       "Task": {
         "properties": {
+          "asked": {
+            "$ref": "#/components/schemas/Asked",
+            "default": {
+              "forbid": [],
+              "qa_rounds": null,
+              "require": [],
+              "test": null,
+              "warn": [],
+              "web": false
+            },
+            "description": "What `task.start` asked of the checks and the worker."
+          },
           "base": {
             "default": "",
             "description": "The commit it was cut from.",
@@ -1231,6 +1728,26 @@
             "default": [],
             "items": {
               "$ref": "#/components/schemas/ChangedFile"
+            },
+            "type": "array"
+          },
+          "check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The test a check has running."
+          },
+          "checks": {
+            "default": [],
+            "description": "One report per checked turn, in order.",
+            "items": {
+              "$ref": "#/components/schemas/CheckReport"
             },
             "type": "array"
           },
@@ -1268,6 +1785,14 @@
               "null"
             ]
           },
+          "followup_role": {
+            "default": null,
+            "description": "What the next follow-up is: qa or redo.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "handoffs": {
             "default": [],
             "description": "One sentence per hand-off, in the order they happened.",
@@ -1285,6 +1810,13 @@
           "name": {
             "default": "",
             "type": "string"
+          },
+          "qa_used": {
+            "default": 0,
+            "description": "How many times the checks have sent this work back.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
           },
           "repo": {
             "default": "",
@@ -1381,6 +1913,56 @@
         },
         "type": "object"
       },
+      "TaskAcceptResult": {
+        "properties": {
+          "commit": {
+            "description": "The commit made, or null with `no_commit`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "description": "The files that came in.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "left": {
+            "description": "What could not be removed, in words.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "patch": {
+            "description": "The patch, kept until the sweep takes it.",
+            "type": "string"
+          },
+          "removed": {
+            "description": "Whether its worktree and branch were removed.",
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state now: accepted."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "files",
+          "patch",
+          "removed",
+          "left"
+        ],
+        "type": "object"
+      },
       "TaskCancelResult": {
         "properties": {
           "state": {
@@ -1444,6 +2026,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "checks": {
+            "default": null,
+            "description": "The last checks in a few words: \"passed\", \"none ran\", or what failed; null before any ran.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "cost_usd": {
             "default": 0.0,
             "format": "double",
@@ -1464,6 +2054,14 @@
               "null"
             ]
           },
+          "gaps": {
+            "default": null,
+            "description": "The last report's Gaps section, cut like the text; null when it has none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "handoffs": {
             "default": [],
             "description": "What each hand-off did, one sentence each.",
@@ -1474,7 +2072,7 @@
           },
           "ok": {
             "default": false,
-            "description": "Done, and nothing changed outside the scope.",
+            "description": "Done or accepted, nothing changed outside the scope, and the last checks passed.",
             "type": "boolean"
           },
           "out_of_scope": {
@@ -1639,6 +2237,76 @@
         ],
         "type": "object"
       },
+      "TaskRedoResult": {
+        "properties": {
+          "next": {
+            "description": "The command that waits for it.",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state right after the pump looked at it."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          },
+          "turn": {
+            "description": "The number of the turn the follow-up goes to.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "waiting": {
+            "description": "Why it is still queued, in words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "turn",
+          "next"
+        ],
+        "type": "object"
+      },
+      "TaskReviewResult": {
+        "properties": {
+          "patch_file": {
+            "description": "Where the whole patch went, when it was asked for and did not fit.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state now."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          },
+          "text": {
+            "description": "The review, in Markdown.",
+            "type": "string"
+          },
+          "truncated": {
+            "description": "The review was cut at `max_bytes`.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "text",
+          "truncated"
+        ],
+        "type": "object"
+      },
       "TaskStartResult": {
         "properties": {
           "error": {
@@ -1709,13 +2377,58 @@
           "queued",
           "running",
           "stranded",
+          "checking",
           "done",
           "failed",
           "timed_out",
           "cancelled",
-          "discarded"
+          "discarded",
+          "accepted"
         ],
         "type": "string"
+      },
+      "TaskSweepResult": {
+        "properties": {
+          "discarded": {
+            "description": "Failed, timed-out or cancelled tasks nobody came for: discarded, worktree and all.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dry_run": {
+            "description": "Nothing was removed: this says what would go.",
+            "type": "boolean"
+          },
+          "freed_bytes": {
+            "description": "The bytes those folders held.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "left": {
+            "description": "What could not be removed, and worktree folders no task owns, in words.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "removed": {
+            "description": "Accepted or discarded tasks whose folder and record went; their ledger rows stay.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "removed",
+          "discarded",
+          "freed_bytes",
+          "left",
+          "dry_run"
+        ],
+        "type": "object"
       },
       "TaskView": {
         "properties": {
@@ -2072,6 +2785,88 @@
         ],
         "type": "object"
       },
+      "TestRun": {
+        "description": "One run of a task's test command.",
+        "properties": {
+          "cmd": {
+            "default": "",
+            "type": "string"
+          },
+          "exit_code": {
+            "default": null,
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "failed": {
+            "default": [],
+            "description": "The names that failed.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "fingerprint": {
+            "additionalProperties": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null,
+            "description": "What each changed and untracked file held when this test ran, so a later round can tell\nwhat changed since; null for a file that is gone.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "log": {
+            "default": null,
+            "description": "The file holding its whole output.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ok": {
+            "default": false,
+            "type": "boolean"
+          },
+          "reused": {
+            "default": null,
+            "description": "Why it wasn't run again: this result is an earlier round's.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "summary": {
+            "default": [],
+            "description": "Its verdict lines.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tail": {
+            "default": "",
+            "description": "The end of its output.",
+            "type": "string"
+          },
+          "timed_out": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "Turn": {
         "properties": {
           "died_at_start": {
@@ -2102,6 +2897,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "path_first": {
+            "default": null,
+            "description": "The folder put first on PATH for this turn, so a check finds the same programs.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "refused": {
             "default": null,
             "description": "The window of the refusal that ended this turn, kept for the hand-off.",
@@ -2117,6 +2920,11 @@
               "string",
               "null"
             ]
+          },
+          "role": {
+            "default": "",
+            "description": "What this turn was for: worker, qa when the checks sent the work back, redo when a person did.",
+            "type": "string"
           },
           "scope_token": {
             "default": null,
@@ -2295,6 +3103,40 @@
         ],
         "type": "object"
       },
+      "WarnHit": {
+        "description": "A line a warn rule flagged, for the review and never for a refusal.",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "side": {
+            "$ref": "#/components/schemas/Side"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "side",
+          "file",
+          "line",
+          "text",
+          "source"
+        ],
+        "type": "object"
+      },
       "WorkerView": {
         "properties": {
           "key": {
@@ -2319,7 +3161,7 @@
           "source": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/Source"
+                "$ref": "#/components/schemas/Source2"
               },
               {
                 "type": "null"
@@ -5038,6 +5880,19 @@
           }
         },
         {
+          "description": "Regex or glob::regex: no added line may match (added to the repository's).",
+          "name": "forbid",
+          "required": false,
+          "schema": {
+            "default": [],
+            "description": "Regex or glob::regex: no added line may match (added to the repository's).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
           "description": "Seconds without output or CPU before the turn is cut (default 900).",
           "name": "idle",
           "required": false,
@@ -5050,6 +5905,35 @@
               "integer",
               "null"
             ]
+          }
+        },
+        {
+          "description": "How many times failed checks go back to the worker, 0 to 3 (default: the repository's, else 1).",
+          "name": "qa_rounds",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "How many times failed checks go back to the worker, 0 to 3 (default: the repository's, else 1).",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "glob::regex: some line of the matching files must match after the run (added to the repository's).",
+          "name": "require",
+          "required": false,
+          "schema": {
+            "default": [],
+            "description": "glob::regex: some line of the matching files must match after the run (added to the repository's).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         {
@@ -5075,6 +5959,19 @@
           }
         },
         {
+          "description": "The test command the checks run when the worker ends, replacing the repository's.",
+          "name": "test",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The test command the checks run when the worker ends, replacing the repository's.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
           "description": "Seconds the turn may run (default 3600).",
           "name": "timeout",
           "required": false,
@@ -5087,6 +5984,29 @@
               "integer",
               "null"
             ]
+          }
+        },
+        {
+          "description": "Regex or glob::regex: a hit flags the line for the review (added to the repository's).",
+          "name": "warn",
+          "required": false,
+          "schema": {
+            "default": [],
+            "description": "Regex or glob::regex: a hit flags the line for the review (added to the repository's).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "description": "Let the worker use the web.",
+          "name": "web",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Let the worker use the web.",
+            "type": "boolean"
           }
         },
         {
@@ -5272,7 +6192,7 @@
       }
     },
     {
-      "description": "Remove a finished task's worktree and branch, keeping its folder and record. A queued or running task must be cancelled first.",
+      "description": "Remove a finished task's worktree and branch, keeping its folder and record, and write its ledger row. A queued or running task must be cancelled first, and an accepted one has nothing left to discard.",
       "errors": [
         {
           "code": -32000,
@@ -5287,6 +6207,13 @@
             "kind": "running"
           },
           "message": "running"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "finished"
+          },
+          "message": "finished"
         }
       ],
       "name": "task.discard",
@@ -5319,6 +6246,419 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/TaskDiscardResult"
+        }
+      }
+    },
+    {
+      "description": "The whole review of a task in one read: time and cost, the checks, each changed file in or out of scope, the warn hits, the worker's Gaps and report, and only the hunks those point at. `full` adds the whole patch; one that does not fit goes to a file the reply names.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "task.review",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Add the whole patch; one that does not fit goes to a file the review names.",
+          "name": "full",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Add the whole patch; one that does not fit goes to a file the review names.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "The review's size in bytes (default 20000).",
+          "name": "max_bytes",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The review's size in bytes (default 20000).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskReviewResult"
+        }
+      }
+    },
+    {
+      "description": "Bring a finished task's changes into its repository and commit only those files, with the repository's identity and hooks. Never pushes. Then removes the worktree and branch, keeps the patch, and writes the ledger row. A refusal leaves the repository as it was.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "running"
+          },
+          "message": "running"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "finished"
+          },
+          "message": "finished"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unfinished"
+          },
+          "message": "unfinished"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "scope_violation"
+          },
+          "message": "scope_violation"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "target_branch_changed"
+          },
+          "message": "target_branch_changed"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "no_worktree"
+          },
+          "message": "no_worktree"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "no_changes"
+          },
+          "message": "no_changes"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "files_dirty"
+          },
+          "message": "files_dirty"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "conflict"
+          },
+          "message": "conflict"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "commit_failed"
+          },
+          "message": "commit_failed"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "task.accept",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Accept files changed outside the task's scope.",
+          "name": "accept_scope_violation",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Accept files changed outside the task's scope.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "Accept a task that failed, timed out or was cancelled, or whose last checks failed.",
+          "name": "accept_unfinished",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Accept a task that failed, timed out or was cancelled, or whose last checks failed.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "The commit message (default: the review, else a line naming the task).",
+          "name": "message",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The commit message (default: the review, else a line naming the task).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Put the changes in the working tree and make no commit.",
+          "name": "no_commit",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Put the changes in the working tree and make no commit.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "What the review decided, kept for the ledger.",
+          "name": "review",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "What the review decided, kept for the ledger.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskAcceptResult"
+        }
+      }
+    },
+    {
+      "description": "Send a finished task back with a follow-up brief: the same worker goes on in its session while it can, any other starts fresh with a hand-off note. The checks run again when it ends.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "running"
+          },
+          "message": "running"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "finished"
+          },
+          "message": "finished"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "no_worktree"
+          },
+          "message": "no_worktree"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "task.redo",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "What to do now, at most 200000 characters.",
+          "name": "brief",
+          "required": true,
+          "schema": {
+            "description": "What to do now, at most 200000 characters.",
+            "type": "string"
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskRedoResult"
+        }
+      }
+    },
+    {
+      "description": "Remove what old tasks left: an accepted or discarded task's folder and record, and a failed, timed-out or cancelled task nobody came for. Ledger rows stay. The core also does this by itself once a day.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "task.sweep",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Days after its end that a task keeps its files (default 14).",
+          "name": "days",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Days after its end that a task keeps its files (default 14).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Say what would go, and remove nothing.",
+          "name": "dry_run",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Say what would go, and remove nothing.",
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskSweepResult"
+        }
+      }
+    },
+    {
+      "description": "The ledger: one row per accepted or discarded task, with its turns, what they cost and the review. With `task`, also the orchestrator's own requests for it.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "ledger.show",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "The newest rows to show (default 20).",
+          "name": "last",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The newest rows to show (default 20).",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Only this task's row, with the orchestrator's own usage for it.",
+          "name": "task",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Only this task's row, with the orchestrator's own usage for it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LedgerResult"
         }
       }
     },

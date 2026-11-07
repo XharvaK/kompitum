@@ -10,10 +10,18 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 // Limen's worker-loop tests that need more than part A, apart from upstream's file.
+#[path = "task/checks.rs"]
+mod checks;
 #[path = "task/environment.rs"]
 mod environment;
 #[path = "task/handoff.rs"]
 mod handoff;
+#[path = "task/ledger.rs"]
+mod ledger;
+#[path = "task/prompt.rs"]
+mod prompt;
+#[path = "task/review.rs"]
+mod review;
 #[path = "task/workers.rs"]
 mod workers;
 

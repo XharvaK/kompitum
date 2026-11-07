@@ -2,17 +2,24 @@
 //! One pump changes tasks one at a time; the terminal runs the runner, which
 //! runs the worker, and the process's exit is what ends a turn.
 
+pub mod accept;
 pub mod brief;
+pub mod checking;
 pub mod checks;
 pub mod clock;
 pub mod commandcode;
 pub mod decide;
 pub mod git;
 pub mod handoff;
+pub mod ledger;
 pub mod opencode;
+pub mod parent_usage;
+pub mod prompt;
 pub mod quota;
+pub mod review;
 pub mod runner;
 pub mod setup;
+pub mod sweep;
 pub mod types;
 pub mod worker;
 pub mod workers;
@@ -217,6 +224,7 @@ fn stopping(core: &Core) -> bool {
 /// The loop that moves the queue: on every change, at least every 2 s, and
 /// never while the core is stopping or restarting.
 pub async fn supervise(core: Arc<Core>) {
+    let mut last_sweep = None;
     loop {
         let notified = core.changed.notified();
         tokio::pin!(notified);
@@ -228,6 +236,7 @@ pub async fn supervise(core: Arc<Core>) {
         if stopping(&core) {
             return;
         }
+        sweep::when_due(&core, &mut last_sweep).await;
         tokio::select! {
             _ = notified => {}
             _ = tokio::time::sleep(Duration::from_secs(2)) => {}
@@ -341,6 +350,13 @@ async fn pump_queued(core: &Arc<Core>, task: Task) {
             let installed = |worker: Worker| worker::prefix(worker, &config).is_ok();
             let chain: Vec<Worker> = task.chain.iter().filter_map(|key| Worker::from_key(key).ok()).collect();
             let chain = if chain.is_empty() { workers::chain(workers::Mode::Auto) } else { chain };
+            // A follow-up stays with the worker that did the work, while it can.
+            let followup =
+                task_folder(&core.paths.state, &task.name).join(format!("turn-{}.followup.md", next_turn(&task)));
+            let chain = match task.turns.last() {
+                Some(last) if followup.is_file() => workers::stay_with(chain, &last.worker),
+                _ => chain,
+            };
             let worker = match workers::pick(&chain, &file, installed, now, crate::platform::utc_offset_minutes()) {
                 Ok(worker) => worker,
                 Err(words) if workers::may_come_back(&chain, &file, now) => {
@@ -529,7 +545,7 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
             restarting = true;
             let usage = &task.turns[index].usage;
             if handoff::did_nothing(usage.steps, new_changed) {
-                if let Err(words) = carry_note(&folder, n) {
+                if let Err(words) = carry_turn_file(&folder, n, "note") {
                     task.warnings.push(words);
                 }
             } else {
@@ -555,9 +571,13 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
             format!("{label} died at its start, so it was started again: {line}")
         };
         task.warnings.push(warning);
-        if let Err(words) = carry_note(&folder, n) {
+        if let Err(words) = carry_turn_file(&folder, n, "note") {
             task.warnings.push(words);
         }
+    }
+    // A follow-up stays asked until a turn has really taken it.
+    if restarting && let Err(words) = carry_turn_file(&folder, n, "followup") {
+        task.warnings.push(words);
     }
     task.state = if restarting { TaskState::Queued } else { end.state };
     task.error = if restarting { None } else { error };
@@ -580,13 +600,13 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     core.changed.notify_waiters();
 }
 
-/// A turn that did nothing carries the note it was given into the next turn.
-fn carry_note(folder: &Path, n: u32) -> Result<(), String> {
-    let from = folder.join(format!("turn-{n}.note.md"));
+/// A turn that didn't take what it was given carries it into the next turn.
+fn carry_turn_file(folder: &Path, n: u32, kind: &str) -> Result<(), String> {
+    let from = folder.join(format!("turn-{n}.{kind}.md"));
     if !from.is_file() {
         return Ok(());
     }
-    let to = folder.join(format!("turn-{}.note.md", n.saturating_add(1)));
+    let to = folder.join(format!("turn-{}.{kind}.md", n.saturating_add(1)));
     std::fs::copy(&from, &to).map(|_| ()).map_err(|e| format!("cannot copy {}: {e}", from.display()))
 }
 
@@ -666,9 +686,24 @@ async fn fail_start(core: &Arc<Core>, task: &Task, error: RpcError) {
     core.changed.notify_waiters();
 }
 
+/// The number the next turn gets.
+fn next_turn(task: &Task) -> u32 {
+    u32::try_from(task.turns.len()).unwrap_or(u32::MAX - 1).saturating_add(1)
+}
+
+/// A turn's note or follow-up, when it has one.
+fn read_turn_file(folder: &Path, n: u32, kind: &str) -> Result<Option<Vec<u8>>, RpcError> {
+    let path = folder.join(format!("turn-{n}.{kind}.md"));
+    match std::fs::read(&path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(unavailable(format!("cannot read {}: {e}", path.display()))),
+    }
+}
+
 async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(), RpcError> {
     let mut task = task.clone();
-    let n = u32::try_from(task.turns.len()).unwrap_or(u32::MAX - 1).saturating_add(1);
+    let n = next_turn(&task);
     let config = crate::config::load(&core.paths.config)?;
     let prefix = worker::prefix(worker, &config)?;
     // The version check is OpenCode's alone.
@@ -679,17 +714,33 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
     let brief = std::fs::read_to_string(folder.join("brief.md"))
         .map_err(|e| unavailable(format!("cannot read the task's brief: {e}")))?;
-    let note_path = folder.join(format!("turn-{n}.note.md"));
-    let note = match std::fs::read(&note_path) {
-        Ok(bytes) => Some(bytes),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-        Err(e) => return Err(unavailable(format!("cannot read {}: {e}", note_path.display()))),
-    };
-    let prompt = folder.join(format!("turn-{n}.prompt.md"));
-    let mut text = note.clone().unwrap_or_default();
-    text.extend_from_slice(brief.as_bytes());
-    crate::paths::write_atomic(&prompt, &text)
-        .map_err(|e| unavailable(format!("cannot write {}: {e}", prompt.display())))?;
+    let mut note = read_turn_file(&folder, n, "note")?;
+    let followup = read_turn_file(&folder, n, "followup")?;
+    // A follow-up continues the session when the same worker is here to take it.
+    let resume = prompt::resume_session(&task, worker, followup.is_some());
+    let mut warnings = Vec::new();
+    // One that can't gets the story the way a hand-off does.
+    if note.is_none()
+        && followup.is_some()
+        && resume.is_none()
+        && let Some(last) = task.turns.last()
+    {
+        let stopped = match last.refused.as_deref() {
+            Some(window) => handoff::stopped_words(window, last.usage.steps, last.usage.cost_usd),
+            None => "finished its turn".to_string(),
+        };
+        let outcome = TurnOutcome { text: last.text.clone(), ..Default::default() };
+        let from = worker::label_of(&last.worker);
+        if let Err(words) = handoff_note(&task, &folder, last.n, &task.changed, &outcome, &from, &stopped).await {
+            warnings.push(words);
+        }
+        note = read_turn_file(&folder, n, "note")?;
+    }
+    let built = prompt::turn_prompt(&task, &brief, note.as_deref(), followup.as_deref(), resume.is_some()).await?;
+    warnings.extend(built.warnings);
+    let prompt_path = folder.join(format!("turn-{n}.prompt.md"));
+    crate::paths::write_atomic(&prompt_path, &built.text)
+        .map_err(|e| unavailable(format!("cannot write {}: {e}", prompt_path.display())))?;
     if task.worktree.is_none() {
         let worktree = worktree_path(&core.paths.state, &task.name).display().to_string();
         git::add_worktree(&task.repo, &worktree, &task.task_branch, &task.base).await?;
@@ -700,8 +751,8 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
         return Err(unavailable("the task has no worktree".into()));
     };
     let prepared = setup::prepare(core, &task, worker, &worktree, n).await?;
-    // Every turn is a fresh session; `Turn.resumes` says when one continues another.
-    let command = worker::turn_command(worker, &prefix, &task.name, &prompt.display().to_string(), None);
+    let command =
+        worker::turn_command(worker, &prefix, &task.name, &prompt_path.display().to_string(), resume.as_deref());
     let exe = std::env::current_exe().map_err(|e| unavailable(format!("cannot find this lc: {e}")))?;
     let mut argv = vec![
         exe.display().to_string(),
@@ -768,12 +819,20 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
             note.is_some(),
         ))
     });
+    let role = if followup.is_some() {
+        task.followup_role.clone().unwrap_or_else(|| "redo".into())
+    } else {
+        "worker".to_string()
+    };
     let turn = Turn {
         n,
         worker: worker.key().into(),
         terminal: Some(started.address.clone()),
         scope_token: started.scope,
         started_ms: now,
+        resumes: resume,
+        role,
+        path_first: prepared.path_first.clone(),
         ..Default::default()
     };
     update(core, &task.name, |task| {
@@ -787,6 +846,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
             task.handoffs.push(sentence);
         }
         task.warnings.extend(prepared.warnings);
+        task.warnings.extend(warnings);
         task.turns.push(turn);
     });
     core.changed.notify_waiters();
@@ -881,13 +941,21 @@ pub async fn discard(
         return Err(unavailable("the core is stopping".into()));
     }
     let Some(mut task) = core.tasks.snapshot(name) else { return Err(not_found(name)) };
-    if matches!(task.state, TaskState::Queued | TaskState::Running | TaskState::Stranded) {
+    if !task.state.ended() {
         return Err(RpcError::new(
             "running",
             format!("{name} is still {}: cancel it first", task.state.word()),
             format!("lc task cancel {name}"),
         ));
     }
+    if task.state == TaskState::Accepted {
+        return Err(RpcError::new(
+            "finished",
+            format!("{name} was accepted: its changes are in the repository"),
+            "see `lc task show`",
+        ));
+    }
+    let first_time = task.state != TaskState::Discarded;
     let removal = git::remove_worktree(&task.repo, task.worktree.as_deref(), Some(&task.task_branch)).await;
     if removal.removed {
         task.worktree = None;
@@ -895,6 +963,9 @@ pub async fn discard(
     task.state = TaskState::Discarded;
     if review.is_some() {
         task.review = review;
+    }
+    if first_time && let Err(words) = ledger::record(&core.paths.state, &task, "discarded", now_ms()) {
+        task.warnings.push(words);
     }
     save(&core.paths.state, &task);
     write_result(&core.paths.state, &task);

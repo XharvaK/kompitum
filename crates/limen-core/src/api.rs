@@ -22,12 +22,14 @@ pub const IDENTITY_VARS: &[&str] = &["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSI
 mod doc;
 mod run;
 mod task;
+mod task_review;
 mod types;
 use doc::*;
 mod waiting;
 use run::*;
 pub(crate) use run::{child_env, not_stopping, start as start_terminal, tail, terminal_env};
 use task::*;
+pub use task_review::*;
 pub use types::*;
 use waiting::*;
 
@@ -164,8 +166,23 @@ methods! { Ctx<'_>;
         "Cancel a queued task, or kill a running one and return once it has ended. Its worktree stays, for reading.",
         errors ["not_found", "finished"];
     "task.discard" => task_discard, TaskDiscardParams => TaskDiscardResult,
-        "Remove a finished task's worktree and branch, keeping its folder and record. A queued or running task must be cancelled first.",
-        errors ["not_found", "running"];
+        "Remove a finished task's worktree and branch, keeping its folder and record, and write its ledger row. A queued or running task must be cancelled first, and an accepted one has nothing left to discard.",
+        errors ["not_found", "running", "finished"];
+    "task.review" => task_review, TaskReviewParams => TaskReviewResult,
+        "The whole review of a task in one read: time and cost, the checks, each changed file in or out of scope, the warn hits, the worker's Gaps and report, and only the hunks those point at. `full` adds the whole patch; one that does not fit goes to a file the reply names.",
+        errors ["invalid_params", "not_found", "unavailable"];
+    "task.accept" => task_accept, TaskAcceptParams => TaskAcceptResult,
+        "Bring a finished task's changes into its repository and commit only those files, with the repository's identity and hooks. Never pushes. Then removes the worktree and branch, keeps the patch, and writes the ledger row. A refusal leaves the repository as it was.",
+        errors ["not_found", "running", "finished", "unfinished", "scope_violation", "target_branch_changed", "no_worktree", "no_changes", "files_dirty", "conflict", "commit_failed", "unavailable"];
+    "task.redo" => task_redo, TaskRedoParams => TaskRedoResult,
+        "Send a finished task back with a follow-up brief: the same worker goes on in its session while it can, any other starts fresh with a hand-off note. The checks run again when it ends.",
+        errors ["invalid_params", "not_found", "running", "finished", "no_worktree", "unavailable"];
+    "task.sweep" => task_sweep, TaskSweepParams => TaskSweepResult,
+        "Remove what old tasks left: an accepted or discarded task's folder and record, and a failed, timed-out or cancelled task nobody came for. Ledger rows stay. The core also does this by itself once a day.",
+        errors ["invalid_params", "unavailable"];
+    "ledger.show" => ledger_show, LedgerParams => LedgerResult,
+        "The ledger: one row per accepted or discarded task, with its turns, what they cost and the review. With `task`, also the orchestrator's own requests for it.",
+        errors ["unavailable"];
     "workers.show" => workers_show, Empty => WorkersView,
         "Which workers can take a task, the order new tasks try them, and what each has spent.",
         errors [];

@@ -5,7 +5,7 @@
 use super::*;
 use crate::task::TEXT_LIMIT;
 use crate::task::quota::Source;
-use crate::task::types::{Task, TaskLine, TaskState};
+use crate::task::types::{Asked, Task, TaskLine, TaskState};
 use crate::task::worker::Worker;
 use crate::task::workers::{self, Mode, Spend};
 use schemars::JsonSchema;
@@ -32,6 +32,24 @@ pub struct TaskStartParams {
     /// Seconds the turn may run (default 3600).
     #[serde(default)]
     pub timeout: Option<u64>,
+    /// The test command the checks run when the worker ends, replacing the repository's.
+    #[serde(default)]
+    pub test: Option<String>,
+    /// Regex or glob::regex: no added line may match (added to the repository's).
+    #[serde(default)]
+    pub forbid: Vec<String>,
+    /// glob::regex: some line of the matching files must match after the run (added to the repository's).
+    #[serde(default)]
+    pub require: Vec<String>,
+    /// Regex or glob::regex: a hit flags the line for the review (added to the repository's).
+    #[serde(default)]
+    pub warn: Vec<String>,
+    /// How many times failed checks go back to the worker, 0 to 3 (default: the repository's, else 1).
+    #[serde(default)]
+    pub qa_rounds: Option<u8>,
+    /// Let the worker use the web.
+    #[serde(default)]
+    pub web: bool,
     /// The caller's terminal.
     #[serde(default)]
     pub caller: Option<String>,
@@ -221,14 +239,20 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
     if idle == 0 || wall == 0 {
         return Err(RpcError::invalid_params("idle and timeout are at least 1 second"));
     }
+    if p.qa_rounds.is_some_and(|rounds| i64::from(rounds) > crate::task::checks::MAX_QA_ROUNDS) {
+        return Err(RpcError::invalid_params(format!("qa_rounds is 0 to {}", crate::task::checks::MAX_QA_ROUNDS)));
+    }
     let dirty = crate::task::git::dirty_count(&repo).await?;
-    let warnings = if dirty > 0 {
+    let mut warnings = if dirty > 0 {
         vec![format!(
             "{dirty} uncommitted files in {repo} are not in the worktree: commit first if the worker needs them"
         )]
     } else {
         Vec::new()
     };
+    let asked =
+        Asked { test: p.test, forbid: p.forbid, require: p.require, warn: p.warn, qa_rounds: p.qa_rounds, web: p.web };
+    warnings.extend(crate::task::prompt::start_warnings(&repo, &base, &p.brief, &p.scope, &asked).await);
     let task = Task {
         name: p.task.clone(),
         seq: core.tasks.next_seq(),
@@ -252,6 +276,11 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         error: None,
         changed: Vec::new(),
         review: None,
+        asked,
+        checks: Vec::new(),
+        check: None,
+        qa_used: 0,
+        followup_role: None,
         created_ms: now_ms(),
         started_ms: None,
         ended_ms: None,
@@ -275,7 +304,7 @@ pub(super) async fn task_list(core: Ctx<'_>, p: TaskListParams) -> Result<TaskLi
     let now = now_ms();
     let mut all = core.tasks.all();
     all.sort_by_key(|task| task.seq);
-    let running = all.iter().filter(|task| task.state == TaskState::Running).count();
+    let running = all.iter().filter(|task| matches!(task.state, TaskState::Running | TaskState::Checking)).count();
     let queued = all.iter().filter(|task| task.state == TaskState::Queued).count();
     let tasks = all
         .iter()

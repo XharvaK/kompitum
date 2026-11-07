@@ -3,8 +3,10 @@
 //! The Python's `checks.py` is the reference.
 
 use crate::task::decide::in_scope;
-use crate::task::types::cut;
+use crate::task::types::{Asked, cut};
 use regex::Regex;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::sync::OnceLock;
 
@@ -14,6 +16,8 @@ pub const SOURCE_FILE: &str = ".limen/checks.json@HEAD";
 pub const DEFAULT_QA_ROUNDS: u8 = 1;
 pub const MAX_QA_ROUNDS: i64 = 3;
 pub const DEFAULT_REUSE_TEST_FOR: &str = "*.md";
+/// The scope's plain paths that look like test files, when `focused_glob` names none.
+pub const DEFAULT_FOCUSED_GLOB: &[&str] = &["**/test_*.py", "**/*_test.py", "**/*.test.*", "**/*.spec.*"];
 /// A review reads at most this many hits of one kind.
 pub const MAX_HITS: usize = 50;
 pub const MAX_FAILED: usize = 50;
@@ -33,6 +37,7 @@ pub struct ChecksFile {
     pub reuse_test_for: Vec<String>,
     pub qa_rounds: u8,
     pub focused_cmd: Option<String>,
+    pub focused_glob: Vec<String>,
     pub second_reader: bool,
 }
 
@@ -47,6 +52,7 @@ impl Default for ChecksFile {
             reuse_test_for: vec![DEFAULT_REUSE_TEST_FOR.to_string()],
             qa_rounds: DEFAULT_QA_ROUNDS,
             focused_cmd: None,
+            focused_glob: DEFAULT_FOCUSED_GLOB.iter().map(|glob| glob.to_string()).collect(),
             second_reader: false,
         }
     }
@@ -105,12 +111,36 @@ pub fn parse_checks(text: &str) -> (ChecksFile, Vec<String>) {
         },
     }
     string_key(&spec, "focused_cmd", &mut file.focused_cmd, &mut problems);
+    // `focused_globs`: one glob or a list of them; anything else keeps the default.
+    match spec.get("focused_glob") {
+        Some(Value::String(glob)) if !glob.trim().is_empty() => file.focused_glob = vec![glob.clone()],
+        Some(Value::Array(items)) => {
+            file.focused_glob = items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|glob| !glob.trim().is_empty())
+                .map(str::to_string)
+                .collect();
+        }
+        _ => {}
+    }
     match spec.get("second_reader") {
         None | Some(Value::Null) => {}
         Some(Value::Bool(flag)) => file.second_reader = *flag,
         Some(_) => problems.push(format!("{SOURCE_FILE}: second_reader must be a boolean")),
     }
     (file, problems)
+}
+
+/// What a task asked, as the checks `merged` lays over the committed file.
+pub fn asked_checks(asked: &Asked) -> ChecksFile {
+    ChecksFile {
+        test_cmd: asked.test.clone(),
+        forbid: asked.forbid.clone(),
+        require: asked.require.clone(),
+        warn: asked.warn.clone(),
+        ..ChecksFile::default()
+    }
 }
 
 /// A call's checks laid over the committed file's: its command replaces, its patterns add.
@@ -138,7 +168,8 @@ fn added(file: &[String], call: &[String]) -> Vec<String> {
 }
 
 /// Which side of a diff a line is on. `+` is what the worker added.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum Side {
     Added,
     Removed,
@@ -282,7 +313,7 @@ pub(crate) fn glob_match(path: &str, glob: &str) -> bool {
 }
 
 /// A line a forbid pattern matched, as the review shows it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
 pub struct Hit {
     pub pattern: String,
     pub file: String,
@@ -351,7 +382,8 @@ pub fn require_missing(files: &[(String, String)], entries: &[String]) -> (Vec<S
 }
 
 /// Where a warn rule came from, so a review can say whose lesson it is.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum Source {
     #[default]
     Builtin,
@@ -485,7 +517,7 @@ pub fn builtin_warns() -> Vec<WarnRule> {
 }
 
 /// A line a warn rule flagged, for the review and never for a refusal.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
 pub struct WarnHit {
     pub rule: String,
     pub side: Side,

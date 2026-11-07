@@ -306,6 +306,20 @@ Options:
   -h, --help  Print help
 ```
 
+## lc ledger
+
+```text
+Worker runs: one row per accepted or discarded task, with what it cost
+
+Usage: lc ledger [OPTIONS]
+
+Options:
+      --json         JSON output even in a terminal
+      --task <TASK>  Only this task's row, with the orchestrator's own usage for it
+      --last <N>     The newest rows to show (default 20)
+  -h, --help         Print help
+```
+
 ## lc ls
 
 ```text
@@ -616,12 +630,36 @@ Commands:
   show     Show one task: its record, progress, changes and report
   wait     Wait for tasks; prints one JSON line each and a summary, at the end
   cancel   Cancel a queued or running task
-  discard  Remove a finished task's worktree and branch
+  discard  Remove a finished task's worktree and branch, and write its ledger row
+  review   The whole review of a task in one read: checks, scope, warns, Gaps, report and the hunks they point at
+  accept   Bring a finished task's changes into its repository and commit only those files
+  redo     Send a finished task back with a follow-up brief; its checks run again
+  sweep    Remove what old tasks left; their ledger rows stay
   help     Print this message or the help of the given subcommand(s)
 
 Options:
       --json  JSON output even in a terminal
   -h, --help  Print help
+```
+
+## lc task accept
+
+```text
+Bring a finished task's changes into its repository and commit only those files
+
+Usage: lc task accept [OPTIONS] <TASK>
+
+Arguments:
+  <TASK>  The task's name
+
+Options:
+      --json                    JSON output even in a terminal
+      --review <REVIEW>         What the review decided, kept for the ledger
+      --message <MESSAGE>       The commit message (default: the review, else a line naming the task)
+      --no-commit               Put the changes in the working tree and make no commit
+      --accept-unfinished       Accept a task that failed, timed out or was cancelled, or whose last checks failed
+      --accept-scope-violation  Accept files changed outside the task's scope
+  -h, --help                    Print help
 ```
 
 ## lc task cancel
@@ -642,7 +680,7 @@ Options:
 ## lc task discard
 
 ```text
-Remove a finished task's worktree and branch
+Remove a finished task's worktree and branch, and write its ledger row
 
 Usage: lc task discard [OPTIONS] <TASK>
 
@@ -666,6 +704,39 @@ Options:
       --all   Include discarded tasks
       --json  JSON output even in a terminal
   -h, --help  Print help
+```
+
+## lc task redo
+
+```text
+Send a finished task back with a follow-up brief; its checks run again
+
+Usage: lc task redo [OPTIONS] --brief <FILE> <TASK>
+
+Arguments:
+  <TASK>  The task's name
+
+Options:
+      --brief <FILE>  The follow-up's file, or - for stdin
+      --json          JSON output even in a terminal
+  -h, --help          Print help
+```
+
+## lc task review
+
+```text
+The whole review of a task in one read: checks, scope, warns, Gaps, report and the hunks they point at
+
+Usage: lc task review [OPTIONS] <TASK>
+
+Arguments:
+  <TASK>  The task's name
+
+Options:
+      --full           Add the whole patch; one that does not fit goes to a file the review names
+      --json           JSON output even in a terminal
+      --max-bytes <N>  The review's size in bytes (default 20000)
+  -h, --help           Print help
 ```
 
 ## lc task show
@@ -701,7 +772,27 @@ Options:
       --worker <WORKER>    Which workers to use, in order: auto is Command Code then opencode Go, free is opencode free then both. Default: what lc workers shows [possible values: auto, cc, go, free]
       --idle <IDLE>        Seconds without output or CPU before the turn is cut (default 900)
       --timeout <TIMEOUT>  Seconds the turn may run (default 3600)
+      --test <COMMAND>     The test command the checks run when the worker ends, replacing the repository's
+      --forbid <PATTERN>   A regex, or glob::regex, no added line may match (repeatable)
+      --require <PATTERN>  A glob::regex some line of the matching files must match after the run (repeatable)
+      --warn <PATTERN>     A regex, or glob::regex, whose hits are flagged for the review (repeatable)
+      --qa-rounds <N>      How many times failed checks go back to the worker, 0 to 3 (default: the repository's, else 1)
+      --web                Let the worker use the web
   -h, --help               Print help
+```
+
+## lc task sweep
+
+```text
+Remove what old tasks left; their ledger rows stay
+
+Usage: lc task sweep [OPTIONS]
+
+Options:
+      --days <N>  Days after its end that a task keeps its files (default 14)
+      --json      JSON output even in a terminal
+      --dry-run   Say what would go, and remove nothing
+  -h, --help      Print help
 ```
 
 ## lc task wait

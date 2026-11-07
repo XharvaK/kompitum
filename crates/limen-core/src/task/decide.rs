@@ -124,7 +124,8 @@ pub fn in_scope(path: &str, scope: &[String]) -> bool {
 
 /// Why a queued task may not start yet, in the words of `waiting`.
 pub fn may_start(task: &Task, others: &[&Task], cap: usize) -> Result<(), String> {
-    let running = others.iter().filter(|other| other.state == TaskState::Running).count();
+    let active = |task: &Task| matches!(task.state, TaskState::Running | TaskState::Checking);
+    let running = others.iter().filter(|other| active(other)).count();
     if running >= cap {
         return Err(format!("waiting for a task to finish: {running} of {cap} running"));
     }
@@ -133,10 +134,10 @@ pub fn may_start(task: &Task, others: &[&Task], cap: usize) -> Result<(), String
             continue;
         }
         // A stranded task holds its work in a worktree too, so it goes first.
-        let earlier = other.state == TaskState::Running
-            || (matches!(other.state, TaskState::Queued | TaskState::Stranded) && other.seq < task.seq);
+        let earlier =
+            active(other) || (matches!(other.state, TaskState::Queued | TaskState::Stranded) && other.seq < task.seq);
         if earlier && scopes_overlap(&task.scope, &other.scope) {
-            return Err(if other.state == TaskState::Running {
+            return Err(if active(other) {
                 format!("waiting for {}: its scope overlaps", other.name)
             } else {
                 format!("queued behind {}: its scope overlaps", other.name)

@@ -17,8 +17,16 @@ pub(super) enum TaskCmd {
     Wait(WaitArgs),
     /// Cancel a queued or running task.
     Cancel(NameArg),
-    /// Remove a finished task's worktree and branch.
+    /// Remove a finished task's worktree and branch, and write its ledger row.
     Discard(DiscardArgs),
+    /// The whole review of a task in one read: checks, scope, warns, Gaps, report and the hunks they point at.
+    Review(ReviewArgs),
+    /// Bring a finished task's changes into its repository and commit only those files.
+    Accept(AcceptArgs),
+    /// Send a finished task back with a follow-up brief; its checks run again.
+    Redo(RedoArgs),
+    /// Remove what old tasks left; their ledger rows stay.
+    Sweep(SweepArgs),
 }
 
 #[derive(clap::Args)]
@@ -43,6 +51,24 @@ pub(super) struct StartArgs {
     /// Seconds the turn may run (default 3600).
     #[arg(long)]
     pub timeout: Option<u64>,
+    /// The test command the checks run when the worker ends, replacing the repository's.
+    #[arg(long, value_name = "COMMAND")]
+    pub test: Option<String>,
+    /// A regex, or glob::regex, no added line may match (repeatable).
+    #[arg(long, value_name = "PATTERN")]
+    pub forbid: Vec<String>,
+    /// A glob::regex some line of the matching files must match after the run (repeatable).
+    #[arg(long, value_name = "PATTERN")]
+    pub require: Vec<String>,
+    /// A regex, or glob::regex, whose hits are flagged for the review (repeatable).
+    #[arg(long, value_name = "PATTERN")]
+    pub warn: Vec<String>,
+    /// How many times failed checks go back to the worker, 0 to 3 (default: the repository's, else 1).
+    #[arg(long, value_name = "N", value_parser = clap::value_parser!(u8).range(0..=3))]
+    pub qa_rounds: Option<u8>,
+    /// Let the worker use the web.
+    #[arg(long)]
+    pub web: bool,
 }
 
 #[derive(clap::Args)]
@@ -105,6 +131,68 @@ pub(super) struct DiscardArgs {
     pub review: Option<String>,
 }
 
+#[derive(clap::Args)]
+pub(super) struct ReviewArgs {
+    /// The task's name.
+    pub task: String,
+    /// Add the whole patch; one that does not fit goes to a file the review names.
+    #[arg(long)]
+    pub full: bool,
+    /// The review's size in bytes (default 20000).
+    #[arg(long, value_name = "N")]
+    pub max_bytes: Option<u64>,
+}
+
+#[derive(clap::Args)]
+pub(super) struct AcceptArgs {
+    /// The task's name.
+    pub task: String,
+    /// What the review decided, kept for the ledger.
+    #[arg(long)]
+    pub review: Option<String>,
+    /// The commit message (default: the review, else a line naming the task).
+    #[arg(long)]
+    pub message: Option<String>,
+    /// Put the changes in the working tree and make no commit.
+    #[arg(long)]
+    pub no_commit: bool,
+    /// Accept a task that failed, timed out or was cancelled, or whose last checks failed.
+    #[arg(long)]
+    pub accept_unfinished: bool,
+    /// Accept files changed outside the task's scope.
+    #[arg(long)]
+    pub accept_scope_violation: bool,
+}
+
+#[derive(clap::Args)]
+pub(super) struct RedoArgs {
+    /// The task's name.
+    pub task: String,
+    /// The follow-up's file, or - for stdin.
+    #[arg(long, value_name = "FILE")]
+    pub brief: String,
+}
+
+#[derive(clap::Args)]
+pub(super) struct SweepArgs {
+    /// Days after its end that a task keeps its files (default 14).
+    #[arg(long, value_name = "N")]
+    pub days: Option<u64>,
+    /// Say what would go, and remove nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(clap::Args)]
+pub(super) struct LedgerArgs {
+    /// Only this task's row, with the orchestrator's own usage for it.
+    #[arg(long)]
+    pub task: Option<String>,
+    /// The newest rows to show (default 20).
+    #[arg(long, value_name = "N")]
+    pub last: Option<usize>,
+}
+
 fn human_seconds(seconds: f64) -> String {
     let seconds = seconds.max(0.0) as u64;
     match seconds {
@@ -123,38 +211,44 @@ fn state(value: &Value) -> &str {
 }
 
 fn ended(state: &str) -> bool {
-    matches!(state, "done" | "failed" | "timed_out" | "cancelled" | "discarded")
+    matches!(state, "done" | "failed" | "timed_out" | "cancelled" | "discarded" | "accepted")
 }
 
 fn ended_badly(state: &str) -> bool {
     matches!(state, "failed" | "timed_out" | "cancelled")
 }
 
+fn read_brief(path: &str) -> Result<String, RpcError> {
+    if path == "-" {
+        let mut text = String::new();
+        std::io::stdin()
+            .read_to_string(&mut text)
+            .map_err(|e| RpcError::new("usage", format!("cannot read stdin: {e}"), ""))?;
+        return Ok(text);
+    }
+    std::fs::read_to_string(path)
+        .map_err(|e| RpcError::new("usage", format!("cannot read {path}: {e}"), "give a brief file, or - for stdin"))
+}
+
+/// `asked`: `--json` itself. The review and the ledger print Markdown even when piped, since
+/// what reads them is a caller's context.
 pub(super) fn task(
     _paths: &Paths,
     action: TaskCmd,
-    _json: bool,
+    asked: bool,
     call: impl Fn(&str, Value) -> Result<Value, RpcError>,
 ) -> Result<Option<Out>, RpcError> {
     Ok(Some(match action {
         TaskCmd::Start(a) => {
-            let brief = if a.brief == "-" {
-                let mut text = String::new();
-                std::io::stdin()
-                    .read_to_string(&mut text)
-                    .map_err(|e| RpcError::new("usage", format!("cannot read stdin: {e}"), ""))?;
-                text
-            } else {
-                std::fs::read_to_string(&a.brief).map_err(|e| {
-                    RpcError::new("usage", format!("cannot read {}: {e}", a.brief), "give a brief file, or - for stdin")
-                })?
-            };
+            let brief = read_brief(&a.brief)?;
             let folder = from_here(a.folder);
             let r = call(
                 "task.start",
                 json!({
                     "task": a.name, "brief": brief, "folder": folder, "scope": a.scope,
                     "worker": a.worker, "idle": a.idle, "timeout": a.timeout, "caller": caller(),
+                    "test": a.test, "forbid": a.forbid, "require": a.require, "warn": a.warn,
+                    "qa_rounds": a.qa_rounds, "web": a.web,
                 }),
             )?;
             let state = state(&r);
@@ -235,6 +329,9 @@ pub(super) fn task(
             if let Some(error) = task["error"].as_str() {
                 human.push_str(&format!("\nerror: {error}"));
             }
+            if let Some(checks) = line["checks"].as_str() {
+                human.push_str(&format!("\nchecks: {checks}"));
+            }
             for sentence in line["handoffs"].as_array().into_iter().flatten() {
                 human.push_str(&format!("\n{}", sentence.as_str().unwrap_or_default()));
             }
@@ -278,7 +375,84 @@ pub(super) fn task(
             }
             Out { json: r, human }
         }
+        TaskCmd::Review(a) => {
+            let r = call("task.review", json!({"task": a.task, "full": a.full, "max_bytes": a.max_bytes}))?;
+            if !asked {
+                println!("{}", r["text"].as_str().unwrap_or_default());
+                return Ok(None);
+            }
+            Out { json: r, human: String::new() }
+        }
+        TaskCmd::Accept(a) => {
+            let r = call(
+                "task.accept",
+                json!({
+                    "task": a.task, "review": a.review, "message": a.message, "no_commit": a.no_commit,
+                    "accept_unfinished": a.accept_unfinished, "accept_scope_violation": a.accept_scope_violation,
+                }),
+            )?;
+            let files = r["files"].as_array().map_or(0, Vec::len);
+            let mut human = match r["commit"].as_str() {
+                Some(commit) => format!("{} accepted: {files} files in {commit}", a.task),
+                None => format!("{} accepted: {files} files left uncommitted", a.task),
+            };
+            for left in r["left"].as_array().into_iter().flatten() {
+                human.push_str(&format!("\nleft: {}", left.as_str().unwrap_or_default()));
+            }
+            Out { json: r, human }
+        }
+        TaskCmd::Redo(a) => {
+            let brief = read_brief(&a.brief)?;
+            let r = call("task.redo", json!({"task": a.task, "brief": brief}))?;
+            let mut human = format!("{} {} for turn {}", a.task, state(&r), r["turn"].as_u64().unwrap_or(0));
+            if let Some(waiting) = r["waiting"].as_str() {
+                human.push_str(&format!(": {waiting}"));
+            }
+            if let Some(next) = r["next"].as_str() {
+                human.push_str(&format!("\nnext: {next}"));
+            }
+            Out { json: r, human }
+        }
+        TaskCmd::Sweep(a) => {
+            let r = call("task.sweep", json!({"days": a.days, "dry_run": a.dry_run}))?;
+            let names = |key: &str| -> Vec<String> {
+                r[key].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect()
+            };
+            let (removed, discarded, left) = (names("removed"), names("discarded"), names("left"));
+            let mut lines = Vec::new();
+            if !removed.is_empty() {
+                lines.push(format!(
+                    "removed: {} ({} bytes)",
+                    removed.join(", "),
+                    r["freed_bytes"].as_u64().unwrap_or(0)
+                ));
+            }
+            if !discarded.is_empty() {
+                lines.push(format!("discarded: {}", discarded.join(", ")));
+            }
+            lines.extend(left.iter().map(|left| format!("left: {left}")));
+            if lines.is_empty() {
+                lines.push("nothing to sweep".into());
+            }
+            if r["dry_run"] == true {
+                lines.insert(0, "a dry run, so nothing was removed".into());
+            }
+            Out { human: lines.join("\n"), json: r }
+        }
     }))
+}
+
+pub(super) fn ledger(
+    a: LedgerArgs,
+    asked: bool,
+    call: impl Fn(&str, Value) -> Result<Value, RpcError>,
+) -> Result<Option<Out>, RpcError> {
+    let r = call("ledger.show", json!({"task": a.task, "last": a.last}))?;
+    if !asked {
+        println!("{}", r["table"].as_str().unwrap_or_default());
+        return Ok(None);
+    }
+    Ok(Some(Out { json: r, human: String::new() }))
 }
 
 fn money(value: &Value) -> String {

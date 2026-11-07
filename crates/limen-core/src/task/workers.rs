@@ -75,6 +75,15 @@ pub fn chain(mode: Mode) -> Vec<Worker> {
     }
 }
 
+/// The chain with this worker first: a follow-up stays with the worker that did the work, while it can.
+pub fn stay_with(mut chain: Vec<Worker>, key: &str) -> Vec<Worker> {
+    if let Some(at) = chain.iter().position(|worker| worker.key() == key) {
+        let worker = chain.remove(at);
+        chain.insert(0, worker);
+    }
+    chain
+}
+
 fn limit_words(window: &str) -> &'static str {
     match window {
         "5-hour" => "its 5-hour limit",
@@ -234,6 +243,13 @@ pub fn spend(tasks: &[Task], now_ms: u64) -> BTreeMap<String, Spend> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_follow_up_stays_with_its_worker_and_only_within_the_chain() {
+        assert_eq!(stay_with(chain(Mode::Auto), "go"), [Worker::Go, Worker::Cc]);
+        assert_eq!(stay_with(chain(Mode::Auto), "cc"), [Worker::Cc, Worker::Go]);
+        assert_eq!(stay_with(chain(Mode::Go), "cc"), [Worker::Go]);
+    }
     use crate::task::clock::Civil;
     use crate::task::types::{Turn, Usage};
 

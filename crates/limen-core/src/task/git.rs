@@ -13,15 +13,20 @@ const LIMIT: Duration = Duration::from_secs(120);
 /// `git -C dir …`: stdin closed, no console, and a child that is killed when
 /// it passes 120 s.
 pub async fn git(dir: &str, args: &[&str]) -> Result<Output, RpcError> {
+    git_for(dir, args, LIMIT).await
+}
+
+/// `git` with its own limit, for what can take longer: a commit runs the repo's hooks.
+pub async fn git_for(dir: &str, args: &[&str], limit: Duration) -> Result<Output, RpcError> {
     let mut command = std::process::Command::new("git");
     command.arg("-C").arg(dir).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     crate::platform::no_console(&mut command);
     let mut command = tokio::process::Command::from(command);
     command.kill_on_drop(true);
-    let out = tokio::time::timeout(LIMIT, command.output()).await.map_err(|_| {
+    let out = tokio::time::timeout(limit, command.output()).await.map_err(|_| {
         RpcError::new(
             "unavailable",
-            format!("git {} took longer than 120 s", args.join(" ")),
+            format!("git {} took longer than {} s", args.join(" "), limit.as_secs()),
             "check the repository for a lock or a hook waiting on input",
         )
     })?;
@@ -53,6 +58,16 @@ pub async fn locate(folder: &str) -> Result<(String, String, String), RpcError> 
         String::from_utf8_lossy(&branch.stdout).trim().to_string(),
         String::from_utf8_lossy(&head.stdout).trim().to_string(),
     ))
+}
+
+/// A file as a commit has it, or None when that commit doesn't have it. A bad commit is an error.
+pub async fn show_file(repo: &str, rev: &str, path: &str) -> Result<Option<Vec<u8>>, RpcError> {
+    let listed = git(repo, &["ls-tree", rev, "--", path]).await?;
+    if listed.stdout.is_empty() {
+        return Ok(None);
+    }
+    let spec = format!("{rev}:{path}");
+    Ok(Some(git(repo, &["show", &spec]).await?.stdout))
 }
 
 /// Uncommitted or untracked entries: a worker's worktree starts without them.

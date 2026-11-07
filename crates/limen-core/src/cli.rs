@@ -87,6 +87,8 @@ enum Cmd {
     },
     /// See which workers can take a task, change the order, or say when one is back.
     Workers(WorkersArgs),
+    /// Worker runs: one row per accepted or discarded task, with what it cost.
+    Ledger(LedgerArgs),
     /// Follow fact changes as they happen (one JSON line each when piped).
     Events(SubscribeParams),
     /// Templates you can run by name (~/.config/limen-core/templates).
@@ -372,7 +374,7 @@ fn as_a_worker(cmd: Option<&Cmd>) -> Result<(), RpcError> {
     }
     match cmd {
         None => deny(),
-        Some(Cmd::Ls(_) | Cmd::Get(_) | Cmd::Read(_) | Cmd::Events(_) | Cmd::Schema) => Ok(()),
+        Some(Cmd::Ls(_) | Cmd::Get(_) | Cmd::Read(_) | Cmd::Events(_) | Cmd::Schema | Cmd::Ledger(_)) => Ok(()),
         // The runner runs under the mark, and the first lc call may start a core.
         Some(Cmd::RunLogged(_) | Cmd::Serve | Cmd::Hold { .. }) => Ok(()),
         Some(Cmd::Server { action }) => match action {
@@ -380,8 +382,13 @@ fn as_a_worker(cmd: Option<&Cmd>) -> Result<(), RpcError> {
             ServerCmd::Start | ServerCmd::Stop | ServerCmd::Restart => deny(),
         },
         Some(Cmd::Task { action }) => match action {
-            TaskCmd::Ls(_) | TaskCmd::Show(_) | TaskCmd::Wait(_) => Ok(()),
-            TaskCmd::Start(_) | TaskCmd::Cancel(_) | TaskCmd::Discard(_) => deny(),
+            TaskCmd::Ls(_) | TaskCmd::Show(_) | TaskCmd::Wait(_) | TaskCmd::Review(_) => Ok(()),
+            TaskCmd::Start(_)
+            | TaskCmd::Cancel(_)
+            | TaskCmd::Discard(_)
+            | TaskCmd::Accept(_)
+            | TaskCmd::Redo(_)
+            | TaskCmd::Sweep(_) => deny(),
         },
         // `lc workers` with no setting looks; any setting changes the chain.
         Some(Cmd::Workers(a)) => {
@@ -725,11 +732,15 @@ fn run(cmd: Option<Cmd>, json: bool, asked: bool) -> Result<Option<Out>, RpcErro
         }
         Cmd::Update { from: Some(from), force, .. } => update(&paths, &from, force)?,
         Cmd::Machine { action } => machine(&paths, action, call)?,
-        Cmd::Task { action } => match task(&paths, action, json, call)? {
+        Cmd::Task { action } => match task(&paths, action, asked, call)? {
             Some(out) => out,
             None => return Ok(None),
         },
         Cmd::Workers(a) => workers(a, call)?,
+        Cmd::Ledger(a) => match ledger(a, asked, call)? {
+            Some(out) => out,
+            None => return Ok(None),
+        },
         Cmd::RunLogged(args) => crate::task::runner::run(args),
         Cmd::File { action } => match file(action, asked, call)? {
             Some(out) => out,
@@ -990,6 +1001,11 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("task wait", "task.wait"),
     ("task cancel", "task.cancel"),
     ("task discard", "task.discard"),
+    ("task review", "task.review"),
+    ("task accept", "task.accept"),
+    ("task redo", "task.redo"),
+    ("task sweep", "task.sweep"),
+    ("ledger", "ledger.show"),
     ("workers", "workers.show"),
     ("workers", "workers.set"),
 ];
