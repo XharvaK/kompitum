@@ -702,7 +702,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         assert!(
-            std::process::Command::new("git")
+            // Through spawn: the test binary has no console either, so a bare
+            // git would open a window of its own on Windows.
+            crate::spawn::command("git")
                 .arg("init")
                 .arg("-q")
                 .arg(&root)
