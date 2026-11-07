@@ -65,6 +65,8 @@ impl Session {
             .env_remove("LIMEN_SOCKET")
             .env_remove("LIMEN_WORKER")
             .env_remove("LIMEN_COMSPEC")
+            // A worker running these tests carries it, and a Command Code turn here shouldn't.
+            .env_remove("OPENCODE_DISABLE_PROJECT_CONFIG")
             .env_remove("SSH_CONNECTION")
             .env_remove("SSH_CLIENT")
             .env_remove("SSH_TTY");
