@@ -159,7 +159,7 @@ fn totals_line(rows: &[LedgerRow]) -> String {
     let usage = totals(rows);
     let seconds: f64 = rows.iter().map(|row| row.seconds).sum();
     let turns: usize = rows.iter().map(|row| row.turns.len()).sum();
-    let qa: u32 = rows.iter().map(|row| row.qa_rounds).sum();
+    let qa = rows.iter().fold(0u32, |sum, row| sum.saturating_add(row.qa_rounds));
     let qa = if qa == 1 { "1 QA round".to_string() } else { format!("{qa} QA rounds") };
     format!(
         "Totals: {}, {}, {}, {}, {} steps, ${:.3}, {:.1}% cached, largest {}.",
@@ -208,10 +208,22 @@ fn read_rows(state: &Path) -> (Vec<LedgerRow>, Vec<String>) {
     (rows, problems)
 }
 
+/// A configured folder with `~` at its start, expanded as `parent_usage.py`'s
+/// `expanduser` does: the home folder for `~`, and the rest under it.
+fn config_path(value: &std::ffi::OsStr) -> PathBuf {
+    let path = PathBuf::from(value);
+    let Some(text) = path.to_str() else { return path };
+    match text.strip_prefix("~/").or_else(|| text.strip_prefix("~\\")) {
+        Some(rest) => crate::platform::home_dir().join(rest),
+        None if text == "~" => crate::platform::home_dir(),
+        None => path,
+    }
+}
+
 fn config_dir() -> PathBuf {
     std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
+        .map(|value| config_path(&value))
         .unwrap_or_else(|| crate::platform::home_dir().join(".claude"))
 }
 
@@ -222,11 +234,10 @@ pub async fn show(core: &Arc<Core>, p: LedgerParams) -> Result<LedgerResult, Rpc
         .map_err(|e| RpcError::new("unavailable", format!("cannot read the ledger: {e}"), "try again"))?;
     if let Some(task) = &p.task {
         rows.retain(|row| &row.task == task);
-    } else {
-        let last = p.last.unwrap_or(DEFAULT_LAST).max(1);
-        if rows.len() > last {
-            rows.drain(..rows.len() - last);
-        }
+    }
+    let last = p.last.unwrap_or(DEFAULT_LAST).max(1);
+    if rows.len() > last {
+        rows.drain(..rows.len() - last);
     }
     let parent = match &p.task {
         None => None,
@@ -405,11 +416,28 @@ mod tests {
         assert!(lines[2].contains("good / bad second line"), "the review stays on one line: {}", lines[2]);
         assert!(lines[3].contains("fix-2"), "{}", lines[3]);
         assert!(lines[4].starts_with("Totals: 2 rows"), "{}", lines[4]);
+        assert!(lines[4].contains("3 turns"), "{}", lines[4]);
+        assert!(lines[4].contains("1 QA round"), "{}", lines[4]);
         assert!(lines[4].contains("$0.750"), "{}", lines[4]);
         assert!(lines[4].contains("5 steps"), "{}", lines[4]);
         assert_eq!(
             lines[5], "Parent: 3 requests, 1.2M cache reads, 2K output, peak 2.4M.",
             "the parent line is the Python's"
         );
+    }
+
+    #[test]
+    fn a_damaged_qa_count_saturates_in_the_totals() {
+        let row = |qa_rounds| LedgerRow { qa_rounds, ..Default::default() };
+        let text = table(&[row(u32::MAX), row(1)], None);
+        assert!(text.contains(&format!("{} QA rounds", u32::MAX)), "{text}");
+    }
+
+    #[test]
+    fn a_config_dir_starting_at_home_expands_as_the_pythons_does() {
+        let home = crate::platform::home_dir();
+        assert_eq!(config_path(std::ffi::OsStr::new("~/claude")), home.join("claude"));
+        assert_eq!(config_path(std::ffi::OsStr::new("~")), home);
+        assert_eq!(config_path(std::ffi::OsStr::new("/somewhere/claude")), PathBuf::from("/somewhere/claude"));
     }
 }

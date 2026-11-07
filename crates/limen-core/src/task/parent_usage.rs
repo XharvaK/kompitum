@@ -301,6 +301,27 @@ mod tests {
         assert_eq!(got.peak, 201);
         assert!(got.closed);
         assert!(find_transcript("fix-1", 0, &dir).is_some());
+
+        let discarded = transcript(
+            &dir,
+            "discarded.jsonl",
+            &[
+                assistant(
+                    "d1",
+                    json!([{"type": "tool_use", "name": "mcp__limen__cw_run", "input": {"task": "fix-1"}}]),
+                    json!({"input_tokens": 4}),
+                ),
+                assistant(
+                    "d2",
+                    json!([{"type": "tool_use", "name": "mcp__limen__cw_discard", "input": {"task": "fix-1"}}]),
+                    json!({"output_tokens": 6}),
+                ),
+            ],
+        );
+        let got = usage(&discarded, "fix-1").unwrap();
+        assert_eq!(got.requests, 2);
+        assert_eq!((got.fresh, got.output), (4, 6));
+        assert!(got.closed, "cw_discard closes the window");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -323,6 +344,23 @@ mod tests {
         assert_eq!(got.requests, 2);
         assert_eq!((got.fresh, got.output), (7, 3));
         assert!(got.closed);
+
+        let discarded = transcript(
+            &dir,
+            "discarded.jsonl",
+            &[
+                assistant(
+                    "d1",
+                    json!([command("Bash", "lc task start fix-1 --brief b.md")]),
+                    json!({"input_tokens": 8}),
+                ),
+                assistant("d2", json!([command("PowerShell", "lc task discard fix-1")]), json!({"output_tokens": 9})),
+            ],
+        );
+        let got = usage(&discarded, "fix-1").unwrap();
+        assert_eq!(got.requests, 2);
+        assert_eq!((got.fresh, got.output), (8, 9));
+        assert!(got.closed, "lc task discard closes the window");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -19,7 +19,14 @@ pub async fn git(dir: &str, args: &[&str]) -> Result<Output, RpcError> {
 /// `git` with its own limit, for what can take longer: a commit runs the repo's hooks.
 pub async fn git_for(dir: &str, args: &[&str], limit: Duration) -> Result<Output, RpcError> {
     let mut command = std::process::Command::new("git");
-    command.arg("-C").arg(dir).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "core.quotePath=false", "-c", "color.ui=false"])
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     crate::platform::no_console(&mut command);
     let mut command = tokio::process::Command::from(command);
     command.kill_on_drop(true);

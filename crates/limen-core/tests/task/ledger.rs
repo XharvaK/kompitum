@@ -116,6 +116,14 @@ fn the_ledger_filters_by_task_and_takes_the_newest() {
     assert_eq!(rows.len(), 1, "{one}");
     assert_eq!(rows[0]["task"], "fix-1");
     assert_eq!(one["totals"]["cost_usd"], rows[0]["usage"]["cost_usd"], "the totals are of the shown rows");
+
+    let mut newer = first;
+    newer["at_ms"] = json!(3_000u64);
+    append_row(&s, &newer);
+    let newest_one = s.json(&["ledger", "--json", "--task", "fix-1", "--last", "1"]);
+    let rows = newest_one["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "the last applies with a task too: {newest_one}");
+    assert_eq!(rows[0]["at_ms"], 3_000, "{newest_one}");
 }
 
 #[test]
@@ -178,12 +186,17 @@ fn the_sweep_removes_an_old_discarded_task_and_frees_its_name() {
     s.json(&["task", "discard", "old", "--review", "stale"]);
     let folder = s.state().join("tasks").join("old");
     assert!(folder.exists(), "the discarded task still has its folder");
+    let patches = s.state().join("patches");
+    std::fs::create_dir_all(&patches).unwrap();
+    let patch = patches.join("old.patch");
+    std::fs::write(&patch, "a kept patch").unwrap();
     age_records(&s, &["old"], 15);
 
     // A core sweeps by itself at its start with the default days.
     let (code, text, err) = s.out(&["task", "ls", "--all"]);
     assert_eq!(code, 0, "{text}{err}");
     wait_until("the old task's folder went", || !folder.exists());
+    assert!(!patch.exists(), "its kept patch went too");
     let ledger = s.json(&["ledger", "--json", "--task", "old"]);
     assert_eq!(ledger["rows"].as_array().unwrap().len(), 1, "the row stays: {ledger}");
 
@@ -204,17 +217,90 @@ fn a_dry_run_removes_nothing() {
     let (exit, rows, _) = s.wait(&["dry"], &["--timeout", "30"]);
     assert_eq!(exit, 0, "{rows:?}");
     s.json(&["task", "discard", "dry"]);
-    age_records(&s, &["dry"], 5);
+    let bad = vec![json!({"out": stream("ses_dry_bad", "never")[0]}), json!({"exit": 3})];
+    let failed = s.script("dry-failed", json!([bad]));
+    s.config(&failed, "");
+    s.start("dry-bad", "fail me", &repo, &["--worker", "go"]);
+    let (exit, rows, _) = s.wait(&["dry-bad"], &["--timeout", "30"]);
+    assert_eq!(exit, 1, "{rows:?}");
+    age_records(&s, &["dry", "dry-bad"], 5);
     // The core's own sweep uses 14 days, so only the command can act on 5.
     s.out(&["task", "ls", "--all"]);
 
     let swept = s.json(&["task", "sweep", "--days", "1", "--dry-run"]);
     assert_eq!(swept["dry_run"], true, "{swept}");
     assert!(names(&swept, "removed").contains(&"dry".to_string()), "{swept}");
+    assert!(names(&swept, "discarded").contains(&"dry-bad".to_string()), "{swept}");
     assert!(swept["freed_bytes"].as_u64().unwrap() > 0, "a dry run counts what would go: {swept}");
     assert!(s.state().join("tasks").join("dry").exists(), "nothing was removed");
+    assert!(s.state().join("tasks").join("dry-bad").exists(), "a failed task was not discarded");
     let ledger = s.json(&["ledger", "--json", "--task", "dry"]);
     assert_eq!(ledger["rows"].as_array().unwrap().len(), 1, "the row stays: {ledger}");
+}
+
+/// Stop the core and rewrite one record's state, worktree and end.
+fn edit_record(s: &Session, task: &str, change: impl FnOnce(&mut Value)) {
+    s.out(&["server", "stop"]);
+    let path = s.state().join("tasks").join(task).join("record.json");
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    change(&mut record);
+    std::fs::write(&path, serde_json::to_vec_pretty(&record).unwrap()).unwrap();
+}
+
+#[test]
+fn a_task_whose_worktree_stayed_is_not_listed_as_removed() {
+    let s = Session::new();
+    let repo = s.repo();
+    let script = s.script("stayed", json!([say(&stream("ses_stayed", "finished"))]));
+    s.config(&script, "");
+    s.start("stayed", "sweep me", &repo, &["--worker", "go"]);
+    let (exit, rows, _) = s.wait(&["stayed"], &["--timeout", "30"]);
+    assert_eq!(exit, 0, "{rows:?}");
+    let outside = s.root.join("outside-worktree");
+    std::fs::create_dir_all(&outside).unwrap();
+    edit_record(&s, "stayed", |record| {
+        record["state"] = json!("discarded");
+        record["worktree"] = json!(outside.display().to_string());
+        record["ended_ms"] = json!(now_ms() - 5 * 86_400_000);
+    });
+    s.out(&["task", "ls", "--all"]);
+
+    let swept = s.json(&["task", "sweep", "--days", "1"]);
+    assert!(
+        names(&swept, "left").iter().any(|word| word.contains("outside-worktree")),
+        "what stayed is named: {swept}"
+    );
+    assert!(!names(&swept, "removed").contains(&"stayed".to_string()), "it was not cleanly removed: {swept}");
+    assert!(!s.state().join("tasks").join("stayed").exists(), "its folder went: {swept}");
+    assert!(outside.exists(), "the worktree stays for a person");
+    let _ = std::fs::remove_dir_all(outside);
+}
+
+#[test]
+fn a_sweep_names_what_a_discard_left() {
+    let s = Session::new();
+    let repo = s.repo();
+    let script = s.script("left", json!([say(&stream("ses_left", "finished"))]));
+    s.config(&script, "");
+    s.start("left", "fail me", &repo, &["--worker", "go"]);
+    let (exit, rows, _) = s.wait(&["left"], &["--timeout", "30"]);
+    assert_eq!(exit, 0, "{rows:?}");
+    let outside = s.root.join("left-worktree");
+    std::fs::create_dir_all(&outside).unwrap();
+    edit_record(&s, "left", |record| {
+        record["state"] = json!("failed");
+        record["worktree"] = json!(outside.display().to_string());
+        record["ended_ms"] = json!(now_ms() - 5 * 86_400_000);
+    });
+    s.out(&["task", "ls", "--all"]);
+
+    let swept = s.json(&["task", "sweep", "--days", "1"]);
+    assert!(names(&swept, "discarded").contains(&"left".to_string()), "{swept}");
+    assert!(
+        names(&swept, "left").iter().any(|word| word.contains("left-worktree")),
+        "the discard's words reach the sweep: {swept}"
+    );
+    let _ = std::fs::remove_dir_all(outside);
 }
 
 #[test]

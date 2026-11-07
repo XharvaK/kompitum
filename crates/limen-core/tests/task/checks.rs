@@ -6,7 +6,7 @@ const QA_PROMPT: &str = "The acceptance checks failed after your turn. Fix what 
                           scope, run the tests again, and report in the same shape as before.\n\n";
 
 /// A shell line that runs the test worker with this script.
-fn test_line(script: &Path) -> String {
+pub(super) fn test_line(script: &Path) -> String {
     let quote = |path: &Path| {
         let text = path.display().to_string();
         if cfg!(windows) { format!("\"{text}\"") } else { format!("'{}'", text.replace('\'', "'\\''")) }

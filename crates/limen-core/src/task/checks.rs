@@ -200,7 +200,7 @@ pub struct DiffLine {
     pub text: String,
 }
 
-fn diff_path(value: &str, prefix: &str) -> Option<String> {
+pub(crate) fn diff_path(value: &str, prefix: &str) -> Option<String> {
     let value = value.trim();
     if value == "/dev/null" || value.is_empty() {
         return None;

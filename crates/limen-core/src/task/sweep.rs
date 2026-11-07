@@ -26,6 +26,7 @@ pub async fn sweep(core: &Arc<Core>, p: TaskSweepParams) -> Result<TaskSweepResu
         let past = now.saturating_sub(task.ended_ms.unwrap_or(task.created_ms)) >= age;
         match task.state {
             TaskState::Accepted | TaskState::Discarded => {
+                let mut left = Vec::new();
                 if !p.dry_run
                     && let Some(worktree) = task.worktree.clone()
                 {
@@ -34,11 +35,11 @@ pub async fn sweep(core: &Arc<Core>, p: TaskSweepParams) -> Result<TaskSweepResu
                     if removal.removed {
                         forget_worktree(core, &task.name).await;
                     }
-                    result.left.extend(removal.left);
+                    left.extend(removal.left);
                 }
                 if past {
-                    result.removed.push(task.name.clone());
                     if p.dry_run {
+                        result.removed.push(task.name.clone());
                         let state = core.paths.state.clone();
                         let name = task.name.clone();
                         let bytes =
@@ -48,12 +49,16 @@ pub async fn sweep(core: &Arc<Core>, p: TaskSweepParams) -> Result<TaskSweepResu
                         remove_record(core, &task.name).await;
                         let state = core.paths.state.clone();
                         let name = task.name.clone();
-                        let (bytes, left) =
+                        let (bytes, stayed) =
                             tokio::task::spawn_blocking(move || remove_files(&state, &name)).await.unwrap_or_default();
                         result.freed_bytes = result.freed_bytes.saturating_add(bytes);
-                        result.left.extend(left);
+                        left.extend(stayed);
+                        if left.is_empty() {
+                            result.removed.push(task.name.clone());
+                        }
                     }
                 }
+                result.left.extend(left);
             }
             TaskState::Failed | TaskState::TimedOut | TaskState::Cancelled => {
                 if !past {
@@ -64,7 +69,10 @@ pub async fn sweep(core: &Arc<Core>, p: TaskSweepParams) -> Result<TaskSweepResu
                 } else {
                     let why = nobody_came(days);
                     match crate::task::discard(core, &task.name, Some(why)).await {
-                        Ok(_) => result.discarded.push(task.name.clone()),
+                        Ok((_, _, left)) => {
+                            result.discarded.push(task.name.clone());
+                            result.left.extend(left);
+                        }
                         Err(error) => result.left.push(format!("{}: {}", task.name, error.message)),
                     }
                 }
@@ -138,16 +146,20 @@ fn remove_files(state: &Path, name: &str) -> (u64, Vec<String>) {
     let mut total = 0u64;
     let mut left = Vec::new();
     let folder = super::task_folder(state, name);
-    total = total.saturating_add(folder_bytes(&folder));
+    let before = folder_bytes(&folder);
     if let Err(e) = std::fs::remove_dir_all(&folder)
         && e.kind() != std::io::ErrorKind::NotFound
     {
         left.push(format!("folder {}: {e}", folder.display()));
     }
+    // What is still there did not go, so it is not counted as freed.
+    total = total.saturating_add(before.saturating_sub(folder_bytes(&folder)));
     for path in patch_files(state, name) {
-        total = total.saturating_add(file_bytes(&path));
-        if let Err(e) = std::fs::remove_file(&path) {
-            left.push(format!("patch {}: {e}", path.display()));
+        let bytes = file_bytes(&path);
+        match std::fs::remove_file(&path) {
+            Ok(()) => total = total.saturating_add(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => left.push(format!("patch {}: {e}", path.display())),
         }
     }
     (total, left)

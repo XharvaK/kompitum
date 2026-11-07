@@ -873,8 +873,11 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
         if let Some(sentence) = sentence {
             task.handoffs.push(sentence);
         }
-        task.warnings.extend(prepared.warnings);
-        task.warnings.extend(warnings);
+        for warning in prepared.warnings.iter().chain(&warnings) {
+            if !task.warnings.contains(warning) {
+                task.warnings.push(warning.clone());
+            }
+        }
         task.turns.push(turn);
     });
     core.changed.notify_waiters();

@@ -3,7 +3,7 @@
 use crate::api::{TaskReviewParams, TaskReviewResult};
 use crate::rpc::RpcError;
 use crate::runtime::{Core, now_ms};
-use crate::task::checks::{Side, Source};
+use crate::task::checks::{Side, Source, diff_path};
 use crate::task::types::{ChangedFile, CheckReport, Task, Usage, cut, gaps_and_report};
 use crate::task::worker;
 use std::collections::{BTreeMap, BTreeSet};
@@ -163,7 +163,12 @@ pub fn render(input: &ReviewInput) -> Rendered {
 
     let mut blocks: Vec<String> = Vec::new();
     if !rest.is_empty() {
-        blocks.push(section("Report", &cut(&rest, REPORT_CHARS)));
+        let body = if rest.chars().count() > REPORT_CHARS {
+            format!("{}\n\n[… cut]", cut(&rest, REPORT_CHARS).trim_end())
+        } else {
+            rest
+        };
+        blocks.push(section("Report", &body));
     }
     let outside: BTreeSet<String> =
         task.changed.iter().filter(|file| !file.in_scope).map(|file| file.path.replace('\\', "/")).collect();
@@ -323,15 +328,6 @@ fn range(value: &str) -> Option<(u32, u32)> {
     Some((start, count))
 }
 
-fn diff_path(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() || value == "/dev/null" {
-        return None;
-    }
-    let value = value.strip_prefix("a/").or_else(|| value.strip_prefix("b/")).unwrap_or(value);
-    Some(value.replace('\\', "/"))
-}
-
 /// The files a patch names, their `---`/`+++` paths, and their hunks in order.
 fn split_patch(patch: &str) -> Vec<PatchFile> {
     let mut files: Vec<PatchFile> = Vec::new();
@@ -356,9 +352,9 @@ fn split_patch(patch: &str) -> Vec<PatchFile> {
         }
         current.header.push(raw.to_string());
         if let Some(value) = raw.strip_prefix("+++ ") {
-            current.new = diff_path(value);
+            current.new = diff_path(value, "b/");
         } else if let Some(value) = raw.strip_prefix("--- ") {
-            current.old = diff_path(value);
+            current.old = diff_path(value, "a/");
         }
     }
     files
@@ -537,6 +533,7 @@ mod tests {
         }
         assert!(text.starts_with("# Review: fix-1\ndone · opencode Go · 4 s · $0.250 · steps 3\n"), "{text}");
         assert!(text.contains("Command Code ran out of credits, so opencode Go went on."), "{text}");
+        assert!(text.contains("## Checks\nFAILED · 1.0 s\n- failed: a_test"), "a failed report's words show: {text}");
         assert!(text.contains("- round 1: failed: 1 test failed"), "{text}");
         assert!(text.contains("| src/a.rs | 2 | 0 | in scope |"), "{text}");
         assert!(text.contains("| outside.txt | 1 | 1 | **OUTSIDE scope** |"), "{text}");
@@ -567,6 +564,29 @@ mod tests {
         assert!(rendered.text.ends_with("bytes left out; raise max_bytes for more"), "{}", rendered.text);
         assert!(!rendered.text.contains('\u{fffd}'), "a character was split: {}", rendered.text);
         assert!(rendered.text.len() <= 700, "{} > 700", rendered.text.len());
+    }
+
+    #[test]
+    fn a_cut_report_ends_with_the_pythons_marker() {
+        let mut task = task();
+        task.turns[0].text = "r".repeat(REPORT_CHARS + 100);
+        let input = ReviewInput { task, max_bytes: 20_000, ..Default::default() };
+        let text = render(&input).text;
+        let expected = format!("## Report\n{}\n\n[… cut]\n\n", "r".repeat(REPORT_CHARS));
+        assert!(text.contains(&expected), "{text}");
+    }
+
+    #[test]
+    fn a_quoted_path_keeps_its_escapes() {
+        let patch = r#"diff --git "a/tab\tname.rs" "b/tab\tname.rs"
+--- "a/tab\tname.rs"
++++ "b/tab\tname.rs"
+@@ -1 +1 @@
+-a
++b
+"#;
+        let files = split_patch(patch);
+        assert_eq!(files[0].path(), Some(r"tab\tname.rs"));
     }
 
     #[test]

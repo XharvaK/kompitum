@@ -137,9 +137,11 @@ impl Session {
         let dir = self.root.join("repo");
         std::fs::create_dir_all(&dir).unwrap();
         git(&dir, &["init", "-q"]);
+        git(&dir, &["config", "user.name", "t"]);
+        git(&dir, &["config", "user.email", "t@t"]);
         std::fs::write(dir.join("a.txt"), "one\n").unwrap();
-        git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "add", "."]);
-        git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "first"]);
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
         dir
     }
 

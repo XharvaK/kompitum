@@ -90,6 +90,7 @@ fn accept_commits_only_the_patchs_files() {
     assert_eq!(accepted["removed"], true, "{accepted}");
     assert!(accepted["left"].as_array().unwrap().is_empty(), "{accepted}");
     assert_eq!(git(&repo, &["show", "--name-only", "--format=", "HEAD"]).trim(), "made.txt");
+    assert_eq!(git(&repo, &["log", "-1", "--format=%s"]).trim(), "looks good", "the review is the message");
     assert_eq!(git(&repo, &["show", "HEAD:a.txt"]), "one\n", "the other change was not committed");
     assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "mine\n", "and it is unchanged");
     assert!(
@@ -103,16 +104,47 @@ fn accept_commits_only_the_patchs_files() {
 }
 
 #[test]
+fn accept_uses_the_default_message_without_a_review_or_message() {
+    let s = Session::new();
+    let repo = s.repo();
+    run_one(&s, &repo, "fix-msg", vec![json!({"write": ["made.txt", "hello"]})], &["--worker", "go"]);
+    let accepted = accept(&s, "fix-msg", &[]);
+    assert_eq!(accepted["state"], "accepted", "{accepted}");
+    assert_eq!(git(&repo, &["log", "-1", "--format=%s"]).trim(), "task fix-msg: worker changes");
+}
+
+#[test]
 fn accept_commits_a_file_with_a_turkish_name() {
     let s = Session::new();
     let repo = s.repo();
     let name = "şarkı.txt";
     run_one(&s, &repo, "fix-turkish", vec![json!({"write": [name, "lyrics"]})], &["--worker", "go"]);
+    let view = s.task("fix-turkish");
+    let changed: Vec<&str> =
+        view["task"]["changed"].as_array().unwrap().iter().filter_map(|file| file["path"].as_str()).collect();
+    assert_eq!(changed, [name], "the changed file keeps its name: {view}");
+    let review = review_fn(&s, "fix-turkish", &[]);
+    assert!(review["text"].as_str().unwrap().contains(name), "the review's scope keeps it: {review}");
     let accepted = accept(&s, "fix-turkish", &[]);
     assert_eq!(accepted["state"], "accepted", "{accepted}");
     assert_eq!(accepted["files"], json!([name]), "{accepted}");
     assert_eq!(std::fs::read_to_string(repo.join(name)).unwrap(), "lyrics");
     git(&repo, &["cat-file", "-e", &format!("HEAD:{name}")]);
+}
+
+#[test]
+fn a_repo_with_colour_always_reviews_and_accepts() {
+    let s = Session::new();
+    let repo = s.repo();
+    git(&repo, &["config", "color.ui", "always"]);
+    run_one(&s, &repo, "fix-colour", vec![json!({"write": ["made.txt", "hello"]})], &["--worker", "go"]);
+    let review = review_fn(&s, "fix-colour", &["--full"]);
+    let text = review["text"].as_str().unwrap();
+    assert!(text.contains("diff --git a/made.txt b/made.txt"), "the patch is plain: {text}");
+    assert!(!text.contains('\u{1b}'), "no escape codes reach the review: {text}");
+    let accepted = accept(&s, "fix-colour", &[]);
+    assert_eq!(accepted["state"], "accepted", "{accepted}");
+    assert_eq!(std::fs::read_to_string(repo.join("made.txt")).unwrap(), "hello");
 }
 
 #[test]
@@ -154,6 +186,10 @@ fn accept_refuses_a_running_task() {
     let script = s.script("accept-running", json!([[{"sleep_ms": 30000}]]));
     s.config(&script, "");
     s.start("fix-4", "sleep", &repo, &["--worker", "go"]);
+    wait_until("the task's worktree and its worker", || {
+        let task = s.task("fix-4");
+        task["task"]["state"] == "running" && !task["task"]["worktree"].is_null()
+    });
     let error = refused(&s, &["task", "accept", "fix-4"]);
     assert_eq!(error["error"]["kind"], "running", "{error}");
     assert!(error["error"]["hint"].as_str().unwrap().contains("cancel"), "{error}");
@@ -282,6 +318,55 @@ fn a_refused_accept_keeps_its_review() {
 }
 
 #[test]
+fn accept_leaves_a_ledger_row_with_its_review() {
+    let s = Session::new();
+    let repo = s.repo();
+    run_one(&s, &repo, "fix-ledger", vec![json!({"write": ["made.txt", "hello"]})], &["--worker", "go"]);
+    let accepted = accept(&s, "fix-ledger", &["--review", "looks sound"]);
+    assert_eq!(accepted["state"], "accepted", "{accepted}");
+    let ledger = s.json(&["ledger", "--json", "--task", "fix-ledger"]);
+    let rows = ledger["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{ledger}");
+    assert_eq!(rows[0]["outcome"], "accepted", "{ledger}");
+    assert_eq!(rows[0]["review"], "looks sound", "{ledger}");
+    let (_, text, _) = s.out(&["ledger", "--task", "fix-ledger"]);
+    assert!(text.contains("looks sound"), "the review line shows: {text}");
+}
+
+#[test]
+fn a_checking_task_is_running_to_accept_redo_and_sweep() {
+    let s = Session::new();
+    let repo = s.repo();
+    let mut actions = vec![json!({"write": ["made.txt", "hello"]})];
+    actions.extend(say(&stream("ses_checking", report())));
+    actions.push(json!({"exit": 0}));
+    let worker = s.script("checking-worker", json!([actions]));
+    s.config(&worker, "");
+    let test = s.script("checking-test", json!([[{"sleep_ms": 30000}]]));
+    s.start("checking-1", "do the work", &repo, &["--worker", "go", "--test", &super::checks::test_line(&test)]);
+    wait_until("the task's check started", || !s.task("checking-1")["task"]["check"].is_null());
+    assert_eq!(s.task("checking-1")["task"]["state"], "checking");
+
+    let error = refused(&s, &["task", "accept", "checking-1"]);
+    assert_eq!(error["error"]["kind"], "running", "{error}");
+    let brief = s.brief("checking-redo", "again\n");
+    let error = refused(&s, &["task", "redo", "checking-1", "--brief", &brief]);
+    assert_eq!(error["error"]["kind"], "running", "{error}");
+
+    let swept = s.json(&["task", "sweep", "--days", "0"]);
+    assert!(!names_of(&swept, "removed").contains(&"checking-1".to_string()), "{swept}");
+    assert!(!names_of(&swept, "discarded").contains(&"checking-1".to_string()), "{swept}");
+    assert!(s.state().join("tasks").join("checking-1").exists(), "a checking task stays: {swept}");
+
+    let cancelled = s.json(&["task", "cancel", "checking-1"]);
+    assert_eq!(cancelled["state"], "cancelled", "{cancelled}");
+}
+
+fn names_of(result: &Value, key: &str) -> Vec<String> {
+    result[key].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect()
+}
+
+#[test]
 fn a_failing_hook_says_so_and_leaves_the_changes() {
     let s = Session::new();
     s.env("GIT_CONFIG_COUNT", "0");
@@ -391,11 +476,18 @@ fn redo_refuses_running_and_accepted() {
 fn review_names_its_sections() {
     let s = Session::new();
     let repo = s.repo();
-    run_one(&s, &repo, "fix-17", vec![json!({"write": ["made.txt", "hello"]})], &["--worker", "go"]);
+    let test = s.script("review-checks", json!([[{"out": "FAILED tests/test_a.py::test_a"}, {"exit": 1}]]));
+    run_one(
+        &s,
+        &repo,
+        "fix-17",
+        vec![json!({"write": ["made.txt", "hello"]})],
+        &["--worker", "go", "--test", &super::checks::test_line(&test), "--qa-rounds", "0"],
+    );
     let review = review_fn(&s, "fix-17", &[]);
     let text = review["text"].as_str().unwrap();
     assert!(text.contains("## Checks"), "{text}");
-    assert!(text.contains("No checks ran."), "{text}");
+    assert!(text.contains("- failed: tests/test_a.py::test_a"), "a failed report's words show: {text}");
     assert!(text.contains("## Gaps\nNone."), "{text}");
     assert!(text.contains("## Report\nthe worker's report"), "{text}");
     assert!(text.contains("## Scope"), "{text}");

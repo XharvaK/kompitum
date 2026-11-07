@@ -114,8 +114,13 @@ fn a_bad_checks_file_warns_and_the_turn_starts() {
     let warnings = started["warnings"].to_string();
     assert!(warnings.contains(".limen/checks.json is not valid JSON"), "{started}");
     let (exit, rows, summary) = s.wait(&["bad-checks-1"], &["--timeout", "60"]);
-    assert_eq!(exit, 0, "{rows:?} {summary}");
+    assert_eq!(exit, 1, "an unreadable checks file is an error in the report: {rows:?} {summary}");
     assert_eq!(rows[0]["state"], "done", "{rows:?}");
+    assert_eq!(rows[0]["ok"], false, "{rows:?}");
+    assert_eq!(rows[0]["checks"], "failed: 1 error", "{rows:?}");
+    let warnings = s.task("bad-checks-1")["task"]["warnings"].as_array().unwrap().clone();
+    let word = ".limen/checks.json is not valid JSON: expected ident at line 1 column 2";
+    assert_eq!(warnings.iter().filter(|warning| warning.as_str() == Some(word)).count(), 1, "{warnings:?}");
 }
 
 #[test]
@@ -125,7 +130,8 @@ fn the_start_warns_of_a_long_brief_a_phrase_and_no_check() {
     let script = s.script("warnings", json!([go_good(None)]));
     s.config(&script, "");
     let long = "a".repeat(19 * 1024 + 1);
-    let phrased = s.start("long-1", &long, &repo, &["--worker", "go", "--require", "src/*.rs::a phrase"]);
+    let phrased =
+        s.start("long-1", &long, &repo, &["--worker", "go", "--require", "src/*.rs::a phrase", "--qa-rounds", "0"]);
     let warnings = phrased["warnings"].to_string();
     assert!(warnings.contains("past about 19 KB"), "{phrased}");
     assert!(warnings.contains("isn't one token"), "{phrased}");
@@ -138,7 +144,15 @@ fn the_start_warns_of_a_long_brief_a_phrase_and_no_check() {
     assert!(!tested["warnings"].to_string().contains("no check at all"), "{tested}");
 
     let (exit, rows, summary) = s.wait(&["long-1", "bare-1", "test-1"], &["--timeout", "120"]);
-    assert_eq!(exit, 0, "{rows:?} {summary}");
+    assert_eq!(exit, 1, "a require that finds nothing fails the checks: {rows:?} {summary}");
+    let long = rows.iter().find(|row| row["task"] == "long-1").unwrap();
+    assert_eq!(long["state"], "done", "{long}");
+    assert_eq!(long["ok"], false, "{long}");
+    assert_eq!(long["checks"], "failed: 1 required pattern missing", "{long}");
+    let bare = rows.iter().find(|row| row["task"] == "bare-1").unwrap();
+    assert_eq!((bare["state"].as_str(), bare["ok"].as_bool()), (Some("done"), Some(true)), "{bare}");
+    let tested = rows.iter().find(|row| row["task"] == "test-1").unwrap();
+    assert_eq!((tested["state"].as_str(), tested["ok"].as_bool()), (Some("done"), Some(true)), "{tested}");
 }
 
 #[test]

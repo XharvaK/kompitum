@@ -77,12 +77,13 @@ pub struct Usage {
 
 impl Usage {
     pub fn add(&mut self, other: &Usage) {
-        self.steps += other.steps;
-        self.input += other.input;
-        self.output += other.output;
-        self.reasoning += other.reasoning;
-        self.cache_read += other.cache_read;
-        self.cache_write += other.cache_write;
+        // A damaged ledger line can hold any number; the core's thread must not panic on it.
+        self.steps = self.steps.saturating_add(other.steps);
+        self.input = self.input.saturating_add(other.input);
+        self.output = self.output.saturating_add(other.output);
+        self.reasoning = self.reasoning.saturating_add(other.reasoning);
+        self.cache_read = self.cache_read.saturating_add(other.cache_read);
+        self.cache_write = self.cache_write.saturating_add(other.cache_write);
         self.cost_usd += other.cost_usd;
         self.largest_request = self.largest_request.max(other.largest_request);
     }
@@ -558,6 +559,36 @@ mod tests {
         let mut clean = task;
         clean.changed.truncate(1);
         assert!(TaskLine::of(&clean, 9_999, 1500).ok);
+    }
+
+    #[test]
+    fn usage_adds_saturate_instead_of_panicking() {
+        let mut usage = Usage {
+            steps: u64::MAX,
+            input: u64::MAX,
+            output: u64::MAX,
+            reasoning: u64::MAX,
+            cache_read: u64::MAX,
+            cache_write: u64::MAX,
+            cost_usd: 1.0,
+            largest_request: 10,
+        };
+        usage.add(&Usage {
+            steps: 1,
+            input: 1,
+            output: 1,
+            reasoning: 1,
+            cache_read: 1,
+            cache_write: 1,
+            cost_usd: 0.5,
+            largest_request: 20,
+        });
+        assert_eq!(
+            (usage.steps, usage.input, usage.output, usage.reasoning, usage.cache_read, usage.cache_write),
+            (u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX, u64::MAX)
+        );
+        assert!((usage.cost_usd - 1.5).abs() < 1e-9);
+        assert_eq!(usage.largest_request, 20);
     }
 
     #[test]
