@@ -15,6 +15,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 #[derive(ClapArgs)]
 pub struct Args {
     /// The task's folder: its turn files live here.
@@ -35,6 +38,9 @@ pub struct Args {
     /// How many of the program's first items are the OpenCode CLI itself.
     #[arg(long)]
     pub prefix_len: Option<usize>,
+    /// This is a task's test, not a worker's turn: its output goes to check-<turn>.log.
+    #[arg(long)]
+    pub check: bool,
     /// The program and its arguments, after `--`.
     #[arg(last = true, required = true, allow_hyphen_values = true)]
     pub program: Vec<String>,
@@ -279,8 +285,137 @@ fn verify_route(
     check
 }
 
+/// A task's test: what it prints is the record, and it ends with the program's
+/// code. No beat: only the wall limit the pump keeps applies.
+fn run_check(args: Args) -> ! {
+    let log_path = args.dir.join(format!("check-{}.log", args.turn));
+    let exit_path = args.dir.join(format!("check-{}.exit", args.turn));
+    say(&format!("task {}, turn {}, check\n", args.task, args.turn));
+    let shared = Arc::new(Mutex::new(Shared::default()));
+    if let Err(e) = std::fs::create_dir_all(&args.dir) {
+        let words = format!("cannot make {}: {e}", args.dir.display());
+        screen(&words);
+        status(&shared, "error", &words);
+        std::process::exit(127);
+    }
+    let file = match std::fs::File::create(&log_path) {
+        Ok(file) => file,
+        Err(e) => {
+            let words = format!("cannot write {}: {e}", log_path.display());
+            screen(&words);
+            write_exit(&exit_path, 127);
+            status(&shared, "error", &words);
+            std::process::exit(127);
+        }
+    };
+    let log = Arc::new(Mutex::new(file));
+    status(&shared, "working", "the test runs");
+    // No `no_console`: the child shares this terminal's hidden console.
+    let mut cmd = Command::new(&args.program[0]);
+    #[cfg(windows)]
+    if crate::platform::is_shell_line(&args.program) {
+        // cmd reads the rest of its command line itself; Rust's argument quoting
+        // would put backslashes before the line's own quotes.
+        cmd.args(&args.program[1..4]).raw_arg(format!("\"{}\"", args.program[4]));
+    } else {
+        cmd.args(&args.program[1..]);
+    }
+    #[cfg(unix)]
+    cmd.args(&args.program[1..]);
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    prepare_child(&mut cmd, args.path_first.as_deref());
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            let words = format!("cannot start {}: {e}", args.program[0]);
+            write_line(&log, &words);
+            screen(&words);
+            write_exit(&exit_path, 127);
+            status(&shared, "error", &words);
+            std::process::exit(127);
+        }
+    };
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let (out_log, err_log) = (log.clone(), log.clone());
+    let out_thread = std::thread::spawn(move || copy_lines(stdout, &out_log));
+    let err_thread = std::thread::spawn(move || copy_lines(stderr, &err_log));
+    let waited = child.wait();
+    join_readers([out_thread, err_thread]);
+    let (code, signal) = match waited {
+        Ok(exit) => {
+            let signal = crate::platform::exit_signal(&exit);
+            (exit.code().unwrap_or_else(|| signal.map_or(1, |signal| 128 + signal)), signal)
+        }
+        Err(e) => {
+            let words = format!("cannot wait for the test: {e}");
+            write_line(&log, &words);
+            screen(&words);
+            (127, None)
+        }
+    };
+    write_exit(&exit_path, code);
+    let ending = match signal {
+        Some(signal) => format!("ended: signal {signal} (exit code {code})"),
+        None => format!("ended: exit code {code}"),
+    };
+    screen(&ending);
+    status(&shared, if code == 0 { "done" } else { "error" }, &ending);
+    std::process::exit(code);
+}
+
+/// Wait for the output readers at most 30 s: a background child the program left
+/// behind may hold the pipes open long after the program itself ended.
+fn join_readers(readers: [std::thread::JoinHandle<()>; 2]) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    for reader in readers {
+        while !reader.is_finished() {
+            if Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = reader.join();
+    }
+}
+
+/// Both streams go to the one log, a whole line at a time, and onto the screen.
+fn copy_lines(reader: impl Read, log: &Mutex<std::fs::File>) {
+    let mut reader = BufReader::new(reader);
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        match reader.read_until(b'\n', &mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                {
+                    let mut file = log.lock().unwrap_or_else(|p| p.into_inner());
+                    let _ = file.write_all(&buf);
+                    let _ = file.flush();
+                }
+                screen(String::from_utf8_lossy(&buf).trim_end_matches(['\r', '\n']));
+            }
+        }
+    }
+}
+
+fn write_line(log: &Mutex<std::fs::File>, line: &str) {
+    let mut file = log.lock().unwrap_or_else(|p| p.into_inner());
+    let _ = writeln!(file, "{line}");
+    let _ = file.flush();
+}
+
+fn write_exit(path: &Path, code: i32) {
+    if let Ok(bytes) = serde_json::to_vec(&serde_json::json!({"code": code})) {
+        let _ = write_atomic(path, &bytes);
+    }
+}
+
 pub fn run(args: Args) -> ! {
     BEGAN.get_or_init(Instant::now);
+    if args.check {
+        run_check(args);
+    }
     let worker = Worker::from_key(&args.worker).unwrap_or(Worker::Go);
     let label = Worker::from_key(&args.worker).map_or_else(|_| args.worker.clone(), |w| w.label().to_string());
     say(&format!("task {}, turn {}, {}\n", args.task, args.turn, label));
@@ -401,8 +536,7 @@ pub fn run(args: Args) -> ! {
             std::process::exit(127);
         }
     };
-    let _ = out_thread.join();
-    let _ = err_thread.join();
+    join_readers([out_thread, err_thread]);
     // Both pipes are closed, so nothing the worker left behind is still writing.
     // What follows is this runner's own work under its own limits, and the idle
     // limit is the worker's: the beats go on, and they count as activity.
@@ -439,9 +573,7 @@ pub fn run(args: Args) -> ! {
     }
     done.store(true, Ordering::SeqCst);
     let _ = beat_thread.join();
-    if let Ok(bytes) = serde_json::to_vec(&serde_json::json!({"code": code})) {
-        let _ = write_atomic(&exit_path, &bytes);
-    }
+    write_exit(&exit_path, code);
     let ending = match signal {
         Some(signal) => format!("ended: signal {signal} (exit code {code})"),
         None => format!("ended: exit code {code}"),

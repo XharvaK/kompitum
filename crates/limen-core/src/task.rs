@@ -257,6 +257,13 @@ pub async fn pump(core: Arc<Core>) {
             return;
         }
     }
+    let checking: Vec<Task> = core.tasks.all().into_iter().filter(|task| task.state == TaskState::Checking).collect();
+    for task in checking {
+        checking::pump_checking(&core, task).await;
+        if stopping(&core) {
+            return;
+        }
+    }
     let mut stranded: Vec<Task> =
         core.tasks.all().into_iter().filter(|task| task.state == TaskState::Stranded).collect();
     stranded.sort_by_key(|task| task.seq);
@@ -398,11 +405,15 @@ fn terminal_now(core: &Core, address: Option<&str>) -> Option<TerminalNow> {
     Some(TerminalNow { live: terminal.is_live(), exit_code: terminal.exit_code, reason: terminal.reason.clone() })
 }
 
-async fn kill_turn(core: &Arc<Core>, name: &str, turn: &Turn) {
-    if let Some(id) = turn.terminal.as_deref().and_then(crate::terminals::parse_id) {
+async fn kill_terminal(core: &Arc<Core>, address: Option<&str>) {
+    if let Some(id) = address.and_then(crate::terminals::parse_id) {
         core.lock().killing.insert(id);
         core.kill(&[id]).await;
     }
+}
+
+async fn kill_turn(core: &Arc<Core>, name: &str, turn: &Turn) {
+    kill_terminal(core, turn.terminal.as_deref()).await;
     // Unix can leave a process behind: look for the token, sweep, look again.
     let survivors = sweep_survivors(turn.scope_token.clone()).await;
     update(core, name, |task| {
@@ -443,6 +454,8 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     let path = folder.join(format!("turn-{n}.jsonl"));
     let err_path = folder.join(format!("turn-{n}.err"));
     let route_path = folder.join(format!("turn-{n}.route.json"));
+    let earlier: Vec<(Option<String>, f64)> =
+        task.turns[..index].iter().map(|turn| (turn.session.clone(), turn.usage.cost_usd)).collect();
     let (outcome, warning, route, stderr_tail) = tokio::task::spawn_blocking(move || {
         let mut outcome = match std::fs::read(&path) {
             Ok(bytes) => TurnOutcome::from_bytes(worker, &bytes),
@@ -451,7 +464,16 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         let mut warning = None;
         if worker == Worker::Cc {
             match outcome.session.as_deref().and_then(crate::task::commandcode::session_cost) {
-                Some(cost) => outcome.usage.cost_usd = cost,
+                Some(cost) => {
+                    // The transcript holds every turn of a resumed session, so only
+                    // what this turn added since the earlier ones counts.
+                    let same: f64 = earlier
+                        .iter()
+                        .filter(|(session, _)| session.as_deref() == outcome.session.as_deref())
+                        .map(|(_, cost)| *cost)
+                        .sum();
+                    outcome.usage.cost_usd = crate::task::checking::turn_cost(cost, same);
+                }
                 None => {
                     if let Some(session) = outcome.session.clone() {
                         warning = Some(format!(
@@ -579,7 +601,13 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     if restarting && let Err(words) = carry_turn_file(&folder, n, "followup") {
         task.warnings.push(words);
     }
-    task.state = if restarting { TaskState::Queued } else { end.state };
+    task.state = if restarting {
+        TaskState::Queued
+    } else if end.state == TaskState::Done {
+        TaskState::Checking
+    } else {
+        end.state
+    };
     task.error = if restarting { None } else { error };
     task.waiting = if restarting {
         if end.refusal.is_some() {
@@ -591,9 +619,9 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         None
     };
     task.changed = changed;
-    task.ended_ms = if restarting { None } else { Some(ended) };
+    task.ended_ms = if restarting || end.state == TaskState::Done { None } else { Some(ended) };
     save(&core.paths.state, &task);
-    if !restarting {
+    if !restarting && end.state != TaskState::Done {
         write_result(&core.paths.state, &task);
     }
     replace(core, task);
@@ -923,6 +951,20 @@ pub async fn cancel(core: &Arc<Core>, name: &str) -> Result<(TaskState, u32), Rp
             finish_turn(core, name, turn.n, terminal.as_ref()).await;
             let done = core.tasks.snapshot(name).unwrap_or(task);
             Ok((done.state, done.turns.last().map_or(0, |turn| turn.survivors)))
+        }
+        TaskState::Checking => {
+            if let Some(check) = task.check.as_ref() {
+                kill_terminal(core, check.terminal.as_deref()).await;
+            }
+            let mut task = task;
+            task.state = TaskState::Cancelled;
+            task.ended_ms = Some(now_ms());
+            task.check = None;
+            save(&core.paths.state, &task);
+            write_result(&core.paths.state, &task);
+            replace(core, task);
+            core.changed.notify_waiters();
+            Ok((TaskState::Cancelled, 0))
         }
         other => {
             Err(RpcError::new("finished", format!("{name} has already ended: {}", other.word()), "see `lc task show`"))

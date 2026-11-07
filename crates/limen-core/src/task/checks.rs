@@ -39,6 +39,8 @@ pub struct ChecksFile {
     pub focused_cmd: Option<String>,
     pub focused_glob: Vec<String>,
     pub second_reader: bool,
+    /// Keys whose values were unusable: said, but never a failed check.
+    pub warnings: Vec<String>,
 }
 
 impl Default for ChecksFile {
@@ -54,6 +56,7 @@ impl Default for ChecksFile {
             focused_cmd: None,
             focused_glob: DEFAULT_FOCUSED_GLOB.iter().map(|glob| glob.to_string()).collect(),
             second_reader: false,
+            warnings: Vec::new(),
         }
     }
 }
@@ -101,13 +104,14 @@ pub fn parse_checks(text: &str) -> (ChecksFile, Vec<String>) {
     }
     array_key(&spec, "forbid", &mut file.forbid, &mut problems);
     array_key(&spec, "require", &mut file.require, &mut problems);
-    array_key(&spec, "warn", &mut file.warn, &mut problems);
+    // A warn never fails a task, so its own bad key is a warning, not a problem.
+    array_key(&spec, "warn", &mut file.warn, &mut file.warnings);
     array_key(&spec, "reuse_test_for", &mut file.reuse_test_for, &mut problems);
     match spec.get("qa_rounds") {
         None => {}
         Some(value) => match value.as_i64() {
             Some(rounds) if (0..=MAX_QA_ROUNDS).contains(&rounds) => file.qa_rounds = rounds as u8,
-            _ => problems.push(format!("{SOURCE_FILE}: qa_rounds must be an integer from 0 to {MAX_QA_ROUNDS}")),
+            _ => file.warnings.push(format!("{SOURCE_FILE}: qa_rounds must be an integer from 0 to {MAX_QA_ROUNDS}")),
         },
     }
     string_key(&spec, "focused_cmd", &mut file.focused_cmd, &mut problems);
@@ -127,7 +131,7 @@ pub fn parse_checks(text: &str) -> (ChecksFile, Vec<String>) {
     match spec.get("second_reader") {
         None | Some(Value::Null) => {}
         Some(Value::Bool(flag)) => file.second_reader = *flag,
-        Some(_) => problems.push(format!("{SOURCE_FILE}: second_reader must be a boolean")),
+        Some(_) => file.warnings.push(format!("{SOURCE_FILE}: second_reader must be a boolean")),
     }
     (file, problems)
 }
@@ -154,6 +158,9 @@ pub fn merged(file: &ChecksFile, call: &ChecksFile) -> ChecksFile {
     both.require = added(&file.require, &call.require);
     // `run_checks` drops a repeated forbid or require entry; `_warn_rules` keeps a repeated warn.
     both.warn = file.warn.iter().chain(&call.warn).cloned().collect();
+    both.warnings = file.warnings.iter().chain(&call.warnings).cloned().collect();
+    // A file that names an empty command names none, as an empty call command does.
+    both.test_cmd = both.test_cmd.filter(|cmd| !cmd.is_empty());
     both
 }
 

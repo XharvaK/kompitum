@@ -246,7 +246,7 @@ fn the_checks_file_parses_with_every_key() {
 
 #[test]
 fn a_wrong_type_is_a_problem_in_words_and_the_rest_still_counts() {
-    let text = r#"{"test_cmd": 5, "forbid": ["a", 7], "require": ["x::y"], "qa_rounds": 9,
+    let text = r#"{"test_cmd": 5, "forbid": ["a", 7], "require": ["x::y"], "warn": "rules", "qa_rounds": 9,
                    "test_timeout_seconds": 0, "second_reader": "yes"}"#;
     let (file, problems) = parse_checks(text);
     assert_eq!(file.test_cmd, None);
@@ -260,9 +260,16 @@ fn a_wrong_type_is_a_problem_in_words_and_the_rest_still_counts() {
             ".limen/checks.json@HEAD: test_cmd must be a string",
             ".limen/checks.json@HEAD: test_timeout_seconds must be a positive integer",
             ".limen/checks.json@HEAD: forbid must be an array of strings",
+        ]
+    );
+    assert_eq!(
+        file.warnings,
+        [
+            ".limen/checks.json@HEAD: warn must be an array of strings",
             ".limen/checks.json@HEAD: qa_rounds must be an integer from 0 to 3",
             ".limen/checks.json@HEAD: second_reader must be a boolean",
-        ]
+        ],
+        "a bad warn, qa_rounds or second_reader is said, but never fails a check"
     );
     let (_, problems) = parse_checks("not json");
     assert!(problems[0].starts_with(".limen/checks.json is not valid JSON: "), "{}", problems[0]);
@@ -284,6 +291,7 @@ fn a_call_replaces_the_test_and_adds_the_patterns() {
         forbid: vec!["a".into()],
         require: vec!["b".into()],
         warn: vec!["c".into()],
+        warnings: vec!["a file's warning".into()],
         ..Default::default()
     };
     let call = ChecksFile {
@@ -298,11 +306,14 @@ fn a_call_replaces_the_test_and_adds_the_patterns() {
     assert_eq!(both.forbid, ["a", "d"], "the file's first, and an entry is said once");
     assert_eq!(both.require, ["b", "e"]);
     assert_eq!(both.warn, ["c", "c"], "a warn entry is a rule: said twice, it is two rules");
+    assert_eq!(both.warnings, ["a file's warning"], "a file's warnings are kept");
     let kept = merged(&file_spec, &ChecksFile::default());
     assert_eq!(kept.test_cmd.as_deref(), Some("full"), "no call command keeps the file's");
     assert_eq!(kept.forbid, ["a"]);
     let blank = merged(&file_spec, &ChecksFile { test_cmd: Some(String::new()), ..Default::default() });
     assert_eq!(blank.test_cmd.as_deref(), Some("full"), "an empty call command is no command");
+    let empty_file = ChecksFile { test_cmd: Some(String::new()), ..Default::default() };
+    assert_eq!(merged(&empty_file, &ChecksFile::default()).test_cmd, None, "an empty file command is no command");
 }
 
 #[test]

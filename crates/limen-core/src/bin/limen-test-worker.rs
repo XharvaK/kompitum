@@ -114,6 +114,13 @@ fn act(action: &Value, script: &str) {
                     .spawn();
             }
         }
+        "orphan" => {
+            // A child that keeps this program's output pipes open after it exits.
+            let pidfile = value.as_str().unwrap_or_default();
+            if let Ok(exe) = std::env::current_exe() {
+                let _ = std::process::Command::new(exe).args([script, "--child", pidfile]).spawn();
+            }
+        }
         "args_to" => {
             let path = value.as_str().unwrap_or_default();
             let mut text = String::new();
