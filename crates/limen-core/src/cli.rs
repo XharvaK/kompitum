@@ -14,6 +14,7 @@ use std::io::{IsTerminal, Read};
 
 mod file;
 mod machine;
+mod mcp;
 mod vault;
 mod output;
 mod status;
@@ -21,6 +22,7 @@ mod task;
 mod update;
 use file::*;
 use machine::*;
+use mcp::*;
 use vault::*;
 use output::*;
 use status::*;
@@ -100,6 +102,9 @@ enum Cmd {
     },
     /// Everything at one glance: agents, tasks, workers and Claude's limits.
     Status(StatusArgs),
+    /// Serve tasks, workers and the vault as MCP tools on stdin and stdout, for an agent's client.
+    #[command(hide = true)]
+    Mcp(McpArgs),
     /// Follow fact changes as they happen (one JSON line each when piped).
     Events(SubscribeParams),
     /// Templates you can run by name (~/.config/limen-core/templates).
@@ -389,6 +394,8 @@ fn as_a_worker(cmd: Option<&Cmd>) -> Result<(), RpcError> {
             Ok(())
         }
         Some(Cmd::Vault { action }) => vault_as_a_worker(action),
+        // An MCP front starts tasks; a worker has its own client and no business serving one.
+        Some(Cmd::Mcp(_)) => deny(),
         // The runner runs under the mark, and the first lc call may start a core.
         Some(Cmd::RunLogged(_) | Cmd::Serve | Cmd::Hold { .. }) => Ok(()),
         Some(Cmd::Server { action }) => match action {
@@ -760,6 +767,10 @@ fn run(cmd: Option<Cmd>, json: bool, asked: bool) -> Result<Option<Out>, RpcErro
             None => return Ok(None),
         },
         Cmd::Status(a) => status_cmd(a, asked, call)?,
+        Cmd::Mcp(a) => {
+            mcp_cmd(a, &paths)?;
+            return Ok(None);
+        }
         Cmd::RunLogged(args) => crate::task::runner::run(args),
         Cmd::File { action } => match file(action, asked, call)? {
             Some(out) => out,
