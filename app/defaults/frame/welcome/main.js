@@ -290,8 +290,7 @@ export default class Welcome extends View {
       .child(this.feature(t, "layers", "Your other machines, in the same window", "A server or a Mac mini runs its own limen-core, so its agents keep going even while this laptop sleeps."))
       .child(div().h(1).bg(t.border))
       .child(h_flex().gap(10).items_center().child(div().w(84).text_size(13).text_color(t.muted).child("Appearance")).child(this.segment(t, APPEARANCES, this.appearance, (v, cx) => this.setAppearance(v, cx))))
-      .child(h_flex().gap(10).items_center().child(div().w(84).text_size(13).text_color(t.muted).child("Size")).child(this.sizeControl(t)))
-      .child(this.comingFromLimen(t));
+      .child(h_flex().gap(10).items_center().child(div().w(84).text_size(13).text_color(t.muted).child("Size")).child(this.sizeControl(t)));
   }
 
   machineRow(t, icon, name, note, ok) {
