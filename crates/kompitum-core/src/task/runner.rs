@@ -57,6 +57,7 @@ struct Shared {
     out_bytes: u64,
     active_ms: u64,
     cpu_ms: u64,
+    io_bytes: u64,
     steps: u64,
     tools: Vec<String>,
     cost_usd: f64,
@@ -142,6 +143,7 @@ fn beat(shared: &Mutex<Shared>, path: &Path) {
             at_ms: now_ms(),
             active_ms: st.active_ms,
             cpu_ms: st.cpu_ms,
+            io_bytes: st.io_bytes,
             out_bytes: st.out_bytes,
             steps: st.steps,
             tools: st.tools.clone(),
@@ -154,24 +156,38 @@ fn beat(shared: &Mutex<Shared>, path: &Path) {
     }
 }
 
+/// What counts as activity in one beat: output grew, 40 ms of CPU were used,
+/// or 1024 bytes of I/O moved. A model streaming tokens is I/O while its CPU
+/// barely moves. On Windows the runner itself sits in the same job and writes
+/// this beat file every second (about 200 bytes), so the I/O threshold stays
+/// well above that.
+fn active(out_grew: bool, cpu_ms: u64, io_bytes: u64) -> bool {
+    out_grew || cpu_ms >= 40 || io_bytes >= 1024
+}
+
 /// One beat a second while the turn runs, and a last one as it ends. It is
 /// activity, not output, that counts: a compiler in silence holds the idle
 /// limit off (UPGRADES #28).
 fn beat_loop(shared: Arc<Mutex<Shared>>, path: PathBuf, done: Arc<AtomicBool>) {
-    let (mut last_out, mut last_cpu) = (0u64, 0u64);
+    let (mut last_out, mut last_cpu, mut last_io) = (0u64, 0u64, 0u64);
     loop {
         let last = done.load(Ordering::SeqCst);
         let now = now_ms();
         let cpu = crate::platform::job_cpu_ms().unwrap_or(0);
+        let io = crate::platform::job_io_bytes().unwrap_or(0);
         {
             let mut st = shared.lock().unwrap_or_else(|p| p.into_inner());
-            if st.worker_ended || st.out_bytes > last_out || cpu.saturating_sub(last_cpu) >= 40 {
+            if st.worker_ended
+                || active(st.out_bytes > last_out, cpu.saturating_sub(last_cpu), io.saturating_sub(last_io))
+            {
                 st.active_ms = now;
             }
             st.cpu_ms = cpu;
+            st.io_bytes = io;
             last_out = st.out_bytes;
         }
         last_cpu = cpu;
+        last_io = io;
         beat(&shared, &path);
         if last {
             return;
@@ -590,4 +606,19 @@ pub fn run(args: Args) -> ! {
     screen(&ending);
     status(&shared, if code == 0 { "done" } else { "error" }, &ending);
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn output_cpu_and_io_each_count_as_activity_and_little_else_does() {
+        assert!(active(true, 0, 0), "output grew");
+        assert!(active(false, 40, 0), "40 ms of CPU");
+        assert!(active(false, 0, 1024), "1024 bytes of I/O");
+        assert!(!active(false, 39, 0), "too little CPU");
+        assert!(!active(false, 0, 1023), "too little I/O, below the runner's own beat");
+        assert!(!active(false, 0, 0), "nothing moved");
+    }
 }

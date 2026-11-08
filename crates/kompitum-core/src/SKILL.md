@@ -156,6 +156,11 @@ kom task accept fix-docs --review "clean; one typo fixed by hand"
   and the repository's `.kompitum/checks.json`) run when it ends, and failures go
   back to it (`--qa-rounds`) before you are told.
 - `"one_at_a_time": true` in `.kompitum/checks.json` makes that repository build one task at a time, whatever their scopes.
+- There is no cap on how many tasks run at once unless `[workers] cap` in the config sets one.
+- A turn has no wall-clock limit unless `--timeout` sets one; `--idle` (900 s) cuts it only after no output, CPU or I/O.
+- A worker that ends its turn with a `## Question` leaves the task `asking`: `kom task wait`
+  wakes with the question and its `next`, and `kom task redo <t> --brief -` sends the answer
+  on stdin as the next turn in the same session. `kom task accept` refuses an asking task; answer or discard it.
 - Worker output is evidence, not truth: read the review before you accept.
   `kom task redo <t> --brief -` sends it back; `kom task discard <t> --review X`
   drops it. `kom ledger` shows what each run cost.
@@ -192,7 +197,8 @@ kom vault find quota reset              # did we try this before?
 ## One picture: kom status
 
 `kom status` shows agents, tasks (to review, running, queued), workers and
-Claude's limits at once; `--json` for scripts. As Claude Code's status line,
+Claude's limits at once; `--json` for scripts. The core keeps OpenCode and Grok
+Build updated once a day; `kom workers` shows each CLI's version and last check. As Claude Code's status line,
 `kom status --line` reads its JSON on stdin, keeps the limit resets for the
 others to read, and prints one line. The Kompitum app's Lead switch hands the
 lead between Opus and Manager with a note the Owner sends: a hand-off is a

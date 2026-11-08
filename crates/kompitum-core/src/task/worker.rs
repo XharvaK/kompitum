@@ -115,11 +115,11 @@ fn check_shim(cli: &str, key: &str, exe: &str) -> Result<(), RpcError> {
 
 /// A program's file name on this system. On Windows only the `.exe` starts
 /// without a shell: npm leaves a shell script called `opencode` beside it.
-fn program(name: &str) -> String {
+pub(crate) fn program(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
-fn on_path(names: &[String]) -> Option<PathBuf> {
+pub(crate) fn on_path(names: &[String]) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)
         .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
@@ -176,7 +176,7 @@ fn command_program(cli: &str, key: &str, mut argv: Vec<String>) -> Result<Vec<St
 /// `opencode`'s argv prefix: `[workers] opencode` when the config gives one,
 /// else the executable on PATH (or the npm fallback on Windows), as
 /// `command_prefix` does in the Python.
-fn opencode_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
+pub(crate) fn opencode_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
     if let Some(argv) = config.opencode() {
         return command_program("OpenCode v2", "opencode", argv);
     }
@@ -231,7 +231,7 @@ pub fn prefix(worker: &Worker, config: &Config) -> Result<Vec<String>, RpcError>
 /// Prefixes whose version this core already accepted: asking once is enough.
 static CHECKED: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
 
-fn first_version(text: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn first_version(text: &str) -> Option<(u32, u32, u32)> {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {

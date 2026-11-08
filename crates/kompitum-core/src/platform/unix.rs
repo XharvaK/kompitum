@@ -284,6 +284,64 @@ pub fn job_cpu_ms() -> Option<u64> {
     None
 }
 
+/// Bytes everything else in the caller's session read and wrote, network
+/// included. The caller is left out for the same reason `job_cpu_ms` leaves it
+/// out: its own reading is not the work's activity.
+#[cfg(target_os = "linux")]
+pub fn job_io_bytes() -> Option<u64> {
+    let session = unsafe { libc::getsid(0) };
+    if session < 0 {
+        return None;
+    }
+    let own = std::process::id() as i32;
+    let mut total = 0u64;
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse::<i32>().ok()) else { continue };
+        if pid == own {
+            continue;
+        }
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+        let Some((_, fields)) = stat.rsplit_once(')') else { continue };
+        let fields: Vec<&str> = fields.split_whitespace().collect();
+        if fields.get(3).and_then(|s| s.parse::<i32>().ok()) != Some(session) {
+            continue;
+        }
+        let Ok(io) = std::fs::read_to_string(format!("/proc/{pid}/io")) else { continue };
+        for line in io.lines() {
+            let Some((key, value)) = line.split_once(':') else { continue };
+            if matches!(key, "rchar" | "wchar")
+                && let Ok(bytes) = value.trim().parse::<u64>()
+            {
+                total = total.saturating_add(bytes);
+            }
+        }
+    }
+    Some(total)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn job_io_bytes() -> Option<u64> {
+    None
+}
+
+/// Every process's executable name on this machine.
+#[cfg(target_os = "linux")]
+pub fn process_names() -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|name| name.parse::<u32>().ok()) else { continue };
+        if let Ok(name) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+            names.push(name.trim_end().to_string());
+        }
+    }
+    Some(names)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn process_names() -> Option<Vec<String>> {
+    None
+}
+
 /// This machine's own shell, as a person here gets it.
 pub fn own_shell() -> Vec<String> {
     let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/bin/sh".into());

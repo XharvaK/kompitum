@@ -54,7 +54,7 @@ pub(super) fn status_cmd(
             "running" | "checking" => running.push(status_task(task)),
             "queued" | "stranded" => queued.push(status_task(task)),
             "accepted" | "discarded" => recent.push(status_task(task)),
-            "done" | "failed" | "timed_out" | "cancelled" => review.push(status_task(task)),
+            "asking" | "done" | "failed" | "timed_out" | "cancelled" => review.push(status_task(task)),
             _ => {}
         }
     }
@@ -83,6 +83,7 @@ fn status_task(task: &Value) -> Value {
         "repo": task["repo"],
         "worker": task["worker"],
         "state": task["state"],
+        "question": task["question"],
         "seconds": task["seconds"],
         "cost_usd": task["cost_usd"],
         "checks": task["checks"],

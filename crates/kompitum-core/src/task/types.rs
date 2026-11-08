@@ -18,6 +18,8 @@ pub enum TaskState {
     Stranded,
     // The worker's turn is over and its checks are running: it still holds its slot and scope.
     Checking,
+    // Its worker's turn ended with a question: it keeps its scope and worktree, and waits for an answer.
+    Asking,
     Done,
     Failed,
     TimedOut,
@@ -28,9 +30,12 @@ pub enum TaskState {
 }
 
 impl TaskState {
-    /// Over: queued, running, stranded and checking are the states that haven't ended.
+    /// Over: queued, running, stranded, checking and asking are the states that haven't ended.
     pub fn ended(self) -> bool {
-        !matches!(self, TaskState::Queued | TaskState::Running | TaskState::Stranded | TaskState::Checking)
+        !matches!(
+            self,
+            TaskState::Queued | TaskState::Running | TaskState::Stranded | TaskState::Checking | TaskState::Asking
+        )
     }
 
     /// An end nobody may accept: a failure, a cut-off, or a cancel.
@@ -44,6 +49,7 @@ impl TaskState {
             TaskState::Running => "running",
             TaskState::Stranded => "stranded",
             TaskState::Checking => "checking",
+            TaskState::Asking => "asking",
             TaskState::Done => "done",
             TaskState::Failed => "failed",
             TaskState::TimedOut => "timed_out",
@@ -188,6 +194,9 @@ pub struct Task {
     /// Why the loop is ending the current turn.
     pub ending: Option<Ending>,
     pub error: Option<String>,
+    /// What its worker asked at the end of its turn, when it is asking.
+    #[serde(default)]
+    pub question: Option<String>,
     pub changed: Vec<ChangedFile>,
     pub review: Option<String>,
     /// What `task.start` asked of the checks and the worker.
@@ -481,6 +490,12 @@ pub struct TaskLine {
     pub out_of_scope: Vec<String>,
     /// The last turn's report; the wait cuts it to 1500 characters.
     pub text: String,
+    /// What its worker asked, when it is asking.
+    #[serde(default)]
+    pub question: Option<String>,
+    /// How to answer an asking task: `answer on stdin: kom task redo <task> --brief -`.
+    #[serde(default)]
+    pub next: Option<String>,
     pub warnings: Vec<String>,
     /// The last checks in a few words: "passed", "none ran", or what failed; null before any ran.
     pub checks: Option<String>,
@@ -521,6 +536,9 @@ impl TaskLine {
             changed: task.changed.len() as u32,
             out_of_scope,
             text: cut(last.map(|t| t.text.as_str()).unwrap_or_default(), text_limit),
+            question: (task.state == TaskState::Asking).then(|| task.question.clone()).flatten(),
+            next: (task.state == TaskState::Asking)
+                .then(|| format!("answer on stdin: kom task redo {} --brief -", task.name)),
             warnings: task.warnings.clone(),
             checks: task.checks.last().map(CheckReport::words),
             gaps: last.and_then(|t| gaps_and_report(&t.text).0).map(|gaps| cut(&gaps, text_limit)),
@@ -541,9 +559,10 @@ pub fn cut(text: &str, limit: usize) -> String {
 #[serde(default)]
 pub struct Beat {
     pub at_ms: u64,
-    /// When output or CPU last moved.
+    /// When output, CPU or I/O last moved.
     pub active_ms: u64,
     pub cpu_ms: u64,
+    pub io_bytes: u64,
     pub out_bytes: u64,
     pub steps: u64,
     pub tools: Vec<String>,
@@ -742,12 +761,28 @@ mod tests {
     }
 
     #[test]
+    fn an_asking_task_line_carries_its_question_and_next_command() {
+        let task = Task {
+            name: "fix-4".into(),
+            state: TaskState::Asking,
+            question: Some("Which option?\n- A\n- B".into()),
+            ..Default::default()
+        };
+        let line = TaskLine::of(&task, &workers(), 0, 1500);
+        assert_eq!(line.state, TaskState::Asking);
+        assert_eq!(line.question.as_deref(), Some("Which option?\n- A\n- B"));
+        assert_eq!(line.next.as_deref(), Some("answer on stdin: kom task redo fix-4 --brief -"));
+        let done = Task { state: TaskState::Done, ..task };
+        assert_eq!(TaskLine::of(&done, &workers(), 0, 1500).next, None);
+    }
+
+    #[test]
     fn a_task_being_checked_holds_its_slot_and_its_scope() {
         let checking = Task { name: "a".into(), state: TaskState::Checking, repo: "r".into(), ..Default::default() };
         let next = Task { name: "b".into(), state: TaskState::Queued, repo: "r".into(), seq: 1, ..Default::default() };
-        let one = crate::task::decide::may_start(&next, &[&checking], 1).unwrap_err();
+        let one = crate::task::decide::may_start(&next, &[&checking], Some(1)).unwrap_err();
         assert!(one.contains("1 of 1 running"), "{one}");
-        let two = crate::task::decide::may_start(&next, &[&checking], 2).unwrap_err();
+        let two = crate::task::decide::may_start(&next, &[&checking], Some(2)).unwrap_err();
         assert!(two.contains("waiting for a: its scope overlaps"), "{two}");
     }
 
@@ -763,7 +798,9 @@ mod tests {
     fn state_words_are_what_the_api_and_files_use() {
         assert_eq!(TaskState::TimedOut.word(), "timed_out");
         assert_eq!(TaskState::Stranded.word(), "stranded");
+        assert_eq!(TaskState::Asking.word(), "asking");
         assert!(!TaskState::Stranded.ended() && !TaskState::Stranded.ended_badly());
+        assert!(!TaskState::Asking.ended() && !TaskState::Asking.ended_badly(), "asking is neither over nor a bad end");
         assert!(TaskState::Cancelled.ended_badly() && TaskState::Done.ended() && !TaskState::Running.ended());
     }
 }

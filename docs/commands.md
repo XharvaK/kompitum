@@ -670,7 +670,7 @@ Commands:
   discard  Remove a finished task's worktree and branch, and write its ledger row
   review   The whole review of a task in one read: checks, scope, warns, Gaps, report and the hunks they point at
   accept   Bring a finished task's changes into its repository and commit only those files
-  redo     Send a finished task back with a follow-up brief; its checks run again
+  redo     Send a finished task back with a follow-up brief, or answer an asking one; its checks run again
   sweep    Remove what old tasks left; their ledger rows stay
   help     Print this message or the help of the given subcommand(s)
 
@@ -749,7 +749,7 @@ Options:
 ## kom task redo
 
 ```text
-Send a finished task back with a follow-up brief; its checks run again
+Send a finished task back with a follow-up brief, or answer an asking one; its checks run again
 
 Usage: kom task redo [OPTIONS] --brief <FILE> <TASK>
 
@@ -757,7 +757,7 @@ Arguments:
   <TASK>  The task's name
 
 Options:
-      --brief <FILE>  The follow-up's file, or - for stdin
+      --brief <FILE>  The follow-up's or answer's file, or - for stdin
       --json          JSON output even in a terminal
   -h, --help          Print help
 ```
@@ -810,8 +810,8 @@ Options:
       --in <FOLDER>        The folder in the repository (default: where kom runs)
       --scope <GLOB>       Paths the task may change (repeatable); none means the whole repository
       --worker <WORKER>    Which worker: auto (the order), free, or a worker key. Default: what kom workers shows
-      --idle <IDLE>        Seconds without output or CPU before the turn is cut (default 900)
-      --timeout <TIMEOUT>  Seconds the turn may run (default 3600)
+      --idle <IDLE>        Seconds without output, CPU or I/O before the turn is cut (default 900)
+      --timeout <TIMEOUT>  Wall-clock limit in seconds (default: none)
       --test <COMMAND>     The test command the checks run when the worker ends, replacing the repository's
       --forbid <PATTERN>   A regex, or glob::regex, no added line may match (repeatable)
       --require <PATTERN>  A glob::regex some line of the matching files must match after the run (repeatable)
@@ -846,7 +846,7 @@ Arguments:
   <NAMES>...  The tasks to wait for
 
 Options:
-      --first              Return at the first task that ends, however it ended
+      --first              Return at the first task that ends or asks, however it did
       --json               JSON output even in a terminal
       --while-stranded     Keep waiting while every worker is out; the task goes on by itself when one comes back
       --timeout <TIMEOUT>  Seconds to wait (default: as long as it takes)

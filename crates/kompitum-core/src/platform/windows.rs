@@ -697,6 +697,52 @@ pub fn job_cpu_ms() -> Option<u64> {
     (ok != 0).then(|| (info.TotalUserTime.saturating_add(info.TotalKernelTime).max(0) as u64) / 10_000)
 }
 
+/// Bytes this process's job read and wrote, network included. A model streaming
+/// tokens moves this while its CPU barely moves.
+pub fn job_io_bytes() -> Option<u64> {
+    let mut info: JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION = unsafe { zeroed() };
+    let ok = unsafe {
+        QueryInformationJobObject(
+            null_mut(),
+            JobObjectBasicAndIoAccountingInformation,
+            (&raw mut info).cast(),
+            size_of::<JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION>() as u32,
+            null_mut(),
+        )
+    };
+    (ok != 0).then(|| {
+        info.IoInfo
+            .ReadTransferCount
+            .saturating_add(info.IoInfo.WriteTransferCount)
+            .saturating_add(info.IoInfo.OtherTransferCount)
+    })
+}
+
+/// Every process's executable name on this machine.
+pub fn process_names() -> Option<Vec<String>> {
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let snap = OwnedHandle::from_raw_handle(snap as RawHandle);
+        let mut entry: PROCESSENTRY32W = zeroed();
+        entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+        let mut names = Vec::new();
+        let mut ok = Process32FirstW(snap.as_raw_handle() as HANDLE, &mut entry);
+        if ok == 0 {
+            return None;
+        }
+        while ok != 0 {
+            let end = entry.szExeFile.iter().position(|c| *c == 0).unwrap_or(entry.szExeFile.len());
+            names.push(String::from_utf16_lossy(&entry.szExeFile[..end]));
+            ok = Process32NextW(snap.as_raw_handle() as HANDLE, &mut entry);
+        }
+        Some(names)
+    }
+}
+
 pub fn random_bytes(bytes: &mut [u8]) {
     use windows_sys::Win32::Security::Cryptography::{BCRYPT_USE_SYSTEM_PREFERRED_RNG, BCryptGenRandom};
     let status =

@@ -6,6 +6,7 @@ use super::*;
 use crate::task::TEXT_LIMIT;
 use crate::task::quota::Source;
 use crate::task::types::{Asked, Task, TaskLine, TaskState};
+use crate::task::updates::CliUpdate;
 use crate::task::worker::{Cli, Worker};
 use crate::task::workers::{self, Spend};
 use schemars::JsonSchema;
@@ -26,10 +27,10 @@ pub struct TaskStartParams {
     /// The worker: auto, free, or a known worker key. With none, the mode `kom workers` shows.
     #[serde(default)]
     pub worker: Option<String>,
-    /// Seconds without output or CPU before the turn is cut (default 900).
+    /// Seconds without output, CPU or I/O before the turn is cut (default 900).
     #[serde(default)]
     pub idle: Option<u64>,
-    /// Seconds the turn may run (default 3600).
+    /// Seconds the turn may run (default: none).
     #[serde(default)]
     pub timeout: Option<u64>,
     /// The test command the checks run when the worker ends, replacing the repository's.
@@ -95,8 +96,8 @@ pub struct TaskListResult {
     pub running: usize,
     /// How many wait in the queue.
     pub queued: usize,
-    /// How many may run at once.
-    pub cap: usize,
+    /// How many may run at once; null for no cap.
+    pub cap: Option<usize>,
     /// Records the core could not read when it started.
     pub problems: Vec<String>,
 }
@@ -145,7 +146,7 @@ pub struct TaskView {
 pub struct TaskWaitParams {
     /// The tasks to wait for.
     pub tasks: Vec<String>,
-    /// Return at the first task that ends, however it ended.
+    /// Return at the first task that ends or asks, however it did.
     #[serde(default)]
     pub first: bool,
     /// Keep waiting while every worker is out; the task goes on by itself when one comes back.
@@ -160,12 +161,12 @@ pub struct TaskWaitParams {
 pub struct TaskWaitResult {
     /// Known tasks, in the order asked for.
     pub lines: Vec<TaskLine>,
-    /// Known tasks that have not ended.
+    /// Known tasks that have not ended or asked.
     pub unfinished: Vec<String>,
     /// Names no task here uses.
     pub unknown: Vec<String>,
-    /// Every task has ended (or, with `first`, one has), and none is unknown;
-    /// a stranded task ends it too unless `while_stranded` was asked for.
+    /// Every task has ended or is asking (or, with `first`, one has), and none is
+    /// unknown; a stranded task ends it too unless `while_stranded` was asked for.
     pub over: bool,
 }
 
@@ -246,8 +247,8 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
     let Some(folder) = folder else { return Err(unavailable("cannot read the core's own folder")) };
     let (repo, branch, base) = crate::task::git::locate(&folder).await?;
     let idle = p.idle.unwrap_or(900);
-    let wall = p.timeout.unwrap_or(3600);
-    if idle == 0 || wall == 0 {
+    let wall = p.timeout.unwrap_or(0);
+    if idle == 0 || p.timeout == Some(0) {
         return Err(RpcError::invalid_params("idle and timeout are at least 1 second"));
     }
     if p.qa_rounds.is_some_and(|rounds| i64::from(rounds) > crate::task::checks::MAX_QA_ROUNDS) {
@@ -289,6 +290,7 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         turns: Vec::new(),
         ending: None,
         error: None,
+        question: None,
         changed: Vec::new(),
         review: None,
         asked,
@@ -363,7 +365,7 @@ fn wait_snapshot(core: &Core, names: &[String], first: bool, while_stranded: boo
     for name in names {
         match core.tasks.snapshot(name) {
             Some(task) => {
-                if !task.state.ended() {
+                if !task.state.ended() && task.state != TaskState::Asking {
                     unfinished.push(name.clone());
                 }
                 lines.push(TaskLine::of(&task, &workers, now, TEXT_LIMIT));
@@ -472,7 +474,17 @@ pub struct WorkersView {
     pub all_out: Option<String>,
     /// Things worth knowing, like a damaged workers.json.
     pub warnings: Vec<String>,
+    /// The CLIs the core keeps up to date, and where each one stands.
+    pub clis: Vec<CliUpdate>,
+    /// Tasks whose worker asked a question and waits for the lead's answer.
+    pub asking: Vec<AskingView>,
     pub workers: Vec<WorkerView>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct AskingView {
+    pub task: String,
+    pub question: String,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -550,6 +562,14 @@ fn workers_view(core: &Core) -> WorkersView {
         warnings.push(problem.clone());
     }
     let order = workers::order(&file);
+    let clis = crate::task::updates::views(core, &config);
+    let asking = core
+        .tasks
+        .all()
+        .into_iter()
+        .filter(|task| task.state == TaskState::Asking)
+        .filter_map(|task| Some(AskingView { question: task.question.clone()?, task: task.name }))
+        .collect();
     WorkersView {
         mode: file.mode,
         order,
@@ -557,6 +577,8 @@ fn workers_view(core: &Core) -> WorkersView {
         next,
         all_out,
         warnings,
+        clis,
+        asking,
         workers,
     }
 }

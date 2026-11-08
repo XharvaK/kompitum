@@ -26,6 +26,13 @@ pub fn refusal(task: &crate::task::types::Task, flags: &AcceptFlags) -> Option<R
             "see `kom task show`",
         ));
     }
+    if task.state == TaskState::Asking {
+        return Some(RpcError::new(
+            "asking",
+            format!("cannot accept {name}: it is asking a question: answer it with kom task redo, or discard it"),
+            format!("answer on stdin: kom task redo {name} --brief -"),
+        ));
+    }
     if !task.state.ended() {
         return Some(RpcError::new(
             "running",
@@ -230,6 +237,15 @@ pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptR
     Ok(TaskAcceptResult { task: name, state, commit, files, patch, removed: removal.removed, left: removal.left })
 }
 
+/// What a redo sends as the next turn: an answer carries its own words in front.
+pub fn redo_brief(state: TaskState, brief: &str) -> String {
+    if state == TaskState::Asking {
+        format!("The lead's answer to your question:\n\n{brief}")
+    } else {
+        brief.to_string()
+    }
+}
+
 pub async fn redo(core: &Arc<Core>, p: TaskRedoParams) -> Result<TaskRedoResult, RpcError> {
     let length = p.brief.chars().count();
     if length == 0 || length > super::MAX_BRIEF {
@@ -243,7 +259,7 @@ pub async fn redo(core: &Arc<Core>, p: TaskRedoParams) -> Result<TaskRedoResult,
         return Err(super::unavailable("the core is stopping".into()));
     }
     let Some(mut task) = core.tasks.snapshot(&p.task) else { return Err(super::not_found(&p.task)) };
-    if !task.state.ended() {
+    if !task.state.ended() && task.state != TaskState::Asking {
         return Err(RpcError::new(
             "running",
             format!("{} is still {}: cancel it first", task.name, task.state.word()),
@@ -262,7 +278,7 @@ pub async fn redo(core: &Arc<Core>, p: TaskRedoParams) -> Result<TaskRedoResult,
     }
     let n = super::next_turn(&task);
     let path = super::task_folder(&core.paths.state, &task.name).join(format!("turn-{n}.followup.md"));
-    let brief = p.brief;
+    let brief = redo_brief(task.state, &p.brief);
     let written = tokio::task::spawn_blocking(move || crate::paths::write_atomic(&path, brief.as_bytes())).await;
     match written {
         Ok(Ok(())) => {}
@@ -273,6 +289,7 @@ pub async fn redo(core: &Arc<Core>, p: TaskRedoParams) -> Result<TaskRedoResult,
     task.state = TaskState::Queued;
     task.ended_ms = None;
     task.error = None;
+    task.question = None;
     task.ending = None;
     task.qa_used = 0;
     task.waiting = Some("redo: waiting for its worker".into());
@@ -326,6 +343,10 @@ mod tests {
         for state in [TaskState::Queued, TaskState::Running, TaskState::Stranded, TaskState::Checking] {
             assert_eq!(kind(&task(state), flags).as_deref(), Some("running"), "{state:?}");
         }
+        let asking = refusal(&task(TaskState::Asking), &flags).unwrap();
+        assert_eq!(asking.kind, "asking");
+        assert!(asking.message.contains("it is asking a question: answer it with kom task redo, or discard it"));
+        assert!(asking.hint.contains("kom task redo"), "{}", asking.hint);
         for state in [TaskState::Failed, TaskState::TimedOut, TaskState::Cancelled] {
             assert_eq!(kind(&task(state), flags).as_deref(), Some("unfinished"), "{state:?}");
         }
@@ -353,6 +374,16 @@ mod tests {
         assert_eq!(kind(&bad_and_outside, allow).as_deref(), Some("scope_violation"), "then the scope");
         let both = AcceptFlags { accept_unfinished: true, accept_scope_violation: true };
         assert_eq!(kind(&bad_and_outside, both), None);
+    }
+
+    #[test]
+    fn a_redo_from_asking_prefixes_the_answer_and_any_other_redo_does_not() {
+        assert_eq!(
+            redo_brief(TaskState::Asking, "Take option A."),
+            "The lead's answer to your question:\n\nTake option A."
+        );
+        assert_eq!(redo_brief(TaskState::Done, "Try again."), "Try again.");
+        assert_eq!(redo_brief(TaskState::Failed, "Fix it."), "Fix it.");
     }
 
     #[test]

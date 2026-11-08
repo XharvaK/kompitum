@@ -23,7 +23,7 @@ pub(super) enum TaskCmd {
     Review(ReviewArgs),
     /// Bring a finished task's changes into its repository and commit only those files.
     Accept(AcceptArgs),
-    /// Send a finished task back with a follow-up brief; its checks run again.
+    /// Send a finished task back with a follow-up brief, or answer an asking one; its checks run again.
     Redo(RedoArgs),
     /// Remove what old tasks left; their ledger rows stay.
     Sweep(SweepArgs),
@@ -45,10 +45,10 @@ pub(super) struct StartArgs {
     /// Which worker: auto (the order), free, or a worker key. Default: what kom workers shows
     #[arg(long)]
     pub worker: Option<String>,
-    /// Seconds without output or CPU before the turn is cut (default 900).
+    /// Seconds without output, CPU or I/O before the turn is cut (default 900).
     #[arg(long)]
     pub idle: Option<u64>,
-    /// Seconds the turn may run (default 3600).
+    /// Wall-clock limit in seconds (default: none).
     #[arg(long)]
     pub timeout: Option<u64>,
     /// The test command the checks run when the worker ends, replacing the repository's.
@@ -98,7 +98,7 @@ pub(super) struct WaitArgs {
     /// The tasks to wait for.
     #[arg(required = true)]
     pub names: Vec<String>,
-    /// Return at the first task that ends, however it ended.
+    /// Return at the first task that ends or asks, however it did.
     #[arg(long)]
     pub first: bool,
     /// Keep waiting while every worker is out; the task goes on by itself when one comes back
@@ -201,7 +201,7 @@ pub(super) struct AcceptArgs {
 pub(super) struct RedoArgs {
     /// The task's name.
     pub task: String,
-    /// The follow-up's file, or - for stdin.
+    /// The follow-up's or answer's file, or - for stdin.
     #[arg(long, value_name = "FILE")]
     pub brief: String,
 }
@@ -252,13 +252,24 @@ fn state(value: &Value) -> &str {
     value["state"].as_str().unwrap_or("unknown")
 }
 
+/// A task's state, or what it asks, for the one-line tables.
+fn state_text(task: &Value) -> String {
+    if state(task) != "asking" {
+        return state(task).to_string();
+    }
+    match task["question"].as_str().and_then(|question| question.lines().next()).map(str::trim) {
+        Some(question) if !question.is_empty() => format!("asking: {question}"),
+        _ => "asking".into(),
+    }
+}
+
 /// One task's row in `kom task ls`: name, who started it, state and what it cost.
 fn task_row(task: &Value) -> String {
     format!(
         "{:<16} {:<8} {:<9} {:<14} {:>4} {:>8} {:>9} {:>6}",
         task["task"].as_str().unwrap_or("?"),
         crate::task::table::by_word(task["by"].as_str()),
-        state(task),
+        state_text(task),
         task["worker"].as_str().unwrap_or("-"),
         task["turns"].as_u64().unwrap_or(0),
         human_seconds(task["seconds"].as_f64().unwrap_or(0.0)),
@@ -268,7 +279,7 @@ fn task_row(task: &Value) -> String {
 }
 
 fn ended(state: &str) -> bool {
-    matches!(state, "done" | "failed" | "timed_out" | "cancelled" | "discarded" | "accepted")
+    matches!(state, "done" | "failed" | "timed_out" | "cancelled" | "discarded" | "accepted" | "asking")
 }
 
 fn ended_badly(state: &str) -> bool {
@@ -373,6 +384,12 @@ pub(super) fn task(
             }
             if let Some(checks) = line["checks"].as_str() {
                 human.push_str(&format!("\nchecks: {checks}"));
+            }
+            if let Some(question) = line["question"].as_str() {
+                human.push_str(&format!("\nquestion:\n{question}"));
+            }
+            if let Some(next) = line["next"].as_str() {
+                human.push_str(&format!("\nnext: {next}"));
             }
             for sentence in line["handoffs"].as_array().into_iter().flatten() {
                 human.push_str(&format!("\n{}", sentence.as_str().unwrap_or_default()));
@@ -544,6 +561,29 @@ fn workers_human(r: &Value) -> String {
         };
         out.push_str(&format!("\n{label:<14} {tail}"));
     }
+    let clis = r["clis"].as_array().cloned().unwrap_or_default();
+    if !clis.is_empty() {
+        let now = crate::runtime::now_ms();
+        let offset = crate::platform::utc_offset_minutes();
+        for cli in &clis {
+            out.push('\n');
+            out.push_str(&crate::task::updates::line(
+                cli["label"].as_str().unwrap_or("?"),
+                cli["version"].as_str(),
+                cli["before"].as_str(),
+                cli["tried_ms"].as_u64().unwrap_or(0),
+                cli["updated_ms"].as_u64().unwrap_or(0),
+                cli["error"].as_str(),
+                cli["waiting"].as_str(),
+                now,
+                offset,
+            ));
+        }
+    }
+    for ask in r["asking"].as_array().into_iter().flatten() {
+        let first = ask["question"].as_str().and_then(|question| question.lines().next()).unwrap_or_default();
+        out.push_str(&format!("\nasking: {} ({})", first.trim(), ask["task"].as_str().unwrap_or("?")));
+    }
     out.push_str(&format!("\n\n{:<14} {:<11}{:<11}{}", "Spent", "5 hours", "week", "month"));
     for worker in &ordered {
         let spend = &worker["spend"];
@@ -638,7 +678,9 @@ fn wait(a: &WaitArgs, call: &impl Fn(&str, Value) -> Result<Value, RpcError>) ->
             }
             let problems: Vec<&serde_json::Value> = lines
                 .iter()
-                .filter(|line| ended_badly(state(line)) || (ended(state(line)) && line["ok"] == false))
+                .filter(|line| {
+                    ended_badly(state(line)) || (ended(state(line)) && state(line) != "asking" && line["ok"] == false)
+                })
                 .collect();
             let unfinished: Vec<&serde_json::Value> = lines.iter().filter(|line| !ended(state(line))).collect();
             let stranded: Vec<&serde_json::Value> = lines.iter().filter(|line| state(line) == "stranded").collect();

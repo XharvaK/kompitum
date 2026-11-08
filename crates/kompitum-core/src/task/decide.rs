@@ -123,14 +123,24 @@ pub fn in_scope(path: &str, scope: &[String]) -> bool {
 }
 
 /// Why a queued task may not start yet, in the words of `waiting`.
-pub fn may_start(task: &Task, others: &[&Task], cap: usize) -> Result<(), String> {
+pub fn may_start(task: &Task, others: &[&Task], cap: Option<usize>) -> Result<(), String> {
     let active = |task: &Task| matches!(task.state, TaskState::Running | TaskState::Checking);
     let running = others.iter().filter(|other| active(other)).count();
-    if running >= cap {
+    if let Some(cap) = cap
+        && running >= cap
+    {
         return Err(format!("waiting for a task to finish: {running} of {cap} running"));
     }
     for other in others {
         if other.name == task.name || other.repo != task.repo {
+            continue;
+        }
+        // An asking task builds nothing, so it holds no one-at-a-time slot, but its
+        // worker goes on in the same files once answered, so it keeps its scope.
+        if other.state == TaskState::Asking {
+            if scopes_overlap(&task.scope, &other.scope) {
+                return Err(format!("waiting for {}: it is asking, and its scope overlaps", other.name));
+            }
             continue;
         }
         // A stranded task holds its work in a worktree too, so it goes first.
@@ -183,7 +193,7 @@ pub fn step(task: &Task, terminal: Option<&TerminalNow>, beat: Option<&Beat>, no
         return Step::Kill(ending);
     }
     let Some(turn) = task.turns.last() else { return Step::TurnOver };
-    if now_ms.saturating_sub(turn.started_ms) > task.wall_s.saturating_mul(1000) {
+    if task.wall_s > 0 && now_ms.saturating_sub(turn.started_ms) > task.wall_s.saturating_mul(1000) {
         return Step::Kill(Ending::Wall);
     }
     let active = beat.map_or(turn.started_ms, |beat| beat.active_ms.max(turn.started_ms));
@@ -230,7 +240,7 @@ pub fn turn_end(
             return TurnEnd {
                 state: TaskState::TimedOut,
                 error: Some(format!(
-                    "no output and no CPU for {} s (idle limit {} s), last tool: {tool}",
+                    "no output, CPU or I/O for {} s (idle limit {} s), last tool: {tool}",
                     task.idle_s, task.idle_s
                 )),
                 refusal: None,
@@ -397,6 +407,28 @@ fn command_code_end(
     TurnEnd { state: TaskState::Done, error: None, refusal: None }
 }
 
+/// The state a turn leaves behind: a normal end with a question asks, any other
+/// normal end checks. Anything else keeps the end it was given.
+pub fn after_turn(state: TaskState, text: &str) -> (TaskState, Option<String>) {
+    if state != TaskState::Done {
+        return (state, None);
+    }
+    match question(text) {
+        Some(question) => (TaskState::Asking, Some(question)),
+        None => (TaskState::Checking, None),
+    }
+}
+
+/// The body of the last `## Question` heading in a turn's final text, up to the
+/// next level-two heading. An empty body, or no heading, is no question.
+pub fn question(text: &str) -> Option<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.iter().rposition(|line| line.trim_end() == "## Question")? + 1;
+    let end = (start..lines.len()).find(|at| lines[*at].starts_with("## ")).unwrap_or(lines.len());
+    let body = lines[start..end].join("\n").trim().to_string();
+    (!body.is_empty()).then_some(body)
+}
+
 /// Workers starting together collide (Command Code rewrites its config as it
 /// starts, and OpenCode dies on a shared server): every start is at least 8 s
 /// after the last one. The last start is kept in memory by the pump.
@@ -422,10 +454,11 @@ pub fn wait_over(lines: &[TaskLine], first: bool, while_stranded: bool) -> bool 
     if lines.iter().any(|line| line.state.ended_badly()) {
         return true;
     }
-    if first && lines.iter().any(|line| line.state.ended()) {
+    let finished = |line: &TaskLine| line.state.ended() || line.state == TaskState::Asking;
+    if first && lines.iter().any(finished) {
         return true;
     }
-    lines.iter().all(|line| line.state.ended())
+    lines.iter().all(finished)
 }
 
 #[cfg(test)]
@@ -487,17 +520,24 @@ mod tests {
         let third = task("c", TaskState::Queued, 3, &["src/a/**"]);
         let running = task("a", TaskState::Running, 1, &["src/a/**"]);
         let run = task("b", TaskState::Running, 2, &["docs/**"]);
-        assert_eq!(may_start(&third, &[&running, &run], 2), Err("waiting for a task to finish: 2 of 2 running".into()));
+        assert_eq!(
+            may_start(&third, &[&running, &run], Some(2)),
+            Err("waiting for a task to finish: 2 of 2 running".into())
+        );
+        assert!(
+            may_start(&task("f", TaskState::Queued, 6, &["lib/**"]), &[&running, &run], None).is_ok(),
+            "no cap holds nothing back"
+        );
         let queued = task("d", TaskState::Queued, 4, &["src/a/**"]);
         let earlier = task("a", TaskState::Queued, 1, &["src/**"]);
-        assert_eq!(may_start(&queued, &[&earlier, &run], 5), Err("queued behind a: its scope overlaps".into()));
+        assert_eq!(may_start(&queued, &[&earlier, &run], Some(5)), Err("queued behind a: its scope overlaps".into()));
         let disjoint = task("e", TaskState::Queued, 5, &["lib/**"]);
-        assert!(may_start(&disjoint, &[&earlier, &run], 5).is_ok());
+        assert!(may_start(&disjoint, &[&earlier, &run], Some(5)).is_ok());
         let other_repo = Task { repo: "/elsewhere".into(), ..task("a", TaskState::Running, 1, &["src/**"]) };
-        assert!(may_start(&third, &[&other_repo], 5).is_ok(), "another repo never overlaps");
+        assert!(may_start(&third, &[&other_repo], Some(5)).is_ok(), "another repo never overlaps");
         let stranded = task("s", TaskState::Stranded, 1, &["src/**"]);
-        assert_eq!(may_start(&queued, &[&stranded], 5), Err("queued behind s: its scope overlaps".into()));
-        assert_eq!(may_start(&disjoint, &[&stranded], 5), Ok(()), "stranded is not running");
+        assert_eq!(may_start(&queued, &[&stranded], Some(5)), Err("queued behind s: its scope overlaps".into()));
+        assert_eq!(may_start(&disjoint, &[&stranded], Some(5)), Ok(()), "stranded is not running");
     }
 
     #[test]
@@ -506,21 +546,32 @@ mod tests {
         let mut next = task("b", TaskState::Queued, 2, &["docs/**"]);
         next.one_at_a_time = true;
         assert_eq!(
-            may_start(&next, &[&running], 5),
+            may_start(&next, &[&running], Some(5)),
             Err("waiting for a: this repository builds one task at a time".into())
         );
         next.one_at_a_time = false;
-        assert!(may_start(&next, &[&running], 5).is_ok(), "without the flag, disjoint scopes start");
+        assert!(may_start(&next, &[&running], Some(5)).is_ok(), "without the flag, disjoint scopes start");
 
         let earlier = task("a", TaskState::Queued, 1, &["src/**"]);
         let mut next = task("b", TaskState::Queued, 2, &["docs/**"]);
         next.one_at_a_time = true;
         assert_eq!(
-            may_start(&next, &[&earlier], 5),
+            may_start(&next, &[&earlier], Some(5)),
             Err("queued behind a: this repository builds one task at a time".into())
         );
         let other_repo = Task { repo: "/elsewhere".into(), ..running };
-        assert!(may_start(&next, &[&other_repo], 5).is_ok(), "another repository is not held");
+        assert!(may_start(&next, &[&other_repo], Some(5)).is_ok(), "another repository is not held");
+
+        let asking = task("a", TaskState::Asking, 1, &["src/**"]);
+        let overlapping = task("b", TaskState::Queued, 2, &["src/a/**"]);
+        assert_eq!(
+            may_start(&overlapping, &[&asking], Some(1)),
+            Err("waiting for a: it is asking, and its scope overlaps".into()),
+            "an asking task keeps its scope, and takes no slot of the cap"
+        );
+        let mut builder = task("c", TaskState::Queued, 3, &["docs/**"]);
+        builder.one_at_a_time = true;
+        assert!(may_start(&builder, &[&asking], Some(1)).is_ok(), "an asking task holds no one-at-a-time slot");
     }
 
     #[test]
@@ -536,6 +587,15 @@ mod tests {
         assert_eq!(step(&t, Some(&live), None, 1_500), Step::Wait, "no beat: the turn's start");
         assert_eq!(step(&t, Some(&live), None, 3_001), Step::Kill(Ending::Idle));
         assert_eq!(step(&t, Some(&live), Some(&beat), 11_001), Step::Kill(Ending::Wall));
+        t.wall_s = 0;
+        let ten_hours = 10 * 3_600_000u64;
+        let still_active = Beat { active_ms: ten_hours, ..Default::default() };
+        assert_eq!(
+            step(&t, Some(&live), Some(&still_active), ten_hours + 1),
+            Step::Wait,
+            "a turn ten hours old is not cut when no wall limit is set and it is still active"
+        );
+        t.wall_s = 10;
         assert_eq!(step(&t, None, Some(&beat), 5_000), Step::TurnOver);
         assert_eq!(step(&t, Some(&TerminalNow { live: false, ..Default::default() }), None, 5_000), Step::TurnOver);
         t.ending = Some(Ending::Cancel);
@@ -587,7 +647,7 @@ mod tests {
         t.ending = Some(Ending::Idle);
         assert_eq!(
             result(judge(&t, Some(&exited), Some(0), &good)),
-            ended(TaskState::TimedOut, Some("no output and no CPU for 2 s (idle limit 2 s), last tool: none"))
+            ended(TaskState::TimedOut, Some("no output, CPU or I/O for 2 s (idle limit 2 s), last tool: none"))
         );
         t.ending = Some(Ending::Wall);
         assert_eq!(
@@ -868,6 +928,33 @@ mod tests {
     }
 
     #[test]
+    fn a_question_is_the_body_under_the_last_exact_heading() {
+        assert_eq!(
+            question("work\n\n## Question\nWhich option?\n- A\n- B\n\n## Notes\nthe rest"),
+            Some("Which option?\n- A\n- B".into())
+        );
+        assert_eq!(question("work but no question"), None);
+        assert_eq!(question("## Question\n\n## Next\nwork"), None, "an empty body is no question");
+        assert_eq!(
+            question("## Question\nfirst\n## Question \nsecond"),
+            Some("second".into()),
+            "the last heading wins, and trailing spaces are allowed"
+        );
+        assert_eq!(question("## Questions\nis this one?"), None, "a longer word is not the heading");
+        assert_eq!(question("## Question\nwork\n### A subheading stays"), Some("work\n### A subheading stays".into()));
+    }
+
+    #[test]
+    fn a_normal_end_with_a_question_asks_and_checks_nothing() {
+        assert_eq!(
+            after_turn(TaskState::Done, "done\n\n## Question\nWhich?\n- A\n- B"),
+            (TaskState::Asking, Some("Which?\n- A\n- B".into()))
+        );
+        assert_eq!(after_turn(TaskState::Done, "done, no question"), (TaskState::Checking, None));
+        assert_eq!(after_turn(TaskState::Failed, "## Question\nWhich?"), (TaskState::Failed, None));
+    }
+
+    #[test]
     fn every_workers_start_is_eight_seconds_after_the_last() {
         assert!(start_slot(None, 1_000).is_ok());
         assert!(start_slot(Some(1_000), 1_001).is_err());
@@ -897,6 +984,11 @@ mod tests {
         assert!(wait_over(&stranded, true, false));
         assert!(!wait_over(&stranded, false, true), "while stranded, the task goes on by itself");
         assert!(!wait_over(&stranded, true, true));
+        let asking = [line("a", TaskState::Asking), line("b", TaskState::Running)];
+        assert!(wait_over(&asking, true, false), "first wakes at the first task that asks");
+        assert!(!wait_over(&asking, false, false));
+        let all_asking = [line("a", TaskState::Asking), line("b", TaskState::Done)];
+        assert!(wait_over(&all_asking, false, false), "an asking task is as good as ended");
     }
 
     #[test]

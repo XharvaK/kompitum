@@ -52,6 +52,21 @@
         },
         "type": "object"
       },
+      "AskingView": {
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "question"
+        ],
+        "type": "object"
+      },
       "AttachResult": {
         "properties": {
           "automatic_input": {
@@ -271,6 +286,60 @@
           "opencode"
         ],
         "type": "string"
+      },
+      "CliUpdate": {
+        "description": "One CLI as `kom workers` shows it.",
+        "properties": {
+          "before": {
+            "description": "What it was before the last update that changed it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "tried_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "updated_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting": {
+            "description": "Why it is busy now, in words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "tried_ms",
+          "updated_ms"
+        ],
+        "type": "object"
       },
       "CoreInfo": {
         "properties": {
@@ -1845,6 +1914,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "question": {
+            "default": null,
+            "description": "What its worker asked at the end of its turn, when it is asking.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "repo": {
             "default": "",
             "description": "git's toplevel.",
@@ -2105,6 +2182,14 @@
             },
             "type": "array"
           },
+          "next": {
+            "default": null,
+            "description": "How to answer an asking task: `answer on stdin: kom task redo <task> --brief -`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "ok": {
             "default": false,
             "description": "Done or accepted, nothing changed outside the scope, and the last checks passed.",
@@ -2116,6 +2201,14 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "question": {
+            "default": null,
+            "description": "What its worker asked, when it is asking.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "repo": {
             "default": "",
@@ -2188,10 +2281,13 @@
       "TaskListResult": {
         "properties": {
           "cap": {
-            "description": "How many may run at once.",
+            "description": "How many may run at once; null for no cap.",
             "format": "uint",
             "minimum": 0,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "problems": {
             "description": "Records the core could not read when it started.",
@@ -2224,7 +2320,6 @@
           "tasks",
           "running",
           "queued",
-          "cap",
           "problems"
         ],
         "type": "object"
@@ -2418,6 +2513,7 @@
           "running",
           "stranded",
           "checking",
+          "asking",
           "done",
           "failed",
           "timed_out",
@@ -2513,11 +2609,11 @@
             "type": "array"
           },
           "over": {
-            "description": "Every task has ended (or, with `first`, one has), and none is unknown;\na stranded task ends it too unless `while_stranded` was asked for.",
+            "description": "Every task has ended or is asking (or, with `first`, one has), and none is\nunknown; a stranded task ends it too unless `while_stranded` was asked for.",
             "type": "boolean"
           },
           "unfinished": {
-            "description": "Known tasks that have not ended.",
+            "description": "Known tasks that have not ended or asked.",
             "items": {
               "type": "string"
             },
@@ -3328,10 +3424,24 @@
               "null"
             ]
           },
+          "asking": {
+            "description": "Tasks whose worker asked a question and waits for the lead's answer.",
+            "items": {
+              "$ref": "#/components/schemas/AskingView"
+            },
+            "type": "array"
+          },
           "chain": {
             "description": "The worker keys this mode tries, in order.",
             "items": {
               "type": "string"
+            },
+            "type": "array"
+          },
+          "clis": {
+            "description": "The CLIs the core keeps up to date, and where each one stands.",
+            "items": {
+              "$ref": "#/components/schemas/CliUpdate"
             },
             "type": "array"
           },
@@ -3372,6 +3482,8 @@
           "order",
           "chain",
           "warnings",
+          "clis",
+          "asking",
           "workers"
         ],
         "type": "object"
@@ -6006,12 +6118,12 @@
           }
         },
         {
-          "description": "Seconds without output or CPU before the turn is cut (default 900).",
+          "description": "Seconds without output, CPU or I/O before the turn is cut (default 900).",
           "name": "idle",
           "required": false,
           "schema": {
             "default": null,
-            "description": "Seconds without output or CPU before the turn is cut (default 900).",
+            "description": "Seconds without output, CPU or I/O before the turn is cut (default 900).",
             "format": "uint64",
             "minimum": 0,
             "type": [
@@ -6085,12 +6197,12 @@
           }
         },
         {
-          "description": "Seconds the turn may run (default 3600).",
+          "description": "Seconds the turn may run (default: none).",
           "name": "timeout",
           "required": false,
           "schema": {
             "default": null,
-            "description": "Seconds the turn may run (default 3600).",
+            "description": "Seconds the turn may run (default: none).",
             "format": "uint64",
             "minimum": 0,
             "type": [
@@ -6236,12 +6348,12 @@
       "paramStructure": "by-name",
       "params": [
         {
-          "description": "Return at the first task that ends, however it ended.",
+          "description": "Return at the first task that ends or asks, however it did.",
           "name": "first",
           "required": false,
           "schema": {
             "default": false,
-            "description": "Return at the first task that ends, however it ended.",
+            "description": "Return at the first task that ends or asks, however it did.",
             "type": "boolean"
           }
         },

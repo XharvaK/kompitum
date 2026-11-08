@@ -34,7 +34,7 @@ pub struct Config {
 /// `[workers]`: the loop's cap and its CLI commands.
 #[derive(Deserialize, Default, Clone)]
 pub struct WorkersConfig {
-    /// How many tasks run at once (default 8).
+    /// How many tasks run at once (default: no cap).
     pub cap: Option<usize>,
     /// opencode's argv prefix, for a build not on PATH.
     pub opencode: Option<Vec<String>>,
@@ -67,8 +67,9 @@ impl Config {
         (self.history_mb.unwrap_or(5.0).max(0.0) * 1024.0 * 1024.0) as usize
     }
 
-    pub fn cap(&self) -> usize {
-        self.workers.as_ref().and_then(|w| w.cap).filter(|cap| *cap > 0).unwrap_or(8)
+    /// The most tasks that may run at once; none when `[workers] cap` is unset or 0.
+    pub fn cap(&self) -> Option<usize> {
+        self.workers.as_ref().and_then(|w| w.cap).filter(|cap| *cap > 0)
     }
 
     pub fn opencode(&self) -> Option<Vec<String>> {
@@ -134,13 +135,13 @@ mod tests {
     }
 
     #[test]
-    fn the_worker_cap_defaults_to_eight() {
-        assert_eq!(Config::default().cap(), 8);
+    fn the_worker_cap_is_none_unless_the_config_sets_one() {
+        assert_eq!(Config::default().cap(), None);
         let config = |cap: Option<usize>| Config {
             workers: Some(WorkersConfig { cap, ..Default::default() }),
             ..Default::default()
         };
-        assert_eq!(config(Some(3)).cap(), 3);
-        assert_eq!(config(Some(0)).cap(), 8, "a cap of zero is no cap");
+        assert_eq!(config(Some(3)).cap(), Some(3));
+        assert_eq!(config(Some(0)).cap(), None, "a cap of zero is no cap");
     }
 }

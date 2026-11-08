@@ -22,6 +22,7 @@ pub mod setup;
 pub mod sweep;
 pub mod table;
 pub mod types;
+pub mod updates;
 pub mod worker;
 pub mod workers;
 
@@ -242,6 +243,7 @@ pub async fn supervise(core: Arc<Core>) {
             return;
         }
         sweep::when_due(&core, &mut last_sweep).await;
+        updates::when_due(&core).await;
         tokio::select! {
             _ = notified => {}
             _ = tokio::time::sleep(Duration::from_secs(2)) => {}
@@ -513,6 +515,7 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     }
     let end =
         decide::turn_end(&task, &all_workers, terminal, code, &outcome, route.as_ref(), &stderr_tail, ended, offset);
+    let (done_state, question) = decide::after_turn(end.state, &outcome.text);
     task.turns[index].refused = end.refusal.as_ref().map(|refusal| refusal.window.clone());
     let mut error = end.error;
     if let Some(refusal) = &end.refusal {
@@ -613,13 +616,8 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     if restarting && let Err(words) = carry_turn_file(&folder, n, "followup") {
         task.warnings.push(words);
     }
-    task.state = if restarting {
-        TaskState::Queued
-    } else if end.state == TaskState::Done {
-        TaskState::Checking
-    } else {
-        end.state
-    };
+    task.state = if restarting { TaskState::Queued } else { done_state };
+    task.question = if task.state == TaskState::Asking { question } else { None };
     task.error = if restarting { None } else { error };
     task.waiting = if restarting {
         if end.refusal.is_some() {
@@ -1010,7 +1008,7 @@ pub async fn discard(
     if let Some(error) = table::change_refusal(&task, by, yes) {
         return Err(error);
     }
-    if !task.state.ended() {
+    if !task.state.ended() && task.state != TaskState::Asking {
         return Err(RpcError::new(
             "running",
             format!("{name} is still {}: cancel it first", task.state.word()),
