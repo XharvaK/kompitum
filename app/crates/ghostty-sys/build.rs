@@ -19,10 +19,12 @@ fn zig_target(target: &str) -> &'static str {
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let src = manifest
-        .join("../../vendor/ghostty")
+    // A git worktree has no submodules: KOMPITUM_APP_GHOSTTY_SRC names a checkout elsewhere.
+    // Not the core's KOMPITUM_GHOSTTY_SRC: the app pins its own Ghostty commit.
+    let src = std::env::var_os("KOMPITUM_APP_GHOSTTY_SRC")
+        .map_or_else(|| manifest.join("../../vendor/ghostty"), PathBuf::from)
         .canonicalize()
-        .expect("vendor/ghostty missing: run `git submodule update --init --depth 1`");
+        .expect("vendor/ghostty missing: run `git submodule update --init --depth 1`, or set KOMPITUM_APP_GHOSTTY_SRC");
     // Windows' canonical form is `\\?\C:\...`, which clang can't resolve includes against.
     let src = PathBuf::from(src.to_string_lossy().trim_start_matches(r"\\?\").to_owned());
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
@@ -30,6 +32,7 @@ fn main() {
         println!("cargo:rerun-if-changed={}", src.join(path).display());
     }
     println!("cargo:rerun-if-env-changed=ZIG");
+    println!("cargo:rerun-if-env-changed=KOMPITUM_APP_GHOSTTY_SRC");
 
     let zig = std::env::var("ZIG").unwrap_or_else(|_| "zig".into());
     let status = Command::new(&zig)

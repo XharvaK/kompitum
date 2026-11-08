@@ -103,8 +103,9 @@ layout or a workspace to return to, it does not belong in the core.
   `scripts/watch_windows.py` runs a command the same way and records every
   window that opens meanwhile, which is how to check the no-windows rule.
 - A worker's worktree has an empty `vendor/ghostty` and no build. On this PC
-  `.cargo\config.toml` in the folder above Kompitum's state sets `target-dir`, `ZIG`
-  and `KOMPITUM_GHOSTTY_SRC`, so a plain `cargo` works there. That build folder is
+  `.cargo\config.toml` in the folder above Kompitum's state sets `target-dir`, `ZIG`,
+  `LIBCLANG_PATH`, `KOMPITUM_GHOSTTY_SRC` and the app's own `KOMPITUM_APP_GHOSTTY_SRC` (the app pins
+  another Ghostty commit), so a plain `cargo` works there, in the core and in `app/`. That build folder is
   shared and Cargo judges freshness by file times, so two worktrees building at
   once can run each other's binaries: one building worker at a time for now.
   `scripts/check_windows.py` touches the crate roots, so a check always builds
