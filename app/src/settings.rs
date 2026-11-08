@@ -100,8 +100,12 @@ const THEMES: &[(&str, &str)] = &[
         include_str!("../defaults/themes/atom-one-dark.json"),
     ),
     ("win98", include_str!("../defaults/themes/win98.json")),
+    (
+        "control-panel",
+        include_str!("../defaults/themes/control-panel.json"),
+    ),
 ];
-pub const SHIPPED_THEMES: &[&str] = &["atom-one-dark", "win98"];
+pub const SHIPPED_THEMES: &[&str] = &["atom-one-dark", "win98", "control-panel"];
 
 /// `themes/<name>.json`: a palette, plus `colors` overrides like settings.json's.
 #[derive(Deserialize)]

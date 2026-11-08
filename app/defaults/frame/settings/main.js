@@ -15,7 +15,17 @@ const SECTIONS = [
   { id: "privacy", title: "Privacy", icon: "shield" },
 ];
 
-const LOOKS = { main: "Limen", terminals: "Terminals", win98: "Limen 98" };
+const LOOKS = {
+  main: "Limen",
+  desk: "Desk",
+  watch: "Watch",
+  focus: "Focus",
+  office: "Office",
+  control: "Control",
+  pasture: "Pasture",
+  terminals: "Terminals",
+  win98: "Limen 98",
+};
 const APPEARANCES = [
   [null, "System"],
   ["light", "Light"],

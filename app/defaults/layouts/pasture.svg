@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">
+  <rect width="320" height="200" fill="#ab7748"/>
+  <!-- the meadow -->
+  <rect width="320" height="78" fill="#9fcf6e"/>
+  <rect width="320" height="22" fill="#c9e7f5"/>
+  <ellipse cx="60" cy="24" rx="70" ry="10" fill="#8cc063"/><ellipse cx="250" cy="25" rx="90" ry="11" fill="#8cc063"/>
+  <!-- sheep: working, idle, blocked, done -->
+  <g fill="#fffdf6" stroke="#4a4136" stroke-width="1">
+    <ellipse cx="54" cy="52" rx="14" ry="9"/><ellipse cx="120" cy="58" rx="14" ry="9"/>
+    <ellipse cx="196" cy="50" rx="14" ry="9"/><ellipse cx="262" cy="60" rx="14" ry="9"/>
+  </g>
+  <g fill="#4a4136"><circle cx="66" cy="49" r="4"/><circle cx="132" cy="56" r="4"/><circle cx="208" cy="47" r="4"/><circle cx="274" cy="58" r="4"/></g>
+  <circle cx="196" cy="34" r="6" fill="#f08c2e"/><rect x="195" y="30" width="2" height="5" fill="#fff"/><rect x="195" y="36" width="2" height="2" fill="#fff"/>
+  <text x="270" y="44" font-family="sans-serif" font-size="8" fill="#4a4136">zzz</text>
+  <!-- the wooden rail -->
+  <rect y="78" width="320" height="10" fill="#8b5e37"/>
+  <rect x="8" y="80" width="60" height="5" rx="2" fill="#f1dcb8"/>
+  <!-- cream panes and the Board -->
+  <rect x="8" y="94" width="204" height="90" fill="#fff9e9" stroke="#8b5e37" stroke-width="3"/>
+  <g fill="#9a8f7c"><rect x="16" y="106" width="80" height="3"/><rect x="16" y="114" width="130" height="3"/><rect x="16" y="122" width="104" height="3"/></g>
+  <rect x="220" y="94" width="92" height="90" fill="#fff9e9" stroke="#8b5e37" stroke-width="3"/>
+  <g><rect x="227" y="102" width="78" height="12" rx="2" fill="#efe4cc"/><circle cx="233" cy="108" r="2.5" fill="#f08c2e"/>
+    <rect x="227" y="118" width="78" height="12" rx="2" fill="#efe4cc"/><circle cx="233" cy="124" r="2.5" fill="#658342"/>
+    <rect x="227" y="134" width="78" height="12" rx="2" fill="#efe4cc"/><circle cx="233" cy="140" r="2.5" fill="#658342"/></g>
+  <rect y="190" width="320" height="10" fill="#8b5e37"/>
+  <rect x="268" y="192" width="44" height="6" rx="3" fill="#658342"/>
+</svg>

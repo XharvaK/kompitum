@@ -1,0 +1,36 @@
+{
+  "id": "control-panel-root", "type": "column", "titlebar": "none",
+  "traffic_lights": [24, 20], "theme": "control-panel",
+  "preview": "mods/control-panel/preview.svg",
+  "font": "JetBrains Mono", "font_size": 13.333333333333334,
+  "ui_font": "JetBrains Mono", "terminal_padding": [16, 24], "terminal_opacity": 1,
+  "background": "canvas", "resizable": false,
+  "children": [
+    { "id": "control-panel-topbar", "type": "block", "size": {"px": 48}, "window_drag": true,
+      "content": {"mod": "control-panel", "props": {"role": "topbar"}} },
+    { "id": "control-panel-overview", "type": "block", "size": {"px": 432}, "min": 292,
+      "content": {"mod": "control-panel", "props": {"role": "overview"}} },
+    { "id": "control-panel-livebar", "type": "block", "size": {"px": 40},
+      "content": {"mod": "control-panel", "props": {"role": "livebar"}} },
+    { "id": "control-body", "type": "row", "divider": {"width": 1, "color": "border"},
+      "children": [
+        { "id": "control-panel-live", "type": "block", "min": 120,
+          "content": {"tab": "active", "pane": {
+            "gap": 4, "radius": 0, "background": "background", "lone": true,
+            "border": {"width": 0, "color": "border"}, "focus": {"width": 1, "color": "accent"},
+            "header": {"content": {"mod": "control-panel", "props": {"role": "pane"}}, "height": 28, "position": "top", "reveal": "always"}
+          }} },
+        { "id": "desk", "type": "column", "size": {"px": 380}, "min": 300, "max": 720,
+          "divider": {"width": 1, "color": "border"},
+          "children": [
+            { "id": "board", "type": "block", "size": {"weight": 1}, "min": 120, "content": {"mod": "board"} },
+            { "id": "line", "type": "block", "size": {"weight": 1}, "min": 120, "content": {"mod": "line"} }
+          ] }
+      ] },
+    { "id": "status-row", "type": "row", "size": {"px": 28}, "resizable": false,
+      "children": [
+        { "id": "status", "type": "block", "content": {"mod": "workspace-status"} },
+        { "id": "lead", "type": "block", "size": {"px": 232}, "content": {"mod": "lead"} }
+      ] }
+  ]
+}

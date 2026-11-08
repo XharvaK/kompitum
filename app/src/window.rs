@@ -188,11 +188,25 @@ const LAYOUTS: &[(&str, &str)] = &[
         include_str!("../defaults/layouts/terminals.json"),
     ),
     ("win98", include_str!("../defaults/layouts/win98.json")),
+    // The looks built around the Board, the Line and the Lead switch.
+    ("desk", include_str!("../defaults/layouts/desk.json")),
+    ("watch", include_str!("../defaults/layouts/watch.json")),
+    ("focus", include_str!("../defaults/layouts/focus.json")),
+    ("office", include_str!("../defaults/layouts/office.json")),
+    ("control", include_str!("../defaults/layouts/control.json")),
+    ("pasture", include_str!("../defaults/layouts/pasture.json")),
 ];
 
 /// Pictures shipped layouts name as their `preview`, written beside them.
-const LAYOUT_PREVIEWS: &[(&str, &str)] =
-    &[("win98.svg", include_str!("../defaults/layouts/win98.svg"))];
+/// Control's picture ships inside its mod (mods/control-panel/preview.svg).
+const LAYOUT_PREVIEWS: &[(&str, &str)] = &[
+    ("win98.svg", include_str!("../defaults/layouts/win98.svg")),
+    ("desk.svg", include_str!("../defaults/layouts/desk.svg")),
+    ("watch.svg", include_str!("../defaults/layouts/watch.svg")),
+    ("focus.svg", include_str!("../defaults/layouts/focus.svg")),
+    ("office.svg", include_str!("../defaults/layouts/office.svg")),
+    ("pasture.svg", include_str!("../defaults/layouts/pasture.svg")),
+];
 
 pub fn shipped_layouts() -> Vec<&'static str> {
     LAYOUTS.iter().map(|(n, _)| *n).collect()

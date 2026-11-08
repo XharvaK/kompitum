@@ -1,0 +1,7 @@
+Control Panel comes from https://github.com/vib-z/herdr-layouts (control-panel/)
+at commit e4619fa, MIT licence (LICENSE), by vib-z. Its animation frames carry their
+own notice in THIRD-PARTY-NOTICES.md; frames.json, the source of frames.js, is left out.
+
+Changed for Limen: the module is imported as "limen" and `hc` is `lc`; the labels
+it reads are `limen.space` and `limen.tab`. Limen's Control layout adds the Board and
+the Line beside the live panes and a status row with the Lead pill.

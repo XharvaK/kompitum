@@ -53,7 +53,14 @@ function money(value) {
   return Number.isFinite(n) ? `$${n.toFixed(2)}` : "";
 }
 
+// Piped, lc says what went wrong as JSON: {"error": {"message", "hint"}}; show its words.
 function errorText(result) {
+  for (const out of [result?.stderr, result?.stdout]) {
+    try {
+      const message = JSON.parse(String(out ?? "")).error?.message;
+      if (message) return firstLine(message);
+    } catch {}
+  }
   return firstLine(result?.stderr) || firstLine(result?.stdout) || `lc exited ${result?.code ?? "?"}`;
 }
 

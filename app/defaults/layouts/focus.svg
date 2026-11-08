@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">
+  <rect width="320" height="200" fill="#131619"/>
+  <!-- sidebar: spaces and agents -->
+  <rect width="64" height="200" fill="#17191c"/>
+  <rect x="8" y="10" width="30" height="5" rx="2" fill="#a9adb3"/>
+  <g fill="#3a3e44"><rect x="8" y="28" width="46" height="4" rx="2"/><rect x="8" y="38" width="40" height="4" rx="2"/><rect x="8" y="48" width="44" height="4" rx="2"/></g>
+  <circle cx="11" cy="74" r="2.5" fill="#3b82f6"/><rect x="17" y="72" width="34" height="4" rx="2" fill="#5a5f66"/>
+  <circle cx="11" cy="84" r="2.5" fill="#22c55e"/><rect x="17" y="82" width="28" height="4" rx="2" fill="#5a5f66"/>
+  <rect x="64" width="1" height="200" fill="#25282c"/>
+  <!-- tabs -->
+  <rect x="72" y="7" width="34" height="9" rx="4.5" fill="#25282c"/><rect x="110" y="7" width="28" height="9" rx="4.5" fill="#1d2023"/>
+  <!-- one wide pane: Opus -->
+  <rect x="70" y="22" width="232" height="164" rx="6" fill="#0f1113" stroke="#3b82f6" stroke-width="1"/>
+  <rect x="70" y="22" width="232" height="12" rx="6" fill="#1d2023"/>
+  <g fill="#8b8f95"><rect x="78" y="44" width="90" height="3" rx="1.5"/><rect x="78" y="52" width="160" height="3" rx="1.5"/><rect x="78" y="60" width="128" height="3" rx="1.5"/><rect x="78" y="76" width="80" height="3" rx="1.5"/><rect x="78" y="84" width="170" height="3" rx="1.5"/><rect x="78" y="92" width="112" height="3" rx="1.5"/></g>
+  <rect x="78" y="108" width="6" height="4" fill="#e8e9eb"/>
+  <!-- the Board drawer, peeking from the right edge -->
+  <rect x="306" y="26" width="14" height="58" rx="4" fill="#202225" stroke="#25282c" stroke-width="1"/>
+  <circle cx="313" cy="36" r="2.5" fill="#f59e0b"/>
+  <circle cx="313" cy="46" r="2.5" fill="#22c55e"/>
+  <circle cx="313" cy="56" r="2.5" fill="#22c55e"/>
+  <rect x="311" y="66" width="4" height="12" rx="2" fill="#5a5f66"/>
+  <!-- status bar with the Lead pill -->
+  <rect x="65" y="190" width="255" height="10" fill="#17191c"/>
+  <rect x="270" y="192" width="40" height="6" rx="3" fill="#3b82f6" opacity="0.8"/>
+</svg>

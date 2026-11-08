@@ -209,6 +209,15 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                 "lc" if first == json!(["machine", "add", "host", "--json"]) => {
                     Some(json!({"code":1,"stdout":"{\"error\":{\"kind\":\"host_key\",\"message\":\"unknown host key\"}}","stderr":""}))
                 }
+                // The Board: one task waiting for review.
+                "lc" if first == json!(["status", "--json"]) => Some(json!({"code":0,"stdout":json!({
+                    "tasks": {"review": [{"name": "fix-docs", "repo": "limen-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []}
+                }).to_string(),"stderr":""})),
+                // The Line: one note from Manager.
+                "lc" if first == json!(["vault", "thread", "manager", "--json"]) => Some(json!({"code":0,"stdout":json!({
+                    "agent": "opus",
+                    "notes": [{"path": "manager/to/opus/2026-11-08-tests-pass.md", "from": "manager", "to": ["opus"], "title": "Tests pass", "date": "2026-11-08T09:00:00+03:00", "status": "open"}]
+                }).to_string(),"stderr":""})),
                 // The files panel lists a folder with sh: kind and name pairs.
                 "exec" if first == "sh" && a.get(1).map(from_host).and_then(|v| v.get(2).cloned()) == Some(json!("files")) => {
                     Some(json!({"code":0,"stdout":"d\u{0}src\u{0}f\u{0}README.md\u{0}","stderr":""}))

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200" viewBox="0 0 320 200" shape-rendering="crispEdges">
+  <rect width="320" height="200" fill="#16181d"/>
+  <rect x="0" y="0" width="64" height="200" fill="#1c1f26"/>
+  <rect x="8" y="14" width="40" height="5" rx="2" fill="#3a3f4b"/>
+  <rect x="8" y="26" width="48" height="8" rx="2" fill="#2b303a"/>
+  <rect x="8" y="38" width="44" height="8" rx="2" fill="#23272f"/>
+  <rect x="64" y="0" width="256" height="10" fill="#1c1f26"/>
+  <rect x="64" y="10" width="256" height="62" fill="#efe3cf"/>
+  <rect x="64" y="42" width="256" height="9" fill="#d8c3a2"/>
+  <rect x="64" y="51" width="256" height="21" fill="#b9895a"/>
+  <rect x="80" y="16" width="30" height="20" fill="#7fc4f0" stroke="#7a5c3e" stroke-width="2"/>
+  <rect x="140" y="16" width="30" height="20" fill="#7fc4f0" stroke="#7a5c3e" stroke-width="2"/>
+  <rect x="244" y="16" width="34" height="20" fill="#fbfbf8" stroke="#a6adb8" stroke-width="2"/>
+  <rect x="100" y="52" width="26" height="3" fill="#a0683f"/>
+  <rect x="112" y="42" width="12" height="9" fill="#2b2f3a"/><rect x="113" y="43" width="10" height="6" fill="#13263f"/>
+  <rect x="94" y="44" width="6" height="6" fill="#e8b48a"/><rect x="94" y="50" width="7" height="6" fill="#e07a5f"/>
+  <rect x="150" y="52" width="26" height="3" fill="#a0683f"/>
+  <rect x="162" y="42" width="12" height="9" fill="#2b2f3a"/><rect x="163" y="43" width="10" height="6" fill="#4a1a1e"/>
+  <rect x="144" y="44" width="6" height="6" fill="#c98d5f"/><rect x="144" y="50" width="6" height="8" fill="#3d8be0"/>
+  <rect x="226" y="46" width="8" height="14" fill="#e9eef3"/><rect x="227" y="40" width="6" height="6" fill="#8fd0f5"/>
+  <rect x="214" y="45" width="6" height="6" fill="#f6d2b0"/><rect x="214" y="51" width="6" height="8" fill="#58b368"/>
+  <rect x="70" y="78" width="244" height="114" rx="4" fill="#1d2027" stroke="#2c313b"/>
+  <rect x="80" y="90" width="90" height="4" fill="#3a3f4b"/><rect x="80" y="100" width="130" height="4" fill="#2f343e"/>
+  <rect x="80" y="110" width="70" height="4" fill="#2f343e"/>
+</svg>
