@@ -76,7 +76,21 @@ HOST_RULE = (
     r"\1kompitum.invalid",
 )
 
+# The release service and its media are this repository's GitHub Pages.
+RELEASES_RULE = (
+    r"(?<![A-Za-z0-9.-])releases\.herdr\.dev"
+    r"(?![A-Za-z0-9-]|\.[A-Za-z0-9-])",
+    r"xharvak.github.io/kompitum",
+)
+MEDIA_RULE = (
+    r"(?<![A-Za-z0-9.-])media\.herdr\.dev"
+    r"(?![A-Za-z0-9-]|\.[A-Za-z0-9-])",
+    r"xharvak.github.io/kompitum/media",
+)
+
 TEXT_RULES = (
+    RELEASES_RULE,
+    MEDIA_RULE,
     HOST_RULE,
     (r"herdr", "kompitum"),
     (r"Herdr", "Kompitum"),
@@ -91,13 +105,15 @@ TEXT_RULES = (
 # Vendored code has its own words starting with hc, so only our own name
 # changes there. It is not ours to format either.
 VENDOR_TEXT_RULES = (
+    RELEASES_RULE,
+    MEDIA_RULE,
     HOST_RULE,
     (r"herdr", "kompitum"),
     (r"Herdr", "Kompitum"),
     (r"HERDR", "KOMPITUM"),
 )
 
-PATH_RULES = TEXT_RULES[1:4] + TEXT_RULES[5:7]
+PATH_RULES = TEXT_RULES[3:6] + TEXT_RULES[7:9]
 
 LEFTOVER = (
     r"(?i)herdr",

@@ -130,13 +130,10 @@ pub fn client(args: &[String]) -> i32 {
     let mut stream = match UnixStream::connect(socket()) {
         Ok(s) => s,
         Err(_) if args.first().is_some_and(|v| v == "feedback") => {
-            let body = crate::feedback::draft(&args[1], "", 0, "agent", "other");
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&body).unwrap_or_default()
-            );
+            let url = crate::feedback::issue_url(args.get(1).map(String::as_str).unwrap_or(""), "agent");
+            println!("{url}");
             eprintln!(
-                "Kompitum must be open to review and send this feedback. Nothing was sent; core version and layout will reflect the open window."
+                "Kompitum isn't open, so no browser was opened. The link above is the filled-in issue: open it to read and submit. Nothing was sent."
             );
             return 1;
         }

@@ -241,7 +241,7 @@ fn media_path(url: &str) -> std::path::PathBuf {
 }
 
 fn local_media_path(url: &str, dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let key = url.strip_prefix("https://media.kompitum.invalid/")?;
+    let key = url.strip_prefix("https://xharvak.github.io/kompitum/media/")?;
     let parts: Vec<_> = key.split('/').collect();
     if parts.len() != 2
         || parts.iter().any(|p| {
@@ -411,7 +411,7 @@ mod tests {
     use super::*;
     fn fixture() -> Vec<Note> {
         parse(
-            "## [1.8.0] - 2026-10-23\n<!-- spotlight -->\n- New thing\n![demo](https://releases.kompitum.invalid/demo.png)\n## [1.7.0] - 2026-10-22\n- Another thing\n## [1.5.0] - 2026-10-20\n- Old thing\n",
+            "## [1.8.0] - 2026-10-23\n<!-- spotlight -->\n- New thing\n![demo](https://xharvak.github.io/kompitum/demo.png)\n## [1.7.0] - 2026-10-22\n- Another thing\n## [1.5.0] - 2026-10-20\n- Old thing\n",
         )
     }
     fn from(version: Option<&str>, running: &str, fresh: bool) -> Launch {
@@ -545,15 +545,15 @@ mod tests {
     fn local_media_is_limited_to_canonical_media_urls() {
         let dir = std::path::Path::new("/var/tmp/media");
         assert_eq!(
-            local_media_path("https://media.kompitum.invalid/0.1.4/peek.webp", dir),
+            local_media_path("https://xharvak.github.io/kompitum/media/0.1.4/peek.webp", dir),
             Some(dir.join("0.1.4/peek.webp"))
         );
         for url in [
             "https://example.com/0.1.4/peek.webp",
-            "https://media.kompitum.invalid/../peek.webp",
-            "https://media.kompitum.invalid/0.1.4/a/b.webp",
-            "https://media.kompitum.invalid/0.1.4/%2e%2e",
-            "https://media.kompitum.invalid/0.1.4/a.webp?query",
+            "https://xharvak.github.io/kompitum/media/../peek.webp",
+            "https://xharvak.github.io/kompitum/media/0.1.4/a/b.webp",
+            "https://xharvak.github.io/kompitum/media/0.1.4/%2e%2e",
+            "https://xharvak.github.io/kompitum/media/0.1.4/a.webp?query",
         ] {
             assert!(local_media_path(url, dir).is_none());
         }
@@ -622,7 +622,7 @@ mod tests {
         assert!(notes[0].spotlight);
         assert_eq!(
             notes[0].items[0].media[0].path,
-            "https://releases.kompitum.invalid/demo.png"
+            "https://xharvak.github.io/kompitum/demo.png"
         );
         assert_eq!(notes[1].items[0].detail, "Another thing");
         assert!(notes[1].items[0].headline.is_empty());

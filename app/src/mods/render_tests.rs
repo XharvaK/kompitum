@@ -115,11 +115,6 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
     for (name, value) in values {
         module = module.function(name, move |_| Ok(to_host(&value)));
     }
-    module = module.function("feedbackPreview", |a| {
-        Ok(to_host(
-            &json!({"available":true,"body":{"message":a.string(0)?,"email":a.string(1)?}}),
-        ))
-    });
     let shared = calls.clone();
     module = module.function("shared", move |a| {
         Ok(shared
@@ -166,16 +161,6 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
             })
         });
     }
-    for name in [
-        "feedbackPasteImage",
-        "feedbackClearImages",
-        "feedbackAttachImages",
-    ] {
-        module = module.function(name, |_| Ok(HostValue::Null));
-    }
-    module = module.async_function("feedbackPickImages", |_| {
-        Ok(async { Ok(HostValue::Array(vec![])) })
-    });
     module = module.async_function("knownAgents", |_| {
         Ok(async { Ok(HostValue::Array(vec![])) })
     });
@@ -190,7 +175,6 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
         "kom",
         "readTextFile",
         "writeTextFile",
-        "sendFeedback",
     ] {
         let calls = calls.clone();
         module = module.async_function(name, move |a| {
@@ -956,7 +940,7 @@ fn settings_sections_and_updates(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let start = Instant::now();
     let staged = Staged::new();
-    for section in ["look", "alerts", "privacy", "updates"] {
+    for section in ["look", "alerts", "about"] {
         let mut p = props();
         p["section"] = json!(section);
         describe(
@@ -973,7 +957,7 @@ fn settings_sections_and_updates(cx: &mut TestAppContext) {
     for app in ["source", "current", "ready"] {
         for core in ["current", "ready", "error", "managed", "updating"] {
             let mut p = props();
-            p["section"] = json!("updates");
+            p["section"] = json!("about");
             let tree = describe(
                 cx,
                 &staged,
@@ -1003,7 +987,7 @@ fn settings_sections_and_updates(cx: &mut TestAppContext) {
         (false, Some(1700000000), true),
     ] {
         let mut p = props();
-        p["section"] = json!("updates");
+        p["section"] = json!("about");
         let mut u = updates("current", "current");
         u["checked"] = json!(checked);
         u["checking"] = json!(checking);
@@ -1125,7 +1109,7 @@ fn settings_keep_notes_in_the_whats_new_window(cx: &mut TestAppContext) {
     let mut update = updates("ready", "current");
     update["notes"] = notes.clone();
     let mut p = props();
-    p["section"] = json!("updates");
+    p["section"] = json!("about");
     let tree = describe(cx, &staged, "frame/settings", true, p, update.clone(), None).unwrap();
     assert!(
         tree.contains("st-whats-new")
@@ -1163,36 +1147,6 @@ fn local_state_and_overlay_initial_descriptions(cx: &mut TestAppContext) {
             "Make it yours",
         ][page - 1];
         assert!(tree.contains(expected), "welcome page {page}: {tree}");
-    }
-    for setup in ["", "this.sent = true;", "this.error = 'Fixture error';"] {
-        let tree = describe(
-            cx,
-            &staged,
-            "frame/feedback",
-            true,
-            props(),
-            updates("current", "current"),
-            Some(setup),
-        )
-        .unwrap();
-        assert!(tree.contains("feedback"), "{tree}");
-        if setup.is_empty() {
-            assert!(
-                tree.contains("Input #")
-                    && tree.contains("Textarea #")
-                    && tree.contains("A prefilled message"),
-                "{tree}"
-            );
-        } else {
-            assert!(
-                tree.contains(if setup.contains("sent") {
-                    "Sent. Thanks"
-                } else {
-                    "Fixture error"
-                }),
-                "{tree}"
-            );
-        }
     }
     for query in ["settings", "no-such-command"] {
         let tree = describe(

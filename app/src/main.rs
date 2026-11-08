@@ -50,7 +50,7 @@ Usage:
   kompitum-app                        open the window
   kompitum-app ls                     spaces, their tabs and terminals, in the open window
   kompitum-app do <command> [args]    run a command: --name api --argv '[\"pi\"]', or one JSON object
-  kompitum-app feedback <text>        draft feedback for the person to review and send
+  kompitum-app feedback <text>        open a GitHub issue with this text, for you to submit
   kompitum-app commands               every command, its arguments, what it does
   kompitum-app status                 what the window shows, and any errors
   kompitum-app shot [file.png]        save the last window frame (default: kompitum-shot.png)

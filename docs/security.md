@@ -104,7 +104,7 @@ Updates restart the core while holders keep the terminals running.
 An update may also restart an older running core when the installed binary is already current.
 
 Release installers and updates download a manifest and check the archive's SHA-256 against it.
-The default release service is HTTPS at releases.kompitum.invalid.
+The default release service is HTTPS at xharvak.github.io/kompitum.
 This trusts the release service and HTTPS; a checksum is not an independently signed release manifest.
 The manifest is not verified with a separate signing key.
 

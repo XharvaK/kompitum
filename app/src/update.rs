@@ -1,5 +1,5 @@
 //! The app's own updates. An installed app (Linux: `~/.local/share/kompitum-app`,
-//! macOS: `Kompitum.app`) checks `releases.kompitum.invalid/app/latest.json` a little
+//! macOS: `Kompitum.app`) checks `xharvak.github.io/kompitum/app/latest.json` a little
 //! after it opens and every hour, downloads a newer build for this
 //! machine, checks its sha256 and unpacks it next to itself (`<install>.new`).
 //! The frame then shows "Restart"; the swap happens on restart or the next
@@ -77,7 +77,7 @@ fn target() -> String {
 
 fn releases() -> String {
     std::env::var("KOMPITUM_RELEASES_URL")
-        .unwrap_or_else(|_| "https://releases.kompitum.invalid".into())
+        .unwrap_or_else(|_| "https://xharvak.github.io/kompitum".into())
 }
 
 /// The version downloaded and waiting for a restart.

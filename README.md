@@ -14,7 +14,7 @@ Kompitum's own parts still live in its Python repository and come over as [the p
 - On Windows the whole suite passes, 156 tests with real cores and terminals among them, and none of it opened a window. One test is skipped because it writes to the real user environment.
 - Claude Code runs in an `kom` terminal on its own login, with Kompitum's `cwmcp` and its workers under it, and nothing it started opened a window. `kom` follows its state, down to the command a permission dialog is asking about. So far that is one test run on Windows.
 - The Unix suite, 273 tests and most of what checks the core's logic, has only been type-checked since the rename. We have no Linux machine or CI for it yet.
-- There are no releases. `kom update` and the install scripts point at `releases.kompitum.invalid`, a name that can never resolve, so they fail loudly and can never fetch upstream's build. Build from source and copy the binary.
+- There are no releases yet. `kom update` and the install scripts point at `https://xharvak.github.io/kompitum`, this repository's GitHub Pages, which holds nothing until the first release, so they fail loudly. Build from source and copy the binary.
 - macOS builds are not planned: Windows and Linux are what we run.
 
 ## Run it and come back

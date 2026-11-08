@@ -1250,19 +1250,6 @@ fn module_pair(inst: Instance, copy: u64) -> [HostModule; 2] {
 fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
     let ModuleState { reads, commands } = state;
     let props = inst.props.clone();
-    let feedback_frame = inst.name == "frame-feedback";
-    let feedback_from = inst
-        .props
-        .get("from")
-        .and_then(Value::as_str)
-        .unwrap_or("person")
-        .to_owned();
-    let feedback_layout = inst
-        .props
-        .get("layout")
-        .and_then(Value::as_str)
-        .unwrap_or("other")
-        .to_owned();
     HostModule::new(name)
         .declarations(DECLARATIONS)
         .async_function("exec", |a| {
@@ -1291,40 +1278,6 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             Ok(HostValue::Null)
         })
         .function("telemetry", |_| Ok(to_host(&crate::telemetry::status())))
-        .function("feedbackPreview", move |a| {
-            let images = a.get(2).and_then(|v| match v { HostValue::Number(n) => Some(*n as usize), _ => None }).unwrap_or(0);
-            let body = crate::feedback::draft(a.string(0)?, a.string(1)?, images, &feedback_from, &feedback_layout);
-            Ok(to_host(&json!({ "body": body, "available": crate::feedback::available() })))
-        })
-        .function("feedbackPasteImage", move |_| {
-            if !feedback_frame { return Err(HostError::new("feedback screenshots are frame-only")); }
-            let bytes = gpui_shell::with_current_app(|cx| {
-                cx.read_from_clipboard()?.entries().iter().find_map(|e| match e {
-                    gpui::ClipboardEntry::Image(i) => Some(i.bytes.clone()),
-                    _ => None,
-                })
-            }).flatten();
-            Ok(match bytes {
-                None => HostValue::Null,
-                Some(b) => to_host(&match crate::feedback::attach(&b) { Ok(path) => json!({ "path": path }), Err(e) => json!({ "error": e }) }),
-            })
-        })
-        .function("feedbackAttachImages", move |a| {
-            if !feedback_frame { return Err(HostError::new("feedback screenshots are frame-only")); }
-            let paths = strings(a.get(0)).into_iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
-            Ok(to_host(&json!(crate::feedback::attach_files(&paths))))
-        })
-        .async_function("feedbackPickImages", move |_| {
-            if !feedback_frame { return Err(HostError::new("feedback screenshots are frame-only")); }
-            let picked = gpui_shell::with_current_app(|cx| cx.prompt_for_paths(gpui::PathPromptOptions {
-                files: true, directories: false, multiple: true, prompt: Some("Add".into()),
-            })).ok_or_else(|| HostError::new("no window to pick from"))?;
-            Ok(async move {
-                let paths = picked.await.ok().and_then(Result::ok).flatten().unwrap_or_default();
-                let out = crate::feedback::attach_files(&paths);
-                Ok(to_host(&Value::Array(out)))
-            })
-        })
         .async_function("knownAgents", |a| {
             let on = opt_str(a.get(0), "on");
             // The table is loaded on the window thread; workers have only defaults.
@@ -1343,22 +1296,6 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             Ok(async move {
                 let path = picked.await.ok().and_then(Result::ok).flatten().and_then(|p| p.into_iter().next());
                 Ok(path.map(|p| HostValue::Str(p.to_string_lossy().into_owned())).unwrap_or(HostValue::Null))
-            })
-        })
-        .function("feedbackClearImages", move |_| {
-            if feedback_frame { crate::feedback::clear_shots(); }
-            Ok(HostValue::Null)
-        })
-        .async_function("sendFeedback", move |a| {
-            if !feedback_frame { return Err(HostError::new("sending feedback is frame-only")); }
-            let body = from_host(a.value(0)?);
-            let shots: Vec<String> = from_host(a.value(1).unwrap_or(&HostValue::Null)).as_array()
-                .map(|l| l.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-            Ok(async move {
-                Ok(match crate::feedback::send(body, shots).await {
-                    Ok(()) => HostValue::Null,
-                    Err(why) => HostValue::Str(why),
-                })
             })
         })
         .function("themes", |_| {

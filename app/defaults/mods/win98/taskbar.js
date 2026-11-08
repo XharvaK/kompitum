@@ -212,7 +212,7 @@ export default class Taskbar {
       act: { run: ["layout.switch", { name }] },
     }));
     return [
-      { label: "Kompitum Update", icon: "update", act: { run: ["app.settings", { section: "updates" }] } },
+      { label: "Kompitum Update", icon: "update", act: { run: ["app.settings", { section: "about" }] } },
       { sep: true },
       {
         label: "&Programs",

@@ -1,6 +1,6 @@
 # Installs the Kompitum app on Windows, and kompitum-core if there's none yet:
 #
-#   powershell -c "irm https://releases.kompitum.invalid/app/install.ps1 | iex"
+#   powershell -c "irm https://xharvak.github.io/kompitum/app/install.ps1 | iex"
 #
 # The app into %LOCALAPPDATA%\Programs\kompitum-app (added to your PATH for
 # `kompitum-app`), Kompitum in the Start menu. The core, with its own installer,
@@ -16,7 +16,7 @@ $ProgressPreference = "SilentlyContinue"
 # throw, not exit: under `irm | iex`, exit would close the person's window.
 function Fail($why) { throw "kompitum: $why" }
 
-$releases = if ($env:KOMPITUM_RELEASES_URL) { $env:KOMPITUM_RELEASES_URL.TrimEnd("/") } else { "https://releases.kompitum.invalid" }
+$releases = if ($env:KOMPITUM_RELEASES_URL) { $env:KOMPITUM_RELEASES_URL.TrimEnd("/") } else { "https://xharvak.github.io/kompitum" }
 $dir = Join-Path $env:LOCALAPPDATA "Programs\kompitum-app"
 $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
 if ($arch -ne "AMD64") { Fail "no build for $arch Windows yet (x64 only)" }

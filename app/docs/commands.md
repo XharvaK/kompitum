@@ -458,7 +458,7 @@ No arguments.
 
 ## `app.feedback`
 
-Draft feedback for the person to review and send (from: person or agent).
+Open a new GitHub issue with this feedback, for the person to read and submit (from: person or agent).
 
 | Argument | Required |
 |---|---|
@@ -473,7 +473,7 @@ No arguments.
 
 ## `app.settings`
 
-Open the settings (section: look, alerts, updates).
+Open the settings (section: look, alerts, about).
 
 | Argument | Required |
 |---|---|

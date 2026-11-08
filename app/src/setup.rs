@@ -17,15 +17,15 @@ use std::sync::Arc;
 
 const ICON: &[u8] = include_bytes!("../assets/icons/kompitum-icon.png");
 #[cfg(not(windows))]
-const APP_INSTALL: &str = "curl -fsSL https://releases.kompitum.invalid/app/install.sh | sh";
+const APP_INSTALL: &str = "curl -fsSL https://xharvak.github.io/kompitum/app/install.sh | sh";
 #[cfg(windows)]
 const APP_INSTALL: &str =
-    "powershell -c \"irm https://releases.kompitum.invalid/app/install.ps1 | iex\"";
+    "powershell -c \"irm https://xharvak.github.io/kompitum/app/install.ps1 | iex\"";
 #[cfg(not(windows))]
-const CORE_INSTALL: &str = "curl -fsSL https://releases.kompitum.invalid/core/install.sh | sh";
+const CORE_INSTALL: &str = "curl -fsSL https://xharvak.github.io/kompitum/core/install.sh | sh";
 #[cfg(windows)]
 const CORE_INSTALL: &str =
-    "powershell -c \"irm https://releases.kompitum.invalid/core/install.ps1 | iex\"";
+    "powershell -c \"irm https://xharvak.github.io/kompitum/core/install.ps1 | iex\"";
 const CORE_PLACE: &str = if cfg!(windows) {
     r"%LOCALAPPDATA%\Programs\kompitum-core"
 } else {

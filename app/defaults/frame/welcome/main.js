@@ -8,7 +8,6 @@ const I = (name) => `frame/welcome/${name}.svg`;
 const W = (name) => `mods/workspace-chrome/${name}.svg`;
 const PAGES = 3;
 const ASK = "Read ~/.config/kompitum-app/AGENTS.md, then tell me what you can change in Kompitum.";
-const MIGRATE = "Read `kompitum-app --skill`, then migrate my keybinds and settings from ~/.config/kompitum/config.toml";
 const APPEARANCES = [
   [null, "System"],
   ["light", "Light"],
@@ -224,27 +223,6 @@ export default class Welcome extends View {
       );
   }
 
-  comingFromKompitum(t) {
-    return v_flex()
-      .gap(12)
-      .p(16)
-      .rounded(12)
-      .border_1()
-      .border_color(t.border)
-      .bg(t.raised)
-      .child(
-        h_flex()
-          .gap(10)
-          .items_center()
-          .child(svg(I("terminal")).size(16).text_color(t.muted))
-          .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child("Coming from kompitum?")),
-      )
-      .child(this.para(t, "This is a new app on a new core. Your kompitum workspaces stay where they are; nothing moves over."))
-      .child(this.para(t, "Same idea as before: spaces, tabs and terminals."))
-      .child(this.para(t, "Want your keybinds and settings carried over? Give your agent this line:"))
-      .child(this.copyLine(t, MIGRATE, "w-migrate-copy"));
-  }
-
   // Pages ---------------------------------------------------------------
 
   pageOne(t) {
@@ -343,7 +321,7 @@ export default class Welcome extends View {
           .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child("Your terminals, outside this window too"))
           .child(this.para(t, "kom is kompitum-core's command line. In any terminal, kom ls lists everything running and kom attach t3 jumps into one. Your agents can use it to start and watch other agents for you. Tell them to read kom's help, or make it a skill.")),
       )
-      .child(this.para(t, "Something off or missing? Settings \u203a Send feedback. We read every one."));
+      .child(this.para(t, "Something off or missing? Settings \u203a Send feedback opens an issue on GitHub."));
   }
 
   render() {

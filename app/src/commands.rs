@@ -286,7 +286,7 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "app.feedback",
         &[opt("message"), opt("from")],
-        "Draft feedback for the person to review and send (from: person or agent).",
+        "Open a new GitHub issue with this feedback, for the person to read and submit (from: person or agent).",
     ),
     cmd(
         "app.palette",
@@ -296,7 +296,7 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "app.settings",
         &[opt("section")],
-        "Open the settings (section: look, alerts, updates).",
+        "Open the settings (section: look, alerts, about).",
     ),
     cmd(
         "app.check_updates",

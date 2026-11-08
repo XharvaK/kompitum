@@ -2,7 +2,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
-import { kom, run, theme, fonts, updates, telemetry, settings, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "kompitum";
+import { kom, run, theme, fonts, updates, settings, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "kompitum";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
@@ -11,8 +11,7 @@ const SECTIONS = [
   ...(window()?.platform === "macos" ? [{ id: "keyboard", title: "Keyboard", icon: "keyboard" }] : []),
   { id: "machines", title: "Machines", icon: "server" },
   { id: "alerts", title: "Alerts", icon: "bell" },
-  { id: "updates", title: "Updates", icon: "refresh" },
-  { id: "privacy", title: "Privacy", icon: "shield" },
+  { id: "about", title: "About", icon: "info" },
 ];
 
 const APPEARANCES = [
@@ -43,7 +42,6 @@ export default class Settings extends View {
     });
     this.person = {};
     this.raw = null;
-    this.showData = false;
     this.machineList = null;
     this.machineLoading = false;
     this.machineError = null;
@@ -528,9 +526,9 @@ export default class Settings extends View {
       .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Want your own sounds? Ask your agent to set sounds.done and sounds.blocked in settings.json to an MP3."));
   }
 
-  // Updates --------------------------------------------------------------
+  // About ----------------------------------------------------------------
 
-  updates(t) {
+  about(t) {
     const u = updates();
     const at = (secs) => {
       const d = new Date(secs * 1000);
@@ -583,74 +581,11 @@ export default class Settings extends View {
       .child(div().h(18))
       .child(this.heading(t, "kompitum-core"))
       .child(this.row(t, `kompitum-core ${c.version ?? ""}`, core[0], core[1] ?? div()))
-      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum looks for both every hour and tells you in the corner. kompitum-core runs your terminals, so they keep running through its updates."));
+      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum looks for both every hour and tells you in the corner. kompitum-core runs your terminals, so they keep running through its updates."))
+      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum sends nothing: no usage data, no crash reports. Send feedback opens an issue on GitHub."))
+      .child(div().text_size(12.5).line_height("18px").text_color(t.dim).child("Built on herdr (Apache 2.0)."));
   }
 
-
-  // Privacy --------------------------------------------------------------
-
-  // A report as it goes out, one line per line of JSON.
-  report(t, id, title, about, report) {
-    const lines = JSON.stringify(report, null, 2).split("\n");
-    return v_flex()
-      .w_full()
-      .pt(14)
-      .gap(4)
-      .child(div().text_size(13.5).text_color(t.foreground).child(title))
-      .when(Boolean(about), (el) => el.child(div().text_size(12.5).text_color(t.dim).child(about)))
-      .child(
-        v_flex()
-          .id(id)
-          .mt(4)
-          .w_full()
-          .p(10)
-          .rounded(8)
-          .border_1()
-          .border_color(t.border)
-          .bg(t.background)
-          .children(lines.map((l) => div().font_family(DEFAULT_FONT).text_size(12).line_height("17px").text_color(t.muted).whitespace_nowrap().child(l || " "))),
-      );
-  }
-
-  privacy(t) {
-    const s = telemetry();
-    const on = s ? s.setting : this.person.telemetry !== false;
-    const at = (secs) => new Date(secs * 1000).toLocaleString();
-    const why = s?.off_because ? `Off for now: ${s.off_because} is set where Kompitum started.` : null;
-    const body = v_flex()
-      .w_full()
-      .child(this.heading(t, "Usage data"))
-      .child(
-        this.row(
-          t,
-          "Share anonymous usage data",
-          why ?? "Once a day: which agents and features you use, how many spaces and tabs, your system and Kompitum's version. Never what's in your terminals, never names of files, folders or projects.",
-          this.toggle(t, "st-telemetry", on, (_e, cx) =>
-            this.change((p) => {
-              if (on) p.telemetry = false;
-              else delete p.telemetry;
-            }, cx),
-          ),
-        ),
-      )
-      .child(
-        this.row(
-          t,
-          "What we send",
-          s && !s.sends ? "This build never sends: it's built from source. You can still see what a release would send." : "Exactly what leaves your computer, word for word.",
-          this.button(t, "st-telemetry-show", this.showData ? "Hide" : "Show", (_e, cx) => {
-            this.showData = !this.showData;
-            cx.notify();
-          }),
-        ),
-      );
-    if (!this.showData) return body;
-    if (!s?.enabled) return body.child(div().pt(14).text_size(13).text_color(t.dim).child("Nothing is collected or sent while it's off."));
-    return body
-      .children(s.queued.map((r, i) => this.report(t, `st-tq-${i}`, `Waiting to send: ${r.day}`, "Sent as is, soon.", r)))
-      .when(Boolean(s.draft), (el) => el.child(this.report(t, "st-td", "Today so far", "A draft: it changes until the day ends (UTC), then goes out once.", s.draft)))
-      .when(Boolean(s.last_sent), (el) => el.child(this.report(t, "st-tl", `Last sent: ${s.last_sent.report.day}`, `Sent ${at(s.last_sent.at)}.`, s.last_sent.report)));
-  }
 
   // ----------------------------------------------------------------------
 
@@ -689,7 +624,7 @@ export default class Settings extends View {
             })
             .child(svg(I(s.icon)).size(15).text_color(on ? t.accent : t.dim))
             .child(div().flex_1().text_size(13.5).text_color(on ? t.foreground : t.muted).child(s.title))
-            .when(s.id === "updates" && waiting, (el) => el.child(div().w(7).h(7).rounded(4).bg(t.accent)));
+            .when(s.id === "about" && waiting, (el) => el.child(div().w(7).h(7).rounded(4).bg(t.accent)));
         }),
       );
     return h_flex()
@@ -746,9 +681,7 @@ export default class Settings extends View {
                         ? this.machines(t)
                       : this.section === "alerts"
                         ? this.alerts(t)
-                        : this.section === "privacy"
-                          ? this.privacy(t)
-                          : this.updates(t),
+                        : this.about(t),
                   ),
               ),
           )

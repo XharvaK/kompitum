@@ -220,7 +220,7 @@ fn login_shell_path() -> Option<std::ffi::OsString> {
 /// ~/.local/bin, or KOMPITUM_INSTALL_DIR), then finds it. Err: what went wrong.
 pub fn install() -> Result<PathBuf, String> {
     let releases = std::env::var("KOMPITUM_RELEASES_URL")
-        .unwrap_or_else(|_| "https://releases.kompitum.invalid".into());
+        .unwrap_or_else(|_| "https://xharvak.github.io/kompitum".into());
     let mut cmd = if cfg!(windows) {
         let mut c = crate::spawn::command("powershell");
         c.args([
@@ -348,7 +348,7 @@ fn ensure_core_bundle(version: &str) -> Result<(), String> {
         return Ok(());
     }
     let releases = std::env::var("KOMPITUM_RELEASES_URL")
-        .unwrap_or_else(|_| "https://releases.kompitum.invalid".into());
+        .unwrap_or_else(|_| "https://xharvak.github.io/kompitum".into());
     let mut cmd = crate::spawn::command("sh");
     cmd.args(["-c", BUNDLE_INSTALL_SCRIPT, "sh", &releases]);
     cmd.env("KOMPITUM_BUNDLE_ONLY", "1");

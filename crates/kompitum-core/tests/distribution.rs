@@ -539,7 +539,7 @@ fn install_script_downloads(s: &Session, url: &str, releases: &str, installed: b
     std::fs::read_to_string(log).unwrap().lines().last().unwrap().to_owned()
 }
 
-/// The download counter on releases.kompitum.invalid: plain release URLs say install
+/// The download counter on xharvak.github.io/kompitum: plain release URLs say install
 /// or update; a mirror's query (a signed URL) or fragment, or another host,
 /// is fetched exactly as the list gives it.
 #[test]

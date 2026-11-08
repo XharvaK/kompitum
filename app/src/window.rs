@@ -1016,7 +1016,7 @@ impl AppWindow {
             crate::update_notes::spotlights()
         };
         if notes.is_empty() {
-            self.run("app.settings", json!({ "section": "updates" }), window, cx);
+            self.run("app.settings", json!({ "section": "about" }), window, cx);
             return;
         }
         let viewport = window.viewport_size();
@@ -4746,10 +4746,10 @@ impl AppWindow {
                 if !matches!(from.as_str(), "person" | "agent") {
                     return self.fail("from must be person or agent");
                 }
-                // A window, not a dialog: the app stays usable behind it (copy an error, paste it in).
-                let spec = json!({ "mod": "frame-feedback", "kind": "window", "key": "feedback", "width": 680,
-                    "props": { "message": Self::owned(a, "message").unwrap_or_default(), "from": from, "layout": self.layout_name } });
-                self.open_overlay(mods::new_overlay_id(), spec, window, cx);
+                let message = Self::owned(a, "message").unwrap_or_default();
+                let url = crate::feedback::issue_url(&message, &from);
+                cx.open_url(&url);
+                self.answer(Ok(json!({ "opened": url })));
                 return;
             }
             "app.settings" => {
@@ -6230,9 +6230,9 @@ impl AppWindow {
                     .id("core-update-error")
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, w, cx| {
-                        this.run("app.settings", json!({ "section": "updates" }), w, cx)
+                        this.run("app.settings", json!({ "section": "about" }), w, cx)
                     }))
-                    .child(format!("kompitum-core update failed: {error} · Open Updates"))
+                    .child(format!("kompitum-core update failed: {error} · Open About"))
                     .into_any_element(),
             );
         }
@@ -6318,13 +6318,13 @@ impl AppWindow {
                     .child(if app_ready || success {
                         "What changed"
                     } else {
-                        "Open Updates"
+                        "Open About"
                     })
                     .on_click(cx.listener(move |this, _, w, cx| {
                         if success {
                             this.update_success = false;
                         }
-                        this.run("app.settings", json!({ "section": "updates" }), w, cx);
+                        this.run("app.settings", json!({ "section": "about" }), w, cx);
                     })),
             )
             .child(

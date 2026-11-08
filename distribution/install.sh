@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs kompitum-core (kom), or updates it:
 #
-#   curl -fsSL https://releases.kompitum.invalid/core/install.sh | sh
+#   curl -fsSL https://xharvak.github.io/kompitum/core/install.sh | sh
 #
 # Into ~/.local/bin/kompitum-core, with `kom` beside it only if no `kom` exists
 # (some window managers ship one). An kom that is already there is swapped
@@ -10,7 +10,7 @@
 # KOMPITUM_RELEASES_URL points elsewhere (tests).
 set -eu
 
-releases=${KOMPITUM_RELEASES_URL:-https://releases.kompitum.invalid}
+releases=${KOMPITUM_RELEASES_URL:-https://xharvak.github.io/kompitum}
 bin=${KOMPITUM_INSTALL_DIR:-$HOME/.local/bin}
 
 say() { printf '%s\n' "$*"; }
@@ -89,7 +89,7 @@ if [ "$bundle" = 1 ] && [ -x "$tmp/Kompitum Core.app/Contents/MacOS/kompitum-cor
     }' || fail "$candidate is older than $installed; use kom update --from with --force to downgrade"
   fi
   case "$releases" in
-    https://releases.kompitum.invalid | https://releases.kompitum.invalid/)
+    https://xharvak.github.io/kompitum | https://xharvak.github.io/kompitum/)
       /usr/bin/codesign --verify --strict -R '=identifier "dev.kompitum.core" and anchor apple generic and certificate leaf[subject.OU] = "2W9652Q7QR"' "$tmp/Kompitum Core.app" || fail "not a signed Kompitum release" ;;
   esac
   "$bundled" --kom-install-bundle "$bundled" "$bin/kompitum-core" || fail "installing Kompitum Core.app failed"

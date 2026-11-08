@@ -7,7 +7,7 @@ tests building a fake release):
 {version, generation, notes, targets: {"<os>-<arch>": {url, sha256}}}.
 Version from crates/kompitum-core/Cargo.toml, generation from api.rs; the
 notes line from $NOTES, else "kompitum-core <version>". URLs under
-$RELEASES_URL (default https://releases.kompitum.invalid)/core/<version>/.
+$RELEASES_URL (default https://xharvak.github.io/kompitum)/core/<version>/.
 """
 import hashlib, json, os, pathlib, re, sys
 
@@ -16,7 +16,7 @@ cargo = (root / "crates/kompitum-core/Cargo.toml").read_text()
 version = re.search(r'^version = "(.+)"', cargo, re.M).group(1)
 api = (root / "crates/kompitum-core/src/api.rs").read_text()
 generation = int(re.search(r"pub const GENERATION: u32 = (\d+);", api).group(1))
-base = os.environ.get("RELEASES_URL", "https://releases.kompitum.invalid").rstrip("/")
+base = os.environ.get("RELEASES_URL", "https://xharvak.github.io/kompitum").rstrip("/")
 
 targets = {}
 for f in sorted([*pathlib.Path(sys.argv[1]).glob("kompitum-core-*.tar.gz"), *pathlib.Path(sys.argv[1]).glob("kompitum-core-*.zip")]):

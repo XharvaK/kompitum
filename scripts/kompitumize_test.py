@@ -302,7 +302,7 @@ def make_minimal(extra=None):
 
 class TextRulesTest(unittest.TestCase):
     CASES = [
-        ("releases.herdr.dev", "releases.kompitum.invalid"),
+        ("releases.herdr.dev", "xharvak.github.io/kompitum"),
         ("herdr", "kompitum"),
         ("herdr_core", "kompitum_core"),
         ("Herdr", "Kompitum"),
@@ -371,6 +371,25 @@ class TextRulesTest(unittest.TestCase):
         )
         once = kompitumize.apply_text(sentence)
         self.assertEqual(kompitumize.apply_text(once), once)
+
+    def test_release_and_media_hosts_are_github_pages(self):
+        cases = [
+            (
+                "https://releases.herdr.dev/core/latest.json",
+                "https://xharvak.github.io/kompitum/core/latest.json",
+            ),
+            (
+                "https://media.herdr.dev/0.1.4/a.webp",
+                "https://xharvak.github.io/kompitum/media/0.1.4/a.webp",
+            ),
+            (
+                "https://telemetry.herdr.dev/v1/report",
+                "https://telemetry.kompitum.invalid/v1/report",
+            ),
+        ]
+        for old, new in cases:
+            with self.subTest(old=old):
+                self.assertEqual(kompitumize.apply_text(old), new)
 
 
 class PathRulesTest(unittest.TestCase):
@@ -987,12 +1006,13 @@ class AppTest(unittest.TestCase):
 
     def test_hosts_become_kompitum_invalid(self):
         repo, root = make_app(
-            {"docs/net.txt": "herdr.dev telemetry.herdr.dev releases.herdr.dev.\n"}
+            {"docs/net.txt": "herdr.dev telemetry.herdr.dev releases.herdr.dev media.herdr.dev.\n"}
         )
         payload = self.check(repo)
         self.assertEqual(
             repo.read(payload["tree"], "app/docs/net.txt"),
-            b"kompitum.invalid telemetry.kompitum.invalid releases.kompitum.invalid.\n",
+            b"kompitum.invalid telemetry.kompitum.invalid xharvak.github.io/kompitum "
+            b"xharvak.github.io/kompitum/media.\n",
         )
 
     def test_upstream_github_address_stays(self):

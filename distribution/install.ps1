@@ -1,6 +1,6 @@
 # Installs kompitum-core (kom) on Windows, or updates it:
 #
-#   powershell -c "irm https://releases.kompitum.invalid/core/install.ps1 | iex"
+#   powershell -c "irm https://xharvak.github.io/kompitum/core/install.ps1 | iex"
 #
 # Into %LOCALAPPDATA%\Programs\kompitum-core (kompitum-core.exe, Microsoft's
 # ConPTY beside it), added to your PATH, with kom.exe linked to it only if no
@@ -23,7 +23,7 @@ $ProgressPreference = "SilentlyContinue"
 # throw, not exit: under `irm | iex`, exit would close the person's window.
 function Fail($why) { throw "kom: $why" }
 
-$releases = if ($env:KOMPITUM_RELEASES_URL) { $env:KOMPITUM_RELEASES_URL.TrimEnd("/") } else { "https://releases.kompitum.invalid" }
+$releases = if ($env:KOMPITUM_RELEASES_URL) { $env:KOMPITUM_RELEASES_URL.TrimEnd("/") } else { "https://xharvak.github.io/kompitum" }
 $dir = if ($env:KOMPITUM_INSTALL_DIR) { $env:KOMPITUM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\kompitum-core" }
 $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
 if ($arch -ne "AMD64") { Fail "no build for $arch Windows yet (x64 only)" }

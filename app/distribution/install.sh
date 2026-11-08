@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs the Kompitum app, and kompitum-core if there's none yet:
 #
-#   curl -fsSL https://releases.kompitum.invalid/app/install.sh | sh
+#   curl -fsSL https://xharvak.github.io/kompitum/app/install.sh | sh
 #
 # Linux: the app into ~/.local/share/kompitum-app, `kompitum-app` in ~/.local/bin,
 # a launcher entry and icon. macOS: Kompitum.app into ~/Applications, keeping
@@ -11,7 +11,7 @@
 # keeps it current after that. Running it again updates the app.
 set -eu
 
-releases=${KOMPITUM_RELEASES_URL:-https://releases.kompitum.invalid}
+releases=${KOMPITUM_RELEASES_URL:-https://xharvak.github.io/kompitum}
 bin="$HOME/.local/bin"
 
 say() { printf '%s\n' "$*"; }
@@ -37,7 +37,7 @@ if [ "$os" = macos ] && [ "$arch" = x86_64 ]; then
      [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || true)" = 1 ]; then
     arch=aarch64
   else
-    fail "Intel Macs aren't supported; build from source: https://github.com/herdrdev/herdr-app#build-from-source"
+    fail "Intel Macs aren't supported; build from source: https://github.com/XharvaK/kompitum#build-from-source"
   fi
 fi
 target="$os-$arch"

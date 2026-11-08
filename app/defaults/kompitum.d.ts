@@ -299,33 +299,22 @@ export function updates(): {
 /** Record only spotlight versions actually shown expanded, never collapsed headlines. */
 export function presentUpdateNotes(versions: string[]): null;
 
-/** Anonymous usage data (one report per day, never terminal content). `enabled`: collecting now;
- *  `setting`: settings.json's `telemetry`; `off_because`: an env var that turns it off for this run
- *  (DO_NOT_TRACK, KOMPITUM_TELEMETRY, CI); `sends`: false for a build from source (it never sends).
- *  `draft`: today's report so far; `queued`: finished days waiting to go, exactly as they'll be
- *  sent; `last_sent`: the last one the server took (`at`: unix seconds). Null until it starts. */
+/** The local usage counts, kept in `telemetry/` on this computer, never terminal content. `enabled`:
+ *  collecting now; `setting`: settings.json's `telemetry`; `off_because`: an env var that turns it
+ *  off for this run (DO_NOT_TRACK, KOMPITUM_TELEMETRY, CI); `sends`: true only when
+ *  KOMPITUM_TELEMETRY_URL names a test server; `endpoint`: that URL, or null.
+ *  `draft`: today's counts so far; `queued`: finished days, kept locally; `last_sent`: the last
+ *  report a test server took (`at`: unix seconds). Null until it starts. Nothing is sent. */
 export function telemetry(): {
   enabled: boolean;
   setting: boolean;
   off_because: string | null;
   sends: boolean;
-  endpoint: string;
+  endpoint: string | null;
   draft: Record<string, unknown> | null;
   queued: Record<string, unknown>[];
   last_sent: { at: number; report: Record<string, unknown> } | null;
 } | null;
-
-/** The explicit feedback draft. Sending is restricted to the app-owned feedback frame. */
-export function feedbackPreview(message: string, email: string, images?: number): { body: import("gpui-kit").HostValue; available: boolean };
-/** The clipboard's image, kept for the form (`path` for `image()`); null when it holds none. Frame-only. */
-export function feedbackPasteImage(): { path: string } | { error: string } | null;
-/** Picks image files (at most 3), each kept like a pasted one. Frame-only. */
-export function feedbackPickImages(): Promise<({ path: string } | { error: string })[]>;
-/** Attaches dropped image paths (at most 3), using the picker's conversion and limits. Frame-only. */
-export function feedbackAttachImages(paths: string[]): ({ path: string } | { error: string })[];
-/** Drops the form's kept screenshots. Frame-only. */
-export function feedbackClearImages(): null;
-export function sendFeedback(body: import("gpui-kit").HostValue, images?: string[]): Promise<string | null>;
 
 /** What the app runs with: the shown layout's look (theme name, fonts, sizes, terminal
  *  padding and opacity) with the person's zoom and sounds. */

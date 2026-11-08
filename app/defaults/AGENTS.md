@@ -612,9 +612,9 @@ The main ones:
   `layout.reset {name?}` (reset a shipped layout and its clicks),
   `layout.clone {name, as?}` (duplicate, then switch; default `<name>-copy`).
 - App: `mod.clone {name, as?}` (duplicate; default `<name>-copy`), `mod.open {name}` (again: closes it), `overlay.close {id?}`, `app.help` (again: closes it), `app.palette` (again: closes it), `app.settings {section?}`
-  (sections: `look`, `machines`, `alerts`, `updates`, `privacy`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
+  (sections: `look`, `machines`, `alerts`, `about`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
   `app.check_updates` (only a successful check reports Up to date; a failed check clears the checked time and can be retried), `app.update_core` (a newer kompitum-core of this generation, terminals kept;
-  never one a package manager owns), `app.welcome`, `app.whats_new`, `app.feedback {message?, from?}` (from `"person"` or `"agent"`; opens a review window, where the person can paste up to 3 screenshots; never sends until the person clicks Send), `app.reset`,
+  never one a package manager owns), `app.welcome`, `app.whats_new`, `app.feedback {message?, from?}` (from `"person"` or `"agent"`; opens a new issue on Kompitum's GitHub in the browser, filled in with the message and the versions; nothing is sent until the person submits it there), `app.reset`,
   `app.theme {name}`, `app.zoom_in`, `app.zoom_out`, `app.zoom_reset`,
   `app.update` (restart into a downloaded update).
   Add machine lists all named ssh-config hosts in a scrollable list. Machines
@@ -679,7 +679,7 @@ What's about the user, never a look:
   waiting, the next launch installs it before opening a window. The first
   start after an app update also updates kompitum-core
   to the latest release of the same generation, keeping terminals running.
-  Settings → Updates keeps app and core actions together;
+  Settings → About keeps app and core actions together;
   its What's new button opens the waiting update's release range, or this
   version's notes, in the What's new window. Reading never clears the waiting-update dot.
   Rare spotlight releases open What’s new after restart, once; otherwise a
@@ -696,7 +696,7 @@ What's about the user, never a look:
   edge-to-edge media at its original aspect ratio, then headline and detail.
   For local release-media previews only, launch with
   `KOMPITUM_NOTES_MEDIA_DIR=/var/tmp/kompitum-notes-media`: URLs under
-  `https://media.kompitum.invalid/<version>/<scene>.webp` use that directory's
+  `https://xharvak.github.io/kompitum/media/<version>/<scene>.webp` use that directory's
   `<version>/<scene>.webp` instead of downloading. Without the variable,
   media uses the normal HTTPS cache.
   Mods use `updates().notes` and `presentUpdateNotes([version])` only
@@ -733,14 +733,13 @@ What's about the user, never a look:
   pane's right edge (default `true`). It shows only when the pane has
   scrollback — never on the alternate screen (editors, pagers) — and
   drags to move through it.
-- `telemetry`: `false` stops anonymous usage data and deletes what wasn't
-  sent (on when absent; Settings → Privacy shows each report word for
-  word, and `telemetry()` in mods). Once a day the app sends counts:
-  version, OS, which known agents ran, how many spaces, tabs and
-  terminals, which layouts, shipped mods and commands were used. Never
-  terminal content, names of files, folders, spaces or the person's own
-  mods; nothing from kompitum-core. `DO_NOT_TRACK=1` or `KOMPITUM_TELEMETRY=0`
-  turns it off for one run. A build from source never sends.
+- `telemetry`: `false` turns off the local counts and deletes them (on when
+  absent; `telemetry()` in mods reads them). The counts stay in `telemetry/`
+  on this computer: version, OS, which known agents ran, how many spaces,
+  tabs and terminals, which layouts, shipped mods and commands were used.
+  Never terminal content, names of files, folders, spaces or the person's own
+  mods; nothing from kompitum-core. Nothing is sent. `DO_NOT_TRACK=1` or
+  `KOMPITUM_TELEMETRY=0` turns it off for one run.
 
 ## Programs: `programs.json`
 
@@ -930,8 +929,7 @@ Chained builders with GPUI's snake_case names: `div()`, `h_flex()`,
 `.hover((s) => s.bg(c))`, `.on_scroll_wheel(...)`; keyboard: `this.h = cx.focus_handle()`
 in init, `.track_focus(this.h).on_key_down((e, cx) => …)`, `this.h.focus()`.
 `.on_drop((event, cx) => …)` on a plain layout element receives external files as
-`event.paths` (absolute paths). The feedback form accepts dropped images with
-the same limits, previews and removal as picked images.
+`event.paths` (absolute paths).
 `.on_hover((hovered, cx) => …)` reports pointer entry and exit on buttons
 and other interactive controls too.
 `.when(cond, (el) => …)`, `.children([...])`. Controls from `gpui-base`

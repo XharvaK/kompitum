@@ -14,7 +14,8 @@ This is a fork of [herdr-core](https://github.com/herdrdev/herdr-core), taken at
 | `hc`, `hcs`, `nohc` | `kom`, `koms`, `nokom` |
 | `HC_` at the start of a word | `KOMPITUM_` |
 | `HC` as a word | `KOM` |
-| `releases.herdr.dev` | `releases.kompitum.invalid` |
+| `releases.herdr.dev` | `xharvak.github.io/kompitum` |
+| `media.herdr.dev` | `xharvak.github.io/kompitum/media` |
 | `limen`, `Limen`, `LIMEN`; `lc`, `lcs`, `nolc` (legacy name) | `kompitum`, `Kompitum`, `KOMPITUM`; `kom`, `koms`, `nokom` |
 
 - **Left out of the renamed tree:** `README.md`, `AGENTS.md` and `SECURITY.md`, which are ours on `main`; `.github/`, which will be ours; `CONTRIBUTING.md`; and `tests/macos_distribution.rs`, which reads upstream's release workflow.

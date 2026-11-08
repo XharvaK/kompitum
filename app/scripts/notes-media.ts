@@ -72,7 +72,7 @@ async function upload(v: string) {
   for (const name of names) {
     const key = `${v}/${name}`;
     await uploadFile(s3, key, Bun.file(join(dir, name)));
-    console.log(`https://media.kompitum.invalid/${key}`);
+    console.log(`https://xharvak.github.io/kompitum/media/${key}`);
   }
 }
 async function clip(scene: string, v: string) {

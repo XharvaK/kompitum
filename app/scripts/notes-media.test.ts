@@ -39,8 +39,8 @@ test("version is a single safe directory component", () => {
 });
 
 test("gate checks only the requested entry and deduplicates images", () => {
-  const notes = "## [0.1.4] - 2026-10-23\n- Demo\n![one](https://media.kompitum.invalid/0.1.4/peek.webp)\n  ![two](https://media.kompitum.invalid/0.1.4/peek.webp)\n## [0.1.3] - 2026-10-22\n![old](https://example.com/old.png)\n";
-  expect(mediaUrls(notes, "0.1.4")).toEqual(["https://media.kompitum.invalid/0.1.4/peek.webp"]);
+  const notes = "## [0.1.4] - 2026-10-23\n- Demo\n![one](https://xharvak.github.io/kompitum/media/0.1.4/peek.webp)\n  ![two](https://xharvak.github.io/kompitum/media/0.1.4/peek.webp)\n## [0.1.3] - 2026-10-22\n![old](https://example.com/old.png)\n";
+  expect(mediaUrls(notes, "0.1.4")).toEqual(["https://xharvak.github.io/kompitum/media/0.1.4/peek.webp"]);
   expect(() => mediaUrls(notes, "0.1.2")).toThrow();
   expect(() => mediaUrls(notes + "## [0.1.4] - duplicate\n", "0.1.4")).toThrow();
 });
@@ -49,7 +49,7 @@ test("spotlight platform comments do not interfere with the release media gate",
   for (const marker of ["<!-- spotlight -->", "<!-- spotlight macos -->", "<!-- spotlight macos linux -->"]) {
     const notes = `## [0.1.4] - today\n${marker}\n### New\n- A change.\n`;
     expect(mediaUrls(notes, "0.1.4")).toEqual([]);
-    expect(mediaUrls(notes + "![demo](https://media.kompitum.invalid/0.1.4/peek.webp)\n", "0.1.4")).toEqual(["https://media.kompitum.invalid/0.1.4/peek.webp"]);
+    expect(mediaUrls(notes + "![demo](https://xharvak.github.io/kompitum/media/0.1.4/peek.webp)\n", "0.1.4")).toEqual(["https://xharvak.github.io/kompitum/media/0.1.4/peek.webp"]);
   }
 });
 

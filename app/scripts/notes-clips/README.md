@@ -24,7 +24,7 @@ and inspect the generated clip before uploading.
 Output: `/var/tmp/kompitum-notes-media/<version>/<scene>.webp`.
 Override the base with `KOMPITUM_NOTES_MEDIA_DIR`. Launch the app with that
 same variable to preview CHANGELOG images pointing at the final URLs:
-`https://media.kompitum.invalid/<version>/<scene>.webp`. No CHANGELOG rewrite needed.
+`https://xharvak.github.io/kompitum/media/<version>/<scene>.webp`. No CHANGELOG rewrite needed.
 
 `just notes-upload <version>` uploads the version's WebP files to
 `kompitum-media`, using Bun's S3Client and credentials in

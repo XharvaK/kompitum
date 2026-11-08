@@ -1,4 +1,4 @@
-//! Released builds on releases.kompitum.invalid: the list (`core/latest.json`, or
+//! Released builds on xharvak.github.io/kompitum: the list (`core/latest.json`, or
 //! `core/<version>/manifest.json` for one version) and its checked
 //! downloads. curl, sha256sum/shasum (Windows: its own crypto) and tar do
 //! the work: no HTTP or crypto code in kom for something run this rarely.
@@ -24,13 +24,13 @@ pub struct Target {
 
 fn base() -> String {
     std::env::var("KOMPITUM_RELEASES_URL")
-        .unwrap_or_else(|_| "https://releases.kompitum.invalid".into())
+        .unwrap_or_else(|_| "https://xharvak.github.io/kompitum".into())
         .trim_end_matches('/')
         .into()
 }
 
 fn unavailable(why: String) -> RpcError {
-    RpcError::new("unavailable", why, "check your connection; the releases are at releases.kompitum.invalid")
+    RpcError::new("unavailable", why, "check your connection; the releases are at xharvak.github.io/kompitum")
 }
 
 fn curl(url: &str, to: &Path) -> Result<(), RpcError> {

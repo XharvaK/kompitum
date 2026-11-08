@@ -20,7 +20,7 @@ Mods may store sensitive data here. Kompitum does not encrypt this folder.
 The [installed guide's file map](../defaults/AGENTS.md#the-files) explains the files.
 
 Spaces, tabs and splits are stored in each machine's core document, not in the app home.
-Terminals and their output belong to [kompitum-core](https://github.com/herdrdev/herdr-core).
+Terminals and their output belong to [kompitum-core](https://github.com/XharvaK/kompitum).
 Removing the app home does not stop the core or erase its data.
 
 The app exposes a local control socket in its home so agents can inspect and drive the window.
@@ -44,13 +44,13 @@ Do not assume every download is notarized or signed.
 
 ## Telemetry
 
-Usage telemetry is **on by default**. Release builds send a small daily report to `https://telemetry.kompitum.invalid/v1/report` with a random install ID.
-Reports include app and core versions, OS and architecture, bucketed usage time and counts, known agent names, built-in layout names, mod counts, app command names, and fixed event counters.
-Custom layout names become `custom`; custom mod names are not sent.
+Kompitum sends no usage data. It keeps a few counts on this computer (which features ran, updates, unclean exits) in `telemetry/` under its state folder, for you and for diagnostics; `"telemetry": false` in settings.json turns them off and deletes them.
+
+The counts cover app and core versions, OS and architecture, bucketed usage time and counts, known agent names, built-in layout names, mod counts, app command names, and fixed event counters.
+Custom layout names become `custom`; custom mod names are not recorded.
 Terminal text, prompts, file contents, folder paths and free-text names are not included.
 
-Turn it off in **Settings → Privacy**. That page also lets you inspect the report.
-Or set this field in your existing `settings.json`:
+Turn them off with this field in your existing `settings.json`:
 
 ```json
 {
@@ -58,11 +58,11 @@ Or set this field in your existing `settings.json`:
 }
 ```
 
-Turning it off deletes the local install ID and unsent reports. It cannot recall reports already sent.
+Turning it off deletes the local install ID and the counts. Nothing leaves this computer.
 For one run, set `DO_NOT_TRACK=1` or `KOMPITUM_TELEMETRY=0`. CI environments disable collection too.
-Ordinary source builds collect locally while enabled but do not send, unless pointed at a test endpoint with `KOMPITUM_TELEMETRY_URL`.
+`KOMPITUM_TELEMETRY_URL` points a test build at a test server; ordinary builds never send.
 
-Telemetry being off does not stop update checks, mod network requests or feedback you choose to send.
-Feedback is drafted for you to review and send, not sent silently.
+Turning the counts off does not stop update checks or mod network requests.
+Send feedback opens a filled-in GitHub issue in your browser, for you to read and submit; the app sends nothing itself.
 
 [Back to Kompitum](../README.md)
