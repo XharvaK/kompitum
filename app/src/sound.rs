@@ -31,6 +31,10 @@ pub fn play(sound: &str) {
     if std::env::var_os("KOMPITUM_APP_NO_SOUND").is_some() {
         return;
     }
+    // A fullscreen game gets the screen and the quiet: every sound, agents' too.
+    if crate::quiet::quiet() {
+        return;
+    }
     let sound = sound.to_owned();
     let attention = matches!(sound.as_str(), "done" | "blocked");
     // Settings are local to the UI thread; resolve them before handing playback off.

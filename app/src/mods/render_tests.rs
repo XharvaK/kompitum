@@ -111,6 +111,33 @@ fn fixture(populated: bool, props: Value, update: Value) -> BTreeMap<String, Val
     values
 }
 
+fn vault_owner_note() -> Value {
+    json!({
+        "path": "manager/to/owner/2026-11-08-please-review.md",
+        "from": "manager", "to": "owner", "kind": "request", "status": "open",
+        "title": "Please review", "date": "2026-11-08T09:00:00+03:00",
+        "project": null, "re": [], "read_by": [], "done": null
+    })
+}
+
+fn vault_agent_note() -> Value {
+    json!({
+        "path": "worker/to/manager/2026-11-08-progress.md",
+        "from": "worker", "to": "manager", "kind": "report", "status": "open",
+        "title": "Progress on the build", "date": "2026-11-08T08:30:00+03:00",
+        "project": null, "re": [],
+        "read_by": [{"agent": "manager", "at": "2026-11-08T08:40:00+03:00"}], "done": null
+    })
+}
+
+fn vault_report(notes: Vec<Value>, unpushed: u32, problems: Vec<&str>) -> String {
+    json!({
+        "vault": "/fixture/vault", "agent": "owner", "unpushed": unpushed,
+        "problems": problems, "notes": notes
+    })
+    .to_string()
+}
+
 fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostModule {
     let person = values.get("person").cloned();
     let mut module = HostModule::new("kompitum");
@@ -188,6 +215,9 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                         .map_or(Value::Null, |person| Value::String(person.to_string())),
                 ),
                 "readTextFile" if first == "/fixture/.ssh/config" => Some(Value::Null),
+                "readTextFile" if first.as_str().is_some_and(|p| p.starts_with("/fixture/vault/")) => {
+                    Some(json!("# Fixture note\n\nA body from the vault.\n"))
+                }
                 "readTextFile" => first
                     .as_str()
                     .and_then(|p| p.strip_prefix("/fixture/app/layouts/"))
@@ -197,6 +227,30 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                 "kom" if first == json!(["machine", "ls", "--json"]) => {
                     Some(json!({"code":0,"stdout":"{\"machines\":[{\"name\":\"remote\",\"state\":\"online\"}]}","stderr":""}))
                 }
+                // The mailbox: one note that needs the Owner, one between agents.
+                "kom" if first == json!(["vault", "open", "--json", "--as", "owner"]) => Some(json!({
+                    "code": 0,
+                    "stdout": vault_report(vec![vault_owner_note()], 2, vec!["fixture: a note's mark file is damaged"]),
+                    "stderr": ""
+                })),
+                "kom" if first == json!(["vault", "find", "--json", "--limit", "50"]) => Some(json!({
+                    "code": 0,
+                    "stdout": vault_report(vec![vault_owner_note(), vault_agent_note()], 2, vec![]),
+                    "stderr": ""
+                })),
+                "kom" if first == json!(["vault", "changes", "--json", "--as", "owner"]) => Some(json!({
+                    "code": 0,
+                    "stdout": vault_report(vec![], 0, vec![]),
+                    "stderr": ""
+                })),
+                "kom" if first == json!(["vault", "read", "manager/to/owner/2026-11-08-please-review.md", "--json", "--as", "owner"]) => Some(json!({
+                    "code": 0,
+                    "stdout": json!({
+                        "vault": "/fixture/vault", "agent": "owner", "unpushed": 0,
+                        "problems": [], "note": vault_owner_note()
+                    }).to_string(),
+                    "stderr": ""
+                })),
                 "kom" if first == json!(["machine", "add", "host", "--json"]) => {
                     Some(json!({"code":1,"stdout":"{\"error\":{\"kind\":\"host_key\",\"message\":\"unknown host key\"}}","stderr":""}))
                 }
@@ -632,7 +686,16 @@ fn the_lead_overlay_draws_the_hand_off_with_a_way_out(cx: &mut TestAppContext) {
     p["title"] = json!("Hand the lead to Manager");
     p["markdown"] = json!("Nothing is open.");
     p["send"] = json!("manager");
-    let tree = describe(cx, &staged, "mods/lead", true, p, updates("current", "current"), None).unwrap();
+    let tree = describe(
+        cx,
+        &staged,
+        "mods/lead",
+        true,
+        p,
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
     assert!(tree.contains("Hand the lead to Manager"), "{tree}");
     assert!(tree.contains("lead-close"), "{tree}");
     assert!(!tree.contains("Lead · "), "the pill drew instead: {tree}");
@@ -1542,4 +1605,129 @@ fn status_bar_shows_the_real_palette_key(cx: &mut TestAppContext) {
         !tree.contains("Shift P"),
         "unbound hint must not invent a key: {tree}"
     );
+}
+
+#[gpui::test]
+fn the_mailbox_lists_both_tabs_and_a_row_per_note(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/mailbox",
+        fixture(true, props(), updates("current", "current")),
+        Some("this.tab = 'all';"),
+    )
+    .unwrap();
+    assert!(tree.contains("Needs you"), "{tree}");
+    assert!(tree.contains("All notes"), "{tree}");
+    assert!(tree.contains("Please review"), "{tree}");
+    assert!(tree.contains("Progress on the build"), "{tree}");
+    assert!(
+        tree.contains("fixture: a note's mark file is damaged"),
+        "problems must be drawn in words: {tree}"
+    );
+}
+
+#[gpui::test]
+fn the_mailbox_opens_a_note_with_answer_and_close(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["note"] = json!("manager/to/owner/2026-11-08-please-review.md");
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/mailbox",
+        fixture(true, p, updates("current", "current")),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Please review"), "{tree}");
+    assert!(
+        tree.contains("mail-answer") && tree.contains("Answer"),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("mail-close") && tree.contains("Close"),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("A body from the vault"),
+        "the body is read from the vault: {tree}"
+    );
+}
+
+#[gpui::test]
+fn the_mailbox_answer_opens_a_multi_line_field_with_send(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(cx, &staged, "frame/mailbox", fixture(true, props(), updates("current", "current")),
+        Some(
+            "this.selected = { path: 'manager/to/owner/2026-11-08-please-review.md', from: 'manager', \
+             to: 'owner', kind: 'request', title: 'Please review', date: '2026-11-08T09:00:00+03:00' }; \
+             this.answerNote(cx);",
+        ),
+    )
+    .unwrap();
+    assert!(
+        tree.contains("mail-send") && tree.contains("Send"),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("mail-cancel") && tree.contains("Cancel"),
+        "{tree}"
+    );
+    assert!(
+        tree.to_lowercase().contains("textarea"),
+        "the field must be multi-line: {tree}"
+    );
+}
+
+#[gpui::test]
+fn the_vault_section_draws_its_folder_and_mailbox_button(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("vault");
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        fixture(true, p, updates("current", "current")),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("st-s-vault"), "{tree}");
+    assert!(tree.contains("/fixture/vault"), "{tree}");
+    assert!(tree.contains("2 notes not sent yet"), "{tree}");
+    assert!(
+        tree.contains("fixture: a note's mark file is damaged"),
+        "{tree}"
+    );
+    assert!(tree.contains("1 note"), "{tree}");
+    assert!(tree.contains("Open the mailbox"), "{tree}");
+}
+
+#[gpui::test]
+fn the_alerts_section_draws_the_popup_toggles(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("alerts");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("POP-UPS"), "{tree}");
+    assert!(tree.contains("Notes between agents"), "{tree}");
+    assert!(tree.contains("Quiet while a game is fullscreen"), "{tree}");
+    assert!(tree.contains("st-notes-between-agents"), "{tree}");
+    assert!(tree.contains("st-quiet-fullscreen"), "{tree}");
 }

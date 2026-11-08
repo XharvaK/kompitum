@@ -624,6 +624,8 @@ The main ones:
   or replaced and a different core answers there, its sidebar offers Connect:
   explicitly forget the old identity and pair again with the same name and target.
   Other unreachable machines don't offer this.
+- Mailbox: `app.mailbox {note?}` opens the vault's notes in a sheet over the window;
+  `note` is a vault path to open there. Answer and Close write through `kom vault`.
 - Window: `window.minimize`, `window.maximize` (or back), `window.close`.
 - macOS: `app.quit`, `app.hide`, `app.hide_others`, `app.show_all`.
 
@@ -737,6 +739,11 @@ What's about the user, never a look:
   pane's right edge (default `true`). It shows only when the pane has
   scrollback — never on the alternate screen (editors, pagers) — and
   drags to move through it.
+- `notes_between_agents`: `false` stops notes between agents from popping up
+  for a few seconds; on by default. Notes that need the Owner still wait for them.
+- `quiet_while_fullscreen`: `false` turns off the quiet while another app fills
+  the screen: no sounds and no passing notes; on by default. Notes that need the
+  Owner still show and wait for an answer.
 - `telemetry`: `false` turns off the local counts and deletes them (on when
   absent; `telemetry()` in mods reads them). The counts stay in `telemetry/`
   on this computer: version, OS, which known agents ran, how many spaces,

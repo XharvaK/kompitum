@@ -14,6 +14,7 @@ mod layout;
 mod layout_sync;
 mod legacy;
 mod links;
+mod mail;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -27,6 +28,7 @@ mod persist;
 mod place;
 mod process_cwd;
 mod programs;
+mod quiet;
 mod remote_shell;
 mod schemes;
 mod settings;
@@ -268,4 +270,6 @@ pub fn open_main(
     })
     .expect("cannot open the Kompitum window");
     cx.activate(true);
+    // One watcher for the whole app: the window has read settings.json by now.
+    mail::start();
 }

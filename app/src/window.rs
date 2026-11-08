@@ -414,6 +414,18 @@ impl OverlayKind {
     }
 }
 
+/// How long a toast stays. `timeout: 0` means it waits for a click or a close,
+/// so the sweep below never takes it.
+pub(crate) fn toast_expiry(is_toast: bool, timeout: f64) -> Option<Duration> {
+    (is_toast && timeout > 0.0).then(|| Duration::from_millis(timeout as u64))
+}
+
+/// Whether the sweep closes an overlay with this expiry at `now`. None never
+/// expires.
+pub(crate) fn sweepable(expires: Option<Instant>, now: Instant) -> bool {
+    expires.is_some_and(|e| e <= now)
+}
+
 struct Overlay {
     id: String,
     kind: OverlayKind,
@@ -2827,6 +2839,10 @@ impl AppWindow {
         if looking {
             return;
         }
+        // The alert toast passes; a fullscreen game keeps the screen.
+        if crate::quiet::quiet() {
+            return;
+        }
         let rec = self.live.get(addr);
         let app = self.model.agents.get(addr).and_then(|a| a.app.clone());
         let name = rec
@@ -4765,6 +4781,19 @@ impl AppWindow {
                 }
                 return;
             }
+            "app.mailbox" => {
+                // Once: a second press doesn't stack another; asking for a note opens it there.
+                let note = Self::owned(a, "note");
+                let open = self.overlays.iter().any(|o| o.id == "mailbox");
+                if open && note.is_some() {
+                    self.close_overlay("mailbox", window, cx);
+                }
+                if !open || note.is_some() {
+                    let spec = json!({ "mod": "frame-mailbox", "kind": "dialog", "width": 880, "props": { "note": note } });
+                    self.open_overlay("mailbox".into(), spec, window, cx);
+                }
+                return;
+            }
             "app.check_updates" => crate::update::check_now(),
             "app.update_core" => {
                 if crate::update::core().ready.is_none() && crate::update::core().error.is_none() {
@@ -5081,6 +5110,7 @@ impl AppWindow {
                 _ => 5000.0,
             },
         );
+        let expires = toast_expiry(kind == OverlayKind::Toast, timeout).map(|d| Instant::now() + d);
         let slot = format!("overlay:{id}");
         // The frame takes the keyboard first, so a mod that focuses itself while loading wins.
         let focus = cx.focus_handle();
@@ -5108,8 +5138,7 @@ impl AppWindow {
             slot,
             at,
             size,
-            expires: (kind == OverlayKind::Toast)
-                .then(|| Instant::now() + Duration::from_millis(timeout as u64)),
+            expires,
             focus,
             layout,
             top,
@@ -5378,7 +5407,7 @@ impl AppWindow {
         let expired: Vec<String> = self
             .overlays
             .iter()
-            .filter(|o| o.expires.is_some_and(|e| e <= now))
+            .filter(|o| sweepable(o.expires, now))
             .map(|o| o.id.clone())
             .collect();
         for id in expired {

@@ -448,6 +448,12 @@ pub struct Person {
     /// Allow terminal programs (including remote ones) to copy text locally.
     #[serde(skip_serializing_if = "is_true")]
     pub clipboard_write: bool,
+    /// Show a note for a few seconds when agents write to each other.
+    #[serde(skip_serializing_if = "is_true")]
+    pub notes_between_agents: bool,
+    /// No sounds and no passing notes while another app fills the screen.
+    #[serde(skip_serializing_if = "is_true")]
+    pub quiet_while_fullscreen: bool,
     /// A draggable scroll position thumb at a terminal pane's right edge.
     #[serde(skip_serializing_if = "is_true")]
     pub pane_scrollbars: bool,
@@ -527,6 +533,8 @@ impl Default for Person {
             ui_font: None,
             telemetry: true,
             clipboard_write: true,
+            notes_between_agents: true,
+            quiet_while_fullscreen: true,
             pane_scrollbars: true,
             minimum_contrast: 1.0,
             option_as_alt: OptionAsAlt::Auto,
@@ -566,6 +574,10 @@ pub struct Settings {
     /// 0..1: below 1, what's behind a terminal shows through.
     pub terminal_opacity: f32,
     pub clipboard_write: bool,
+    /// Show a note for a few seconds when agents write to each other.
+    pub notes_between_agents: bool,
+    /// No sounds and no passing notes while another app fills the screen.
+    pub quiet_while_fullscreen: bool,
     pub minimum_contrast: f32,
     pub option_as_alt: OptionAsAlt,
     pub sounds: Sounds,
@@ -612,6 +624,8 @@ impl Default for Settings {
             terminal_padding: [10.0, 6.0],
             terminal_opacity: 1.0,
             clipboard_write: true,
+            notes_between_agents: true,
+            quiet_while_fullscreen: true,
             minimum_contrast: 1.0,
             option_as_alt: OptionAsAlt::Auto,
             sounds: Sounds::default(),
@@ -663,6 +677,8 @@ impl Settings {
             terminal_opacity: look.terminal_opacity.unwrap_or(1.0).clamp(0.0, 1.0),
             sounds: person.sounds.clone(),
             clipboard_write: person.clipboard_write,
+            notes_between_agents: person.notes_between_agents,
+            quiet_while_fullscreen: person.quiet_while_fullscreen,
             minimum_contrast: person.minimum_contrast,
             option_as_alt: person.option_as_alt,
         }
@@ -729,6 +745,23 @@ pub fn path() -> std::path::PathBuf {
 thread_local! {
     static CURRENT: RefCell<(Rc<Settings>, Rc<Theme>)> =
         RefCell::new((Rc::new(Settings::default()), Rc::new(resolve(&INK, &BTreeMap::new()))));
+}
+
+/// The two settings other threads ask about (the vault watcher), kept in step
+/// with the UI thread's copy by `set`.
+static NOTES_BETWEEN_AGENTS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+static QUIET_WHILE_FULLSCREEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// Whether notes between agents pop up (settings.json's `notes_between_agents`).
+pub fn notes_between_agents() -> bool {
+    NOTES_BETWEEN_AGENTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether quiet while another app fills the screen is on.
+pub fn quiet_while_fullscreen() -> bool {
+    QUIET_WHILE_FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 const ZOOM_MIN: f32 = 0.5;
@@ -800,6 +833,8 @@ pub fn write_person(person: &Person) -> std::io::Result<()> {
 
 /// Installs new settings; returns whether anything changed.
 pub fn set(s: Settings) -> bool {
+    NOTES_BETWEEN_AGENTS.store(s.notes_between_agents, std::sync::atomic::Ordering::Relaxed);
+    QUIET_WHILE_FULLSCREEN.store(s.quiet_while_fullscreen, std::sync::atomic::Ordering::Relaxed);
     #[cfg(target_os = "macos")]
     gpui_macos::set_option_as_alt(match s.option_as_alt {
         OptionAsAlt::Auto => None,
@@ -1173,6 +1208,8 @@ mod tests {
             ui_font: Some(String::new()),
             telemetry: false,
             clipboard_write: false,
+            notes_between_agents: false,
+            quiet_while_fullscreen: false,
             appearance: Appearance::Light,
             theme: Some(crate::layout::ThemeChoice::One(String::new())),
             colors: [("text".into(), String::new())].into(),

@@ -68,7 +68,10 @@ fn cache_path(scheme: &str) -> PathBuf {
 /// The icon as `image()` names it: mods read assets by their path under the app home.
 pub fn icon_asset(icon: &std::path::Path) -> String {
     let home = crate::mods::app_dir();
-    icon.strip_prefix(&home).unwrap_or(icon).to_string_lossy().replace('\\', "/")
+    icon.strip_prefix(&home)
+        .unwrap_or(icon)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 /// Writes the icon where `image()` can read it. No icon is never an error.

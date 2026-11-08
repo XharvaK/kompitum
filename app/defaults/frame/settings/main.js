@@ -3,6 +3,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
 import { kom, run, theme, fonts, updates, settings, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "kompitum";
+import { loadVault, vaultSection } from "./vault.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
 
 const I = (name) => `frame/settings/${name}.svg`;
@@ -11,6 +12,7 @@ const SECTIONS = [
   { id: "look", title: "Look", icon: "palette" },
   ...(window()?.platform === "macos" ? [{ id: "keyboard", title: "Keyboard", icon: "keyboard" }] : []),
   { id: "machines", title: "Machines", icon: "server" },
+  { id: "vault", title: "Vault", icon: "mail" },
   { id: "connect", title: "Connect", icon: "link" },
   { id: "alerts", title: "Alerts", icon: "bell" },
   { id: "about", title: "About", icon: "info" },
@@ -51,11 +53,15 @@ export default class Settings extends View {
     this.machineResults = {};
     this.machineEdit = null;
     this.machineNotice = null;
+    this.vault = null;
+    this.vaultError = null;
+    this.vaultLoading = false;
     this.handle = cx.focus_handle();
     this.handle.focus();
     cx.spawn(async (cx) => {
       await this.load();
       if (this.section === "machines") await this.loadMachines();
+      if (this.section === "vault") loadVault(this, cx);
       cx.notify();
     });
     // After "Check now": follow the look (the answer comes from the app), then
@@ -512,6 +518,8 @@ export default class Settings extends View {
   alerts(t) {
     const sounds = this.person.sounds ?? {};
     const on = sounds.enabled !== false;
+    const between = this.person.notes_between_agents !== false;
+    const quiet = this.person.quiet_while_fullscreen !== false;
     const file = (f) => (f ? f.split(/[\\/]/).pop() : "Kompitum's sound");
     return v_flex()
       .w_full()
@@ -526,6 +534,10 @@ export default class Settings extends View {
       )
       .child(this.row(t, "An agent needs you", file(sounds.blocked), this.button(t, "st-play-blocked", "Play", () => playSound("blocked"))))
       .child(this.row(t, "An agent finished", file(sounds.done), this.button(t, "st-play-done", "Play", () => playSound("done"))))
+      .child(div().h(18))
+      .child(this.heading(t, "Pop-ups"))
+      .child(this.row(t, "Notes between agents", "Show a note for a few seconds when agents write to each other.", this.toggle(t, "st-notes-between-agents", between, (_e, cx) => this.change((p) => (p.notes_between_agents = !between), cx))))
+      .child(this.row(t, "Quiet while a game is fullscreen", "No sounds and no passing notes while another app fills the screen. Notes that need you still wait for you.", this.toggle(t, "st-quiet-fullscreen", quiet, (_e, cx) => this.change((p) => (p.quiet_while_fullscreen = !quiet), cx))))
       .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Want your own sounds? Ask your agent to set sounds.done and sounds.blocked in settings.json to an MP3."));
   }
 
@@ -623,6 +635,7 @@ export default class Settings extends View {
               this.machineEdit = null;
               this.handle.focus();
               if (s.id === "machines") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
+              if (s.id === "vault") loadVault(this, cx);
               if (s.id === "connect" && this.connect.vault === null) loadConnect(this, cx);
               cx.notify();
             })
@@ -683,6 +696,8 @@ export default class Settings extends View {
                         ? this.keyboard(t)
                       : this.section === "machines"
                         ? this.machines(t)
+                      : this.section === "vault"
+                        ? vaultSection(this, t, cx)
                       : this.section === "connect"
                         ? connectPage(this, t, cx)
                       : this.section === "alerts"

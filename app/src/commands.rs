@@ -299,6 +299,11 @@ pub const COMMANDS: &[Command] = &[
         "Open the settings (section: look, alerts, about).",
     ),
     cmd(
+        "app.mailbox",
+        &[opt("note")],
+        "Open the mailbox: the vault's notes, and one note's path to open there.",
+    ),
+    cmd(
         "app.check_updates",
         &[],
         "Look for a newer Kompitum and kompitum-core now.",
