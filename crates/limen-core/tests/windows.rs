@@ -130,6 +130,7 @@ fn cmd_at(exe: &Path, session: &str, root: &Path) -> Command {
         .env_remove("LIMEN_SOCKET")
         // A worker's own suite starts lc too: the mark is the worker's, not ours.
         .env_remove("LIMEN_WORKER")
+        .env_remove("LIMEN_AGENT")
         .env_remove("SSH_CONNECTION")
         .env_remove("SSH_CLIENT")
         .env_remove("SSH_TTY");

@@ -162,6 +162,12 @@ pub struct Task {
     pub wall_s: u64,
     /// The caller's terminal.
     pub started_by: Option<String>,
+    /// Who started it: opus, manager or owner; null for a record from before this.
+    #[serde(default)]
+    pub by: Option<String>,
+    /// The Owner's words that let a manager accept it.
+    #[serde(default)]
+    pub owner_said: Option<String>,
     pub warnings: Vec<String>,
     /// Why it is still queued, in words.
     pub waiting: Option<String>,
@@ -358,6 +364,9 @@ pub struct LedgerRow {
     pub at_ms: u64,
     pub created_ms: u64,
     pub task: String,
+    /// Who started it: opus, manager or owner; null for a record from before this.
+    #[serde(default)]
+    pub by: Option<String>,
     pub repo: String,
     /// accepted or discarded.
     pub outcome: String,
@@ -430,6 +439,12 @@ fn heading(line: &str) -> Option<usize> {
 #[serde(default)]
 pub struct TaskLine {
     pub task: String,
+    /// Who started it: opus, manager or owner; null for a record from before this.
+    #[serde(default)]
+    pub by: Option<String>,
+    /// git's toplevel.
+    #[serde(default)]
+    pub repo: String,
     pub state: TaskState,
     /// Done or accepted, nothing changed outside the scope, and the last checks passed.
     pub ok: bool,
@@ -472,6 +487,8 @@ impl TaskLine {
             .unwrap_or(0.0);
         TaskLine {
             task: task.name.clone(),
+            by: task.by.clone(),
+            repo: task.repo.clone(),
             state: task.state,
             ok: matches!(task.state, TaskState::Done | TaskState::Accepted)
                 && out_of_scope.is_empty()

@@ -15,19 +15,19 @@ use std::io::{IsTerminal, Read};
 mod file;
 mod machine;
 mod mcp;
-mod vault;
 mod output;
 mod status;
 mod task;
 mod update;
+mod vault;
 use file::*;
 use machine::*;
 use mcp::*;
-use vault::*;
 use output::*;
 use status::*;
 use task::*;
 use update::*;
+use vault::*;
 
 #[derive(Parser)]
 #[command(name = "lc", version, about = "limen-core: a terminal runtime for coding agents")]
@@ -390,9 +390,9 @@ fn as_a_worker(cmd: Option<&Cmd>) -> Result<(), RpcError> {
     }
     match cmd {
         None => deny(),
-        Some(Cmd::Ls(_) | Cmd::Get(_) | Cmd::Read(_) | Cmd::Events(_) | Cmd::Schema | Cmd::Ledger(_) | Cmd::Status(_)) => {
-            Ok(())
-        }
+        Some(
+            Cmd::Ls(_) | Cmd::Get(_) | Cmd::Read(_) | Cmd::Events(_) | Cmd::Schema | Cmd::Ledger(_) | Cmd::Status(_),
+        ) => Ok(()),
         Some(Cmd::Vault { action }) => vault_as_a_worker(action),
         // An MCP front starts tasks; a worker has its own client and no business serving one.
         Some(Cmd::Mcp(_)) => deny(),

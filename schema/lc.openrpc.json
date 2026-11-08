@@ -753,6 +753,14 @@
             "minimum": 0,
             "type": "integer"
           },
+          "by": {
+            "default": null,
+            "description": "Who started it: opus, manager or owner; null for a record from before this.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "changed": {
             "default": 0,
             "format": "uint32",
@@ -1716,6 +1724,14 @@
             "description": "The branch it was cut from, \"HEAD\" when detached.",
             "type": "string"
           },
+          "by": {
+            "default": null,
+            "description": "Who started it: opus, manager or owner; null for a record from before this.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "chain": {
             "default": [],
             "description": "The worker keys `task.start` fixed, in the order to try them.",
@@ -1810,6 +1826,14 @@
           "name": {
             "default": "",
             "type": "string"
+          },
+          "owner_said": {
+            "default": null,
+            "description": "The Owner's words that let a manager accept it.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "qa_used": {
             "default": 0,
@@ -2020,6 +2044,14 @@
       "TaskLine": {
         "description": "The wake and the result: one task, small enough to read in one line of tools.",
         "properties": {
+          "by": {
+            "default": null,
+            "description": "Who started it: opus, manager or owner; null for a record from before this.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "changed": {
             "default": 0,
             "format": "uint32",
@@ -2081,6 +2113,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "repo": {
+            "default": "",
+            "description": "git's toplevel.",
+            "type": "string"
           },
           "seconds": {
             "default": 0.0,
@@ -5854,6 +5891,19 @@
           }
         },
         {
+          "description": "Who starts it: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who starts it: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
           "description": "The caller's terminal.",
           "name": "caller",
           "required": false,
@@ -6069,12 +6119,35 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
           "description": "The task's name.",
           "name": "task",
           "required": true,
           "schema": {
             "description": "The task's name.",
             "type": "string"
+          }
+        },
+        {
+          "description": "Cancel another caller's task.",
+          "name": "yes",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Cancel another caller's task.",
+            "type": "boolean"
           }
         }
       ],
@@ -6175,12 +6248,35 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
           "description": "The task's name.",
           "name": "task",
           "required": true,
           "schema": {
             "description": "The task's name.",
             "type": "string"
+          }
+        },
+        {
+          "description": "Cancel another caller's task.",
+          "name": "yes",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Cancel another caller's task.",
+            "type": "boolean"
           }
         }
       ],
@@ -6220,6 +6316,19 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
           "description": "What the review decided, kept with the record.",
           "name": "review",
           "required": false,
@@ -6239,6 +6348,16 @@
           "schema": {
             "description": "The task's name.",
             "type": "string"
+          }
+        },
+        {
+          "description": "Discard another caller's task.",
+          "name": "yes",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Discard another caller's task.",
+            "type": "boolean"
           }
         }
       ],
@@ -6431,6 +6550,19 @@
           }
         },
         {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
           "description": "The commit message (default: the review, else a line naming the task).",
           "name": "message",
           "required": false,
@@ -6451,6 +6583,19 @@
             "default": false,
             "description": "Put the changes in the working tree and make no commit.",
             "type": "boolean"
+          }
+        },
+        {
+          "description": "The Owner's words that let a manager accept; kept in the record and the ledger row.",
+          "name": "owner_said",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The Owner's words that let a manager accept; kept in the record and the ledger row.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         {
@@ -6539,6 +6684,19 @@
           "schema": {
             "description": "What to do now, at most 200000 characters.",
             "type": "string"
+          }
+        },
+        {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         {

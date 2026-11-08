@@ -68,7 +68,7 @@ pub async fn sweep(core: &Arc<Core>, p: TaskSweepParams) -> Result<TaskSweepResu
                     result.discarded.push(task.name.clone());
                 } else {
                     let why = nobody_came(days);
-                    match crate::task::discard(core, &task.name, Some(why)).await {
+                    match crate::task::discard(core, &task.name, Some(why), None, true).await {
                         Ok((_, _, left)) => {
                             result.discarded.push(task.name.clone());
                             result.left.extend(left);

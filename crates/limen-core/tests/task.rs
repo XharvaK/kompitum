@@ -18,6 +18,8 @@ mod environment;
 mod handoff;
 #[path = "task/ledger.rs"]
 mod ledger;
+#[path = "task/manager.rs"]
+mod manager;
 #[path = "task/prompt.rs"]
 mod prompt;
 #[path = "task/review.rs"]
@@ -64,6 +66,7 @@ impl Session {
             .env_remove("LIMEN_SCOPE")
             .env_remove("LIMEN_SOCKET")
             .env_remove("LIMEN_WORKER")
+            .env_remove("LIMEN_AGENT")
             .env_remove("LIMEN_COMSPEC")
             // A worker running these tests carries it, and a Command Code turn here shouldn't.
             .env_remove("OPENCODE_DISABLE_PROJECT_CONFIG")

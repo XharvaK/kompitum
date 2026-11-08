@@ -129,6 +129,7 @@ pub fn render(input: &ReviewInput) -> Rendered {
         duration_text(seconds),
         format!("${:.3}", usage.cost_usd),
         format!("steps {}", usage.steps),
+        format!("by {}", crate::task::table::by_word(task.by.as_deref())),
     ];
     fixed.push_str(&parts.join(" · "));
     fixed.push('\n');
@@ -531,7 +532,7 @@ mod tests {
             let found = text[at..].find(title).unwrap_or_else(|| panic!("{title} missing from {text}"));
             at += found + title.len();
         }
-        assert!(text.starts_with("# Review: fix-1\ndone · opencode Go · 4 s · $0.250 · steps 3\n"), "{text}");
+        assert!(text.starts_with("# Review: fix-1\ndone · opencode Go · 4 s · $0.250 · steps 3 · by —\n"), "{text}");
         assert!(text.contains("Command Code ran out of credits, so opencode Go went on."), "{text}");
         assert!(text.contains("## Checks\nFAILED · 1.0 s\n- failed: a_test"), "a failed report's words show: {text}");
         assert!(text.contains("- round 1: failed: 1 test failed"), "{text}");

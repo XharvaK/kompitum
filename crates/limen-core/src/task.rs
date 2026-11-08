@@ -20,6 +20,7 @@ pub mod review;
 pub mod runner;
 pub mod setup;
 pub mod sweep;
+pub mod table;
 pub mod types;
 pub mod worker;
 pub mod workers;
@@ -924,12 +925,15 @@ pub async fn create(core: &Arc<Core>, task: Task, brief: &str) -> Result<(), Rpc
 
 /// Cancel a queued task, or kill a running one and finish its turn as cancelled.
 /// Returns its state and how many processes survived the kill.
-pub async fn cancel(core: &Arc<Core>, name: &str) -> Result<(TaskState, u32), RpcError> {
+pub async fn cancel(core: &Arc<Core>, name: &str, by: Option<&str>, yes: bool) -> Result<(TaskState, u32), RpcError> {
     let _serial = core.tasks.lock.lock().await;
     if stopping(core) {
         return Err(unavailable("the core is stopping".into()));
     }
     let Some(task) = core.tasks.snapshot(name) else { return Err(not_found(name)) };
+    if let Some(error) = table::change_refusal(&task, by, yes) {
+        return Err(error);
+    }
     match task.state {
         TaskState::Queued | TaskState::Stranded => {
             let mut task = task;
@@ -980,12 +984,17 @@ pub async fn discard(
     core: &Arc<Core>,
     name: &str,
     review: Option<String>,
+    by: Option<&str>,
+    yes: bool,
 ) -> Result<(TaskState, bool, Vec<String>), RpcError> {
     let _serial = core.tasks.lock.lock().await;
     if stopping(core) {
         return Err(unavailable("the core is stopping".into()));
     }
     let Some(mut task) = core.tasks.snapshot(name) else { return Err(not_found(name)) };
+    if let Some(error) = table::change_refusal(&task, by, yes) {
+        return Err(error);
+    }
     if !task.state.ended() {
         return Err(RpcError::new(
             "running",

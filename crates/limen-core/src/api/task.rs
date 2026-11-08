@@ -53,6 +53,9 @@ pub struct TaskStartParams {
     /// The caller's terminal.
     #[serde(default)]
     pub caller: Option<String>,
+    /// Who starts it: opus, manager or owner (default: owner).
+    #[serde(default)]
+    pub by: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -102,6 +105,12 @@ pub struct TaskListResult {
 pub struct TaskParams {
     /// The task's name.
     pub task: String,
+    /// Who is asking: opus, manager or owner (default: owner).
+    #[serde(default)]
+    pub by: Option<String>,
+    /// Cancel another caller's task.
+    #[serde(default)]
+    pub yes: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -177,6 +186,12 @@ pub struct TaskDiscardParams {
     /// What the review decided, kept with the record.
     #[serde(default)]
     pub review: Option<String>,
+    /// Who is asking: opus, manager or owner (default: owner).
+    #[serde(default)]
+    pub by: Option<String>,
+    /// Discard another caller's task.
+    #[serde(default)]
+    pub yes: bool,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -269,6 +284,8 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         idle_s: idle,
         wall_s: wall,
         started_by: p.caller,
+        by: p.by.as_deref().map(str::trim).filter(|by| !by.is_empty()).map(String::from),
+        owner_said: None,
         warnings,
         waiting: Some("waiting for the pump".into()),
         turns: Vec::new(),
@@ -383,12 +400,12 @@ pub(super) async fn task_wait(core: Ctx<'_>, p: TaskWaitParams) -> Result<TaskWa
 }
 
 pub(super) async fn task_cancel(core: Ctx<'_>, p: TaskParams) -> Result<TaskCancelResult, RpcError> {
-    let (state, survivors) = crate::task::cancel(core.core, &p.task).await?;
+    let (state, survivors) = crate::task::cancel(core.core, &p.task, p.by.as_deref(), p.yes).await?;
     Ok(TaskCancelResult { task: p.task, state, survivors })
 }
 
 pub(super) async fn task_discard(core: Ctx<'_>, p: TaskDiscardParams) -> Result<TaskDiscardResult, RpcError> {
-    let (state, removed, left) = crate::task::discard(core.core, &p.task, p.review).await?;
+    let (state, removed, left) = crate::task::discard(core.core, &p.task, p.review, p.by.as_deref(), p.yes).await?;
     Ok(TaskDiscardResult { task: p.task, state, removed, left })
 }
 

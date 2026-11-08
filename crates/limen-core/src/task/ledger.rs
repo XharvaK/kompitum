@@ -43,6 +43,7 @@ pub fn row(task: &Task, outcome: &str, now_ms: u64) -> LedgerRow {
         at_ms: now_ms,
         created_ms: task.created_ms,
         task: task.name.clone(),
+        by: task.by.clone(),
         repo: task.repo.clone(),
         outcome: outcome.into(),
         role: "worker".into(),
@@ -69,7 +70,7 @@ pub fn row(task: &Task, outcome: &str, now_ms: u64) -> LedgerRow {
         changed: u32::try_from(task.changed.len()).unwrap_or(u32::MAX),
         out_of_scope: u32::try_from(task.changed.iter().filter(|file| !file.in_scope).count()).unwrap_or(u32::MAX),
         checks: task.checks.last().map(CheckReport::words),
-        review: task.review.clone(),
+        review: crate::task::table::review_with_owner(task.owner_said.as_deref(), task.review.as_deref()),
         report: crate::task::types::cut(report, REPORT_LIMIT),
     }
 }
@@ -288,6 +289,7 @@ mod tests {
         let report = format!("{}tail", "é".repeat(REPORT_LIMIT));
         let task = Task {
             name: "fix-1".into(),
+            by: Some("manager".into()),
             repo: "/repo".into(),
             state: TaskState::Accepted,
             created_ms: 500,
@@ -324,12 +326,14 @@ mod tests {
             ],
             checks: vec![CheckReport { ok: true, forbid_checked: 1, ..Default::default() }],
             review: Some("sound".into()),
+            owner_said: Some("ship it".into()),
             ..Default::default()
         };
         let row = row(&task, "accepted", 20_000);
         assert_eq!(row.at_ms, 20_000);
         assert_eq!(row.created_ms, 500);
         assert_eq!(row.task, "fix-1");
+        assert_eq!(row.by.as_deref(), Some("manager"));
         assert_eq!(row.repo, "/repo");
         assert_eq!(row.outcome, "accepted");
         assert_eq!(row.role, "worker");
@@ -349,7 +353,7 @@ mod tests {
         assert_eq!(row.changed, 2);
         assert_eq!(row.out_of_scope, 1);
         assert_eq!(row.checks.as_deref(), Some("passed"));
-        assert_eq!(row.review.as_deref(), Some("sound"));
+        assert_eq!(row.review.as_deref(), Some("Owner: \"ship it\". sound"));
         assert_eq!(row.report.chars().count(), REPORT_LIMIT, "the report is cut on a character");
         assert_eq!(row.report, "é".repeat(REPORT_LIMIT));
     }

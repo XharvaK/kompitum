@@ -16,7 +16,7 @@ pub(super) enum TaskCmd {
     /// Wait for tasks; prints one JSON line each and a summary, at the end.
     Wait(WaitArgs),
     /// Cancel a queued or running task.
-    Cancel(NameArg),
+    Cancel(CancelArgs),
     /// Remove a finished task's worktree and branch, and write its ledger row.
     Discard(DiscardArgs),
     /// The whole review of a task in one read: checks, scope, warns, Gaps, report and the hunks they point at.
@@ -85,6 +85,15 @@ pub(super) struct NameArg {
 }
 
 #[derive(clap::Args)]
+pub(super) struct CancelArgs {
+    /// The task's name.
+    pub task: String,
+    /// Cancel a task another caller started.
+    #[arg(long)]
+    pub yes: bool,
+}
+
+#[derive(clap::Args)]
 pub(super) struct WaitArgs {
     /// The tasks to wait for.
     #[arg(required = true)]
@@ -129,6 +138,9 @@ pub(super) struct DiscardArgs {
     /// What the review decided, kept with the record.
     #[arg(long)]
     pub review: Option<String>,
+    /// Discard a task another caller started.
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(clap::Args)]
@@ -162,6 +174,9 @@ pub(super) struct AcceptArgs {
     /// Accept files changed outside the task's scope.
     #[arg(long)]
     pub accept_scope_violation: bool,
+    /// The Owner's words that let a manager accept; kept in the record and the ledger row.
+    #[arg(long, value_name = "TEXT")]
+    pub owner_said: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -193,6 +208,15 @@ pub(super) struct LedgerArgs {
     pub last: Option<usize>,
 }
 
+/// Who is asking, as the table names them: LIMEN_AGENT's word, else the Owner.
+fn by() -> String {
+    std::env::var("LIMEN_AGENT")
+        .ok()
+        .map(|word| word.trim().to_string())
+        .filter(|word| !word.is_empty())
+        .unwrap_or_else(|| "owner".into())
+}
+
 fn human_seconds(seconds: f64) -> String {
     let seconds = seconds.max(0.0) as u64;
     match seconds {
@@ -208,6 +232,21 @@ fn human_cost(cost: f64) -> String {
 
 fn state(value: &Value) -> &str {
     value["state"].as_str().unwrap_or("unknown")
+}
+
+/// One task's row in `lc task ls`: name, who started it, state and what it cost.
+fn task_row(task: &Value) -> String {
+    format!(
+        "{:<16} {:<8} {:<9} {:<14} {:>4} {:>8} {:>9} {:>6}",
+        task["task"].as_str().unwrap_or("?"),
+        crate::task::table::by_word(task["by"].as_str()),
+        state(task),
+        task["worker"].as_str().unwrap_or("-"),
+        task["turns"].as_u64().unwrap_or(0),
+        human_seconds(task["seconds"].as_f64().unwrap_or(0.0)),
+        human_cost(task["cost_usd"].as_f64().unwrap_or(0.0)),
+        task["usage"]["steps"].as_u64().unwrap_or(0),
+    )
 }
 
 fn ended(state: &str) -> bool {
@@ -246,7 +285,7 @@ pub(super) fn task(
                 "task.start",
                 json!({
                     "task": a.name, "brief": brief, "folder": folder, "scope": a.scope,
-                    "worker": a.worker, "idle": a.idle, "timeout": a.timeout, "caller": caller(),
+                    "worker": a.worker, "idle": a.idle, "timeout": a.timeout, "caller": caller(), "by": by(),
                     "test": a.test, "forbid": a.forbid, "require": a.require, "warn": a.warn,
                     "qa_rounds": a.qa_rounds, "web": a.web,
                 }),
@@ -275,23 +314,7 @@ pub(super) fn task(
         }
         TaskCmd::Ls(a) => {
             let r = call("task.list", json!({"all": a.all}))?;
-            let rows: Vec<String> = r["tasks"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .map(|task| {
-                    format!(
-                        "{:<16} {:<9} {:<14} {:>4} {:>8} {:>9} {:>6}",
-                        task["task"].as_str().unwrap_or("?"),
-                        state(task),
-                        task["worker"].as_str().unwrap_or("-"),
-                        task["turns"].as_u64().unwrap_or(0),
-                        human_seconds(task["seconds"].as_f64().unwrap_or(0.0)),
-                        human_cost(task["cost_usd"].as_f64().unwrap_or(0.0)),
-                        task["usage"]["steps"].as_u64().unwrap_or(0),
-                    )
-                })
-                .collect();
+            let rows: Vec<String> = r["tasks"].as_array().into_iter().flatten().map(task_row).collect();
             let mut human = if rows.is_empty() { "no tasks".into() } else { rows.join("\n") };
             for problem in r["problems"].as_array().into_iter().flatten() {
                 human.push_str(&format!("\nproblem: {}", problem.as_str().unwrap_or_default()));
@@ -304,8 +327,9 @@ pub(super) fn task(
             let line = &r["line"];
             let name = task["name"].as_str().unwrap_or(&a.task);
             let mut human = format!(
-                "{name} {}\nworker {}, turn {}, {}, {}, steps {}",
+                "{name} {}, by {}\nworker {}, turn {}, {}, {}, steps {}",
                 state(line),
+                crate::task::table::by_word(task["by"].as_str()),
                 line["worker"].as_str().unwrap_or("-"),
                 line["turns"].as_u64().unwrap_or(0),
                 human_seconds(line["seconds"].as_f64().unwrap_or(0.0)),
@@ -360,12 +384,12 @@ pub(super) fn task(
             return Ok(None);
         }
         TaskCmd::Cancel(a) => {
-            let r = call("task.cancel", json!({"task": a.task}))?;
+            let r = call("task.cancel", json!({"task": a.task, "by": by(), "yes": a.yes}))?;
             let human = format!("{} {} ({} survivors)", a.task, state(&r), r["survivors"].as_u64().unwrap_or(0));
             Out { json: r, human }
         }
         TaskCmd::Discard(a) => {
-            let r = call("task.discard", json!({"task": a.task, "review": a.review}))?;
+            let r = call("task.discard", json!({"task": a.task, "review": a.review, "by": by(), "yes": a.yes}))?;
             let mut human = format!("{} discarded", a.task);
             if r["removed"] != true {
                 human.push_str("; its worktree stayed");
@@ -389,6 +413,7 @@ pub(super) fn task(
                 json!({
                     "task": a.task, "review": a.review, "message": a.message, "no_commit": a.no_commit,
                     "accept_unfinished": a.accept_unfinished, "accept_scope_violation": a.accept_scope_violation,
+                    "by": by(), "owner_said": a.owner_said,
                 }),
             )?;
             let files = r["files"].as_array().map_or(0, Vec::len);
@@ -403,7 +428,7 @@ pub(super) fn task(
         }
         TaskCmd::Redo(a) => {
             let brief = read_brief(&a.brief)?;
-            let r = call("task.redo", json!({"task": a.task, "brief": brief}))?;
+            let r = call("task.redo", json!({"task": a.task, "brief": brief, "by": by()}))?;
             let mut human = format!("{} {} for turn {}", a.task, state(&r), r["turn"].as_u64().unwrap_or(0));
             if let Some(waiting) = r["waiting"].as_str() {
                 human.push_str(&format!(": {waiting}"));
@@ -608,6 +633,17 @@ fn wait(a: &WaitArgs, call: &impl Fn(&str, Value) -> Result<Value, RpcError>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_task_row_says_who_started_it() {
+        let row = task_row(&json!({
+            "task": "fix-1", "by": "manager", "state": "done", "worker": "opencode Go", "turns": 1,
+            "seconds": 65.0, "cost_usd": 0.25, "usage": {"steps": 3}
+        }));
+        assert!(row.contains("fix-1") && row.contains("manager") && row.contains("$0.2500"), "{row}");
+        let old = task_row(&json!({"task": "old", "state": "done"}));
+        assert!(old.contains("—"), "an old record shows a dash: {old}");
+    }
 
     #[test]
     fn the_workers_table_is_the_documented_shape() {

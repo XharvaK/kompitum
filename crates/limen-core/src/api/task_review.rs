@@ -51,6 +51,12 @@ pub struct TaskAcceptParams {
     /// Accept files changed outside the task's scope.
     #[serde(default)]
     pub accept_scope_violation: bool,
+    /// Who is asking: opus, manager or owner (default: owner).
+    #[serde(default)]
+    pub by: Option<String>,
+    /// The Owner's words that let a manager accept; kept in the record and the ledger row.
+    #[serde(default)]
+    pub owner_said: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -77,6 +83,9 @@ pub struct TaskRedoParams {
     pub task: String,
     /// What to do now, at most 200000 characters.
     pub brief: String,
+    /// Who is asking: opus, manager or owner (default: owner).
+    #[serde(default)]
+    pub by: Option<String>,
 }
 
 #[derive(Serialize, JsonSchema)]

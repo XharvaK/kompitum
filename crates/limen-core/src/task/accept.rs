@@ -95,8 +95,17 @@ pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptR
         return Err(super::unavailable("the core is stopping".into()));
     }
     let Some(mut task) = core.tasks.snapshot(&p.task) else { return Err(super::not_found(&p.task)) };
-    if let Some(review) = p.review.clone() {
-        task.review = Some(review);
+    if let Some(error) = super::table::accept_refusal(&task, p.by.as_deref(), p.owner_said.as_deref()) {
+        return Err(error);
+    }
+    let words = super::table::owner_said_words(p.owner_said.as_deref()).map(String::from);
+    if p.review.is_some() || words.is_some() {
+        if let Some(review) = p.review.clone() {
+            task.review = Some(review);
+        }
+        if words.is_some() {
+            task.owner_said = words;
+        }
         super::save(&core.paths.state, &task);
         super::replace(core, task.clone());
     }

@@ -626,6 +626,7 @@ Usage: lc status [OPTIONS]
 
 Options:
       --json  JSON output even in a terminal
+      --line  Read Claude Code's status line JSON on stdin: keep its limit resets and print one line
   -h, --help  Print help
 ```
 
@@ -671,6 +672,7 @@ Options:
       --no-commit               Put the changes in the working tree and make no commit
       --accept-unfinished       Accept a task that failed, timed out or was cancelled, or whose last checks failed
       --accept-scope-violation  Accept files changed outside the task's scope
+      --owner-said <TEXT>       The Owner's words that let a manager accept; kept in the record and the ledger row
   -h, --help                    Print help
 ```
 
@@ -686,6 +688,7 @@ Arguments:
 
 Options:
       --json  JSON output even in a terminal
+      --yes   Cancel a task another caller started
   -h, --help  Print help
 ```
 
@@ -702,6 +705,7 @@ Arguments:
 Options:
       --json             JSON output even in a terminal
       --review <REVIEW>  What the review decided, kept with the record
+      --yes              Discard a task another caller started
   -h, --help             Print help
 ```
 
@@ -861,24 +865,153 @@ Notes between agents in the shared vault: read, post, mark, find
 Usage: lc vault [OPTIONS] <COMMAND>
 
 Commands:
-  ls    The notes in the vault
-  help  Print this message or the help of the given subcommand(s)
+  open     The messages open for me, newest first
+  read     Read one note by its vault path; this also leaves a read mark
+  find     Search the vault: every word must be in the note; the filters narrow it
+  post     Write a message into my own folder, then commit and push it
+  mark     Set the status of one of my own notes: open, answered or superseded
+  done     Close a note for me with no reply, leaving a done mark
+  thread   Every message between me and another agent, both ways, oldest first
+  changes  The messages added since the last commit this reader saw
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
       --json  JSON output even in a terminal
   -h, --help  Print help
 ```
 
-## lc vault ls
+## lc vault changes
 
 ```text
-The notes in the vault
+The messages added since the last commit this reader saw
 
-Usage: lc vault ls [OPTIONS]
+Usage: lc vault changes [OPTIONS]
 
 Options:
-      --json  JSON output even in a terminal
-  -h, --help  Print help
+      --as <AGENT>  Act as this agent, overriding LIMEN_AGENT
+      --json        JSON output even in a terminal
+  -h, --help        Print help
+```
+
+## lc vault done
+
+```text
+Close a note for me with no reply, leaving a done mark
+
+Usage: lc vault done [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  The note to close
+
+Options:
+      --json        JSON output even in a terminal
+      --why <TEXT>  Why it is closed, kept with the mark
+      --as <AGENT>  Act as this agent, overriding LIMEN_AGENT
+  -h, --help        Print help
+```
+
+## lc vault find
+
+```text
+Search the vault: every word must be in the note; the filters narrow it
+
+Usage: lc vault find [OPTIONS] [WORDS]...
+
+Arguments:
+  [WORDS]...  Words that must all be in the note (case does not matter)
+
+Options:
+      --json         JSON output even in a terminal
+      --project <P>  Only notes of this project (front matter, or the folder)
+      --kind <K>     Only notes of this kind
+      --status <S>   Only notes with this status
+      --from <A>     Only notes from this agent (front matter, or the folder)
+      --limit <N>    The newest this many (default 20) [default: 20]
+      --as <AGENT>   Act as this agent, overriding LIMEN_AGENT
+  -h, --help         Print help
+```
+
+## lc vault mark
+
+```text
+Set the status of one of my own notes: open, answered or superseded
+
+Usage: lc vault mark [OPTIONS] <PATH> <STATUS>
+
+Arguments:
+  <PATH>    One of my own notes
+  <STATUS>  open, answered or superseded
+
+Options:
+      --as <AGENT>  Act as this agent, overriding LIMEN_AGENT
+      --json        JSON output even in a terminal
+  -h, --help        Print help
+```
+
+## lc vault open
+
+```text
+The messages open for me, newest first
+
+Usage: lc vault open [OPTIONS]
+
+Options:
+      --as <AGENT>  Act as this agent, overriding LIMEN_AGENT
+      --json        JSON output even in a terminal
+  -h, --help        Print help
+```
+
+## lc vault post
+
+```text
+Write a message into my own folder, then commit and push it
+
+Usage: lc vault post [OPTIONS] --to <A> --kind <K> --title <T>
+
+Options:
+      --json              JSON output even in a terminal
+      --to <A>            The agent's folder to write into, or all
+      --kind <K>          request, report, decision, tried, question or answer
+      --title <T>         One line naming the note
+      --body <TEXT>       The body, in Markdown
+      --body-file <FILE>  The body's file, or - for standard input
+      --project <P>       The project the note belongs to
+      --re <PATH>         A note this one answers (repeatable for one answer to several)
+      --as <AGENT>        Act as this agent, overriding LIMEN_AGENT
+  -h, --help              Print help
+```
+
+## lc vault read
+
+```text
+Read one note by its vault path; this also leaves a read mark
+
+Usage: lc vault read [OPTIONS] <PATH>
+
+Arguments:
+  <PATH>  The note's vault path, such as manager/to/opus/2026-11-04_1826_living-brain.md
+
+Options:
+      --as <AGENT>  Act as this agent, overriding LIMEN_AGENT
+      --json        JSON output even in a terminal
+  -h, --help        Print help
+```
+
+## lc vault thread
+
+```text
+Every message between me and another agent, both ways, oldest first
+
+Usage: lc vault thread [OPTIONS] <AGENT>
+
+Arguments:
+  <AGENT>  The other agent
+
+Options:
+      --json        JSON output even in a terminal
+      --limit <N>   The newest this many messages (default 50) [default: 50]
+      --as <AGENT>  Act as this agent, overriding LIMEN_AGENT
+  -h, --help        Print help
 ```
 
 ## lc wait
