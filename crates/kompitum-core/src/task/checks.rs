@@ -39,6 +39,8 @@ pub struct ChecksFile {
     pub focused_cmd: Option<String>,
     pub focused_glob: Vec<String>,
     pub second_reader: bool,
+    /// This repository builds one task at a time, whatever their scopes.
+    pub one_at_a_time: bool,
     /// Keys whose values were unusable: said, but never a failed check.
     pub warnings: Vec<String>,
 }
@@ -56,6 +58,7 @@ impl Default for ChecksFile {
             focused_cmd: None,
             focused_glob: DEFAULT_FOCUSED_GLOB.iter().map(|glob| glob.to_string()).collect(),
             second_reader: false,
+            one_at_a_time: false,
             warnings: Vec::new(),
         }
     }
@@ -132,6 +135,11 @@ pub fn parse_checks(text: &str) -> (ChecksFile, Vec<String>) {
         None | Some(Value::Null) => {}
         Some(Value::Bool(flag)) => file.second_reader = *flag,
         Some(_) => file.warnings.push(format!("{SOURCE_FILE}: second_reader must be a boolean")),
+    }
+    match spec.get("one_at_a_time") {
+        None | Some(Value::Null) => {}
+        Some(Value::Bool(flag)) => file.one_at_a_time = *flag,
+        Some(_) => file.warnings.push(format!("{SOURCE_FILE}: one_at_a_time must be a boolean")),
     }
     (file, problems)
 }

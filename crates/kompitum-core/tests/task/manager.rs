@@ -153,6 +153,8 @@ fn status_is_the_whole_picture() {
         json!({
             "five_hour_resets_at": 1762560000u64,
             "seven_day_resets_at": 1762900000u64,
+            "five_hour_used_percentage": 42.4,
+            "seven_day_used_percentage": 61.0,
             "seen_at": 1762550000000u64
         })
         .to_string(),
@@ -180,6 +182,8 @@ fn status_is_the_whole_picture() {
     assert_eq!(status["workers"], s.json(&["workers", "--json"]), "the workers block is `kom workers`");
     assert_eq!(status["claude"]["five_hour_resets_at"], 1762560000u64, "{status}");
     assert_eq!(status["claude"]["seven_day_resets_at"], 1762900000u64, "{status}");
+    assert_eq!(status["claude"]["five_hour_used_percentage"], 42.4, "{status}");
+    assert_eq!(status["claude"]["seven_day_used_percentage"], 61.0, "{status}");
     assert_eq!(status["claude"]["seen_at"], 1762550000000u64, "{status}");
     assert_eq!(status["waiting"]["review"], 1, "{status}");
     assert_eq!(status["waiting"]["blocked"], 0, "{status}");
@@ -218,7 +222,10 @@ fn the_status_line_keeps_claudes_limits_and_never_fails() {
     let limits = s.state().join("claude-limits.json");
     let input = json!({
         "model": {"display_name": "Claude Opus 4.5"},
-        "rate_limits": {"five_hour": {"resets_at": 1762560000u64}, "seven_day": {"resets_at": 1762900000u64}}
+        "rate_limits": {
+            "five_hour": {"resets_at": 1762560000u64, "used_percentage": 42.4},
+            "seven_day": {"resets_at": 1762900000u64, "used_percentage": 61.0}
+        }
     })
     .to_string();
     let (code, text) = status_line(&s, &input);
@@ -230,6 +237,8 @@ fn the_status_line_keeps_claudes_limits_and_never_fails() {
     let saved: Value = serde_json::from_slice(&std::fs::read(&limits).unwrap()).unwrap();
     assert_eq!(saved["five_hour_resets_at"], 1762560000u64, "{saved}");
     assert_eq!(saved["seven_day_resets_at"], 1762900000u64, "{saved}");
+    assert_eq!(saved["five_hour_used_percentage"], 42.4, "{saved}");
+    assert_eq!(saved["seven_day_used_percentage"], 61.0, "{saved}");
     assert!(saved["seen_at"].as_u64().unwrap() > 1_700_000_000_000, "{saved}");
 
     let before = std::fs::read(&limits).unwrap();

@@ -5,7 +5,7 @@
 use crate::task::opencode::RouteCheck;
 use crate::task::quota::{self, Refusal};
 use crate::task::types::{Beat, Ending, Task, TaskLine, TaskState};
-use crate::task::worker::{TurnOutcome, Worker};
+use crate::task::worker::{Cli, TurnOutcome, Worker};
 
 /// A `*` crosses `/`, as Python's `fnmatch` does: `src/*` admits `src/a/b.rs`.
 fn glob_match(pattern: &str, text: &str) -> bool {
@@ -136,7 +136,17 @@ pub fn may_start(task: &Task, others: &[&Task], cap: usize) -> Result<(), String
         // A stranded task holds its work in a worktree too, so it goes first.
         let earlier =
             active(other) || (matches!(other.state, TaskState::Queued | TaskState::Stranded) && other.seq < task.seq);
-        if earlier && scopes_overlap(&task.scope, &other.scope) {
+        if !earlier {
+            continue;
+        }
+        if task.one_at_a_time {
+            return Err(if active(other) {
+                format!("waiting for {}: this repository builds one task at a time", other.name)
+            } else {
+                format!("queued behind {}: this repository builds one task at a time", other.name)
+            });
+        }
+        if scopes_overlap(&task.scope, &other.scope) {
             return Err(if active(other) {
                 format!("waiting for {}: its scope overlaps", other.name)
             } else {
@@ -204,6 +214,7 @@ impl TurnEnd {
 /// and at last the route the worker really used.
 pub fn turn_end(
     task: &Task,
+    workers: &[Worker],
     terminal: Option<&TerminalNow>,
     exit_file_code: Option<i32>,
     outcome: &TurnOutcome,
@@ -250,10 +261,15 @@ pub fn turn_end(
         }
         _ => {}
     }
-    let worker = task.turns.last().map(|turn| turn.worker.as_str()).unwrap_or_default();
-    match Worker::from_key(worker) {
-        Ok(Worker::Cc) => command_code_end(task, code, outcome, stderr_tail, now_ms, offset_min),
-        _ => opencode_end(task, code, outcome, route, stderr_tail, now_ms),
+    let turn = task.turns.last();
+    let cli = turn.map_or(Cli::Opencode, |turn| turn.cli_or_lookup(workers));
+    match cli {
+        Cli::CommandCode => {
+            let key = turn.map(|turn| turn.worker.as_str()).unwrap_or_default();
+            let route = workers.iter().find(|worker| worker.key == key).map_or("", |worker| worker.route.as_str());
+            command_code_end(task, route, code, outcome, stderr_tail, now_ms, offset_min)
+        }
+        Cli::Opencode => opencode_end(task, code, outcome, route, stderr_tail, now_ms),
     }
 }
 
@@ -329,6 +345,7 @@ pub fn route_unchecked(route: Option<&RouteCheck>) -> Option<String> {
 
 fn command_code_end(
     task: &Task,
+    route: &str,
     code: Option<i32>,
     outcome: &TurnOutcome,
     stderr_tail: &str,
@@ -370,7 +387,7 @@ fn command_code_end(
     if outcome.text.is_empty() {
         return TurnEnd::failed("worker produced no final text");
     }
-    let (model, _) = crate::task::commandcode::route(Worker::Cc.route());
+    let (model, _) = crate::task::commandcode::route(route);
     if outcome.models.is_empty() {
         return TurnEnd::failed("model verification unverifiable");
     }
@@ -418,6 +435,10 @@ mod tests {
 
     fn scopes(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn workers() -> Vec<Worker> {
+        crate::task::worker::builtin()
     }
 
     #[test]
@@ -480,6 +501,29 @@ mod tests {
     }
 
     #[test]
+    fn one_at_a_time_holds_disjoint_scopes_in_one_repository() {
+        let running = task("a", TaskState::Running, 1, &["src/**"]);
+        let mut next = task("b", TaskState::Queued, 2, &["docs/**"]);
+        next.one_at_a_time = true;
+        assert_eq!(
+            may_start(&next, &[&running], 5),
+            Err("waiting for a: this repository builds one task at a time".into())
+        );
+        next.one_at_a_time = false;
+        assert!(may_start(&next, &[&running], 5).is_ok(), "without the flag, disjoint scopes start");
+
+        let earlier = task("a", TaskState::Queued, 1, &["src/**"]);
+        let mut next = task("b", TaskState::Queued, 2, &["docs/**"]);
+        next.one_at_a_time = true;
+        assert_eq!(
+            may_start(&next, &[&earlier], 5),
+            Err("queued behind a: this repository builds one task at a time".into())
+        );
+        let other_repo = Task { repo: "/elsewhere".into(), ..running };
+        assert!(may_start(&next, &[&other_repo], 5).is_ok(), "another repository is not held");
+    }
+
+    #[test]
     fn a_turn_ends_with_its_terminal_or_at_its_limits() {
         let mut t = task("a", TaskState::Running, 1, &[]);
         t.turns = vec![turn(1_000)];
@@ -517,7 +561,7 @@ mod tests {
     }
 
     fn judge(t: &Task, terminal: Option<&TerminalNow>, code: Option<i32>, outcome: &TurnOutcome) -> TurnEnd {
-        turn_end(t, terminal, code, outcome, Some(&verified()), "", 1_000, 0)
+        turn_end(t, &workers(), terminal, code, outcome, Some(&verified()), "", 1_000, 0)
     }
 
     fn ended(state: TaskState, error: Option<&str>) -> (TaskState, Option<String>) {
@@ -572,7 +616,7 @@ mod tests {
         quota.errors = vec!["ProviderError (429): quota".into()];
         quota.raw_errors = vec![serde_json::json!({
             "name": "ProviderError", "status": 429, "message": "reached your weekly usage limit"})];
-        let end = turn_end(&t, Some(&exited), Some(3), &quota, Some(&verified()), "", 1_000, 0);
+        let end = turn_end(&t, &workers(), Some(&exited), Some(3), &quota, Some(&verified()), "", 1_000, 0);
         assert_eq!(end.state, TaskState::Failed);
         assert_eq!(end.refusal.as_ref().unwrap().window, "weekly");
         assert_eq!(
@@ -616,7 +660,7 @@ mod tests {
             result(judge(&t, Some(&exited), Some(0), &no_text)),
             ended(TaskState::Failed, Some("worker produced no final text"))
         );
-        let no_route = turn_end(&t, Some(&exited), Some(0), &good, None, "", 1_000, 0);
+        let no_route = turn_end(&t, &workers(), Some(&exited), Some(0), &good, None, "", 1_000, 0);
         assert_eq!(
             result(no_route),
             ended(TaskState::Failed, Some("model verification error: the runner wrote no route check"))
@@ -627,7 +671,7 @@ mod tests {
             message: Some("asked for opencode-go/deepseek-v4.1-flash#max, the export says opencode/other".into()),
             ..Default::default()
         };
-        let end = turn_end(&t, Some(&exited), Some(0), &good, Some(&mismatch), "", 1_000, 0);
+        let end = turn_end(&t, &workers(), Some(&exited), Some(0), &good, Some(&mismatch), "", 1_000, 0);
         assert_eq!(end.state, TaskState::Failed);
         assert!(end.error.unwrap().starts_with("model verification mismatch: asked for"));
         assert_eq!(route_unchecked(Some(&mismatch)), None);
@@ -636,7 +680,7 @@ mod tests {
         for status in ["error", "unverifiable"] {
             let unknown =
                 RouteCheck { status: status.into(), message: Some("export timed out".into()), ..Default::default() };
-            let end = turn_end(&t, Some(&exited), Some(0), &good, Some(&unknown), "", 1_000, 0);
+            let end = turn_end(&t, &workers(), Some(&exited), Some(0), &good, Some(&unknown), "", 1_000, 0);
             assert_eq!(end.state, TaskState::Done, "{status}");
             assert_eq!(end.error, None, "{status}");
             assert_eq!(
@@ -682,10 +726,10 @@ mod tests {
         t.turns = vec![turn(0)];
         let exited = TerminalNow { live: false, exit_code: Some(0), reason: Some("exited".into()) };
         let stale = r#"{"type":"error","error":{"type":"FreeUsageLimitError"}}"#;
-        let clean = turn_end(&t, Some(&exited), Some(0), &outcome(), Some(&verified()), stale, 1_000, 0);
+        let clean = turn_end(&t, &workers(), Some(&exited), Some(0), &outcome(), Some(&verified()), stale, 1_000, 0);
         assert_eq!((clean.state, clean.refusal), (TaskState::Done, None));
         let no_text = TurnOutcome { text: String::new(), ..outcome() };
-        let refused = turn_end(&t, Some(&exited), Some(0), &no_text, Some(&verified()), stale, 1_000, 0);
+        let refused = turn_end(&t, &workers(), Some(&exited), Some(0), &no_text, Some(&verified()), stale, 1_000, 0);
         assert_eq!(refused.state, TaskState::Failed);
         assert!(refused.refusal.is_some());
     }
@@ -736,7 +780,7 @@ mod tests {
             error: "You have insufficient credits to make this request.".into(),
             final_text: String::new(),
         });
-        let end = turn_end(&t, Some(&exited), Some(1), &refused, None, "", 1_000, 0);
+        let end = turn_end(&t, &workers(), Some(&exited), Some(1), &refused, None, "", 1_000, 0);
         assert_eq!(end.state, TaskState::Failed);
         assert_eq!(end.refusal.as_ref().unwrap().window, "credits");
         let mut max_turns = good.clone();
@@ -793,6 +837,37 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_whose_worker_was_removed_still_ends_with_its_own_cli() {
+        let mut t = task("a", TaskState::Running, 1, &[]);
+        t.turns = vec![Turn { worker: "gone".into(), cli: Some(Cli::CommandCode), ..turn(0) }];
+        let exited = TerminalNow { live: false, exit_code: Some(0), reason: Some("exited".into()) };
+        let end = turn_end(&t, &[], Some(&exited), Some(0), &TurnOutcome::default(), None, "", 1_000, 0);
+        assert_eq!(
+            end.error.as_deref(),
+            Some("worker stream ended without a result line"),
+            "the recorded CLI chose the Command Code reader"
+        );
+    }
+
+    #[test]
+    fn a_command_code_turn_checks_the_route_of_its_own_worker() {
+        let mut t = task("a", TaskState::Running, 1, &[]);
+        t.turns = vec![Turn { worker: "mine-cc".into(), ..turn(0) }];
+        let mut workers = workers();
+        workers.push(Worker {
+            key: "mine-cc".into(),
+            label: "Mine".into(),
+            cli: Cli::CommandCode,
+            route: "commandcode/vendor/model#high".into(),
+        });
+        let mut good = cc_outcome();
+        good.models = vec!["vendor/model".into()];
+        let exited = TerminalNow { live: false, exit_code: Some(0), reason: Some("exited".into()) };
+        let end = turn_end(&t, &workers, Some(&exited), Some(0), &good, None, "", 1_000, 0);
+        assert_eq!(result(end), ended(TaskState::Done, None), "the task's own route is the one checked");
+    }
+
+    #[test]
     fn every_workers_start_is_eight_seconds_after_the_last() {
         assert!(start_slot(None, 1_000).is_ok());
         assert!(start_slot(Some(1_000), 1_001).is_err());
@@ -836,6 +911,6 @@ mod tests {
         let mut t = task("a", TaskState::Done, 1, &["src/**"]);
         t.turns = vec![Turn { text: "ok".into(), usage: Usage::default(), ..turn(0) }];
         t.changed = vec![file];
-        assert!(TaskLine::of(&t, 1, 1500).ok);
+        assert!(TaskLine::of(&t, &workers(), 1, 1500).ok);
     }
 }

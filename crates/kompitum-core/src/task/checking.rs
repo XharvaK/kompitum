@@ -376,7 +376,7 @@ async fn finish(core: &Arc<Core>, mut task: Task, mut report: CheckReport, start
     task.check = None;
     task.checks.push(report);
     super::save(&core.paths.state, &task);
-    super::write_result(&core.paths.state, &task);
+    super::write_result(&core.paths.state, &task, &super::worker_list(core));
     super::replace(core, task);
     core.changed.notify_waiters();
 }

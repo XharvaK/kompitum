@@ -5,6 +5,8 @@
 use crate::config::Config;
 use crate::rpc::RpcError;
 use crate::task::types::Usage;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -12,52 +14,84 @@ use std::process::Stdio;
 use std::sync::Mutex;
 use std::time::Duration;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Worker {
-    Cc,
-    Go,
-    Free,
+/// A worker CLI the loop can run headless and read. Its launch, stream and quota words live in code.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Cli {
+    CommandCode,
+    Opencode,
+}
+
+impl Cli {
+    pub fn key(self) -> &'static str {
+        match self {
+            Cli::CommandCode => "command_code",
+            Cli::Opencode => "opencode",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Cli> {
+        match key {
+            "command_code" => Some(Cli::CommandCode),
+            "opencode" => Some(Cli::Opencode),
+            _ => None,
+        }
+    }
+}
+
+/// One worker: a CLI and the model route it runs.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq, Eq)]
+pub struct Worker {
+    pub key: String,
+    pub label: String,
+    pub cli: Cli,
+    pub route: String,
+}
+
+/// The three workers every core has, unchanged.
+pub fn builtin() -> Vec<Worker> {
+    vec![
+        Worker {
+            key: "cc".into(),
+            label: "Command Code".into(),
+            cli: Cli::CommandCode,
+            route: "commandcode/deepseek/deepseek-v4.1-flash#max".into(),
+        },
+        Worker {
+            key: "go".into(),
+            label: "opencode Go".into(),
+            cli: Cli::Opencode,
+            route: "opencode-go/deepseek-v4.1-flash#max".into(),
+        },
+        Worker {
+            key: "free".into(),
+            label: "opencode free".into(),
+            cli: Cli::Opencode,
+            route: "opencode/deepseek/deepseek-v4.1-flash-free#max".into(),
+        },
+    ]
 }
 
 /// The label for a stored worker key; an unknown key stays as it is.
-pub fn label_of(key: &str) -> String {
-    Worker::from_key(key).map_or_else(|_| key.to_string(), |worker| worker.label().to_string())
+pub fn label_of(workers: &[Worker], key: &str) -> String {
+    workers
+        .iter()
+        .chain(builtin().iter())
+        .find(|worker| worker.key == key)
+        .map_or_else(|| key.to_string(), |worker| worker.label.clone())
 }
 
 impl Worker {
-    pub const ALL: [Worker; 3] = [Worker::Cc, Worker::Go, Worker::Free];
-
-    pub fn key(self) -> &'static str {
-        match self {
-            Worker::Cc => "cc",
-            Worker::Go => "go",
-            Worker::Free => "free",
-        }
+    pub fn key(&self) -> &str {
+        &self.key
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Worker::Cc => "Command Code",
-            Worker::Go => "opencode Go",
-            Worker::Free => "opencode free",
-        }
+    pub fn label(&self) -> &str {
+        &self.label
     }
 
-    pub fn route(self) -> &'static str {
-        match self {
-            Worker::Cc => "commandcode/deepseek/deepseek-v4.1-flash#max",
-            Worker::Go => "opencode-go/deepseek-v4.1-flash#max",
-            Worker::Free => "opencode/deepseek-v4.1-flash-free#max",
-        }
-    }
-
-    pub fn from_key(key: &str) -> Result<Worker, RpcError> {
-        match key {
-            "cc" => Ok(Worker::Cc),
-            "go" => Ok(Worker::Go),
-            "free" => Ok(Worker::Free),
-            other => Err(RpcError::invalid_params(format!("unknown worker {other:?}: use cc, go or free"))),
-        }
+    pub fn route(&self) -> &str {
+        &self.route
     }
 }
 
@@ -187,10 +221,10 @@ fn commandcode_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
 }
 
 /// The argv prefix that starts a worker CLI.
-pub fn prefix(worker: Worker, config: &Config) -> Result<Vec<String>, RpcError> {
-    match worker {
-        Worker::Cc => commandcode_prefix(config),
-        Worker::Go | Worker::Free => opencode_prefix(config),
+pub fn prefix(worker: &Worker, config: &Config) -> Result<Vec<String>, RpcError> {
+    match worker.cli {
+        Cli::CommandCode => commandcode_prefix(config),
+        Cli::Opencode => opencode_prefix(config),
     }
 }
 
@@ -280,7 +314,7 @@ pub async fn check_version(prefix: &[String]) -> Result<(), RpcError> {
 /// The whole command for one OpenCode turn. `session` means continue that conversation.
 pub fn opencode_command(
     prefix: &[String],
-    worker: Worker,
+    worker: &Worker,
     task: &str,
     prompt_path: &str,
     session: Option<&str>,
@@ -317,14 +351,14 @@ pub struct TurnCommand {
 }
 
 pub fn turn_command(
-    worker: Worker,
+    worker: &Worker,
     prefix: &[String],
     task: &str,
     prompt_path: &str,
     session: Option<&str>,
 ) -> TurnCommand {
-    match worker {
-        Worker::Cc => {
+    match worker.cli {
+        Cli::CommandCode => {
             let (model, effort) = crate::task::commandcode::route(worker.route());
             let mut argv = prefix.to_vec();
             argv.extend(
@@ -357,7 +391,7 @@ pub fn turn_command(
                 prefix_len: None,
             }
         }
-        Worker::Go | Worker::Free => TurnCommand {
+        Cli::Opencode => TurnCommand {
             argv: opencode_command(prefix, worker, task, prompt_path, session),
             stdin: None,
             env: BTreeMap::new(),
@@ -373,7 +407,7 @@ pub struct Progress {
     pub tools: Vec<String>,
     pub cost_usd: f64,
     pub peak: u64,
-    pub(crate) worker: Worker,
+    pub(crate) cli: Cli,
     /// The worktree: a tool's path inside it is shown relative to it.
     pub(crate) root: Option<PathBuf>,
     pub(crate) seen: BTreeSet<String>,
@@ -381,21 +415,21 @@ pub struct Progress {
 
 impl Default for Progress {
     fn default() -> Progress {
-        Progress::new(Worker::Go, None)
+        Progress::new(Cli::Opencode, None)
     }
 }
 
 impl Progress {
     /// For a turn running in this folder.
-    pub fn new(worker: Worker, root: Option<PathBuf>) -> Progress {
-        Progress { steps: 0, tools: Vec::new(), cost_usd: 0.0, peak: 0, worker, root, seen: BTreeSet::new() }
+    pub fn new(cli: Cli, root: Option<PathBuf>) -> Progress {
+        Progress { steps: 0, tools: Vec::new(), cost_usd: 0.0, peak: 0, cli, root, seen: BTreeSet::new() }
     }
 
     /// One output line in, one line for the screen out (or nothing to show).
     pub fn feed(&mut self, line: &str) -> Option<String> {
-        match self.worker {
-            Worker::Cc => crate::task::commandcode::progress(self, line),
-            Worker::Go | Worker::Free => crate::task::opencode::progress(self, line),
+        match self.cli {
+            Cli::CommandCode => crate::task::commandcode::progress(self, line),
+            Cli::Opencode => crate::task::opencode::progress(self, line),
         }
     }
 }
@@ -512,15 +546,15 @@ pub struct Reported {
 }
 
 impl TurnOutcome {
-    pub fn from_lines(worker: Worker, lines: impl IntoIterator<Item = String>) -> TurnOutcome {
-        match worker {
-            Worker::Cc => crate::task::commandcode::read(lines),
-            Worker::Go | Worker::Free => crate::task::opencode::read(lines),
+    pub fn from_lines(cli: Cli, lines: impl IntoIterator<Item = String>) -> TurnOutcome {
+        match cli {
+            Cli::CommandCode => crate::task::commandcode::read(lines),
+            Cli::Opencode => crate::task::opencode::read(lines),
         }
     }
 
-    pub fn from_bytes(worker: Worker, bytes: &[u8]) -> TurnOutcome {
-        TurnOutcome::from_lines(worker, String::from_utf8_lossy(bytes).lines().map(String::from))
+    pub fn from_bytes(cli: Cli, bytes: &[u8]) -> TurnOutcome {
+        TurnOutcome::from_lines(cli, String::from_utf8_lossy(bytes).lines().map(String::from))
     }
 }
 
@@ -547,13 +581,18 @@ mod tests {
         assert_eq!(first_version("path 9/2.0.0"), Some((2, 0, 0)));
     }
 
+    fn worker(key: &str) -> Worker {
+        builtin().into_iter().find(|worker| worker.key == key).expect("a built-in worker")
+    }
+
     #[test]
     fn the_command_continues_a_session_or_names_a_new_one() {
         let prefix = vec!["opencode".to_string()];
-        let fresh = opencode_command(&prefix, Worker::Go, "fix-1", "C:/t/prompt.md", None);
+        let go = worker("go");
+        let fresh = opencode_command(&prefix, &go, "fix-1", "C:/t/prompt.md", None);
         assert_eq!(
             &fresh[..8],
-            ["opencode", "run", "--standalone", "--auto", "--format", "json", "--model", Worker::Go.route()]
+            ["opencode", "run", "--standalone", "--auto", "--format", "json", "--model", go.route()]
         );
         assert!(fresh.windows(2).any(|w| w == ["--title", "kompitum-fix-1"]), "{fresh:?}");
         assert!(fresh.windows(2).any(|w| w == ["--file", "C:/t/prompt.md"]), "{fresh:?}");
@@ -561,7 +600,7 @@ mod tests {
             fresh.last().unwrap(),
             "The attached file is the full task brief. Read it and carry it out exactly."
         );
-        let continued = opencode_command(&prefix, Worker::Free, "fix-1", "p", Some("ses_1"));
+        let continued = opencode_command(&prefix, &worker("free"), "fix-1", "p", Some("ses_1"));
         assert!(continued.windows(2).any(|w| w == ["--session", "ses_1"]));
         assert!(!continued.iter().any(|a| a == "--title"));
     }
@@ -569,33 +608,57 @@ mod tests {
     #[test]
     fn the_brief_goes_on_stdin_and_not_in_the_arguments() {
         let prefix = vec!["node".to_string(), "index.mjs".to_string()];
-        let command = turn_command(Worker::Cc, &prefix, "fix-1", "C:/t/prompt.md", None);
+        let cc = worker("cc");
+        let command = turn_command(&cc, &prefix, "fix-1", "C:/t/prompt.md", None);
         assert_eq!(command.stdin.as_deref(), Some("C:/t/prompt.md"));
         assert!(!command.argv.iter().any(|arg| arg.contains("prompt")), "{:?}", command.argv);
         assert_eq!(command.argv[..2], ["node", "index.mjs"]);
         assert!(command.argv.windows(2).any(|w| w == ["-n", "kompitum-fix-1"]), "{:?}", command.argv);
         assert_eq!(command.env.get("COMMANDCODE_SKIP_UPDATES").map(String::as_str), Some("1"));
         assert_eq!(command.prefix_len, None);
-        let continued = turn_command(Worker::Cc, &prefix, "fix-1", "p", Some("ses_1"));
+        let continued = turn_command(&cc, &prefix, "fix-1", "p", Some("ses_1"));
         assert!(continued.argv.windows(2).any(|w| w == ["--resume", "ses_1"]), "{:?}", continued.argv);
         assert!(!continued.argv.iter().any(|arg| arg == "-n"));
-        let opencode = turn_command(Worker::Go, &["opencode".into()], "fix-1", "p", None);
+        let opencode = turn_command(&worker("go"), &["opencode".into()], "fix-1", "p", None);
         assert_eq!(opencode.stdin, None);
         assert_eq!(opencode.prefix_len, Some(1));
     }
 
     #[test]
+    fn an_added_worker_runs_its_own_route() {
+        let opencode = Worker {
+            key: "mine".into(),
+            label: "Mine".into(),
+            cli: Cli::Opencode,
+            route: "opencode-go/other-model#max".into(),
+        };
+        let command = turn_command(&opencode, &["opencode".into()], "fix-1", "p", None);
+        assert!(command.argv.windows(2).any(|w| w == ["--model", "opencode-go/other-model#max"]), "{:?}", command.argv);
+        assert_eq!(command.prefix_len, Some(1));
+        let command_code = Worker {
+            key: "mine-cc".into(),
+            label: "Mine CC".into(),
+            cli: Cli::CommandCode,
+            route: "commandcode/vendor/model#high".into(),
+        };
+        let command = turn_command(&command_code, &["cc".into()], "fix-1", "p", None);
+        assert!(command.argv.windows(2).any(|w| w == ["-m", "vendor/model"]), "{:?}", command.argv);
+        assert!(command.argv.windows(2).any(|w| w == ["--effort", "high"]), "{:?}", command.argv);
+        assert_eq!(command.stdin.as_deref(), Some("p"));
+    }
+
+    #[test]
     fn a_program_that_does_not_exist_is_not_installed() {
         let missing = std::env::temp_dir().join("kompitum-no-such-worker-2419").display().to_string();
-        let error = prefix(Worker::Cc, &config(Some(&missing), None)).unwrap_err();
+        let error = prefix(&worker("cc"), &config(Some(&missing), None)).unwrap_err();
         assert_eq!(error.kind, "worker_missing");
         assert!(error.message.contains("Command Code"), "{}", error.message);
         assert!(error.hint.contains("[workers] commandcode"), "{}", error.hint);
-        let error = prefix(Worker::Go, &config(None, Some(&missing))).unwrap_err();
+        let error = prefix(&worker("go"), &config(None, Some(&missing))).unwrap_err();
         assert_eq!(error.kind, "worker_missing");
         assert!(error.hint.contains("[workers] opencode"), "{}", error.hint);
         let shim = std::env::temp_dir().join("kompitum-worker-2419.cmd").display().to_string();
-        let error = prefix(Worker::Cc, &config(Some(&shim), None)).unwrap_err();
+        let error = prefix(&worker("cc"), &config(Some(&shim), None)).unwrap_err();
         assert!(error.message.contains("shell shim"), "{}", error.message);
     }
 

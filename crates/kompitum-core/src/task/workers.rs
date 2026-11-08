@@ -1,45 +1,17 @@
 //! The chain of workers, what each one's block means, and what it has spent.
 //! Pure: `task.rs` keeps the file and the pump asks these questions.
 
+use crate::rpc::RpcError;
 use crate::task::clock;
 use crate::task::quota::{Refusal, Source};
 use crate::task::types::Task;
-use crate::task::worker::Worker;
+use crate::task::worker::{Worker, builtin};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-/// Which workers a new task may use, in order.
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum Mode {
-    #[default]
-    Auto,
-    Cc,
-    Go,
-    Free,
-}
-
-impl Mode {
-    pub fn key(self) -> &'static str {
-        match self {
-            Mode::Auto => "auto",
-            Mode::Cc => "cc",
-            Mode::Go => "go",
-            Mode::Free => "free",
-        }
-    }
-
-    pub fn from_key(key: &str) -> Option<Mode> {
-        match key {
-            "auto" => Some(Mode::Auto),
-            "cc" => Some(Mode::Cc),
-            "go" => Some(Mode::Go),
-            "free" => Some(Mode::Free),
-            _ => None,
-        }
-    }
-}
+/// The auto chain when the file names none.
+const DEFAULT_ORDER: [&str; 2] = ["cc", "go"];
 
 /// A worker that may not start until `until_ms`, and who said so.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -57,22 +29,141 @@ pub struct Block {
     pub set_ms: u64,
 }
 
-/// `<state>/workers.json`: the mode and every worker's block.
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+/// `<state>/workers.json`: the mode, the person's workers, the auto chain, and every worker's block.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct WorkersFile {
-    pub mode: Mode,
+    /// "auto", "free", or any known worker key.
+    pub mode: String,
     pub blocks: BTreeMap<String, Block>,
+    /// The workers the person added; the built-ins are never stored.
+    #[serde(default)]
+    pub workers: Vec<Worker>,
+    /// The auto chain; empty means the default.
+    #[serde(default)]
+    pub order: Vec<String>,
+}
+
+impl Default for WorkersFile {
+    fn default() -> Self {
+        WorkersFile { mode: "auto".into(), blocks: BTreeMap::new(), workers: Vec::new(), order: Vec::new() }
+    }
+}
+
+/// The built-ins, then the person's workers.
+pub fn all(file: &WorkersFile) -> Vec<Worker> {
+    let mut workers = builtin();
+    workers.extend(file.workers.iter().cloned());
+    workers
+}
+
+fn choices(file: &WorkersFile) -> String {
+    all(file).iter().map(|worker| worker.key.clone()).collect::<Vec<_>>().join(", ")
+}
+
+fn unknown_worker(file: &WorkersFile, key: &str) -> RpcError {
+    RpcError::invalid_params(format!("unknown worker {key:?}: use {}", choices(file)))
+}
+
+/// Look a worker key up in the built-ins and the person's workers.
+pub fn find(file: &WorkersFile, key: &str) -> Result<Worker, RpcError> {
+    all(file).into_iter().find(|worker| worker.key == key).ok_or_else(|| unknown_worker(file, key))
+}
+
+/// The auto chain, with the default filled in.
+pub fn order(file: &WorkersFile) -> Vec<String> {
+    if file.order.is_empty() { DEFAULT_ORDER.iter().map(|key| key.to_string()).collect() } else { file.order.clone() }
+}
+
+fn no_known_order(file: &WorkersFile) -> String {
+    format!("workers.json names no known worker in its order ({})", order(file).join(", "))
 }
 
 /// The order a mode tries its workers in.
-pub fn chain(mode: Mode) -> Vec<Worker> {
+pub fn chain(file: &WorkersFile) -> Vec<Worker> {
+    chain_for(file, &file.mode).unwrap_or_default()
+}
+
+/// The chain one mode names: auto is the order, free comes first, and any other key is alone.
+pub fn chain_for(file: &WorkersFile, mode: &str) -> Result<Vec<Worker>, RpcError> {
     match mode {
-        Mode::Auto => vec![Worker::Cc, Worker::Go],
-        Mode::Cc => vec![Worker::Cc],
-        Mode::Go => vec![Worker::Go],
-        Mode::Free => vec![Worker::Free, Worker::Cc, Worker::Go],
+        "auto" => {
+            let chain: Vec<Worker> = order(file).iter().filter_map(|key| find(file, key).ok()).collect();
+            if chain.is_empty() { Err(RpcError::invalid_params(no_known_order(file))) } else { Ok(chain) }
+        }
+        "free" => {
+            let mut chain: Vec<Worker> = find(file, "free").ok().into_iter().collect();
+            chain
+                .extend(order(file).iter().filter(|key| key.as_str() != "free").filter_map(|key| find(file, key).ok()));
+            Ok(chain)
+        }
+        key => Ok(vec![find(file, key)?]),
     }
+}
+
+/// Validate and add a worker, then put it at the end of the auto chain.
+pub fn add_worker(file: &mut WorkersFile, worker: Worker) -> Result<(), RpcError> {
+    crate::addr::check_name(&worker.key)?;
+    if worker.key == "auto" {
+        return Err(RpcError::invalid_params("\"auto\" is the mode word: pick another key"));
+    }
+    if all(file).iter().any(|known| known.key == worker.key) {
+        return Err(RpcError::invalid_params(format!("worker {:?} is already taken", worker.key)));
+    }
+    if worker.route.trim().is_empty() {
+        return Err(RpcError::invalid_params("a worker needs a route"));
+    }
+    if file.order.is_empty() {
+        file.order = DEFAULT_ORDER.iter().map(|key| key.to_string()).collect();
+    }
+    file.order.retain(|key| key != &worker.key);
+    file.order.push(worker.key.clone());
+    file.workers.push(worker);
+    Ok(())
+}
+
+/// Remove an added worker, its block, and its place in the auto chain.
+pub fn remove_worker(file: &mut WorkersFile, key: &str) -> Result<(), RpcError> {
+    if builtin().iter().any(|worker| worker.key == key) {
+        return Err(RpcError::invalid_params(format!("{key} is built in: leave it out of the order instead")));
+    }
+    let Some(at) = file.workers.iter().position(|worker| worker.key == key) else {
+        return Err(unknown_worker(file, key));
+    };
+    file.workers.remove(at);
+    file.blocks.remove(key);
+    file.order.retain(|item| item != key);
+    if file.mode == key {
+        file.mode = "auto".into();
+    }
+    Ok(())
+}
+
+/// A new auto chain: known keys, no repeats, at least one.
+pub fn set_order(file: &mut WorkersFile, order: Vec<String>) -> Result<(), RpcError> {
+    if order.is_empty() {
+        return Err(RpcError::invalid_params("an order needs at least one worker key"));
+    }
+    let mut seen = BTreeSet::new();
+    for key in &order {
+        find(file, key)?;
+        if !seen.insert(key.as_str()) {
+            return Err(RpcError::invalid_params(format!("worker {key:?} is in the order twice")));
+        }
+    }
+    file.order = order;
+    Ok(())
+}
+
+/// A mode: auto, or one known worker key.
+pub fn set_mode(file: &mut WorkersFile, mode: &str) -> Result<(), RpcError> {
+    if mode == "auto" {
+        file.mode = "auto".into();
+        return Ok(());
+    }
+    find(file, mode)?;
+    file.mode = mode.to_string();
+    Ok(())
 }
 
 /// The chain with this worker first: a follow-up stays with the worker that did the work, while it can.
@@ -123,21 +214,24 @@ pub fn sentence(label: &str, block: &Block, now_ms: u64, offset_min: i32) -> Str
 pub fn pick(
     chain: &[Worker],
     file: &WorkersFile,
-    installed: impl Fn(Worker) -> bool,
+    installed: impl Fn(&Worker) -> bool,
     now_ms: u64,
     offset_min: i32,
 ) -> Result<Worker, String> {
+    if chain.is_empty() {
+        return Err(no_known_order(file));
+    }
     let mut reasons = Vec::new();
     for worker in chain {
         if let Some(block) = file.blocks.get(worker.key()).filter(|block| block.until_ms > now_ms) {
             reasons.push(sentence(worker.label(), block, now_ms, offset_min));
             continue;
         }
-        if !installed(*worker) {
+        if !installed(worker) {
             reasons.push(format!("{} is not installed.", worker.label()));
             continue;
         }
-        return Ok(*worker);
+        return Ok(worker.clone());
     }
     if chain.len() == 1
         && let Some(block) = chain.first().and_then(|worker| file.blocks.get(worker.key()))
@@ -244,14 +338,9 @@ pub fn spend(tasks: &[Task], now_ms: u64) -> BTreeMap<String, Spend> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_follow_up_stays_with_its_worker_and_only_within_the_chain() {
-        assert_eq!(stay_with(chain(Mode::Auto), "go"), [Worker::Go, Worker::Cc]);
-        assert_eq!(stay_with(chain(Mode::Auto), "cc"), [Worker::Cc, Worker::Go]);
-        assert_eq!(stay_with(chain(Mode::Go), "cc"), [Worker::Go]);
-    }
     use crate::task::clock::Civil;
     use crate::task::types::{Turn, Usage};
+    use crate::task::worker::Cli;
 
     fn now() -> u64 {
         clock::to_ms(&Civil { year: 2026, month: 11, day: 5, hour: 9, minute: 0, second: 0, weekday: 0 }, 0)
@@ -267,26 +356,160 @@ mod tests {
 
     fn workers_file(blocks: &[(&str, Block)]) -> WorkersFile {
         WorkersFile {
-            mode: Mode::Auto,
             blocks: blocks.iter().map(|(key, block)| (key.to_string(), block.clone())).collect(),
+            ..Default::default()
         }
+    }
+
+    fn custom(key: &str, cli: Cli, route: &str) -> Worker {
+        Worker { key: key.into(), label: key.into(), cli, route: route.into() }
+    }
+
+    fn keys(chain: &[Worker]) -> Vec<&str> {
+        chain.iter().map(Worker::key).collect()
+    }
+
+    #[test]
+    fn a_follow_up_stays_with_its_worker_and_only_within_the_chain() {
+        let mut file = WorkersFile::default();
+        assert_eq!(keys(&stay_with(chain(&file), "go")), ["go", "cc"]);
+        assert_eq!(keys(&stay_with(chain(&file), "cc")), ["cc", "go"]);
+        file.mode = "go".into();
+        assert_eq!(keys(&stay_with(chain(&file), "cc")), ["go"]);
+    }
+
+    #[test]
+    fn the_chain_is_the_order_free_or_one_pinned_worker() {
+        let mut file = WorkersFile::default();
+        assert_eq!(keys(&chain(&file)), ["cc", "go"], "the default order");
+        assert_eq!(keys(&chain_for(&file, "free").unwrap()), ["free", "cc", "go"]);
+        file.mode = "go".into();
+        assert_eq!(keys(&chain(&file)), ["go"], "a pinned key");
+        file.order = vec!["free".into(), "cc".into()];
+        file.mode = "auto".into();
+        assert_eq!(keys(&chain(&file)), ["free", "cc"], "a custom order");
+        file.mode = "free".into();
+        assert_eq!(keys(&chain(&file)), ["free", "cc"], "free, then the order without it");
+
+        let mine = custom("mine", Cli::Opencode, "opencode-go/other#max");
+        add_worker(&mut file, mine.clone()).unwrap();
+        assert_eq!(file.order, ["free", "cc", "mine"], "an added worker goes to the end");
+        file.mode = "auto".into();
+        assert_eq!(keys(&chain(&file)), ["free", "cc", "mine"]);
+        file.mode = "mine".into();
+        assert_eq!(chain(&file), [mine], "a pinned added worker is alone");
+    }
+
+    #[test]
+    fn an_order_with_no_known_worker_is_said_in_words() {
+        let mut file = WorkersFile { order: vec!["gone".into()], ..Default::default() };
+        assert_eq!(
+            chain_for(&file, "auto").unwrap_err().message,
+            "workers.json names no known worker in its order (gone)"
+        );
+        assert_eq!(
+            pick(&[], &file, |_| true, now(), 0).unwrap_err(),
+            "workers.json names no known worker in its order (gone)",
+            "never `ALL WORKERS OUT:` with nothing after it"
+        );
+        file.order = vec!["gone".into(), "cc".into()];
+        assert_eq!(keys(&chain_for(&file, "auto").unwrap()), ["cc"], "the known keys stay");
+    }
+
+    #[test]
+    fn an_old_workers_file_loads_unchanged() {
+        let file: WorkersFile = serde_json::from_str(r#"{"mode":"cc","blocks":{}}"#).unwrap();
+        assert_eq!(file.mode, "cc");
+        assert_eq!(keys(&chain(&file)), ["cc"]);
+        assert!(file.workers.is_empty() && file.order.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_key_is_refused_with_the_known_ones() {
+        let file = WorkersFile::default();
+        assert_eq!(
+            find(&file, "x").unwrap_err().message,
+            r#"unknown worker "x": use cc, go, free"#,
+            "the known keys are listed"
+        );
+    }
+
+    #[test]
+    fn the_order_needs_known_keys_no_repeats_and_one_entry() {
+        let mut file = WorkersFile::default();
+        assert!(set_order(&mut file, vec!["nope".into()]).is_err(), "an unknown key");
+        assert!(set_order(&mut file, vec!["cc".into(), "cc".into()]).is_err(), "a repeat");
+        assert_eq!(set_order(&mut file, Vec::new()).unwrap_err().message, "an order needs at least one worker key");
+        assert!(file.order.is_empty(), "nothing was changed");
+        set_order(&mut file, vec!["go".into(), "cc".into()]).unwrap();
+        assert_eq!(file.order, ["go", "cc"]);
+    }
+
+    #[test]
+    fn adding_refuses_taken_bad_keys_and_an_empty_route_and_appends() {
+        let mut file = WorkersFile::default();
+        let taken = add_worker(&mut file, custom("cc", Cli::CommandCode, "commandcode/x#max")).unwrap_err();
+        assert!(taken.message.contains("already taken"), "{}", taken.message);
+        let bad = add_worker(&mut file, custom("Bad Key", Cli::Opencode, "opencode/x#max")).unwrap_err();
+        assert!(bad.message.contains("bad name"), "{}", bad.message);
+        let mode_word = add_worker(&mut file, custom("auto", Cli::Opencode, "opencode/x#max")).unwrap_err();
+        assert_eq!(mode_word.message, "\"auto\" is the mode word: pick another key");
+        let empty = add_worker(&mut file, custom("mine", Cli::Opencode, "  ")).unwrap_err();
+        assert!(empty.message.contains("route"), "{}", empty.message);
+        assert!(file.workers.is_empty() && file.order.is_empty(), "nothing was changed");
+
+        add_worker(&mut file, custom("mine", Cli::Opencode, "opencode/x#max")).unwrap();
+        assert_eq!(file.order, ["cc", "go", "mine"], "an empty order is filled with the default first");
+        file.order = vec!["go".into()];
+        add_worker(&mut file, custom("other", Cli::Opencode, "opencode/y#max")).unwrap();
+        assert_eq!(file.order, ["go", "other"]);
+    }
+
+    #[test]
+    fn removing_a_builtin_is_refused_and_an_added_one_leaves_everything() {
+        let mut file = WorkersFile::default();
+        assert_eq!(
+            remove_worker(&mut file, "cc").unwrap_err().message,
+            "cc is built in: leave it out of the order instead"
+        );
+        add_worker(&mut file, custom("mine", Cli::Opencode, "opencode/x#max")).unwrap();
+        file.mode = "mine".into();
+        file.blocks.insert("mine".into(), block(Source::Person, "", 10));
+        remove_worker(&mut file, "mine").unwrap();
+        assert!(file.workers.is_empty(), "its worker went");
+        assert!(!file.order.iter().any(|key| key == "mine"), "its place in the order went");
+        assert!(!file.blocks.contains_key("mine"), "its block went");
+        assert_eq!(file.mode, "auto", "a mode that named it goes back to auto");
+    }
+
+    #[test]
+    fn a_mode_is_auto_or_a_known_key() {
+        let mut file = WorkersFile::default();
+        set_mode(&mut file, "go").unwrap();
+        assert_eq!(file.mode, "go");
+        assert!(set_mode(&mut file, "nope").is_err());
+        add_worker(&mut file, custom("mine", Cli::Opencode, "opencode/x#max")).unwrap();
+        set_mode(&mut file, "mine").unwrap();
+        assert_eq!(file.mode, "mine");
     }
 
     #[test]
     fn auto_passes_over_a_blocked_worker_and_one_not_installed() {
         let now = now();
         let file = workers_file(&[("cc", block(Source::Named, "weekly", now + 3_600_000))]);
-        let installed = |worker: Worker| worker != Worker::Free;
-        assert_eq!(pick(&chain(Mode::Auto), &file, installed, now, 0), Ok(Worker::Go));
+        let installed = |worker: &Worker| worker.key != "free";
+        assert_eq!(pick(&chain(&file), &file, installed, now, 0), Ok(find(&file, "go").unwrap()));
         let empty = WorkersFile::default();
-        let none = |_worker: Worker| false;
+        let none = |_worker: &Worker| false;
         assert_eq!(
-            pick(&chain(Mode::Auto), &empty, none, now, 0),
+            pick(&chain(&empty), &empty, none, now, 0),
             Err("ALL WORKERS OUT: Command Code is not installed. opencode Go is not installed.".into())
         );
         let cc_only = workers_file(&[("cc", block(Source::Named, "weekly", now + 3_600_000))]);
+        let mut pinned = cc_only.clone();
+        pinned.mode = "cc".into();
         assert_eq!(
-            pick(&chain(Mode::Cc), &cc_only, installed, now, 0),
+            pick(&chain(&pinned), &cc_only, installed, now, 0),
             Err("QUOTA EXHAUSTED: Command Code is out of its weekly limit, back at 10:00.".into())
         );
     }
@@ -298,18 +521,29 @@ mod tests {
             ("free", block(Source::Named, "daily", now + 3_600_000)),
             ("cc", block(Source::Named, "weekly", now + 3_600_000)),
         ]);
-        assert_eq!(pick(&chain(Mode::Free), &both, |_| true, now, 0), Ok(Worker::Go));
+        let mut free = both.clone();
+        free.mode = "free".into();
+        assert_eq!(pick(&chain(&free), &both, |_| true, now, 0), Ok(find(&both, "go").unwrap()));
         let cc_out = workers_file(&[("free", block(Source::Named, "daily", now + 3_600_000))]);
-        assert_eq!(pick(&chain(Mode::Free), &cc_out, |_| true, now, 0), Ok(Worker::Cc));
-        assert_eq!(chain(Mode::Free), [Worker::Free, Worker::Cc, Worker::Go]);
-        assert_eq!(chain(Mode::Auto), [Worker::Cc, Worker::Go]);
+        assert_eq!(pick(&chain(&free), &cc_out, |_| true, now, 0), Ok(find(&cc_out, "cc").unwrap()));
+        assert_eq!(keys(&chain(&free)), ["free", "cc", "go"]);
+        assert_eq!(keys(&chain(&WorkersFile::default())), ["cc", "go"]);
+    }
+
+    #[test]
+    fn pick_can_choose_an_added_worker() {
+        let now = now();
+        let mut file = WorkersFile::default();
+        let mine = custom("mine", Cli::Opencode, "opencode-go/other#max");
+        add_worker(&mut file, mine.clone()).unwrap();
+        assert_eq!(pick(&chain(&file), &file, |worker| worker.key == "mine", now, 0), Ok(mine));
     }
 
     #[test]
     fn a_block_lapses_by_itself() {
         let now = now();
         let file = workers_file(&[("cc", block(Source::Named, "weekly", now - 1))]);
-        assert_eq!(pick(&chain(Mode::Auto), &file, |_| true, now, 0), Ok(Worker::Cc));
+        assert_eq!(pick(&chain(&file), &file, |_| true, now, 0), Ok(find(&file, "cc").unwrap()));
         assert!(file.blocks.contains_key("cc"), "a lapsed block stays for its refusals");
     }
 
@@ -317,10 +551,11 @@ mod tests {
     fn a_stranded_chain_comes_back_only_while_a_block_is_live() {
         let now = now();
         let live = workers_file(&[("cc", block(Source::Named, "weekly", now + 1))]);
-        assert!(may_come_back(&chain(Mode::Auto), &live, now));
+        assert!(may_come_back(&chain(&live), &live, now));
         let lapsed = workers_file(&[("cc", block(Source::Named, "weekly", now - 1))]);
-        assert!(!may_come_back(&chain(Mode::Auto), &lapsed, now));
-        assert!(!may_come_back(&chain(Mode::Auto), &WorkersFile::default(), now));
+        assert!(!may_come_back(&chain(&lapsed), &lapsed, now));
+        let empty = WorkersFile::default();
+        assert!(!may_come_back(&chain(&empty), &empty, now));
     }
 
     #[test]

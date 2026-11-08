@@ -809,7 +809,7 @@ Options:
       --json               JSON output even in a terminal
       --in <FOLDER>        The folder in the repository (default: where kom runs)
       --scope <GLOB>       Paths the task may change (repeatable); none means the whole repository
-      --worker <WORKER>    Which workers to use, in order: auto is Command Code then opencode Go, free is opencode free then both. Default: what kom workers shows [possible values: auto, cc, go, free]
+      --worker <WORKER>    Which worker: auto (the order), free, or a worker key. Default: what kom workers shows
       --idle <IDLE>        Seconds without output or CPU before the turn is cut (default 900)
       --timeout <TIMEOUT>  Seconds the turn may run (default 3600)
       --test <COMMAND>     The test command the checks run when the worker ends, replacing the repository's
@@ -1079,10 +1079,16 @@ Usage: kom workers [OPTIONS]
 
 Options:
       --json             JSON output even in a terminal
-      --mode <MODE>      Which workers new tasks use, in order: auto is Command Code then opencode Go, free is opencode free then both [possible values: auto, cc, go, free]
-      --block <BLOCK>    Mark this worker as out [possible values: cc, go, free]
+      --mode <MODE>      Which worker new tasks use: auto or a worker key
+      --order <KEY,...>  The auto chain, in order (a comma list)
+      --add <KEY>        Add a worker, at the end of the auto chain
+      --cli <CLI>        The added worker's CLI: command_code or opencode [possible values: command_code, opencode]
+      --route <ROUTE>    The added worker's model route
+      --label <LABEL>    The added worker's label (default: its key)
+      --remove <KEY>     Remove an added worker
+      --block <BLOCK>    Mark this worker as out
       --until <UNTIL>    When it is back: 2026-11-23, 2026-11-23 15:36, or a span such as 3h or 2d
       --reason <REASON>  Why, in your words
-      --clear <CLEAR>    Say this worker is back now [possible values: cc, go, free]
+      --clear <CLEAR>    Say this worker is back now
   -h, --help             Print help
 ```

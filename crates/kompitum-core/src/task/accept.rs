@@ -223,7 +223,7 @@ pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptR
     let name = task.name.clone();
     let state = task.state;
     super::save(&core.paths.state, &task);
-    super::write_result(&core.paths.state, &task);
+    super::write_result(&core.paths.state, &task, &super::worker_list(core));
     super::replace(core, task);
     core.changed.notify_waiters();
     drop(serial);

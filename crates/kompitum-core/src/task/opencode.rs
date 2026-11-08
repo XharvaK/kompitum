@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn progress_counts_steps_once_and_keeps_the_last_five_tools() {
-        let mut progress = Progress::new(crate::task::worker::Worker::Go, None);
+        let mut progress = Progress::new(crate::task::worker::Cli::Opencode, None);
         let feed: Vec<_> = stream().iter().filter_map(|l| progress.feed(l)).collect();
         assert_eq!(progress.steps, 1);
         assert_eq!(progress.peak, 11142 + 1536 + 8);
@@ -446,7 +446,7 @@ mod tests {
     fn a_tool_line_says_what_the_tool_works_on_relative_to_the_worktree() {
         let root = std::env::temp_dir().join("worktree");
         let inside = root.join("src").join("lib.rs").display().to_string();
-        let mut progress = Progress::new(crate::task::worker::Worker::Go, Some(root));
+        let mut progress = Progress::new(crate::task::worker::Cli::Opencode, Some(root));
         let mut feed = |tool: &str, status: &str, input: Value| {
             let id = format!("{tool}-{status}");
             let event = serde_json::json!({"type": "tool_use", "part": {

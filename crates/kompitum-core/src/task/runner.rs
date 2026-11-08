@@ -6,7 +6,7 @@
 use crate::paths::write_atomic;
 use crate::task::opencode::{RouteCheck, route_check};
 use crate::task::types::{Beat, cut};
-use crate::task::worker::{Progress, TurnOutcome, Worker};
+use crate::task::worker::{Cli, Progress, TurnOutcome};
 use clap::Args as ClapArgs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -29,6 +29,9 @@ pub struct Args {
     pub turn: u32,
     #[arg(long)]
     pub worker: String,
+    /// The worker's CLI: command_code or opencode.
+    #[arg(long)]
+    pub cli: Option<String>,
     /// The file the worker reads as stdin (closed when absent).
     #[arg(long)]
     pub stdin: Option<PathBuf>,
@@ -416,8 +419,14 @@ pub fn run(args: Args) -> ! {
     if args.check {
         run_check(args);
     }
-    let worker = Worker::from_key(&args.worker).unwrap_or(Worker::Go);
-    let label = Worker::from_key(&args.worker).map_or_else(|_| args.worker.clone(), |w| w.label().to_string());
+    let builtin = crate::task::worker::builtin().into_iter().find(|worker| worker.key == args.worker);
+    let cli = args
+        .cli
+        .as_deref()
+        .and_then(Cli::from_key)
+        .or_else(|| builtin.as_ref().map(|worker| worker.cli))
+        .unwrap_or(Cli::Opencode);
+    let label = builtin.map_or_else(|| args.worker.clone(), |worker| worker.label);
     say(&format!("task {}, turn {}, {}\n", args.task, args.turn, label));
     let jsonl = args.dir.join(format!("turn-{}.jsonl", args.turn));
     let err = args.dir.join(format!("turn-{}.err", args.turn));
@@ -477,7 +486,7 @@ pub fn run(args: Args) -> ! {
     let out_thread = std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
         let mut file = out_file;
-        let mut progress = Progress::new(worker, std::env::current_dir().ok());
+        let mut progress = Progress::new(cli, std::env::current_dir().ok());
         let mut buf = Vec::new();
         loop {
             buf.clear();
@@ -550,7 +559,7 @@ pub fn run(args: Args) -> ! {
         && let Some(prefix_len) = args.prefix_len
         && let Ok(bytes) = std::fs::read(&jsonl)
     {
-        let outcome = TurnOutcome::from_bytes(worker, &bytes);
+        let outcome = TurnOutcome::from_bytes(cli, &bytes);
         if outcome.sessions.len() == 1
             && let Some(session) = outcome.session.as_deref()
         {

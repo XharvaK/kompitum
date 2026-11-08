@@ -27,6 +27,8 @@ const TRUNCATED: &str = "TRUNCATED: {bytes} bytes left out; raise max_bytes for 
 #[derive(Clone, Debug, Default)]
 pub struct ReviewInput {
     pub task: Task,
+    /// The built-ins and the person's workers, for the labels a record stores as keys.
+    pub workers: Vec<worker::Worker>,
     pub patch: String,
     pub full: bool,
     pub max_bytes: usize,
@@ -69,8 +71,10 @@ pub async fn review(core: &Arc<Core>, p: TaskReviewParams) -> Result<TaskReviewR
         }
     }
     let max_bytes = p.max_bytes.map(|value| usize::try_from(value).unwrap_or(usize::MAX)).unwrap_or(DEFAULT_MAX_BYTES);
+    let workers = crate::task::workers::all(&core.tasks.workers());
     let input = ReviewInput {
         task,
+        workers,
         patch: patch.clone(),
         full: p.full,
         max_bytes,
@@ -125,7 +129,7 @@ pub fn render(input: &ReviewInput) -> Rendered {
     });
     let parts = [
         task.state.word().to_string(),
-        last.map(|turn| worker::label_of(&turn.worker)).unwrap_or_else(|| "unknown".into()),
+        last.map(|turn| worker::label_of(&input.workers, &turn.worker)).unwrap_or_else(|| "unknown".into()),
         duration_text(seconds),
         format!("${:.3}", usage.cost_usd),
         format!("steps {}", usage.steps),

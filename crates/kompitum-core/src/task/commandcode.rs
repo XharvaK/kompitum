@@ -215,7 +215,6 @@ pub fn session_cost(session: &str) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::worker::Worker;
 
     const SESSION: &str = "11142727-ca4c-4fe9-876a-3c0190ce95b7";
     const MODEL: &str = "deepseek/deepseek-v4.1-flash";
@@ -283,7 +282,7 @@ mod tests {
 
     #[test]
     fn a_thinking_stream_shows_no_lines_and_a_tool_shows_its_target() {
-        let mut progress = Progress::new(Worker::Cc, None);
+        let mut progress = Progress::new(crate::task::worker::Cli::CommandCode, None);
         let shown: Vec<_> = stream().iter().filter_map(|line| progress.feed(line)).collect();
         assert_eq!(shown, ["write_file made.txt", "step 1: 17639 in, 88 out", "step 2: 17775 in, 3 out"]);
         assert_eq!(progress.steps, 2);

@@ -519,6 +519,6 @@ mod tests {
             schema["properties"]["in"]["description"],
             "The repository folder the task runs in, as an absolute path."
         );
-        assert_eq!(schema["properties"]["worker"]["enum"], json!(["auto", "cc", "go", "free"]));
+        assert!(schema["properties"]["worker"]["enum"].is_null(), "a worker key may be one the person added");
     }
 }

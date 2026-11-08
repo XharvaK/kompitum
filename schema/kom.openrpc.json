@@ -264,6 +264,14 @@
         ],
         "type": "string"
       },
+      "Cli": {
+        "description": "A worker CLI the loop can run headless and read. Its launch, stream and quota words live in code.",
+        "enum": [
+          "command_code",
+          "opencode"
+        ],
+        "type": "string"
+      },
       "CoreInfo": {
         "properties": {
           "id": {
@@ -1077,16 +1085,6 @@
         ],
         "type": "object"
       },
-      "Mode": {
-        "description": "Which workers a new task may use, in order.",
-        "enum": [
-          "auto",
-          "cc",
-          "go",
-          "free"
-        ],
-        "type": "string"
-      },
       "ParentUsage": {
         "description": "What the orchestrator itself spent on one task, read from its transcript.",
         "properties": {
@@ -1826,6 +1824,11 @@
           "name": {
             "default": "",
             "type": "string"
+          },
+          "one_at_a_time": {
+            "default": false,
+            "description": "The repository's committed checks asked for one builder at a time.",
+            "type": "boolean"
           },
           "owner_said": {
             "default": null,
@@ -2906,6 +2909,18 @@
       },
       "Turn": {
         "properties": {
+          "cli": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cli"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The CLI this turn ran, fixed at its start; null in records from before this."
+          },
           "died_at_start": {
             "default": false,
             "description": "The worker exited with an error before it began; it was started again.",
@@ -3176,6 +3191,10 @@
       },
       "WorkerView": {
         "properties": {
+          "cli": {
+            "$ref": "#/components/schemas/Cli",
+            "description": "command_code or opencode."
+          },
           "key": {
             "type": "string"
           },
@@ -3190,6 +3209,10 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "route": {
+            "description": "The model route it runs.",
+            "type": "string"
           },
           "sentence": {
             "description": "The block in words, as `kom workers` shows it.",
@@ -3226,6 +3249,8 @@
         "required": [
           "key",
           "label",
+          "cli",
+          "route",
           "state",
           "until_ms",
           "window",
@@ -3233,6 +3258,36 @@
           "sentence",
           "refusals",
           "spend"
+        ],
+        "type": "object"
+      },
+      "WorkersAddParam": {
+        "properties": {
+          "cli": {
+            "$ref": "#/components/schemas/Cli",
+            "description": "Its CLI: command_code or opencode."
+          },
+          "key": {
+            "description": "The new worker's key, using the terminal name rules (1-32 of a-z 0-9 - _ ., starting with a letter or digit).",
+            "type": "string"
+          },
+          "label": {
+            "default": null,
+            "description": "Its label; the key when absent.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "route": {
+            "description": "The model route it runs; not empty.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "cli",
+          "route"
         ],
         "type": "object"
       },
@@ -3255,7 +3310,7 @@
             ]
           },
           "worker": {
-            "description": "The worker to mark: cc, go or free.",
+            "description": "The worker to mark: a known worker key.",
             "type": "string"
           }
         },
@@ -3281,8 +3336,8 @@
             "type": "array"
           },
           "mode": {
-            "$ref": "#/components/schemas/Mode",
-            "description": "The mode new tasks use."
+            "description": "The mode new tasks use.",
+            "type": "string"
           },
           "next": {
             "description": "The key of the worker the next task would use, or null when all are out.",
@@ -3290,6 +3345,13 @@
               "string",
               "null"
             ]
+          },
+          "order": {
+            "description": "The auto chain, with the default filled in.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "warnings": {
             "description": "Things worth knowing, like a damaged workers.json.",
@@ -3307,6 +3369,7 @@
         },
         "required": [
           "mode",
+          "order",
           "chain",
           "warnings",
           "workers"
@@ -6060,12 +6123,12 @@
           }
         },
         {
-          "description": "The worker: auto (the default), cc, go or free. With none, the mode `kom workers` shows.",
+          "description": "The worker: auto, free, or a known worker key. With none, the mode `kom workers` shows.",
           "name": "worker",
           "required": false,
           "schema": {
             "default": null,
-            "description": "The worker: auto (the default), cc, go or free. With none, the mode `kom workers` shows.",
+            "description": "The worker: auto, free, or a known worker key. With none, the mode `kom workers` shows.",
             "type": [
               "string",
               "null"
@@ -6848,6 +6911,22 @@
       "paramStructure": "by-name",
       "params": [
         {
+          "description": "Add a worker, at the end of the auto chain.",
+          "name": "add",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkersAddParam"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Add a worker, at the end of the auto chain."
+          }
+        },
+        {
           "description": "Mark a worker out until a time.",
           "name": "block",
           "required": false,
@@ -6877,12 +6956,41 @@
           }
         },
         {
-          "description": "The mode new tasks use: auto, cc, go or free.",
+          "description": "The mode new tasks use: auto or a known worker key.",
           "name": "mode",
           "required": false,
           "schema": {
             "default": null,
-            "description": "The mode new tasks use: auto, cc, go or free.",
+            "description": "The mode new tasks use: auto or a known worker key.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The new auto chain: known keys, no repeats, at least one.",
+          "name": "order",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The new auto chain: known keys, no repeats, at least one.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Remove an added worker, its block and its place in the order.",
+          "name": "remove",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Remove an added worker, its block and its place in the order.",
             "type": [
               "string",
               "null"

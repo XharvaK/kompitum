@@ -3,7 +3,7 @@
 use crate::rpc::RpcError;
 use crate::runtime::Core;
 use crate::task::types::Task;
-use crate::task::worker::Worker;
+use crate::task::worker::{Cli, Worker};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -352,7 +352,7 @@ const NO_PYTHON: &str = "no real Python found, so this worker's python is whatev
 pub async fn prepare(
     core: &Arc<Core>,
     task: &Task,
-    worker: Worker,
+    worker: &Worker,
     worktree: &str,
     n: u32,
 ) -> Result<Prepared, RpcError> {
@@ -369,7 +369,7 @@ pub async fn prepare(
     // OpenCode would read the repository's and the home folder's AGENTS.md by itself; the prompt
     // carries the committed one instead. Command Code's settings stay as they are: what it
     // carries is unmeasured until its credits return.
-    if worker != Worker::Cc {
+    if worker.cli != Cli::CommandCode {
         prepared.env.insert("OPENCODE_DISABLE_PROJECT_CONFIG".into(), "1".into());
     }
     if crate::platform::PYTHON_SHIMS {
@@ -382,11 +382,11 @@ pub async fn prepare(
         }
     }
     let folder = crate::task::task_folder(&core.paths.state, &task.name);
-    if worker == Worker::Cc
+    if worker.cli == Cli::CommandCode
         && let Err(error) = command_code_settings(&folder, worktree, n)
     {
         // A start that fails leaves the worktree as it found it.
-        let _ = after_turn(&folder, worktree, worker, n);
+        let _ = after_turn(&folder, worktree, worker.clone(), n);
         return Err(error);
     }
     Ok(prepared)
@@ -437,7 +437,8 @@ mod tests {
         std::fs::create_dir_all(&worktree).unwrap();
         std::fs::write(settings_marker(&folder, 1, "kept"), b"mine").unwrap();
 
-        after_turn(&folder, &worktree.display().to_string(), Worker::Cc, 1).unwrap();
+        let cc = crate::task::worker::builtin().into_iter().find(|worker| worker.key == "cc").unwrap();
+        after_turn(&folder, &worktree.display().to_string(), cc, 1).unwrap();
 
         let back = std::fs::read(worktree.join(".commandcode").join("settings.local.json")).unwrap();
         assert_eq!(back, b"mine");

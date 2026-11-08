@@ -2,6 +2,7 @@
 //! Pure data: `task.rs` writes it and `decide.rs` judges it.
 
 use crate::task::checks::{CHECKS_PATH, Hit, WarnHit};
+use crate::task::worker::{Cli, Worker};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -104,6 +105,9 @@ pub struct Turn {
     pub n: u32,
     /// The worker key (`go`, `free`).
     pub worker: String,
+    /// The CLI this turn ran, fixed at its start; null in records from before this.
+    #[serde(default)]
+    pub cli: Option<Cli>,
     pub terminal: Option<String>,
     /// The terminal's `KOMPITUM_SCOPE` token: everything the turn started carries it.
     pub scope_token: Option<String>,
@@ -132,6 +136,15 @@ pub struct Turn {
     pub usage: Usage,
     /// Processes carrying the scope token that outlived the kill.
     pub survivors: u32,
+}
+
+impl Turn {
+    /// The CLI the turn ran: recorded at its start, or looked up for an old record.
+    pub fn cli_or_lookup(&self, workers: &[Worker]) -> Cli {
+        self.cli
+            .or_else(|| workers.iter().find(|worker| worker.key == self.worker).map(|worker| worker.cli))
+            .unwrap_or(Cli::Opencode)
+    }
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
@@ -179,6 +192,9 @@ pub struct Task {
     pub review: Option<String>,
     /// What `task.start` asked of the checks and the worker.
     pub asked: Asked,
+    /// The repository's committed checks asked for one builder at a time.
+    #[serde(default)]
+    pub one_at_a_time: bool,
     /// One report per checked turn, in order.
     pub checks: Vec<CheckReport>,
     /// The test a check has running.
@@ -474,7 +490,7 @@ pub struct TaskLine {
 
 impl TaskLine {
     /// The task as a wake, with its report cut to `text_limit` characters.
-    pub fn of(task: &Task, now_ms: u64, text_limit: usize) -> TaskLine {
+    pub fn of(task: &Task, workers: &[crate::task::worker::Worker], now_ms: u64, text_limit: usize) -> TaskLine {
         let mut usage = Usage::default();
         for turn in &task.turns {
             usage.add(&turn.usage);
@@ -493,7 +509,7 @@ impl TaskLine {
             ok: matches!(task.state, TaskState::Done | TaskState::Accepted)
                 && out_of_scope.is_empty()
                 && task.checks.last().is_none_or(|report| report.ok),
-            worker: last.map(|t| crate::task::worker::label_of(&t.worker)),
+            worker: last.map(|t| crate::task::worker::label_of(workers, &t.worker)),
             workers: task.turns.iter().map(|t| t.worker.clone()).collect(),
             handoffs: task.handoffs.clone(),
             turns: task.turns.len() as u32,
@@ -540,6 +556,10 @@ pub struct Beat {
 mod tests {
     use super::*;
 
+    fn workers() -> Vec<crate::task::worker::Worker> {
+        crate::task::worker::builtin()
+    }
+
     fn turn(worker: &str, text: &str, cost: f64) -> Turn {
         Turn {
             worker: worker.into(),
@@ -548,6 +568,17 @@ mod tests {
             exit_code: Some(0),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn a_turns_own_cli_survives_a_removed_worker_and_old_records_look_it_up() {
+        let recorded = turn("gone", "", 0.0);
+        let mut recorded = recorded;
+        recorded.cli = Some(Cli::CommandCode);
+        assert_eq!(recorded.cli_or_lookup(&[]), Cli::CommandCode, "its own CLI stays");
+        let old = turn("go", "", 0.0);
+        assert_eq!(old.cli_or_lookup(&workers()), Cli::Opencode, "an old record looks the key up");
+        assert_eq!(turn("gone", "", 0.0).cli_or_lookup(&[]), Cli::Opencode, "an unknown old key is OpenCode");
     }
 
     #[test]
@@ -564,7 +595,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let line = TaskLine::of(&task, 9_999, 1500);
+        let line = TaskLine::of(&task, &workers(), 9_999, 1500);
         assert_eq!(line.seconds, 3.5);
         assert!((line.cost_usd - 0.75).abs() < 1e-9);
         assert_eq!(line.usage.steps, 2);
@@ -575,7 +606,7 @@ mod tests {
         assert!(!line.ok, "a file outside the scope is not ok");
         let mut clean = task;
         clean.changed.truncate(1);
-        assert!(TaskLine::of(&clean, 9_999, 1500).ok);
+        assert!(TaskLine::of(&clean, &workers(), 9_999, 1500).ok);
     }
 
     #[test]
@@ -617,7 +648,7 @@ mod tests {
             turns: vec![turn("go", "éééé", 0.0)],
             ..Default::default()
         };
-        let line = TaskLine::of(&task, 3_000, 3);
+        let line = TaskLine::of(&task, &workers(), 3_000, 3);
         assert_eq!(line.seconds, 2.0);
         assert_eq!(line.text, "ééé");
         assert!(!line.ok);
@@ -684,16 +715,16 @@ mod tests {
             checks: vec![failed_report()],
             ..Default::default()
         };
-        let line = TaskLine::of(&task, 0, 1500);
+        let line = TaskLine::of(&task, &workers(), 0, 1500);
         assert!(!line.ok);
         assert_eq!(line.checks.as_deref().map(|words| words.starts_with("failed: ")), Some(true));
         assert_eq!(line.gaps.as_deref(), Some("The docs."));
         task.checks.push(CheckReport { ok: true, forbid_checked: 1, ..Default::default() });
-        let line = TaskLine::of(&task, 0, 1500);
+        let line = TaskLine::of(&task, &workers(), 0, 1500);
         assert!(line.ok, "the last report decides");
         assert_eq!(line.checks.as_deref(), Some("passed"));
         task.state = TaskState::Accepted;
-        assert!(TaskLine::of(&task, 0, 1500).ok);
+        assert!(TaskLine::of(&task, &workers(), 0, 1500).ok);
     }
 
     #[test]

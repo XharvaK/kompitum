@@ -224,6 +224,7 @@ fn the_checks_file_parses_with_every_key() {
         "qa_rounds": 2,
         "focused_cmd": "cargo test --lib",
         "second_reader": true,
+        "one_at_a_time": true,
         "a key it does not know": 1
     }"#;
     let (file, problems) = parse_checks(text);
@@ -237,11 +238,24 @@ fn the_checks_file_parses_with_every_key() {
     assert_eq!(file.qa_rounds, 2);
     assert_eq!(file.focused_cmd.as_deref(), Some("cargo test --lib"));
     assert!(file.second_reader);
+    assert!(file.one_at_a_time);
     let (empty, problems) = parse_checks("{}");
     assert!(problems.is_empty());
     assert_eq!(empty.reuse_test_for, [DEFAULT_REUSE_TEST_FOR], "a default the file never names");
     assert_eq!(empty.qa_rounds, DEFAULT_QA_ROUNDS);
     assert!(!empty.second_reader);
+    assert!(!empty.one_at_a_time);
+}
+
+#[test]
+fn one_at_a_time_is_a_boolean() {
+    let (file, problems) = parse_checks(r#"{"one_at_a_time": true}"#);
+    assert!(file.one_at_a_time);
+    assert!(problems.is_empty());
+    let (file, problems) = parse_checks(r#"{"one_at_a_time": "yes"}"#);
+    assert!(!file.one_at_a_time);
+    assert!(problems.is_empty(), "a bad flag never fails a check: {problems:?}");
+    assert_eq!(file.warnings, [".kompitum/checks.json@HEAD: one_at_a_time must be a boolean"]);
 }
 
 #[test]

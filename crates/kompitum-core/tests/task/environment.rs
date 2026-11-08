@@ -75,13 +75,16 @@ fn a_worker_cannot_start_a_task_or_change_the_workers() {
     let repo = s.repo();
     let brief = s.brief("refused", "do nothing");
     let folder = repo.display().to_string();
-    let cases: [(Vec<&str>, &str); 13] = [
+    let cases: [(Vec<&str>, &str); 16] = [
         (vec!["task", "start", "nope", "--brief", brief.as_str(), "--in", folder.as_str()], "task start"),
         (vec!["task", "cancel", "nope"], "task cancel"),
         (vec!["task", "discard", "nope"], "task discard"),
         (vec!["workers", "--mode", "go"], "workers"),
         (vec!["workers", "--block", "cc", "--until", "2d"], "workers"),
         (vec!["workers", "--clear", "cc"], "workers"),
+        (vec!["workers", "--order", "cc,go"], "workers"),
+        (vec!["workers", "--add", "mine", "--cli", "opencode", "--route", "opencode-go/x#max"], "workers"),
+        (vec!["workers", "--remove", "mine"], "workers"),
         (vec!["server", "stop"], "server stop"),
         (vec!["server", "restart"], "server restart"),
         (vec!["kill", "t1"], "kill"),

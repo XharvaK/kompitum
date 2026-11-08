@@ -412,11 +412,18 @@ fn as_a_worker(cmd: Option<&Cmd>) -> Result<(), RpcError> {
         },
         // `kom workers` with no setting looks; any setting changes the chain.
         Some(Cmd::Workers(a)) => {
-            if a.mode.is_none() && a.block.is_none() && a.until.is_none() && a.reason.is_none() && a.clear.is_none() {
-                Ok(())
-            } else {
-                deny()
-            }
+            let setting = a.mode.is_some()
+                || a.block.is_some()
+                || a.until.is_some()
+                || a.reason.is_some()
+                || a.clear.is_some()
+                || a.order.is_some()
+                || a.add.is_some()
+                || a.cli.is_some()
+                || a.route.is_some()
+                || a.label.is_some()
+                || a.remove.is_some();
+            if setting { deny() } else { Ok(()) }
         }
         Some(Cmd::Run(_) | Cmd::Kill(_) | Cmd::Rm(_) | Cmd::Label(_) | Cmd::Keep(_) | Cmd::Send(_) | Cmd::Wait(_)) => {
             deny()

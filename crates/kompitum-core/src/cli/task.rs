@@ -42,8 +42,8 @@ pub(super) struct StartArgs {
     /// Paths the task may change (repeatable); none means the whole repository.
     #[arg(long = "scope", value_name = "GLOB")]
     pub scope: Vec<String>,
-    /// Which workers to use, in order: auto is Command Code then opencode Go, free is opencode free then both. Default: what kom workers shows
-    #[arg(long, value_parser = ["auto", "cc", "go", "free"])]
+    /// Which worker: auto (the order), free, or a worker key. Default: what kom workers shows
+    #[arg(long)]
     pub worker: Option<String>,
     /// Seconds without output or CPU before the turn is cut (default 900).
     #[arg(long)]
@@ -114,11 +114,29 @@ pub(super) struct WaitArgs {
 
 #[derive(clap::Args)]
 pub(super) struct WorkersArgs {
-    /// Which workers new tasks use, in order: auto is Command Code then opencode Go, free is opencode free then both
-    #[arg(long, value_parser = ["auto", "cc", "go", "free"])]
+    /// Which worker new tasks use: auto or a worker key
+    #[arg(long)]
     pub mode: Option<String>,
+    /// The auto chain, in order (a comma list)
+    #[arg(long, value_name = "KEY,...")]
+    pub order: Option<String>,
+    /// Add a worker, at the end of the auto chain
+    #[arg(long, value_name = "KEY", requires_all = ["cli", "route"])]
+    pub add: Option<String>,
+    /// The added worker's CLI: command_code or opencode
+    #[arg(long, value_parser = ["command_code", "opencode"], requires = "add")]
+    pub cli: Option<String>,
+    /// The added worker's model route
+    #[arg(long, requires = "add")]
+    pub route: Option<String>,
+    /// The added worker's label (default: its key)
+    #[arg(long, requires = "add")]
+    pub label: Option<String>,
+    /// Remove an added worker
+    #[arg(long, value_name = "KEY")]
+    pub remove: Option<String>,
     /// Mark this worker as out
-    #[arg(long, value_parser = ["cc", "go", "free"], requires = "until")]
+    #[arg(long, requires = "until")]
     pub block: Option<String>,
     /// When it is back: 2026-11-23, 2026-11-23 15:36, or a span such as 3h or 2d
     #[arg(long, requires = "block")]
@@ -127,7 +145,7 @@ pub(super) struct WorkersArgs {
     #[arg(long, requires = "block")]
     pub reason: Option<String>,
     /// Say this worker is back now
-    #[arg(long, value_parser = ["cc", "go", "free"])]
+    #[arg(long)]
     pub clear: Option<String>,
 }
 
@@ -487,12 +505,10 @@ fn money(value: &Value) -> String {
 fn workers_human(r: &Value) -> String {
     let workers = r["workers"].as_array().cloned().unwrap_or_default();
     let by_key = |key: &str| workers.iter().find(|worker| worker["key"].as_str() == Some(key)).cloned();
-    let labels: Vec<String> = r["chain"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .filter_map(&by_key)
+    let chain: Vec<&str> = r["chain"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+    let labels: Vec<String> = chain
+        .iter()
+        .filter_map(|key| by_key(key))
         .filter_map(|worker| worker["label"].as_str().map(String::from))
         .collect();
     let mut out = format!("Mode {}: {}. ", r["mode"].as_str().unwrap_or("auto"), labels.join(", then "));
@@ -501,7 +517,21 @@ fn workers_human(r: &Value) -> String {
         None => out.push_str(r["all_out"].as_str().unwrap_or("No worker can take a task.")),
     }
     out.push('\n');
-    for worker in &workers {
+    // The chain first, then every other worker.
+    let mut ordered: Vec<Value> = Vec::new();
+    for key in &chain {
+        if let Some(worker) = by_key(key)
+            && !ordered.iter().any(|seen| seen["key"] == worker["key"])
+        {
+            ordered.push(worker);
+        }
+    }
+    for worker in workers {
+        if !ordered.iter().any(|seen| seen["key"] == worker["key"]) {
+            ordered.push(worker);
+        }
+    }
+    for worker in &ordered {
         let label = worker["label"].as_str().unwrap_or("?");
         let tail = match worker["state"].as_str() {
             Some("out") => {
@@ -515,7 +545,7 @@ fn workers_human(r: &Value) -> String {
         out.push_str(&format!("\n{label:<14} {tail}"));
     }
     out.push_str(&format!("\n\n{:<14} {:<11}{:<11}{}", "Spent", "5 hours", "week", "month"));
-    for worker in &workers {
+    for worker in &ordered {
         let spend = &worker["spend"];
         out.push_str(&format!(
             "\n{:<14} {:<11}{:<11}{}",
@@ -533,13 +563,31 @@ fn workers_human(r: &Value) -> String {
 
 /// `kom workers`: what can take a task, or change the order and the blocks.
 pub(super) fn workers(a: WorkersArgs, call: impl Fn(&str, Value) -> Result<Value, RpcError>) -> Result<Out, RpcError> {
-    let setting = a.mode.is_some() || a.block.is_some() || a.clear.is_some();
+    let setting = a.mode.is_some()
+        || a.order.is_some()
+        || a.add.is_some()
+        || a.remove.is_some()
+        || a.block.is_some()
+        || a.clear.is_some();
     let r = if setting {
         let block = match (&a.block, &a.until) {
             (Some(worker), Some(until)) => Some(json!({"worker": worker, "until": until, "reason": a.reason})),
             _ => None,
         };
-        call("workers.set", json!({"mode": a.mode, "block": block, "clear": a.clear}))?
+        let add = match (&a.add, &a.cli, &a.route) {
+            (Some(key), Some(cli), Some(route)) => {
+                Some(json!({"key": key, "label": a.label, "cli": cli, "route": route}))
+            }
+            _ => None,
+        };
+        let order = a
+            .order
+            .as_deref()
+            .map(|list| list.split(',').map(str::trim).filter(|key| !key.is_empty()).collect::<Vec<_>>());
+        call(
+            "workers.set",
+            json!({"mode": a.mode, "order": order, "add": add, "remove": a.remove, "block": block, "clear": a.clear}),
+        )?
     } else {
         call("workers.show", json!({}))?
     };
@@ -678,5 +726,24 @@ mod tests {
              opencode Go    $0.39      $1.96      $3.10\n\
              opencode free  $0.00      $0.00      $0.00"
         );
+    }
+
+    #[test]
+    fn the_workers_table_lists_the_chain_first_then_the_rest() {
+        let worker = |key: &str, label: &str| {
+            json!({"key": key, "label": label, "state": "ready", "until_ms": 0, "source": null,
+                   "window": "", "message": "", "sentence": "", "refusals": 0,
+                   "spend": {"five_hours": {"runs": 0, "cost_usd": 0.0}, "week": {"runs": 0, "cost_usd": 0.0},
+                             "month": {"runs": 0, "cost_usd": 0.0}}})
+        };
+        let r = json!({
+            "mode": "auto", "order": ["free"], "chain": ["free"], "next": "free", "all_out": null, "warnings": [],
+            "workers": [worker("cc", "Command Code"), worker("go", "opencode Go"), worker("free", "opencode free")]
+        });
+        let text = workers_human(&r);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[2], "opencode free  ready");
+        assert_eq!(lines[3], "Command Code   ready");
+        assert_eq!(lines[4], "opencode Go    ready");
     }
 }

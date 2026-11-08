@@ -20,7 +20,7 @@ const FOLLOWUP: &str = "\n\n---\n\n# What is asked now\n\nAn earlier turn of thi
                         your folder. This comes on top of the brief above:\n\n";
 
 /// The session a follow-up continues: the last turn's, when this worker ran it and reported one.
-pub fn resume_session(task: &Task, worker: Worker, has_followup: bool) -> Option<String> {
+pub fn resume_session(task: &Task, worker: &Worker, has_followup: bool) -> Option<String> {
     if !has_followup {
         return None;
     }
@@ -138,8 +138,15 @@ pub async fn turn_prompt(
     Ok(TurnPrompt { text, warnings })
 }
 
-/// What is worth saying before a worker starts. These warn and never refuse.
-pub async fn start_warnings(repo: &str, base: &str, brief: &str, _scope: &[String], asked: &Asked) -> Vec<String> {
+/// What is worth saying before a worker starts, and the committed checks' one-at-a-time rule.
+/// These warn and never refuse.
+pub async fn start_warnings(
+    repo: &str,
+    base: &str,
+    brief: &str,
+    _scope: &[String],
+    asked: &Asked,
+) -> (Vec<String>, bool) {
     let mut warnings = Vec::new();
     let spec = match checking::spec(repo, base, asked).await {
         Ok((spec, problems)) => {
@@ -151,12 +158,13 @@ pub async fn start_warnings(repo: &str, base: &str, brief: &str, _scope: &[Strin
             ChecksFile::default()
         }
     };
+    let one_at_a_time = spec.one_at_a_time;
     let has_any_check = spec.test_cmd.as_deref().is_some_and(|cmd| !cmd.trim().is_empty())
         || !spec.forbid.is_empty()
         || !spec.require.is_empty();
     warnings.extend(brief::start_warnings(brief, &spec.require, has_any_check));
     let Some(rules) = base_text(repo, base, ".kompitum/rules.md", &mut warnings).await else {
-        return warnings;
+        return (warnings, one_at_a_time);
     };
     let (rules, problems) = brief::parse_rules(&rules);
     warnings.extend(problems);
@@ -168,5 +176,5 @@ pub async fn start_warnings(repo: &str, base: &str, brief: &str, _scope: &[Strin
         }
         Err(error) => warnings.push(format!("the files of the task's base could not be listed: {}", error.message)),
     }
-    warnings
+    (warnings, one_at_a_time)
 }

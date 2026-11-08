@@ -71,7 +71,7 @@ pub(super) fn status_cmd(
         "claude": claude_limits(&paths.state),
         "waiting": {"review": review_count, "blocked": blocked},
     });
-    let human = status_human(&result);
+    let human = status_human(&result, crate::runtime::now_ms());
     Ok(Out { json: result, human })
 }
 
@@ -96,11 +96,21 @@ fn claude_limits(state: &Path) -> Value {
     if !value.is_object() {
         return Value::Null;
     }
-    json!({
-        "five_hour_resets_at": value.get("five_hour_resets_at").cloned().unwrap_or(Value::Null),
-        "seven_day_resets_at": value.get("seven_day_resets_at").cloned().unwrap_or(Value::Null),
-        "seen_at": value.get("seen_at").cloned().unwrap_or(Value::Null),
-    })
+    let mut limits = serde_json::Map::new();
+    for (key, from) in [("five_hour_resets_at", "five_hour_resets_at"), ("seven_day_resets_at", "seven_day_resets_at")]
+    {
+        limits.insert(key.into(), value.get(from).cloned().unwrap_or(Value::Null));
+    }
+    for (key, from) in [
+        ("five_hour_used_percentage", "five_hour_used_percentage"),
+        ("seven_day_used_percentage", "seven_day_used_percentage"),
+    ] {
+        if let Some(number) = value.get(from).and_then(Value::as_f64).filter(|number| number.is_finite()) {
+            limits.insert(key.into(), json!(number));
+        }
+    }
+    limits.insert("seen_at".into(), value.get("seen_at").cloned().unwrap_or(Value::Null));
+    Value::Object(limits)
 }
 
 fn hhmm(ms: u64) -> String {
@@ -108,8 +118,65 @@ fn hhmm(ms: u64) -> String {
     format!("{:02}:{:02}", at.hour, at.minute)
 }
 
+/// The limit windows Claude sent, with a percentage only when it sent one.
+fn limits_object(value: &Value) -> Option<serde_json::Map<String, Value>> {
+    let (five, seven) = (reset_at(value, "five_hour"), reset_at(value, "seven_day"));
+    let (five_used, seven_used) = (used_percentage(value, "five_hour"), used_percentage(value, "seven_day"));
+    if five.is_none() && seven.is_none() && five_used.is_none() && seven_used.is_none() {
+        return None;
+    }
+    let mut limits = serde_json::Map::new();
+    limits.insert("five_hour_resets_at".into(), five.map_or(Value::Null, |at| json!(at)));
+    limits.insert("seven_day_resets_at".into(), seven.map_or(Value::Null, |at| json!(at)));
+    if let Some(used) = five_used {
+        limits.insert("five_hour_used_percentage".into(), json!(used));
+    }
+    if let Some(used) = seven_used {
+        limits.insert("seven_day_used_percentage".into(), json!(used));
+    }
+    Some(limits)
+}
+
+/// The line the Owner set: `claude: 5H 42% · resets 18:40 · Week 61% · resets Sat`.
+fn claude_line(value: &Value, now_ms: u64, offset_min: i32) -> Option<String> {
+    let now = crate::task::clock::civil(now_ms, offset_min);
+    let mut parts = Vec::new();
+    for (label, window, day_is_clock) in [("5H", "five_hour", true), ("Week", "seven_day", false)] {
+        let Some(seconds) = value.get(format!("{window}_resets_at")).and_then(as_u64) else { continue };
+        let at = crate::task::clock::civil(seconds.saturating_mul(1000), offset_min);
+        let today = (at.year, at.month, at.day) == (now.year, now.month, now.day);
+        let when = if day_is_clock || today {
+            format!("{:02}:{:02}", at.hour, at.minute)
+        } else {
+            ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][at.weekday as usize % 7].to_string()
+        };
+        let used = value.get(format!("{window}_used_percentage")).and_then(Value::as_f64);
+        let head = match used {
+            Some(used) if used >= 100.0 => format!("{label} exhausted"),
+            Some(used) => format!("{label} {}%", (used.round().max(0.0) as u64).min(99)),
+            None => label.to_string(),
+        };
+        parts.push(if used.is_some() { format!("{head} · resets {when}") } else { format!("{head} resets {when}") });
+    }
+    (!parts.is_empty()).then(|| format!("claude: {}", parts.join(" · ")))
+}
+
+/// A window's field, when Claude sent one.
+fn window_value<'a>(value: &'a Value, window: &str, key: &str) -> Option<&'a Value> {
+    value.get("rate_limits")?.get(window)?.get(key)
+}
+
+fn as_u64(number: &Value) -> Option<u64> {
+    number.as_u64().or_else(|| number.as_f64().filter(|s| s.is_finite() && *s >= 0.0).map(|s| s as u64))
+}
+
+/// A window's `used_percentage`, when Claude sent one.
+fn used_percentage(value: &Value, window: &str) -> Option<f64> {
+    window_value(value, window, "used_percentage")?.as_f64().filter(|percent| percent.is_finite() && *percent >= 0.0)
+}
+
 /// A few short lines, starting with what waits for the person reading them.
-fn status_human(r: &Value) -> String {
+fn status_human(r: &Value, now_ms: u64) -> String {
     let names = |list: &Value| -> Vec<String> {
         list.as_array().into_iter().flatten().filter_map(|item| item["name"].as_str()).map(String::from).collect()
     };
@@ -170,8 +237,8 @@ fn status_human(r: &Value) -> String {
         Some(label) => format!("workers: next {label}"),
         None => format!("workers: {}", workers["all_out"].as_str().unwrap_or("none ready")),
     });
-    if let Some(seconds) = r["claude"]["five_hour_resets_at"].as_u64() {
-        lines.push(format!("Claude's 5h limit resets at {}", hhmm(seconds.saturating_mul(1000))));
+    if let Some(line) = claude_line(&r["claude"], now_ms, crate::platform::utc_offset_minutes()) {
+        lines.push(line);
     }
     lines.join("\n")
 }
@@ -188,15 +255,10 @@ fn status_line(state: &Path) {
         return;
     };
     let five = reset_at(&value, "five_hour");
-    let seven = reset_at(&value, "seven_day");
-    if five.is_some() || seven.is_some() {
-        let limits = json!({
-            "five_hour_resets_at": five,
-            "seven_day_resets_at": seven,
-            "seen_at": crate::runtime::now_ms(),
-        });
+    if let Some(mut limits) = limits_object(&value) {
+        limits.insert("seen_at".into(), json!(crate::runtime::now_ms()));
         if std::fs::create_dir_all(state).is_ok()
-            && let Ok(bytes) = serde_json::to_vec(&limits)
+            && let Ok(bytes) = serde_json::to_vec(&Value::Object(limits))
         {
             let _ = crate::paths::write_atomic(&state.join("claude-limits.json"), &bytes);
         }
@@ -235,18 +297,79 @@ mod tests {
             "claude": {"five_hour_resets_at": 1762560000u64, "seven_day_resets_at": null, "seen_at": 0},
             "waiting": {"review": 1, "blocked": 1}
         });
-        let text = status_human(&r);
+        let text = status_human(&r, 1_762_550_000_000);
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines[0], "1 to review: fix-1; 1 blocked: pane");
         assert!(text.contains("agents: pane claude-code blocked"), "{text}");
         assert!(text.contains("workers: next opencode Go"), "{text}");
-        assert!(text.contains("Claude's 5h limit resets at "), "{text}");
-        let none = status_human(&json!({
-            "agents": [], "tasks": {"review": [], "running": [], "queued": [], "recent": []},
-            "workers": {"workers": [], "next": null, "all_out": "every worker is out"}, "claude": null,
-            "waiting": {"review": 0, "blocked": 0}
-        }));
+        assert!(text.contains("claude: 5H resets "), "{text}");
+        let none = status_human(
+            &json!({
+                "agents": [], "tasks": {"review": [], "running": [], "queued": [], "recent": []},
+                "workers": {"workers": [], "next": null, "all_out": "every worker is out"}, "claude": null,
+                "waiting": {"review": 0, "blocked": 0}
+            }),
+            1_762_550_000_000,
+        );
         assert_eq!(none.lines().next(), Some("Nothing waits for you"));
+        assert!(!none.contains("claude:"), "no limits, no line: {none}");
+    }
+
+    fn at(day: u32, hour: u32, minute: u32) -> u64 {
+        crate::task::clock::to_ms(
+            &crate::task::clock::Civil { year: 2026, month: 11, day, hour, minute, second: 0, weekday: 0 },
+            0,
+        ) / 1000
+    }
+
+    #[test]
+    fn claude_percentages_are_kept_and_shown() {
+        let value = json!({"rate_limits": {
+            "five_hour": {"resets_at": at(5, 18, 40), "used_percentage": 42.4},
+            "seven_day": {"resets_at": at(7, 12, 0), "used_percentage": 61.0}
+        }});
+        let limits = limits_object(&value).unwrap();
+        assert_eq!(limits["five_hour_used_percentage"], json!(42.4));
+        assert_eq!(limits["seven_day_used_percentage"], json!(61.0));
+        let line = claude_line(&json!(limits), at(5, 9, 0) * 1000, 0).unwrap();
+        assert_eq!(line, "claude: 5H 42% · resets 18:40 · Week 61% · resets Sat");
+    }
+
+    #[test]
+    fn a_window_at_a_hundred_percent_is_exhausted() {
+        let value = json!({"rate_limits": {
+            "five_hour": {"resets_at": at(5, 18, 40), "used_percentage": 100.0},
+            "seven_day": {"resets_at": at(7, 12, 0), "used_percentage": 99.6}
+        }});
+        let limits = limits_object(&value).unwrap();
+        let line = claude_line(&json!(limits), at(5, 9, 0) * 1000, 0).unwrap();
+        assert_eq!(line, "claude: 5H exhausted · resets 18:40 · Week 99% · resets Sat");
+    }
+
+    #[test]
+    fn a_window_without_a_percentage_says_only_its_reset() {
+        let value = json!({"five_hour_resets_at": at(5, 18, 40), "seven_day_resets_at": null});
+        assert_eq!(claude_line(&value, at(5, 9, 0) * 1000, 0).unwrap(), "claude: 5H resets 18:40");
+        assert_eq!(claude_line(&json!({}), at(5, 9, 0) * 1000, 0), None, "no limits, no line");
+    }
+
+    #[test]
+    fn the_saved_percentages_reach_the_claude_object() {
+        let state = std::env::temp_dir().join(format!("kom-status-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&state);
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(
+            state.join("claude-limits.json"),
+            json!({"five_hour_resets_at": at(5, 18, 40), "seven_day_resets_at": null,
+                   "five_hour_used_percentage": 42.4, "seen_at": 7})
+            .to_string(),
+        )
+        .unwrap();
+        let limits = claude_limits(&state);
+        assert_eq!(limits["five_hour_used_percentage"], json!(42.4));
+        assert!(limits["seven_day_used_percentage"].is_null(), "left out when Claude sent none: {limits}");
+        assert_eq!(limits["five_hour_resets_at"], json!(at(5, 18, 40)));
+        let _ = std::fs::remove_dir_all(&state);
     }
 
     #[test]

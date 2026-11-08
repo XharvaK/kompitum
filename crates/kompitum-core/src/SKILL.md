@@ -155,6 +155,7 @@ kom task accept fix-docs --review "clean; one typo fixed by hand"
 - `--scope` is what it may change; checks (`--test`, `--forbid`, `--require`,
   and the repository's `.kompitum/checks.json`) run when it ends, and failures go
   back to it (`--qa-rounds`) before you are told.
+- `"one_at_a_time": true` in `.kompitum/checks.json` makes that repository build one task at a time, whatever their scopes.
 - Worker output is evidence, not truth: read the review before you accept.
   `kom task redo <t> --brief -` sends it back; `kom task discard <t> --review X`
   drops it. `kom ledger` shows what each run cost.

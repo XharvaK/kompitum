@@ -31,7 +31,7 @@ use crate::runtime::{Core, now_ms};
 use crate::task::decide::{Step, TerminalNow};
 use crate::task::opencode::RouteCheck;
 use crate::task::types::{Beat, ChangedFile, Ending, Task, TaskLine, TaskState, Turn};
-use crate::task::worker::{TurnOutcome, Worker};
+use crate::task::worker::{Cli, TurnOutcome, Worker};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -195,8 +195,8 @@ pub fn save_workers(state: &Path, file: &workers::WorkersFile) -> std::io::Resul
     crate::paths::write_atomic(&state.join("workers.json"), &bytes)
 }
 
-fn write_result(state: &Path, task: &Task) {
-    let line = TaskLine::of(task, now_ms(), usize::MAX);
+fn write_result(state: &Path, task: &Task, workers: &[Worker]) {
+    let line = TaskLine::of(task, workers, now_ms(), usize::MAX);
     let Ok(bytes) = serde_json::to_vec_pretty(&line) else { return };
     if let Err(e) = crate::paths::write_atomic(&task_folder(state, &task.name).join("result.json"), &bytes) {
         eprintln!("core: task {}: cannot write its result: {e}", task.name);
@@ -220,6 +220,10 @@ fn update(core: &Core, name: &str, change: impl FnOnce(&mut Task)) -> Option<Tas
 
 fn stopping(core: &Core) -> bool {
     core.lock().stopping || core.restart.load(Ordering::SeqCst)
+}
+
+fn worker_list(core: &Core) -> Vec<Worker> {
+    workers::all(&core.tasks.workers())
 }
 
 /// The loop that moves the queue: on every change, at least every 2 s, and
@@ -292,9 +296,9 @@ async fn pump_stranded(core: &Arc<Core>, task: Task) {
     }
     let Ok(config) = crate::config::load(&core.paths.config) else { return };
     let file = core.tasks.workers();
-    let installed = |worker: Worker| worker::prefix(worker, &config).is_ok();
-    let chain: Vec<Worker> = task.chain.iter().filter_map(|key| Worker::from_key(key).ok()).collect();
-    let chain = if chain.is_empty() { workers::chain(workers::Mode::Auto) } else { chain };
+    let installed = |worker: &Worker| worker::prefix(worker, &config).is_ok();
+    let chain: Vec<Worker> = task.chain.iter().filter_map(|key| workers::find(&file, key).ok()).collect();
+    let chain = if chain.is_empty() { workers::chain_for(&file, "auto").unwrap_or_default() } else { chain };
     let now = now_ms();
     match workers::pick(&chain, &file, installed, now, crate::platform::utc_offset_minutes()) {
         Err(words) if workers::may_come_back(&chain, &file, now) => {
@@ -355,9 +359,9 @@ async fn pump_queued(core: &Arc<Core>, task: Task) {
                 Err(error) => return fail_start(core, &task, error).await,
             };
             let file = core.tasks.workers();
-            let installed = |worker: Worker| worker::prefix(worker, &config).is_ok();
-            let chain: Vec<Worker> = task.chain.iter().filter_map(|key| Worker::from_key(key).ok()).collect();
-            let chain = if chain.is_empty() { workers::chain(workers::Mode::Auto) } else { chain };
+            let installed = |worker: &Worker| worker::prefix(worker, &config).is_ok();
+            let chain: Vec<Worker> = task.chain.iter().filter_map(|key| workers::find(&file, key).ok()).collect();
+            let chain = if chain.is_empty() { workers::chain_for(&file, "auto").unwrap_or_default() } else { chain };
             // A follow-up stays with the worker that did the work, while it can.
             let followup =
                 task_folder(&core.paths.state, &task.name).join(format!("turn-{}.followup.md", next_turn(&task)));
@@ -451,7 +455,11 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     let Some(index) = task.turns.iter().position(|turn| turn.n == n) else { return };
     let folder = task_folder(&core.paths.state, name);
     let key = task.turns[index].worker.clone();
-    let worker = Worker::from_key(&key).unwrap_or(Worker::Go);
+    let worker_file = core.tasks.workers();
+    let all_workers = workers::all(&worker_file);
+    let worker = workers::find(&worker_file, &key)
+        .unwrap_or_else(|_| worker::builtin().into_iter().find(|worker| worker.key == "go").expect("go is built in"));
+    let cli = task.turns[index].cli_or_lookup(&all_workers);
     let path = folder.join(format!("turn-{n}.jsonl"));
     let err_path = folder.join(format!("turn-{n}.err"));
     let route_path = folder.join(format!("turn-{n}.route.json"));
@@ -459,11 +467,11 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         task.turns[..index].iter().map(|turn| (turn.session.clone(), turn.usage.cost_usd)).collect();
     let (outcome, warning, route, stderr_tail) = tokio::task::spawn_blocking(move || {
         let mut outcome = match std::fs::read(&path) {
-            Ok(bytes) => TurnOutcome::from_bytes(worker, &bytes),
+            Ok(bytes) => TurnOutcome::from_bytes(cli, &bytes),
             Err(_) => TurnOutcome::default(),
         };
         let mut warning = None;
-        if worker == Worker::Cc {
+        if cli == Cli::CommandCode {
             match outcome.session.as_deref().and_then(crate::task::commandcode::session_cost) {
                 Some(cost) => {
                     // The transcript holds every turn of a resumed session, so only
@@ -503,7 +511,8 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     if let Some(warning) = warning {
         task.warnings.push(warning);
     }
-    let end = decide::turn_end(&task, terminal, code, &outcome, route.as_ref(), &stderr_tail, ended, offset);
+    let end =
+        decide::turn_end(&task, &all_workers, terminal, code, &outcome, route.as_ref(), &stderr_tail, ended, offset);
     task.turns[index].refused = end.refusal.as_ref().map(|refusal| refusal.window.clone());
     let mut error = end.error;
     if let Some(refusal) = &end.refusal {
@@ -516,8 +525,10 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         }
         let block = new.or_else(|| file.blocks.get(&key).filter(|block| block.until_ms > ended).cloned());
         if let Some(block) = block {
-            error =
-                Some(format!("QUOTA EXHAUSTED: {}", workers::sentence(&worker::label_of(&key), &block, ended, offset)));
+            error = Some(format!(
+                "QUOTA EXHAUSTED: {}",
+                workers::sentence(&worker::label_of(&all_workers, &key), &block, ended, offset)
+            ));
         }
         if file != before {
             if let Err(e) = save_workers(&core.paths.state, &file) {
@@ -572,7 +583,7 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
                     task.warnings.push(words);
                 }
             } else {
-                let from = worker::label_of(&key);
+                let from = worker::label_of(&all_workers, &key);
                 let stopped = handoff::stopped_words(
                     task.turns[index].refused.as_deref().unwrap_or_default(),
                     usage.steps,
@@ -587,7 +598,7 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         task.turns[index].died_at_start = true;
         restarting = true;
         let line = handoff::first_line(&stderr_tail);
-        let label = worker::label_of(&key);
+        let label = worker::label_of(&all_workers, &key);
         let warning = if line.is_empty() {
             format!("{label} died at its start, so it was started again")
         } else {
@@ -623,7 +634,7 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     task.ended_ms = if restarting || end.state == TaskState::Done { None } else { Some(ended) };
     save(&core.paths.state, &task);
     if !restarting && end.state != TaskState::Done {
-        write_result(&core.paths.state, &task);
+        write_result(&core.paths.state, &task, &all_workers);
     }
     replace(core, task);
     core.changed.notify_waiters();
@@ -683,7 +694,7 @@ fn finish_with_error(core: &Arc<Core>, task: &Task, message: &str) {
     task.error = Some(message.into());
     task.ended_ms = Some(now_ms());
     save(&core.paths.state, &task);
-    write_result(&core.paths.state, &task);
+    write_result(&core.paths.state, &task, &worker_list(core));
     replace(core, task);
     core.changed.notify_waiters();
 }
@@ -710,7 +721,7 @@ async fn fail_start(core: &Arc<Core>, task: &Task, error: RpcError) {
     task.waiting = None;
     task.ended_ms = Some(now_ms());
     save(&core.paths.state, &task);
-    write_result(&core.paths.state, &task);
+    write_result(&core.paths.state, &task, &worker_list(core));
     replace(core, task);
     core.changed.notify_waiters();
 }
@@ -733,10 +744,11 @@ fn read_turn_file(folder: &Path, n: u32, kind: &str) -> Result<Option<Vec<u8>>, 
 async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(), RpcError> {
     let mut task = task.clone();
     let n = next_turn(&task);
+    let all_workers = worker_list(core);
     let config = crate::config::load(&core.paths.config)?;
-    let prefix = worker::prefix(worker, &config)?;
+    let prefix = worker::prefix(&worker, &config)?;
     // The version check is OpenCode's alone.
-    if worker != Worker::Cc {
+    if worker.cli != Cli::CommandCode {
         worker::check_version(&prefix).await?;
     }
     let folder = task_folder(&core.paths.state, &task.name);
@@ -746,7 +758,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     let mut note = read_turn_file(&folder, n, "note")?;
     let followup = read_turn_file(&folder, n, "followup")?;
     // A follow-up continues the session when the same worker is here to take it.
-    let resume = prompt::resume_session(&task, worker, followup.is_some());
+    let resume = prompt::resume_session(&task, &worker, followup.is_some());
     let mut warnings = Vec::new();
     // One that can't gets the story the way a hand-off does.
     if note.is_none()
@@ -759,7 +771,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
             None => "finished its turn".to_string(),
         };
         let outcome = TurnOutcome { text: last.text.clone(), ..Default::default() };
-        let from = worker::label_of(&last.worker);
+        let from = worker::label_of(&all_workers, &last.worker);
         if let Err(words) = handoff_note(&task, &folder, last.n, &task.changed, &outcome, &from, &stopped).await {
             warnings.push(words);
         }
@@ -779,9 +791,9 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     let Some(worktree) = task.worktree.clone() else {
         return Err(unavailable("the task has no worktree".into()));
     };
-    let prepared = setup::prepare(core, &task, worker, &worktree, n).await?;
+    let prepared = setup::prepare(core, &task, &worker, &worktree, n).await?;
     let command =
-        worker::turn_command(worker, &prefix, &task.name, &prompt_path.display().to_string(), resume.as_deref());
+        worker::turn_command(&worker, &prefix, &task.name, &prompt_path.display().to_string(), resume.as_deref());
     let exe = std::env::current_exe().map_err(|e| unavailable(format!("cannot find this kom: {e}")))?;
     let mut argv = vec![
         exe.display().to_string(),
@@ -794,12 +806,14 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
         n.to_string(),
         "--worker".into(),
         worker.key().into(),
+        "--cli".into(),
+        worker.cli.key().into(),
     ];
     if let Some(stdin) = &command.stdin {
         argv.push("--stdin".into());
         argv.push(stdin.clone());
     }
-    if worker != Worker::Cc {
+    if worker.cli != Cli::CommandCode {
         argv.push("--route".into());
         argv.push(worker.route().into());
         if let Some(prefix_len) = command.prefix_len {
@@ -831,7 +845,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
         Ok(started) => started,
         Err(error) => {
             // No turn will end to do this.
-            if let Err(words) = setup::after_turn(&folder, &worktree, worker, n) {
+            if let Err(words) = setup::after_turn(&folder, &worktree, worker.clone(), n) {
                 update(core, &task.name, |task| task.warnings.push(words));
             }
             return Err(error);
@@ -841,7 +855,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     let sentence = task.turns.last().and_then(|turn| {
         let window = turn.refused.as_deref()?;
         Some(handoff::sentence(
-            &worker::label_of(&turn.worker),
+            &worker::label_of(&all_workers, &turn.worker),
             &handoff::stopped_words(window, turn.usage.steps, turn.usage.cost_usd),
             worker.label(),
             task.changed.len(),
@@ -856,6 +870,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     let turn = Turn {
         n,
         worker: worker.key().into(),
+        cli: Some(worker.cli),
         terminal: Some(started.address.clone()),
         scope_token: started.scope,
         started_ms: now,
@@ -942,7 +957,7 @@ pub async fn cancel(core: &Arc<Core>, name: &str, by: Option<&str>, yes: bool) -
             task.error = None;
             task.ended_ms = Some(now_ms());
             save(&core.paths.state, &task);
-            write_result(&core.paths.state, &task);
+            write_result(&core.paths.state, &task, &worker_list(core));
             replace(core, task);
             core.changed.notify_waiters();
             Ok((TaskState::Cancelled, 0))
@@ -968,7 +983,7 @@ pub async fn cancel(core: &Arc<Core>, name: &str, by: Option<&str>, yes: bool) -
             task.ended_ms = Some(now_ms());
             task.check = None;
             save(&core.paths.state, &task);
-            write_result(&core.paths.state, &task);
+            write_result(&core.paths.state, &task, &worker_list(core));
             replace(core, task);
             core.changed.notify_waiters();
             Ok((TaskState::Cancelled, 0))
@@ -1022,7 +1037,7 @@ pub async fn discard(
         task.warnings.push(words);
     }
     save(&core.paths.state, &task);
-    write_result(&core.paths.state, &task);
+    write_result(&core.paths.state, &task, &worker_list(core));
     replace(core, task);
     core.changed.notify_waiters();
     Ok((TaskState::Discarded, removal.removed, removal.left))
