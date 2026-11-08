@@ -3,8 +3,7 @@
 // something first (kompitum-core installed there, a password, a new host
 // key), the picker explains what to run in a terminal. Machines that need
 // no answers are added quietly. Opened as a dialog
-// (`mod.open machine-add`); the sidebars' Add machine and the welcome
-// open it.
+// (`mod.open machine-add`); Settings › Machines and the welcome open it.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";

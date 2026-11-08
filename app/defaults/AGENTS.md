@@ -58,7 +58,7 @@ commands. They're rewritten on every start to match this version.
   in the app.
 - **Escape hatch:** `ctrl-alt-shift-escape` always works: it sets the shown
   layout and `keys.json` aside (`*.reset-<time>`) and goes back to the
-  default `main` layout. Nothing can rebind it.
+  default `desk` layout. Nothing can rebind it.
 
 ## Seeing the window
 
@@ -169,12 +169,14 @@ the highlighted line shows where it will land.
 
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
-shown one's name. Kompitum ships `main` ("Kompitum": spaces by machine and the
+shown one's name. A window starts on `desk` ("Desk": the Board and the
+Line beside your work, with Kompitum's sidebar, tabs and panels); the others
+are there to try or start from. Kompitum ships `main` ("Kompitum": spaces by machine and the
 agents list on the left, `workspace-chrome`; tabs as pills with a + menu
 that starts a terminal or any installed agent, `new-menu`; panes as cards
 with a header; Files and Changes panels on the right, `files` and
 `changes`, opened from the tab bar and remembered per space (which ones:
-shared `"workspace.panels"`, set by the welcome); a status bar,
+shared `"workspace.panels"`); a status bar,
 `workspace-status`), and as examples `terminals` ("Terminals": tabs in
 the title bar, panes as cards, a space picker) and `win98`
 ("Kompitum 98": a whole desktop in one mod, `win98`). Add a layout by
@@ -185,9 +187,9 @@ only when expanded.
 
 **Kompitum's own layouts and mods are read-only.** They are replaced whole
 on every start. Use settings.json for look (fonts, sizes, theme, colors,
-sounds), where the layout leaves them unset. Kompitum (main) has no look of
-its own, so your settings decide it; Kompitum 98 and Terminals bring their own
-look. The theme picker overrides any layout. To change a shipped layout's
+sounds), where the layout leaves them unset. Desk and Kompitum (main) have no
+look of their own, so your settings decide it; Kompitum 98 and Terminals bring
+their own look. A theme set with `app.theme` overrides any layout. To change a shipped layout's
 look beyond that, or its structure/code, clone it and edit the clone:
 
 ```sh
@@ -258,10 +260,9 @@ Properties any node can have:
   Windows), the bar draws them with `window.minimize`, `window.maximize`, `window.close`.
   Windows' shipped tab bar and system strip use vector window icons, with a
   restore icon when maximized, rather than font glyphs.
-- Root only: `"preview": "layouts/<name>.svg"` (or png): the picture the
-  settings screen shows for this layout. Draw one when you make a layout;
-  without it the person sees a plain frame. New layouts and `themes/*.json`
-  show up in settings by themselves.
+- Root only: `"preview": "layouts/<name>.svg"` (or png): a picture of the
+  layout. Settings offers no layout or theme choice for now; switch with
+  `layout.switch` and `app.theme`.
 - Root only: `"terminal_menu": "my-menu"` chooses the mod for terminal
   right-clicks (including Shift+right-click). Omit it for the shipped `menu`;
   an unknown mod logs a warning and falls back to `menu`. Clone a shipped
@@ -297,7 +298,7 @@ export default class MyMenu extends View {
 ### The look: on the layout, cascading
 
 A layout's own look wins; settings.json fills what it leaves unset.
-The theme picker overrides both. These go
+A theme set with `app.theme` overrides both. These go
 on any node, and the nearest node up the tree wins, so the root sets the
 layout's look and a block can differ:
 
@@ -312,7 +313,7 @@ layout's look and a block can differ:
   `"theme": { "light": "paper", "dark": "graphite" }` follows the system's
   light or dark mode (or the person's `appearance`). `app.theme {name}`
   sets the half of the name's lightness. A layout without a theme shows
-  settings.json's theme, else graphite or paper. `colors` overrides any theme color by name (see
+  settings.json's theme, else ink or paper. `colors` overrides any theme color by name (see
   `theme()` below), for terminals and panels alike: overrides apply in
   both appearances, so name theme colors (`chrome`, `canvas`) rather than
   writing hex when a layout should work light and dark.
@@ -322,7 +323,7 @@ layout's look and a block can differ:
   `atom-one-dark`. The original unedited Atom One Dark and Win98 theme files
   are upgraded to readable terminal colors; edited theme files are kept.
   A theme named like a layout (`themes/win98.json`) is
-  that layout's own: Settings offers it only there.
+  that layout's own.
 - `font` / `font_size`: the terminals' (px at zoom 1); `ui_font`: the mods'
   (their text sizes are their own, in px, and follow zoom). Optional: without
   them a layout uses settings.json's, else Kompitum's (JetBrains Mono 14, Geist).
@@ -340,7 +341,7 @@ layout's look and a block can differ:
   terminal columns do not change. Hidden in alternate-screen programs.
 - `terminal_opacity` (0..1): below 1, the background behind a terminal
   (a pane frame's, the layout's gradient) shows through its text.
-- Switching layouts switches the look. The theme menu changes the shown
+- Switching layouts switches the look. `app.theme` changes the shown
   layout's root `theme`.
 - Today only the root's look applies; a block's own look is coming.
 
@@ -668,7 +669,7 @@ What's about the user, never a look:
   enable them in terminal fonts such as JetBrains Mono and Fira Code. The cursor
   and background changes (including selections) break ligatures so individual cells stay clear.
 - `theme`: a theme name or `{light, dark}`; used where the layout sets none.
-  The theme picker overrides any layout and stays on that layout.
+  A theme set with `app.theme` overrides any layout and stays on that layout.
 - `colors`: theme color overrides (`{"accent":"#ff8800"}`), with the same
   precedence as fonts.
 - `appearance`: `"light"` or `"dark"` always; absent, the system's. A layout

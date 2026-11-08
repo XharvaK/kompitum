@@ -80,7 +80,7 @@ const PAPER: Palette = Palette {
 pub const PRESETS: &[&str] = &["graphite", "ink", "moss", "paper"];
 
 /// The theme a layout without one shows, by appearance.
-pub const DEFAULT_DARK: &str = "graphite";
+pub const DEFAULT_DARK: &str = "ink";
 pub const DEFAULT_LIGHT: &str = "paper";
 
 fn preset(name: &str) -> Option<&'static Palette> {
@@ -713,7 +713,7 @@ pub fn path() -> std::path::PathBuf {
 
 thread_local! {
     static CURRENT: RefCell<(Rc<Settings>, Rc<Theme>)> =
-        RefCell::new((Rc::new(Settings::default()), Rc::new(resolve(&GRAPHITE, &BTreeMap::new()))));
+        RefCell::new((Rc::new(Settings::default()), Rc::new(resolve(&INK, &BTreeMap::new()))));
 }
 
 const ZOOM_MIN: f32 = 0.5;
@@ -797,7 +797,7 @@ pub fn set(s: Settings) -> bool {
         // Read the theme even when the settings are the same: its file may
         // have new colors under the same name.
         let (p, mut colors) =
-            palette(&s.theme).unwrap_or_else(|_| (GRAPHITE.clone(), BTreeMap::new()));
+            palette(&s.theme).unwrap_or_else(|_| (INK.clone(), BTreeMap::new()));
         colors.extend(s.colors.clone());
         let theme = resolve(&p, &colors);
         if *c.borrow().0 == s && *c.borrow().1 == theme {

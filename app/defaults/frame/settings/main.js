@@ -1,8 +1,8 @@
 // App-owned settings mod. Writes changes immediately; no Save step.
 
-import { View, div, svg, image } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
-import { kom, run, theme, themes, fonts, updates, telemetry, settings, layouts, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "kompitum";
+import { kom, run, theme, fonts, updates, telemetry, settings, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "kompitum";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
@@ -15,17 +15,6 @@ const SECTIONS = [
   { id: "privacy", title: "Privacy", icon: "shield" },
 ];
 
-const LOOKS = {
-  main: "Kompitum",
-  desk: "Desk",
-  watch: "Watch",
-  focus: "Focus",
-  office: "Office",
-  control: "Control",
-  pasture: "Pasture",
-  terminals: "Terminals",
-  win98: "Kompitum 98",
-};
 const APPEARANCES = [
   [null, "System"],
   ["light", "Light"],
@@ -54,8 +43,6 @@ export default class Settings extends View {
     });
     this.person = {};
     this.raw = null;
-    this.previews = {}; // layout name -> its "preview" picture
-    this.previewsOf = "";
     this.showData = false;
     this.machineList = null;
     this.machineLoading = false;
@@ -90,22 +77,6 @@ export default class Settings extends View {
 
   file() {
     return `${appHome()}/settings.json`;
-  }
-
-  // Each layout file may name a picture of itself (`"preview"` on its root).
-  loadPreviews(names, cx) {
-    this.previewsOf = names.join("\n");
-    cx.spawn(async (cx) => {
-      const found = {};
-      for (const name of names) {
-        try {
-          const preview = JSON.parse((await readTextFile(`${appHome()}/layouts/${name}.json`)) ?? "{}").preview;
-          if (typeof preview === "string" && preview) found[name] = preview;
-        } catch {}
-      }
-      this.previews = found;
-      cx.notify();
-    });
   }
 
   async load() {
@@ -159,7 +130,7 @@ export default class Settings extends View {
           .flex_1()
           .min_w(0)
           .gap(3)
-          .child(div().text_size(14).text_color(t.foreground).child(title))
+          .when(Boolean(title), (el) => el.child(div().text_size(14).text_color(t.foreground).child(title)))
           .when(Boolean(about), (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.dim).child(about))),
       )
       .child(div().flex_none().child(control));
@@ -227,87 +198,6 @@ export default class Settings extends View {
 
   // Look -----------------------------------------------------------------
 
-  // A small drawing of each layout, in the theme's colors (as the welcome draws them).
-  preview(t, name) {
-    const row = () => div().flex().flex_row();
-    const col = () => div().flex().flex_col();
-    const term = (bg = t.background, edge = t.border) => div().flex_1().rounded(2).bg(bg).border_1().border_color(edge);
-    const line = (w, c = t.dim) => div().h(3).w(w).flex_none().rounded(2).bg(c);
-    const lines = (n, c) => col().gap(4).p(5).children([...Array(n)].map((_, i) => line(i % 2 ? 22 : 32, c)));
-    const frame = (el) => el.size_full().rounded(6).overflow_hidden().border_1().border_color(t.border).bg(t.surface);
-    if (name === "main")
-      return frame(row())
-        .child(col().w(42).border_r(1).border_color(t.border).child(lines(4)))
-        .child(
-          col()
-            .flex_1()
-            .child(row().h(11).gap(2).p(2).border_b(1).border_color(t.border).child(div().w(20).rounded(2).bg(t.accent)).child(div().w(16).rounded(2).bg(t.raised)).child(div().w(16).rounded(2).bg(t.raised)))
-            .child(row().flex_1().p(4).gap(3).child(term()).child(term())),
-        );
-    if (name === "terminals") {
-      const card = () => col().flex_1().rounded(4).border_1().border_color("#2c2f34").bg("#17191c").child(row().h(7).px(3).items_center().border_b(1).border_color("#25282c").child(line(14, "#5d6168")));
-      return frame(col())
-        .bg("#131619")
-        .p(4)
-        .gap(4)
-        .child(row().h(10).gap(3).p(1).rounded(4).bg("#1d1f22").child(div().w(30).rounded(3).bg("#34373c").border_1().border_color("#4a4d53")).child(div().w(30)))
-        .child(row().flex_1().gap(4).child(card()).child(card()));
-    }
-    // A layout of the person's own: a plain frame.
-    return frame(col()).child(row().h(11).border_b(1).border_color(t.border)).child(row().flex_1().p(4).child(term()));
-  }
-
-  layoutPicker(t, cx) {
-    const current = shared("layout") ?? "main";
-    // Shipped looks in the welcome's order, then the person's own; new files show up by themselves.
-    const shipped = Object.keys(LOOKS);
-    const rank = (n) => (shipped.includes(n) ? shipped.indexOf(n) : shipped.length);
-    const names = [...layouts()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
-    if (names.join("\n") !== this.previewsOf) this.loadPreviews(names, cx);
-    return h_flex()
-      .w_full()
-      .flex_wrap()
-      .gap(8)
-      .children(
-        names.map((name) => {
-          const on = name === current;
-          return v_flex()
-            .id(`st-l-${name}`)
-            .w(124)
-            .gap(6)
-            .p(6)
-            .rounded(10)
-            .border_2()
-            .border_color(on ? t.accent : "#00000000")
-            .bg(on ? t.raised : "#00000000")
-            .cursor_pointer()
-            .hover((s) => s.bg(t.raised))
-            .on_click((_e, cx) => {
-              run("layout.switch", { name });
-              cx.notify();
-            })
-            .child(
-              div()
-                .h(62)
-                .w_full()
-                .overflow_hidden()
-                .child(
-                  this.previews[name]
-                    ? image(this.previews[name]).w_full().h(62).rounded(6).border_1().border_color(t.border)
-                    : this.preview(t, name),
-                ),
-            )
-            .child(
-              h_flex()
-                .gap(5)
-                .items_center()
-                .child(div().text_size(12.5).text_color(on ? t.foreground : t.muted).child(LOOKS[name] ?? name))
-                .when(on, (el) => el.child(svg(I("check")).size(12).text_color(t.accent))),
-            );
-        }),
-      );
-  }
-
   appearancePicker(t, cx) {
     const now = this.person.appearance ?? null;
     return h_flex()
@@ -336,61 +226,6 @@ export default class Settings extends View {
             )
             .child(label),
         ),
-      );
-  }
-
-  themePicker(t, light) {
-    const s = settings();
-    const current = light ? s.theme_light : s.theme_dark;
-    return h_flex()
-      .w_full()
-      .flex_wrap()
-      .gap(8)
-      .children(
-        // A theme named like a layout (themes/win98.json) is that layout's own.
-        themes()
-          .filter((x) => Boolean(x.light) === light && (x.name === shared("layout") || !layouts().includes(x.name)))
-          .map(({ name, colors: c }) => {
-          const on = name === current;
-          const label = name.replace(/-/g, " ");
-          const dot = (color) => div().w(8).h(8).rounded(4).bg(color);
-          return v_flex()
-            .id(`st-t-${name}`)
-            .w(124)
-            .gap(6)
-            .p(6)
-            .rounded(10)
-            .border_2()
-            .border_color(on ? t.accent : "#00000000")
-            .cursor_pointer()
-            .hover((s) => s.bg(t.raised))
-            .on_click((_e, cx) => {
-              run("app.theme", { name });
-              cx.notify();
-            })
-            .child(
-              v_flex()
-                .h(46)
-                .w_full()
-                .p(7)
-                .gap(6)
-                .rounded(6)
-                .border_1()
-                .border_color(t.border)
-                .bg(c.background)
-                .child(div().h(4).w(44).rounded(2).bg(c.terminal_foreground))
-                .child(h_flex().gap(4).child(dot(c.accent)).child(dot(c.ansi1)).child(dot(c.ansi2)).child(dot(c.ansi3)).child(dot(c.ansi5))),
-            )
-            .child(
-              h_flex()
-                .w_full()
-                .min_w(0)
-                .gap(5)
-                .items_center()
-                .child(div().min_w(0).truncate().tooltip(label).text_size(12.5).text_color(on ? t.foreground : t.muted).child(label))
-                .when(on, (el) => el.child(svg(I("check")).size(12).flex_none().text_color(t.accent))),
-            );
-        }),
       );
   }
 
@@ -494,16 +329,8 @@ export default class Settings extends View {
         .when(this.picking === which, (el) => el.child(this.fontList(t, which, def)));
     return v_flex()
       .w_full()
-      .child(this.heading(t, "Layout"))
-      .child(this.layoutPicker(t, cx))
-      .child(div().h(18))
-      .child(this.heading(t, "Theme"))
-      .child(this.row(t, "Appearance", "Light or dark, or as your system is now.", this.appearancePicker(t, cx)))
-      .child(div().pt(12).pb(8).text_size(12.5).text_color(t.dim).child("For the layout you're in: each layout keeps its own light and dark theme."))
-      .child(div().pb(6).text_size(12.5).font_medium().text_color(t.muted).child("Dark"))
-      .child(this.themePicker(t, false))
-      .child(div().pt(10).pb(6).text_size(12.5).font_medium().text_color(t.muted).child("Light"))
-      .child(this.themePicker(t, true))
+      .child(this.heading(t, "Appearance"))
+      .child(this.row(t, "", "Light or dark, or as your system is now.", this.appearancePicker(t, cx)))
       .child(div().h(18))
       .child(this.heading(t, "Size and fonts"))
       .child(

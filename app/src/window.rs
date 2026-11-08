@@ -35,6 +35,9 @@ use std::time::{Duration, Instant, SystemTime};
 const HEADER_HEIGHT: f32 = 30.0;
 const HANDLE: f32 = 6.0;
 
+/// The layout a window starts on when none is chosen, or when the chosen one's mods are gone.
+const DEFAULT_LAYOUT: &str = "desk";
+
 // The three native buttons plus their trailing breathing room (also used by the tabs mod).
 const TRAFFIC_LIGHT_WIDTH: f32 = 64.0;
 
@@ -592,8 +595,8 @@ impl AppWindow {
         let mut w = AppWindow {
             core,
             runtime,
-            chrome: default_layout("main"),
-            layout_name: "main".into(),
+            chrome: default_layout(DEFAULT_LAYOUT),
+            layout_name: DEFAULT_LAYOUT.into(),
             agent: None,
             agent_focused: None,
             swapped: HashMap::new(),
@@ -710,9 +713,9 @@ impl AppWindow {
         // theirs) starts on Kompitum's instead of a wall of "did not load".
         let gone = name.as_deref().map(missing_mods).unwrap_or_default();
         w.load_layout(if gone.is_empty() {
-            name.as_deref().unwrap_or("main")
+            name.as_deref().unwrap_or(DEFAULT_LAYOUT)
         } else {
-            "main"
+            DEFAULT_LAYOUT
         });
         w.apply_look(window, cx);
         w.show_layout_notes(window, cx);
@@ -5218,7 +5221,7 @@ impl AppWindow {
         self.watched.keys = None;
         install_layouts();
         self.drop_layout_copies(window, cx);
-        self.load_layout("main");
+        self.load_layout(DEFAULT_LAYOUT);
         self.apply_look(window, cx);
         self.focused_pane = None;
         self.agent_focused = None;

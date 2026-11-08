@@ -2,11 +2,11 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
-import { spaces, run, theme, props, closeOverlay, setShared, shared, kom, appHome, readTextFile, writeTextFile, settings, layout, keys } from "kompitum";
+import { spaces, run, theme, props, closeOverlay, setShared, kom, appHome, readTextFile, writeTextFile, settings, keys } from "kompitum";
 
 const I = (name) => `frame/welcome/${name}.svg`;
 const W = (name) => `mods/workspace-chrome/${name}.svg`;
-const PAGES = 4;
+const PAGES = 3;
 const ASK = "Read ~/.config/kompitum-app/AGENTS.md, then tell me what you can change in Kompitum.";
 const MIGRATE = "Read `kompitum-app --skill`, then migrate my keybinds and settings from ~/.config/kompitum/config.toml";
 const APPEARANCES = [
@@ -14,26 +14,11 @@ const APPEARANCES = [
   ["light", "Light"],
   ["dark", "Dark"],
 ];
-// The panels the layout offers (its "panel-body" stack), as the tab bar's buttons.
-const PANELS = [
-  { id: "files", icon: "files", title: "Files", about: "The folder you're in as a tree. Open a file to read it, highlighted." },
-  { id: "changes", icon: "git-compare", title: "Changes", about: "What your agents changed: every file with its diff, and a commit box." },
-];
 
 // The key bound to a command, as people press it: "Ctrl+Shift+P".
 function bound(action) {
   const k = keys().find((b) => b.section === "global" && b.action === action);
   return k ? k.keys.split("-").map((p) => (p === "cmd" ? "\u2318" : p.charAt(0).toUpperCase() + p.slice(1))).join("+") : null;
-}
-
-function find(node, id) {
-  if (!node) return null;
-  if (node.id === id) return node;
-  for (const c of node.children ?? []) {
-    const f = find(c, id);
-    if (f) return f;
-  }
-  return null;
 }
 
 export default class Welcome extends View {
@@ -105,25 +90,6 @@ export default class Welcome extends View {
       cx.notify();
     });
     cx.notify();
-  }
-
-  // The panels picked: the tab bar shows a button for each.
-  panels() {
-    return shared("workspace.panels") ?? PANELS.map((p) => p.id);
-  }
-
-  togglePanel(id) {
-    const on = this.panels().includes(id);
-    const next = on ? this.panels().filter((x) => x !== id) : [...this.panels(), id];
-    setShared("workspace.panels", next);
-    const L = layout();
-    if (!find(L, "panel")) return;
-    if (on) {
-      if (find(L, "panel-body")?.active === id || next.length === 0) run("layout.hide", { id: "panel" });
-    } else {
-      run("layout.select", { stack: "panel-body", child: id });
-      run("layout.show", { id: "panel" });
-    }
   }
 
   // Pieces -------------------------------------------------------------
@@ -337,77 +303,10 @@ export default class Welcome extends View {
               .child("Add a machine"),
           ),
       )
-      .child(this.para(t, "Not now? Add machine is at the bottom of the sidebar too."));
-  }
-
-  panelCard(t, p) {
-    const on = this.panels().includes(p.id);
-    return h_flex()
-      .id(`w-panel-${p.id}`)
-      .p(12)
-      .gap(12)
-      .items_start()
-      .rounded(12)
-      .border_1()
-      .border_color(on ? t.accent : t.input)
-      .when(on, (el) => el.bg(t.accent + "10"))
-      .cursor_pointer()
-      .hover((s) => s.border_color(on ? t.accent : t.ring))
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_click((_e, cx) => {
-        this.togglePanel(p.id);
-        cx.notify();
-      })
-      .child(div().flex_none().w(32).h(32).rounded(9).bg(t.raised).border_1().border_color(t.border).flex().items_center().justify_center().child(svg(W(p.icon)).size(16).text_color(t.foreground)))
-      .child(
-        v_flex()
-          .flex_1()
-          .min_w(0)
-          .gap(4)
-          .child(
-            h_flex()
-              .gap(8)
-              .items_center()
-              .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child(p.title))
-              .child(div().px(6).py(0.5).rounded(5).bg(t.hover).text_size(11).text_color(t.dim).child(`mods/${p.id}`)),
-          )
-          .child(this.para(t, p.about)),
-      )
-      .child(
-        div()
-          .flex_none()
-          .mt(4)
-          .w(34)
-          .h(20)
-          .rounded(10)
-          .p(2)
-          .bg(on ? t.accent : t.input)
-          .flex()
-          .when(on, (el) => el.justify_end())
-          .child(div().w(16).h(16).rounded(8).bg(on ? t.accent_foreground : t.muted)),
-      );
+      .child(this.para(t, "Not now? It's in Settings \u203a Machines too."));
   }
 
   pageThree(t) {
-    // The first look at this page asks: nothing is picked yet (skipping the
-    // welcome leaves both on).
-    if (shared("workspace.panels") === undefined || shared("workspace.panels") === null) setShared("workspace.panels", []);
-    return v_flex()
-      .gap(14)
-      .child(this.title(t, "Choose your panels", "Kompitum comes with a couple of panels. Turn one on and it appears beside your terminals. Drag this window aside to see it. Later, the buttons in the tab bar open and close them."))
-      .children(PANELS.map((p) => this.panelCard(t, p)))
-      .child(
-        h_flex()
-          .gap(10)
-          .items_start()
-          .p(12)
-          .rounded(10)
-          .bg(t.raised)
-          .child(this.para(t, "Ask your agent for a board of your agents, your pull requests, a cost meter, or the sidebar on the right. Not sure what's possible? Ask it that too.")),
-      );
-  }
-
-  pageFour(t) {
     const pal = bound("app.palette");
     return v_flex()
       .gap(16)
@@ -443,15 +342,6 @@ export default class Welcome extends View {
           .bg(t.raised)
           .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child("Your terminals, outside this window too"))
           .child(this.para(t, "kom is kompitum-core's command line. In any terminal, kom ls lists everything running and kom attach t3 jumps into one. Your agents can use it to start and watch other agents for you. Tell them to read kom's help, or make it a skill.")),
-      )
-      .child(
-        v_flex()
-          .gap(10)
-          .p(12)
-          .rounded(10)
-          .bg(t.raised)
-          .child(div().text_size(13.5).font_semibold().text_color(t.foreground).child("More examples in Settings"))
-          .child(this.para(t, "Settings \u203a Look has more layouts to try or start from: Desk, Watch and Focus put the Board and the Line beside your work, and Kompitum 98 is there too. Your agent can copy any of them and change anything.")),
       )
       .child(this.para(t, "Something off or missing? Settings \u203a Send feedback. We read every one."));
   }
@@ -530,7 +420,7 @@ export default class Welcome extends View {
               .overflow_y_scroll()
               // Padding inside, not on the scroll area: there it counts as
               // content and a page that fits still shows a bar.
-              .child(div().px(22).pt(22).pb(20).child([this.pageOne, this.pageTwo, this.pageThree, this.pageFour][this.page - 1].call(this, t))),
+              .child(div().px(22).pt(22).pb(20).child([this.pageOne, this.pageTwo, this.pageThree][this.page - 1].call(this, t))),
           )
           .child(Scrollbar.vertical("w-body").mode("always").absolute().inset_0()),
       )

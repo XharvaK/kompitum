@@ -1,13 +1,12 @@
 // The frame's command palette: everything you can do, by name, with its key.
 // Places (spaces, tabs) stay in the picker. Fuzzy: your letters in
 // order, word starts and runs rank higher. Empty: recent first, then every
-// group. Choices are entries of their own ("Layout: Zen"); commands that need
-// a name ask for it. Enter runs, ↑/↓ move, Esc closes.
+// group. Commands that need a name ask for it. Enter runs, ↑/↓ move, Esc closes.
 // The app's own mod: rewritten from the binary on every start.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { commands, layouts, keys, run, theme, props, closeOverlay, openOverlay, shared, window as win } from "kompitum";
+import { commands, keys, run, theme, props, closeOverlay, openOverlay, shared, window as win } from "kompitum";
 
 // The list keeps one height while you move: rows and group titles have fixed
 // heights, and the window shows as many as fit in LIST_H.
@@ -38,7 +37,6 @@ const NAMED = [
   ["space.close", {}, "Space", "Close space", "workspace kill"],
   ["space.next", {}, "Space", "Next space", "workspace"],
   ["space.prev", {}, "Space", "Previous space", "workspace"],
-  ["layout.switch", {}, "Layout", "Next layout", "look switch"],
   ["layout.reset", {}, "Layout", "Reset layout", "new version default restore kompitum's"],
   ["layout.clone", {}, "Layout", "Duplicate layout", "clone copy customize"],
   ["mod.clone", {}, "Layout", "Duplicate mod", "clone copy customize"],
@@ -59,14 +57,13 @@ const NAMED = [
   ["app.zoom_out", {}, "App", "Zoom out", "smaller font size"],
   ["app.zoom_reset", {}, "App", "Reset zoom", "font size"],
   ["app.quit", {}, "App", "Quit Kompitum", "exit"],
-  ...["graphite", "ink", "moss", "atom-one-dark"].map((n) => ["app.theme", { name: n }, "App", `Theme: ${n.replace(/-/g, " ")}`, "colors look"]),
 ];
 
 // Commands that act on something you point at (ids, terminals): not for a list.
 const HIDDEN = new Set([
   "space.move", "tab.move", "space.select", "tab.select", "pane.focus", "terminal.keep",
   "terminal.park", "terminal.kill", "terminal.show", "agent.focus", "layout.set", "layout.toggle",
-  "layout.show", "layout.hide", "layout.resize", "layout.select", "mod.open", "overlay.close",
+  "layout.show", "layout.hide", "layout.resize", "layout.select", "layout.switch", "mod.open", "overlay.close",
   "tab.settle", "tab.unsettle",
   "app.palette", "app.hide", "app.hide_others", "app.show_all", "app.theme", "app.settings",
 ]);
@@ -83,10 +80,6 @@ function entries() {
   const list = NAMED.filter(([n]) => known.has(n))
     .filter(([n]) => !(mac && n.startsWith("window.")))
     .map(([name, args, group, title, words]) => ({ name, args, group, title, words }));
-  for (const l of layouts()) {
-    const t = { main: "Kompitum", terminals: "Terminals", win98: "Kompitum 98" }[l] ?? l.charAt(0).toUpperCase() + l.slice(1);
-    list.push({ name: "layout.switch", args: { name: l }, group: "Layout", title: `Layout: ${t}`, words: `look ${l}` });
-  }
   // Anything new in the app shows up too, until it gets a better name here.
   const named = new Set(NAMED.map(([n]) => n));
   for (const c of commands()) {
@@ -158,7 +151,7 @@ export default class Palette extends View {
         command: { name: "mod.clone", args: {} },
       } });
     } else {
-      run(e.name, e.name === "layout.clone" ? { name: shared("layout") ?? "main" } : e.args);
+      run(e.name, e.name === "layout.clone" ? { name: shared("layout") ?? "desk" } : e.args);
     }
   }
 

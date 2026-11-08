@@ -742,58 +742,6 @@ fn font_pickers_contain_scroll_on_the_wrapper(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn long_theme_names_stay_inside_their_card(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let long = "catppuccin-macchiato";
-    let mut p = props();
-    p["section"] = json!("look");
-    let mut values = fixture(true, p, updates("current", "current"));
-    let theme = values["theme"].clone();
-    values.insert(
-        "themes".into(),
-        json!([{ "name": long, "light": false, "colors": theme }]),
-    );
-    let mut settings = values["settings"].clone();
-    settings["theme_dark"] = json!(long);
-    values.insert("settings".into(), settings);
-    let tree = describe_with_values(cx, &staged, "frame/settings", values, None).unwrap();
-    let lines: Vec<&str> = tree.lines().collect();
-    let card = lines
-        .iter()
-        .position(|l| l.contains(&format!("st-t-{long}")))
-        .unwrap();
-    let row = lines[card..]
-        .iter()
-        .find(|l| l.trim_start().starts_with("h_flex") && l.contains("min_w"))
-        .unwrap();
-    assert!(
-        row.contains(".w_full"),
-        "the name row must fill the card: {row}"
-    );
-    assert!(
-        row.contains(".min_w[Number(0.0)]"),
-        "the name row must be allowed to shrink: {row}"
-    );
-    let name = lines[card..]
-        .iter()
-        .find(|l| l.contains("truncate"))
-        .unwrap();
-    assert!(
-        name.contains(":tooltip[Str(\"catppuccin macchiato\")]"),
-        "a cut name needs its full text on hover: {name}"
-    );
-    let check = lines[card..]
-        .iter()
-        .find(|l| l.contains("check.svg"))
-        .unwrap();
-    assert!(
-        check.contains(".flex_none"),
-        "the selected check must not shrink: {check}"
-    );
-}
-
-#[gpui::test]
 fn confirm_dialog_background_follows_the_frame_corners(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
@@ -817,39 +765,6 @@ fn confirm_dialog_background_follows_the_frame_corners(cx: &mut TestAppContext) 
     assert!(
         root.contains(".rounded[Number(8.0)]"),
         "the dialog background must follow the frame's corners: {root}"
-    );
-}
-
-#[gpui::test]
-fn layout_previews_stay_inside_their_cards(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let mut p = props();
-    p["section"] = json!("look");
-    let mut values = fixture(true, p, updates("current", "current"));
-    values.insert("layouts".into(), json!(["main"]));
-    let tree = describe_with_values(
-        cx,
-        &staged,
-        "frame/settings",
-        values,
-        Some("this.previews = { main: 'layouts/portrait.png' }; this.previewsOf = 'main';"),
-    )
-    .unwrap();
-    let lines: Vec<&str> = tree.lines().collect();
-    let image = lines
-        .iter()
-        .position(|l| l.contains("layouts/portrait.png"))
-        .unwrap();
-    assert!(
-        lines[image].contains(".h[Number(62.0)]"),
-        "a preview keeps the card's height: {}",
-        lines[image]
-    );
-    assert!(
-        lines[image - 1].contains(".overflow_hidden"),
-        "a preview cannot spill out of its card: {}",
-        lines[image - 1]
     );
 }
 
@@ -1231,7 +1146,7 @@ fn local_state_and_overlay_initial_descriptions(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let start = Instant::now();
     let staged = Staged::new();
-    for page in 1..=4 {
+    for page in 1..=3 {
         let tree = describe(
             cx,
             &staged,
@@ -1245,7 +1160,6 @@ fn local_state_and_overlay_initial_descriptions(cx: &mut TestAppContext) {
         let expected = [
             "Kompitum runs your terminals in the background",
             "Add your other machines",
-            "Choose your panels",
             "Make it yours",
         ][page - 1];
         assert!(tree.contains(expected), "welcome page {page}: {tree}");
