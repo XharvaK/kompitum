@@ -103,7 +103,6 @@ enum Cmd {
     /// Everything at one glance: agents, tasks, workers and Claude's limits.
     Status(StatusArgs),
     /// Serve tasks, workers and the vault as MCP tools on stdin and stdout, for an agent's client.
-    #[command(hide = true)]
     Mcp(McpArgs),
     /// Follow fact changes as they happen (one JSON line each when piped).
     Events(SubscribeParams),

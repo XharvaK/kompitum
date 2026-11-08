@@ -39,6 +39,7 @@ Workers and notes
   ledger                      what each worker run cost
   vault open|read|post|done|thread|find
                               notes between agents in the shared vault
+  mcp [--as manager]          all of the above as MCP tools, for an agent's client
 
 More
   templates                   list templates

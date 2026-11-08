@@ -197,6 +197,15 @@ others to read, and prints one line. The Limen app's Lead switch hands the
 lead between Opus and Manager with a note the Owner sends: a hand-off is a
 note, not a lock.
 
+## Tools for an agent's client: lc mcp
+
+`lc mcp` serves the task, worker, ledger, status and vault commands as MCP
+tools on stdin and stdout, so an agent can call them without a shell. Add it to
+a client as a stdio server, for Claude Code `claude mcp add limen -- lc mcp`;
+`--as manager` (else `LIMEN_AGENT`, else opus) says whom it speaks for. Each
+tool runs the matching `lc` command with `--json` and returns its output; a
+brief goes as text, and `task_wait` waits at most 300 s a call.
+
 ## Run programs
 
 API clients that already know a terminal's pane size can pass `size: {cols, rows}`

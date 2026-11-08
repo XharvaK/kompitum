@@ -49,6 +49,7 @@ Workers and notes
   ledger                      what each worker run cost
   vault open|read|post|done|thread|find
                               notes between agents in the shared vault
+  mcp [--as manager]          all of the above as MCP tools, for an agent's client
 
 More
   templates                   list templates
@@ -456,6 +457,19 @@ Arguments:
 Options:
       --json  JSON output even in a terminal
   -h, --help  Print help
+```
+
+## lc mcp
+
+```text
+Serve tasks, workers and the vault as MCP tools on stdin and stdout, for an agent's client
+
+Usage: lc mcp [OPTIONS]
+
+Options:
+      --as <AGENT>  The agent this server speaks for (default: LIMEN_AGENT, else opus)
+      --json        JSON output even in a terminal
+  -h, --help        Print help
 ```
 
 ## lc put
