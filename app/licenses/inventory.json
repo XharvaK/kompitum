@@ -164,6 +164,20 @@
       ]
     },
     {
+      "name": "Google Sans Flex font",
+      "source": "https://github.com/googlefonts/googlesans-flex",
+      "files": [
+        "assets/fonts/OFL-GoogleSansFlex.txt"
+      ]
+    },
+    {
+      "name": "Google Sans Code fonts",
+      "source": "https://github.com/googlefonts/googlesans-code",
+      "files": [
+        "assets/fonts/OFL-GoogleSansCode.txt"
+      ]
+    },
+    {
       "name": "Symbols Nerd Font",
       "source": "https://github.com/ryanoasis/nerd-fonts",
       "files": [
