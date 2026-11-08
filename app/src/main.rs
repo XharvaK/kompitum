@@ -28,6 +28,7 @@ mod place;
 mod process_cwd;
 mod programs;
 mod remote_shell;
+mod schemes;
 mod settings;
 mod setup;
 mod sound;

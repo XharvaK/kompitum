@@ -463,6 +463,20 @@ pub struct Person {
     pub theme: Option<crate::layout::ThemeChoice>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub colors: BTreeMap<String, String>,
+    /// Agent systems joined to Kompitum, by system id (Settings › Connect).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub connect: BTreeMap<String, Connection>,
+}
+
+/// One agent system's way into Kompitum: Connect was copied, then its Joined
+/// note gave the agent's name.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Connection {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -519,6 +533,7 @@ impl Default for Person {
             appearance: Appearance::System,
             theme: None,
             colors: BTreeMap::new(),
+            connect: BTreeMap::new(),
         }
     }
 }
@@ -1161,6 +1176,14 @@ mod tests {
             appearance: Appearance::Light,
             theme: Some(crate::layout::ThemeChoice::One(String::new())),
             colors: [("text".into(), String::new())].into(),
+            connect: [(
+                "grokbot".into(),
+                Connection {
+                    since: Some(String::new()),
+                    agent: None,
+                },
+            )]
+            .into(),
             ..Person::default()
         };
         let keys: Vec<String> = serde_json::to_value(&all)

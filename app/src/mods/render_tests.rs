@@ -90,6 +90,7 @@ fn fixture(populated: bool, props: Value, update: Value) -> BTreeMap<String, Val
         ("telemetry".into(), json!({"enabled":true,"setting":true,"sends":true,"off_because":null,"endpoint":"https://invalid.example", "draft":{},"queued":[],"last_sent":null})),
         ("window".into(), json!({"platform":"linux","titlebar":"none","buttons":true,"maximized":false,"fullscreen":false,"active":true})),
         ("placement".into(), Value::Null),
+        ("appLink".into(), Value::Null), ("person".into(), Value::Null),
         ("home".into(), json!("/fixture")), ("appHome".into(), json!("/fixture/app")),
         ("keys".into(), Value::Array(serde_json::from_str::<BTreeMap<String, BTreeMap<String, String>>>(include_str!("../../defaults/keys.json")).unwrap().into_iter().flat_map(|(section, bindings)| bindings.into_iter().map(move |(keys, action)| json!({"section":section,"keys":keys,"action":action}))).collect())),
         ("commands".into(), Value::Array(crate::commands::COMMANDS.iter().map(|c| json!({"name":c.name,"about":c.about,"args":c.args.iter().map(|a| json!({"name":a.name,"required":a.required})).collect::<Vec<_>>()})).collect())),
@@ -111,8 +112,12 @@ fn fixture(populated: bool, props: Value, update: Value) -> BTreeMap<String, Val
 }
 
 fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostModule {
+    let person = values.get("person").cloned();
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
+        if name == "person" {
+            continue;
+        }
         module = module.function(name, move |_| Ok(to_host(&value)));
     }
     let shared = calls.clone();
@@ -140,6 +145,7 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
         "closeOverlay",
         "notify",
         "presentUpdateNotes",
+        "openLink",
     ] {
         let calls = calls.clone();
         module = module.function(name, move |a| {
@@ -170,17 +176,18 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
             Ok(std::future::pending::<gpui_shell::HostResult>())
         });
     }
-    for name in [
-        "exec",
-        "kom",
-        "readTextFile",
-        "writeTextFile",
-    ] {
+    for name in ["exec", "kom", "readTextFile", "writeTextFile"] {
         let calls = calls.clone();
+        let person = person.clone();
         module = module.async_function(name, move |a| {
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
             let reply = match name {
-                "readTextFile" if first == "/fixture/app/settings.json" || first == "/fixture/.ssh/config" => Some(Value::Null),
+                "readTextFile" if first == "/fixture/app/settings.json" => Some(
+                    person
+                        .clone()
+                        .map_or(Value::Null, |person| Value::String(person.to_string())),
+                ),
+                "readTextFile" if first == "/fixture/.ssh/config" => Some(Value::Null),
                 "readTextFile" => first
                     .as_str()
                     .and_then(|p| p.strip_prefix("/fixture/app/layouts/"))
@@ -202,9 +209,22 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                     "agent": "opus",
                     "notes": [{"path": "manager/to/opus/2026-11-08-tests-pass.md", "from": "manager", "to": ["opus"], "title": "Tests pass", "date": "2026-11-08T09:00:00+03:00", "status": "open"}]
                 }).to_string(),"stderr":""})),
+                // Settings › Connect: the vault's folder and notes.
+                "kom" if first == json!(["vault", "open", "--json", "--as", "opus"]) => Some(json!({"code":0,"stdout":json!({
+                    "vault": "/fixture/vault", "agent": "opus", "unpushed": 0, "problems": [], "notes": []
+                }).to_string(),"stderr":""})),
+                "kom" if first == json!(["vault", "find", "Joined", "--kind", "report", "--json"]) => Some(json!({"code":0,"stdout":json!({
+                    "vault": "/fixture/vault", "agent": "opus", "unpushed": 0, "problems": [], "notes": []
+                }).to_string(),"stderr":""})),
                 // The files panel lists a folder with sh: kind and name pairs.
                 "exec" if first == "sh" && a.get(1).map(from_host).and_then(|v| v.get(2).cloned()) == Some(json!("files")) => {
                     Some(json!({"code":0,"stdout":"d\u{0}src\u{0}f\u{0}README.md\u{0}","stderr":""}))
+                }
+                "exec"
+                    if first == "git"
+                        && a.get(1).map(from_host) == Some(json!(["-C", "/fixture/vault", "remote", "get-url", "origin"])) =>
+                {
+                    Some(json!({"code":0,"stdout":"https://example.invalid/opus/vault.git\n","stderr":""}))
                 }
                 "exec"
                     if first == "git"
@@ -516,6 +536,50 @@ fn describe_with_values(
         calls.borrow().unexpected
     );
     result
+}
+
+/// Like `describe_with_values`, but lets the mod's first async pass finish so
+/// the description shows what its host reads answered.
+fn describe_settled(
+    cx: &mut TestAppContext,
+    staged: &Staged,
+    entry: &str,
+    values: BTreeMap<String, Value>,
+    setup: Option<&str>,
+) -> anyhow::Result<String> {
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    static NEXT_STORE: AtomicU64 = AtomicU64::new(0);
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join(format!(
+            "store-{}.json",
+            NEXT_STORE.fetch_add(1, Ordering::Relaxed)
+        )))
+        .with_capabilities(
+            Capabilities::new()
+                .storage(true)
+                .read_roots([staged.0.clone()]),
+        )
+        .with_host_module(module(values, calls.clone()))?;
+    let runtime = ShellRuntime::new_isolated()?;
+    let root = setup
+        .map(|s| staged.wrapper(entry, s))
+        .unwrap_or_else(|| staged.0.join(entry));
+    let window = cx.add_window(|_, _| Empty);
+    let mut session = window.update(cx, |_, window, cx| {
+        let mut session = DescriptionSession::load(runtime, root, policy, window, cx)?;
+        session.describe(window, cx)?;
+        Ok::<_, anyhow::Error>(session)
+    })??;
+    cx.run_until_parked();
+    let result = window.update(cx, |_, window, cx| session.describe(window, cx))??;
+    window.update(cx, |_, window, _| window.remove_window())?;
+    cx.run_until_parked();
+    assert!(
+        calls.borrow().unexpected.is_empty(),
+        "{entry}: {:?}",
+        calls.borrow().unexpected
+    );
+    Ok(result)
 }
 
 fn props() -> Value {
@@ -933,6 +997,87 @@ fn option_key_settings_are_only_shown_on_macos(cx: &mut TestAppContext) {
             "{platform}: {tree}"
         );
     }
+}
+
+#[gpui::test]
+fn connect_lists_a_found_system_and_other(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(
+            json!({"program": "C:\\Program Files\\Grok Bot\\grokbot.exe", "icon": null}),
+            Value::Null,
+        ),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("st-c-grokbot"), "{tree}");
+    assert!(tree.contains("st-c-other"), "{tree}");
+}
+
+#[gpui::test]
+fn connect_hides_a_system_it_does_not_find(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(Value::Null, Value::Null),
+        None,
+    )
+    .unwrap();
+    assert!(!tree.contains("st-c-grokbot"), "{tree}");
+    assert!(tree.contains("st-c-other"), "{tree}");
+}
+
+#[gpui::test]
+fn connect_shows_a_joined_system_as_connected(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(
+            json!({"program": "C:\\Program Files\\Grok Bot\\grokbot.exe", "icon": null}),
+            json!({"connect": {"grokbot": {"agent": "grok"}}}),
+        ),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Connected as grok"), "{tree}");
+}
+
+#[gpui::test]
+fn connect_prompt_holds_the_lead_and_vault(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(
+            json!({"program": "C:\\Program Files\\Grok Bot\\grokbot.exe", "icon": null}),
+            Value::Null,
+        ),
+        Some("this.connect.showPrompt = true;"),
+    )
+    .unwrap();
+    assert!(tree.contains("--to opus"), "{tree}");
+    assert!(tree.contains("/fixture/vault"), "{tree}");
+}
+
+fn connect_values(found: Value, person: Value) -> BTreeMap<String, Value> {
+    let mut p = props();
+    p["section"] = json!("connect");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("appLink".into(), found);
+    values.insert("person".into(), person);
+    values
 }
 
 #[gpui::test]

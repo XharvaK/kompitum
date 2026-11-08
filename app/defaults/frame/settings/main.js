@@ -3,6 +3,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
 import { kom, run, theme, fonts, updates, settings, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "kompitum";
+import { connectPage, initConnect, loadConnect } from "./connect.js";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
@@ -10,6 +11,7 @@ const SECTIONS = [
   { id: "look", title: "Look", icon: "palette" },
   ...(window()?.platform === "macos" ? [{ id: "keyboard", title: "Keyboard", icon: "keyboard" }] : []),
   { id: "machines", title: "Machines", icon: "server" },
+  { id: "connect", title: "Connect", icon: "link" },
   { id: "alerts", title: "Alerts", icon: "bell" },
   { id: "about", title: "About", icon: "info" },
 ];
@@ -71,6 +73,7 @@ export default class Settings extends View {
         cx.notify();
       });
     });
+    initConnect(this, cx);
   }
 
   file() {
@@ -620,6 +623,7 @@ export default class Settings extends View {
               this.machineEdit = null;
               this.handle.focus();
               if (s.id === "machines") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
+              if (s.id === "connect" && this.connect.vault === null) loadConnect(this, cx);
               cx.notify();
             })
             .child(svg(I(s.icon)).size(15).text_color(on ? t.accent : t.dim))
@@ -679,6 +683,8 @@ export default class Settings extends View {
                         ? this.keyboard(t)
                       : this.section === "machines"
                         ? this.machines(t)
+                      : this.section === "connect"
+                        ? connectPage(this, t, cx)
                       : this.section === "alerts"
                         ? this.alerts(t)
                         : this.about(t),

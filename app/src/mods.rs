@@ -1306,6 +1306,22 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             crate::sound::play(a.string(0)?);
             Ok(HostValue::Null)
         })
+        .function("appLink", |a| {
+            let scheme = a.string(0)?.to_owned();
+            match crate::schemes::handler(&scheme) {
+                Ok(Some(handler)) => Ok(to_host(&json!({
+                    "program": handler.program.to_string_lossy(),
+                    "icon": handler.icon.as_deref().map(crate::schemes::icon_asset),
+                }))),
+                Ok(None) => Ok(HostValue::Null),
+                Err(error) => Err(HostError::new(error)),
+            }
+        })
+        .function("openLink", |a| {
+            let url = a.string(0)?.to_owned();
+            crate::links::open(&crate::links::Target::Url(url));
+            Ok(HostValue::Null)
+        })
         .function("run", |a| {
             let name = a.string(0)?.to_owned();
             let args = a.get(1).map(from_host).unwrap_or(Value::Null);

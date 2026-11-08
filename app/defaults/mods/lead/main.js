@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { kom, exec, theme, notify, openOverlay, closeOverlay, shared, setShared, props } from "kompitum";
+import { kom, theme, notify, openOverlay, closeOverlay, shared, setShared, props, appLink, openLink } from "kompitum";
 
 const LEAD_KEY = "lead";
 const DOOR = "grokbot://";
@@ -263,19 +263,18 @@ export default class Lead extends View {
     });
   }
 
-  door(cx) {
-    const link = props()?.door ?? DOOR;
-    cx.spawn(async () => {
-      try {
-        const r = await exec("explorer.exe", [String(link)]);
-        // explorer.exe often exits with 1 after it has opened a link.
-        if (r.code !== 0 && r.code !== 1) {
-          notify({ title: "Could not open Manager", body: errorText(r), level: "error" });
-        }
-      } catch (e) {
-        notify({ title: "Could not open Manager", body: errorText(e), level: "error" });
-      }
-    });
+  door() {
+    const link = String(props()?.door ?? DOOR);
+    const scheme = link.split(":")[0];
+    const fail = (body) => notify({ title: "Could not open Manager", body, level: "error" });
+    let app;
+    try {
+      app = appLink(scheme);
+    } catch (e) {
+      return fail(errorText(e));
+    }
+    if (!app) return fail(`Nothing on this computer opens ${scheme}:// links.`);
+    openLink(link);
   }
 
   send(cx) {
@@ -389,7 +388,7 @@ export default class Lead extends View {
           .text_color(t.muted)
           .cursor_pointer()
           .hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => this.door(cx))
+          .on_click(() => this.door())
           .child("Manager ↗"),
       );
   }

@@ -42,6 +42,12 @@ export function pickFolder(options?: { prompt?: string }): Promise<string | null
  *  file (absolute, or relative to ~/.config/kompitum-app). */
 export function playSound(sound: string): null;
 
+/** The app that opens `<scheme>://` links on this computer, or null when nothing handles it.
+ *  `icon` is a PNG in the app's cache (its path under the app home), or null; pass it to image(). Throws when the question fails. */
+export function appLink(scheme: string): { program: string; icon: string | null } | null;
+/** Opens a link through the system's default handler (ShellExecuteW, open, xdg-open). */
+export function openLink(url: string): void;
+
 /**
  * Runs a command, the same ones keys.json binds (`kompitum-app commands` lists them all with their
  * arguments). Structural commands fail while their machine's layout is unavailable.
