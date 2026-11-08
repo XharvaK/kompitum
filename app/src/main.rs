@@ -8,9 +8,10 @@ mod core_bin;
 mod feedback;
 mod files;
 mod keys;
+mod kom;
 mod layout;
 mod layout_sync;
-mod lc;
+mod legacy;
 mod links;
 #[cfg(target_os = "macos")]
 mod macos;
@@ -42,28 +43,28 @@ mod window;
 use gpui::*;
 
 const HELP: &str = "\
-limen-app: the Limen desktop app. With no arguments it opens the window.
+kompitum-app: the Kompitum desktop app. With no arguments it opens the window.
 
 Usage:
-  limen-app                        open the window
-  limen-app ls                     spaces, their tabs and terminals, in the open window
-  limen-app do <command> [args]    run a command: --name api --argv '[\"pi\"]', or one JSON object
-  limen-app feedback <text>        draft feedback for the person to review and send
-  limen-app commands               every command, its arguments, what it does
-  limen-app status                 what the window shows, and any errors
-  limen-app shot [file.png]        save the last window frame (default: limen-shot.png)
-  limen-app check <mod folder>     load a mod once and report what's wrong
-  limen-app --skill                Agent Skill: driving the window, and where lc fits
-  limen-app --version
+  kompitum-app                        open the window
+  kompitum-app ls                     spaces, their tabs and terminals, in the open window
+  kompitum-app do <command> [args]    run a command: --name api --argv '[\"pi\"]', or one JSON object
+  kompitum-app feedback <text>        draft feedback for the person to review and send
+  kompitum-app commands               every command, its arguments, what it does
+  kompitum-app status                 what the window shows, and any errors
+  kompitum-app shot [file.png]        save the last window frame (default: kompitum-shot.png)
+  kompitum-app check <mod folder>     load a mod once and report what's wrong
+  kompitum-app --skill                Agent Skill: driving the window, and where kom fits
+  kompitum-app --version
 
-The terminals run in limen-core (`lc`), which keeps them alive when the
-window closes. `lc --help`: start, read, wait on and talk to terminals and
+The terminals run in kompitum-core (`kom`), which keeps them alive when the
+window closes. `kom --help`: start, read, wait on and talk to terminals and
 agents. The app shows them and arranges them in spaces and tabs.
 
-Home: ~/.config/limen-app (LIMEN_APP_HOME picks another).
+Home: ~/.config/kompitum-app (KOMPITUM_APP_HOME picks another).
 ";
 
-/// A Windows window app has no console: answers to `limen-app ls` and the
+/// A Windows window app has no console: answers to `kompitum-app ls` and the
 /// like go to the terminal it was started from. Output already piped (agents,
 /// scripts) keeps its pipes.
 #[cfg(windows)]
@@ -79,6 +80,8 @@ fn attach_console() {
 }
 
 fn main() {
+    legacy::adopt_env();
+    legacy::adopt_home();
     let args: Vec<String> = std::env::args().collect();
     #[cfg(target_os = "macos")]
     macos_check::startup(&args);
@@ -86,7 +89,7 @@ fn main() {
     if args.len() > 1 {
         attach_console();
     }
-    // `limen-app check <mod>` / `limen-app types <mod>`: gpui-shell's own checker, with Limen's module installed.
+    // `kompitum-app check <mod>` / `kompitum-app types <mod>`: gpui-shell's own checker, with Kompitum's module installed.
     if matches!(args.get(1).map(String::as_str), Some("check" | "types")) {
         mods::install_check_policy();
         gpui_shell::host::main_with_components(gpui_shell::FrozenComponentRegistry::default());
@@ -106,10 +109,10 @@ fn main() {
         Some("-h" | "--help" | "help") => return print!("{HELP}"),
         Some("--skill") => return print!("{}", include_str!("SKILL.md")),
         Some("-V" | "--version" | "version") => {
-            return println!("limen-app {}", env!("CARGO_PKG_VERSION"));
+            return println!("kompitum-app {}", env!("CARGO_PKG_VERSION"));
         }
         Some(other) => {
-            eprint!("limen-app: unknown argument {other:?}\n\n{HELP}");
+            eprint!("kompitum-app: unknown argument {other:?}\n\n{HELP}");
             std::process::exit(2);
         }
     }
@@ -118,8 +121,8 @@ fn main() {
     core_bin::fill_path();
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("LIMEN_APP_LOG")
-                .unwrap_or_else(|_| "warn,limen_app=info,gpui_shell=info".into()),
+            tracing_subscriber::EnvFilter::try_from_env("KOMPITUM_APP_LOG")
+                .unwrap_or_else(|_| "warn,kompitum_app=info,gpui_shell=info".into()),
         )
         .init();
 
@@ -133,18 +136,18 @@ fn main() {
     // The core people installed; without one, the setup screen installs it.
     let person = settings::load_person();
     let configured = person.as_ref().ok().and_then(|p| p.core.clone());
-    let core: Result<std::sync::Arc<lc::Core>, setup::Need> =
+    let core: Result<std::sync::Arc<kom::Core>, setup::Need> =
         match core_bin::find(configured.as_deref()) {
             None => Err(setup::Need::Install),
             Some(bin) => {
                 core_bin::use_core(bin);
-                match lc::Core::connect() {
+                match kom::Core::connect() {
                     // One that can't serve this app gets the screen that fixes it.
-                    Ok(core) => lc::check(&core.hello)
+                    Ok(core) => kom::check(&core.hello)
                         .map(|()| core)
                         .map_err(setup::Need::Fix),
                     Err(e) => {
-                        eprintln!("limen-app: {e:#}");
+                        eprintln!("kompitum-app: {e:#}");
                         Err(setup::Need::Connect(format!("{e:#}")))
                     }
                 }
@@ -159,7 +162,10 @@ fn main() {
     telemetry::start(settings::telemetry_setting(&person));
     bench::start();
     if let Err(e) = mods::write_workspace() {
-        eprintln!("limen-app: cannot write {}: {e}", mods::app_dir().display());
+        eprintln!(
+            "kompitum-app: cannot write {}: {e}",
+            mods::app_dir().display()
+        );
     }
 
     gpui_platform::application()
@@ -221,7 +227,7 @@ fn main() {
 
 /// The main window, on a connected core.
 pub fn open_main(
-    core: std::sync::Arc<lc::Core>,
+    core: std::sync::Arc<kom::Core>,
     requests: async_channel::Receiver<mods::Request>,
     cx: &mut App,
 ) {
@@ -232,7 +238,7 @@ pub fn open_main(
         // macOS: always see-through, so a layout can draw its own title bar
         // live; the app drags the window (window/titlebar.rs).
         titlebar: Some(TitlebarOptions {
-            title: Some("Limen".into()),
+            title: Some("Kompitum".into()),
             // Windows: hidden for good (it can't change live); the app draws it.
             appears_transparent: cfg!(any(target_os = "macos", windows)),
             traffic_light_position: cfg!(target_os = "macos").then(|| point(px(12.0), px(7.0))),
@@ -242,18 +248,18 @@ pub fn open_main(
         // system's off on the first render, while KWin maps the window, shrinks
         // it to 20x20; turning it on later (a "system" layout) is fine.
         window_decorations: Some(WindowDecorations::Client),
-        // Limen Dev and other side-by-side builds get their own dock icon.
+        // Kompitum Dev and other side-by-side builds get their own dock icon.
         app_id: Some(
-            std::env::var("LIMEN_APP_ID")
+            std::env::var("KOMPITUM_APP_ID")
                 .ok()
                 .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "limen-app".into()),
+                .unwrap_or_else(|| "kompitum-app".into()),
         ),
         ..Default::default()
     };
     cx.open_window(options, |window, cx| {
         cx.new(|cx| window::AppWindow::new(core, requests, window, cx))
     })
-    .expect("cannot open the Limen window");
+    .expect("cannot open the Kompitum window");
     cx.activate(true);
 }

@@ -1198,7 +1198,7 @@ pub struct Window {
     focused_text_input_active: bool,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
-    // LIMEN: distinguish an empty scene from a window that has not drawn yet.
+    // KOMPITUM: distinguish an empty scene from a window that has not drawn yet.
     rendered_frame_size: Option<(Size<Pixels>, f32)>,
     pub(crate) next_frame: Frame,
     next_hitbox_id: HitboxId,

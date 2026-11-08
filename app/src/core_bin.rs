@@ -1,11 +1,11 @@
-//! Finding limen-core (`lc`) on this machine. The app doesn't carry one: it
+//! Finding kompitum-core (`kom`) on this machine. The app doesn't carry one: it
 //! uses the core people installed, or installs the core's own release.
 //!
 //! Where it looks, in order: `core` in settings.json; this process's PATH;
 //! the person's login shell's PATH (an app opened from the Dock or a
 //! launcher doesn't get it); then the usual install places. A candidate
-//! counts only if `--version` says `lc …`: some window managers ship an
-//! unrelated `lc`.
+//! counts only if `--version` says `kom …`: some window managers ship an
+//! unrelated `kom`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -25,21 +25,21 @@ pub fn install_cli_link() {
             let result = std::env::current_exe()
                 .and_then(|exe| cli_link::ensure(&crate::mods::home(), &exe));
             if let Err(e) = result {
-                tracing::warn!("cannot install limen-app CLI link: {e}");
+                tracing::warn!("cannot install kompitum-app CLI link: {e}");
             }
         })
     {
-        tracing::warn!("cannot start limen-app CLI setup: {e}");
+        tracing::warn!("cannot start kompitum-app CLI setup: {e}");
     }
 }
 
-/// The core the app runs (`lc` until one is found).
+/// The core the app runs (`kom` until one is found).
 pub fn path() -> PathBuf {
-    BIN.get().cloned().unwrap_or_else(|| PathBuf::from("lc"))
+    BIN.get().cloned().unwrap_or_else(|| PathBuf::from("kom"))
 }
 
 /// Uses this core from now on, and puts its folder first on PATH so mods'
-/// `lc()` and anything the app runs find the same one.
+/// `kom()` and anything the app runs find the same one.
 pub fn use_core(bin: PathBuf) {
     if let Some(dir) = bin.parent() {
         let path = std::env::var_os("PATH").unwrap_or_default();
@@ -87,7 +87,7 @@ fn merged_path(
     std::env::join_paths(dirs).ok()
 }
 
-/// `lc X.Y.Z` if this binary is limen-core and runs.
+/// `kom X.Y.Z` if this binary is kompitum-core and runs.
 pub fn version(bin: &Path) -> Option<String> {
     let out = crate::spawn::command(bin)
         .arg("--version")
@@ -96,10 +96,10 @@ pub fn version(bin: &Path) -> Option<String> {
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    (out.status.success() && text.starts_with("lc ")).then_some(text)
+    (out.status.success() && text.starts_with("kom ")).then_some(text)
 }
 
-/// The first limen-core found, or None.
+/// The first kompitum-core found, or None.
 pub fn find(configured: Option<&str>) -> Option<PathBuf> {
     let home = crate::mods::home();
     let pick = |candidates: Vec<PathBuf>| {
@@ -115,8 +115,8 @@ pub fn find(configured: Option<&str>) -> Option<PathBuf> {
     ) {
         return Some(found);
     }
-    // Tests: LIMEN_CORE_DIRS replaces every place Limen would look.
-    if let Some(dirs) = std::env::var_os("LIMEN_CORE_DIRS") {
+    // Tests: KOMPITUM_CORE_DIRS replaces every place Kompitum would look.
+    if let Some(dirs) = std::env::var_os("KOMPITUM_CORE_DIRS") {
         return pick(
             std::env::split_paths(&dirs)
                 .flat_map(|d| names(&d))
@@ -148,8 +148,8 @@ fn expand(p: &str, home: &Path) -> PathBuf {
 fn names(dir: &Path) -> [PathBuf; 2] {
     let exe = std::env::consts::EXE_SUFFIX;
     [
-        dir.join(format!("limen-core{exe}")),
-        dir.join(format!("lc{exe}")),
+        dir.join(format!("kompitum-core{exe}")),
+        dir.join(format!("kom{exe}")),
     ]
 }
 
@@ -157,14 +157,17 @@ fn dirs_on(path: &std::ffi::OsStr) -> impl Iterator<Item = PathBuf> + '_ {
     std::env::split_paths(path)
 }
 
-/// Where limen-core gets installed: its own installer and Limen 1.x's
+/// Where kompitum-core gets installed: its own installer and Kompitum 1.x's
 /// (~/.local/bin), Homebrew, mise, Nix, cargo.
 fn usual_dirs(home: &Path) -> Vec<PathBuf> {
     if cfg!(windows) {
         let local = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join("AppData/Local"));
-        return vec![local.join("Programs/limen-core"), home.join(".cargo/bin")];
+        return vec![
+            local.join("Programs/kompitum-core"),
+            home.join(".cargo/bin"),
+        ];
     }
     let mut dirs = vec![
         home.join(".local/bin"),
@@ -176,9 +179,9 @@ fn usual_dirs(home: &Path) -> Vec<PathBuf> {
         home.join(".cargo/bin"),
     ];
     if cfg!(target_os = "macos") {
-        dirs.push(home.join(".local/share/limen-core/current/Contents/MacOS"));
-        // Older installers placed the bundle directly in limen-core.
-        dirs.push(home.join(".local/share/limen-core/Limen Core.app/Contents/MacOS"));
+        dirs.push(home.join(".local/share/kompitum-core/current/Contents/MacOS"));
+        // Older installers placed the bundle directly in kompitum-core.
+        dirs.push(home.join(".local/share/kompitum-core/Kompitum Core.app/Contents/MacOS"));
     }
     dirs
 }
@@ -214,10 +217,10 @@ fn login_shell_path() -> Option<std::ffi::OsString> {
 }
 
 /// Installs the core's latest release with its own installer (into
-/// ~/.local/bin, or LIMEN_INSTALL_DIR), then finds it. Err: what went wrong.
+/// ~/.local/bin, or KOMPITUM_INSTALL_DIR), then finds it. Err: what went wrong.
 pub fn install() -> Result<PathBuf, String> {
-    let releases = std::env::var("LIMEN_RELEASES_URL")
-        .unwrap_or_else(|_| "https://releases.limen.invalid".into());
+    let releases = std::env::var("KOMPITUM_RELEASES_URL")
+        .unwrap_or_else(|_| "https://releases.kompitum.invalid".into());
     let mut cmd = if cfg!(windows) {
         let mut c = crate::spawn::command("powershell");
         c.args([
@@ -244,7 +247,7 @@ pub fn install() -> Result<PathBuf, String> {
         });
     }
     let home = crate::mods::home();
-    let dir = std::env::var_os("LIMEN_INSTALL_DIR")
+    let dir = std::env::var_os("KOMPITUM_INSTALL_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             if cfg!(windows) {
@@ -253,20 +256,20 @@ pub fn install() -> Result<PathBuf, String> {
                 home.join(".local/bin")
             }
         });
-    let bin = dir.join(format!("limen-core{}", std::env::consts::EXE_SUFFIX));
+    let bin = dir.join(format!("kompitum-core{}", std::env::consts::EXE_SUFFIX));
     version(&bin)
         .map(|_| bin)
-        .ok_or_else(|| "installed, but limen-core doesn't run".into())
+        .ok_or_else(|| "installed, but kompitum-core doesn't run".into())
 }
 
-/// Updates the core to its latest release (`lc update`: same generation only,
+/// Updates the core to its latest release (`kom update`: same generation only,
 /// terminals kept). Ok: the version it runs now. Err: what it said, e.g.
-/// "belongs to Homebrew: brew upgrade limen-core".
+/// "belongs to Homebrew: brew upgrade kompitum-core".
 pub fn update() -> Result<String, String> {
     update_to(None)
 }
 
-/// `lc update --version X`: at least X (a newer core stays). Cores before 0.1.5 lack it.
+/// `kom update --version X`: at least X (a newer core stays). Cores before 0.1.5 lack it.
 pub fn update_to(at_least: Option<&str>) -> Result<String, String> {
     let mut cmd = crate::spawn::command(path());
     cmd.args(["update", "--json"]);
@@ -276,7 +279,7 @@ pub fn update_to(at_least: Option<&str>) -> Result<String, String> {
     let out = cmd
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| format!("cannot run lc update: {e}"))?;
+        .map_err(|e| format!("cannot run kom update: {e}"))?;
     let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
     if out.status.success() {
         let now = reply
@@ -304,12 +307,12 @@ pub fn update_to(at_least: Option<&str>) -> Result<String, String> {
 }
 
 #[cfg(any(target_os = "macos", all(test, unix)))]
-const BUNDLE_INSTALL_SCRIPT: &str = "installer=$(curl -fsSL \"$1/core/install.sh\") && case \"$installer\" in *LIMEN_BUNDLE_ONLY*) printf '%s\\n' \"$installer\" | sh ;; *) exit 0 ;; esac";
+const BUNDLE_INSTALL_SCRIPT: &str = "installer=$(curl -fsSL \"$1/core/install.sh\") && case \"$installer\" in *KOMPITUM_BUNDLE_ONLY*) printf '%s\\n' \"$installer\" | sh ;; *) exit 0 ;; esac";
 
 #[cfg(any(target_os = "macos", all(test, unix)))]
 fn bundle_completion_path(bin: &Path, home: &Path) -> bool {
     bin.starts_with(home)
-        && !bin.ends_with("Contents/MacOS/limen-core")
+        && !bin.ends_with("Contents/MacOS/kompitum-core")
         && !["/Cellar/", "/nix/store/", "/mise/installs/"]
             .iter()
             .any(|marker| bin.to_string_lossy().contains(marker))
@@ -339,23 +342,23 @@ fn ensure_core_bundle(version: &str) -> Result<(), String> {
     }
     // Never replace a contributor's build, package-manager core, or a host app.
     let official = crate::spawn::command("/usr/bin/codesign")
-        .args(["--verify", "--strict", "-R", "=identifier \"dev.limen.core\" and anchor apple generic and certificate leaf[subject.OU] = \"2W9652Q7QR\""])
+        .args(["--verify", "--strict", "-R", "=identifier \"dev.kompitum.core\" and anchor apple generic and certificate leaf[subject.OU] = \"2W9652Q7QR\""])
         .arg(&bin).output().is_ok_and(|out| out.status.success());
     if !official {
         return Ok(());
     }
-    let releases = std::env::var("LIMEN_RELEASES_URL")
-        .unwrap_or_else(|_| "https://releases.limen.invalid".into());
+    let releases = std::env::var("KOMPITUM_RELEASES_URL")
+        .unwrap_or_else(|_| "https://releases.kompitum.invalid".into());
     let mut cmd = crate::spawn::command("sh");
     cmd.args(["-c", BUNDLE_INSTALL_SCRIPT, "sh", &releases]);
-    cmd.env("LIMEN_BUNDLE_ONLY", "1");
-    if let Some(v) = version.strip_prefix("lc ") {
-        cmd.env("LIMEN_VERSION", v);
+    cmd.env("KOMPITUM_BUNDLE_ONLY", "1");
+    if let Some(v) = version.strip_prefix("kom ") {
+        cmd.env("KOMPITUM_VERSION", v);
     }
     if resolved.is_absolute()
         && let Some(dir) = resolved.parent()
     {
-        cmd.env("LIMEN_INSTALL_DIR", dir);
+        cmd.env("KOMPITUM_INSTALL_DIR", dir);
     }
     let out = cmd
         .stdin(Stdio::null())
@@ -376,11 +379,11 @@ mod tests {
     #[test]
     fn the_independent_core_bundle_is_a_discovery_fallback() {
         let home = Path::new("/Users/test");
-        let dir = home.join(".local/share/limen-core/current/Contents/MacOS");
-        let legacy = home.join(".local/share/limen-core/Limen Core.app/Contents/MacOS");
+        let dir = home.join(".local/share/kompitum-core/current/Contents/MacOS");
+        let legacy = home.join(".local/share/kompitum-core/Kompitum Core.app/Contents/MacOS");
         let dirs = usual_dirs(home);
         assert_eq!(&dirs[dirs.len() - 2..], &[dir.clone(), legacy]);
-        assert_eq!(names(&dir)[0], dir.join("limen-core"));
+        assert_eq!(names(&dir)[0], dir.join("kompitum-core"));
     }
 
     #[test]
@@ -421,15 +424,15 @@ mod tests {
     fn bundle_completion_skips_managed_and_system_paths() {
         let home = Path::new("/Users/test");
         assert!(bundle_completion_path(
-            &home.join(".local/bin/limen-core"),
+            &home.join(".local/bin/kompitum-core"),
             home
         ));
         for bin in [
-            "/usr/local/bin/limen-core",
-            "/opt/homebrew/Cellar/limen-core/1/bin/limen-core",
-            "/nix/store/abc/bin/limen-core",
-            "/Users/test/.local/share/mise/installs/limen-core/1/limen-core",
-            "/Users/test/.local/share/limen-core/current/Contents/MacOS/limen-core",
+            "/usr/local/bin/kompitum-core",
+            "/opt/homebrew/Cellar/kompitum-core/1/bin/kompitum-core",
+            "/nix/store/abc/bin/kompitum-core",
+            "/Users/test/.local/share/mise/installs/kompitum-core/1/kompitum-core",
+            "/Users/test/.local/share/kompitum-core/current/Contents/MacOS/kompitum-core",
         ] {
             assert!(!bundle_completion_path(Path::new(bin), home), "{bin}");
         }
@@ -439,15 +442,15 @@ mod tests {
     #[test]
     fn bundle_completion_skips_unwritable_directories() {
         assert!(bundle_completion_writable(
-            &std::env::temp_dir().join("limen-core")
+            &std::env::temp_dir().join("kompitum-core")
         ));
         assert!(!bundle_completion_writable(Path::new(
-            "/nonexistent/limen-core"
+            "/nonexistent/kompitum-core"
         )));
         let root = Command::new("id").arg("-u").output().unwrap().stdout == b"0\n";
         if !root {
             assert!(!bundle_completion_writable(Path::new(
-                "/usr/bin/limen-core"
+                "/usr/bin/kompitum-core"
             )));
         }
     }
@@ -457,7 +460,7 @@ mod tests {
     fn bundle_completion_does_not_run_a_legacy_installer() {
         for (installer, expected) in [
             ("echo restarted", ""),
-            ("# LIMEN_BUNDLE_ONLY\necho bundled", "bundled\n"),
+            ("# KOMPITUM_BUNDLE_ONLY\necho bundled", "bundled\n"),
         ] {
             let out = Command::new("sh")
                 .args([
@@ -477,12 +480,12 @@ mod tests {
     // Fakes the binary with a shell script.
     #[cfg(unix)]
     #[test]
-    fn only_a_binary_that_says_lc_counts() {
+    fn only_a_binary_that_says_kom_counts() {
         // Runtime writes can leave a writer fd in a parallel fork, causing ETXTBSY.
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/core-bin");
-        assert_eq!(version(&dir.join("lc")), None);
-        let real = dir.join("limen-core");
-        assert_eq!(version(&real).as_deref(), Some("lc 0.1.1"));
+        assert_eq!(version(&dir.join("kom")), None);
+        let real = dir.join("kompitum-core");
+        assert_eq!(version(&real).as_deref(), Some("kom 0.1.1"));
         assert_eq!(find(Some(real.to_str().unwrap())), Some(real));
     }
 }

@@ -1,4 +1,4 @@
-//! Limen's view of a core terminal: libghostty-vt fed with the relayed bytes,
+//! Kompitum's view of a core terminal: libghostty-vt fed with the relayed bytes,
 //! read back as frames to draw, and asked to encode keys and mouse input.
 
 use ghostty_sys::*;
@@ -376,7 +376,7 @@ fn kitty_virtual_placement_geometry(
 
 fn kitty_placeholder_diacritic_index(codepoint: u32) -> Option<u32> {
     let map = KITTY_PLACEHOLDER_DIACRITICS.get_or_init(|| {
-        // Reuse Ghostty's vendored table so Limen decodes the same placeholder
+        // Reuse Ghostty's vendored table so Kompitum decodes the same placeholder
         // row/column diacritics that libghostty accepts.
         let source = include_str!("../vendor/ghostty/src/terminal/kitty/graphics_unicode.zig");
         let mut map = HashMap::new();
@@ -3528,9 +3528,9 @@ mod tests {
     #[test]
     fn marked_links_open_their_uri() {
         let mut vt = Vt::new(30, 2);
-        vt.write(b"see \x1b]8;;https://limen.invalid\x1b\\the docs\x1b]8;;\x1b\\ now");
+        vt.write(b"see \x1b]8;;https://kompitum.invalid\x1b\\the docs\x1b]8;;\x1b\\ now");
         let hit = vt.link_at(6, 0, found).unwrap();
-        assert_eq!(hit.target, "https://limen.invalid");
+        assert_eq!(hit.target, "https://kompitum.invalid");
         assert_eq!(hit.spans, vec![(0, 4, 11)]);
         assert_eq!(vt.link_at(13, 0, found), None);
     }

@@ -21,14 +21,14 @@ modifiers and smooth pointer movement. Coordinates match the sandbox's
 1280×820 app window at its default 120% zoom. Update these when UI changes,
 and inspect the generated clip before uploading.
 
-Output: `/var/tmp/limen-notes-media/<version>/<scene>.webp`.
-Override the base with `LIMEN_NOTES_MEDIA_DIR`. Launch the app with that
+Output: `/var/tmp/kompitum-notes-media/<version>/<scene>.webp`.
+Override the base with `KOMPITUM_NOTES_MEDIA_DIR`. Launch the app with that
 same variable to preview CHANGELOG images pointing at the final URLs:
-`https://media.limen.invalid/<version>/<scene>.webp`. No CHANGELOG rewrite needed.
+`https://media.kompitum.invalid/<version>/<scene>.webp`. No CHANGELOG rewrite needed.
 
 `just notes-upload <version>` uploads the version's WebP files to
-`limen-media`, using Bun's S3Client and credentials in
-`~/.config/limen-media/env`:
+`kompitum-media`, using Bun's S3Client and credentials in
+`~/.config/kompitum-media/env`:
 `R2_MEDIA_ACCESS_KEY_ID=...` and `R2_MEDIA_SECRET_ACCESS_KEY=...`.
 Never commit that file. Uploads set image/webp and immutable one-year caching.
 Existing keys are refused, including concurrent writes. Upload only final

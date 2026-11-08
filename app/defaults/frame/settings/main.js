@@ -2,7 +2,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
-import { lc, run, theme, themes, fonts, updates, telemetry, settings, layouts, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "limen";
+import { kom, run, theme, themes, fonts, updates, telemetry, settings, layouts, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "kompitum";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
@@ -16,7 +16,7 @@ const SECTIONS = [
 ];
 
 const LOOKS = {
-  main: "Limen",
+  main: "Kompitum",
   desk: "Desk",
   watch: "Watch",
   focus: "Focus",
@@ -24,7 +24,7 @@ const LOOKS = {
   control: "Control",
   pasture: "Pasture",
   terminals: "Terminals",
-  win98: "Limen 98",
+  win98: "Kompitum 98",
 };
 const APPEARANCES = [
   [null, "System"],
@@ -557,7 +557,7 @@ export default class Settings extends View {
     if (this.machineLoading) return;
     this.machineLoading = true;
     try {
-      const r = await lc(["machine", "ls", "--json"]);
+      const r = await kom(["machine", "ls", "--json"]);
       if (r.code !== 0) throw new Error(r.stderr || r.stdout || "Couldn't read machines.");
       const list = JSON.parse(r.stdout).machines;
       if (!Array.isArray(list)) throw new Error("Couldn't read machines.");
@@ -582,12 +582,12 @@ export default class Settings extends View {
       try {
         const args = ["machine", action, machine];
         if (action === "rename") args.push(name.trim());
-        const r = await lc(args);
+        const r = await kom(args);
         let payload = null;
         try { payload = JSON.parse(r.stdout || r.stderr); } catch {}
         if (r.code !== 0) throw new Error(payload?.error?.message || (r.stderr || r.stdout || "It didn't work.").trim());
         const message = action === "update"
-          ? `Updated ${machine}${payload?.version ? ` to lc ${payload.version}` : ""}; its terminals kept running.`
+          ? `Updated ${machine}${payload?.version ? ` to kom ${payload.version}` : ""}; its terminals kept running.`
           : action === "rename" ? `Renamed ${machine} to ${name.trim()}.` : `Removed ${machine}; its terminals keep running there.`;
         if (action === "update") this.machineResults[machine] = { message, ok: true };
         else this.machineNotice = message;
@@ -647,9 +647,9 @@ export default class Settings extends View {
         .child(div().w(7).h(7).flex_none().rounded(4).bg(color))
         .child(v_flex().flex_1().min_w(0).gap(3)
           .child(div().text_size(14).text_color(t.foreground).child(m.name))
-          .child(div().text_size(12.5).text_color(t.dim).child(`${m.target ?? ""} · ${state} · ${m.version ? `lc ${m.version}` : "lc version unknown"}`)))
+          .child(div().text_size(12.5).text_color(t.dim).child(`${m.target ?? ""} · ${state} · ${m.version ? `kom ${m.version}` : "kom version unknown"}`)))
         .child(controls.flex_none()));
-    if (busy === "update") row.child(div().text_size(12.5).text_color(t.dim).child("Copying this computer's limen-core. Its terminals keep running."));
+    if (busy === "update") row.child(div().text_size(12.5).text_color(t.dim).child("Copying this computer's kompitum-core. Its terminals keep running."));
     if (edit && !busy) {
       const cancel = this.button(t, `st-m-cancel-${m.name}`, "Cancel", (_e, cx) => { this.machineEdit = null; this.handle.focus(); cx.notify(); });
       if (edit.action === "rm") row.child(v_flex().gap(8)
@@ -670,7 +670,7 @@ export default class Settings extends View {
     return v_flex().w_full()
       .child(this.heading(t, "Machines"))
       .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim).child("Your computers, reached over ssh. Their terminals keep running when you disconnect."))
-      .child(this.row(t, "This computer", `Connected · ${version ? `lc ${version}` : "lc version unknown"}`, div().w(7).h(7).rounded(4).bg(t.ansi2)))
+      .child(this.row(t, "This computer", `Connected · ${version ? `kom ${version}` : "kom version unknown"}`, div().w(7).h(7).rounded(4).bg(t.ansi2)))
       .children((this.machineList ?? []).map((m) => this.machineRow(t, m, version)))
       .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12.5).text_color(t.dim).child("Reading machines…"))))
       .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(12.5).text_color(t.dim).child("No other machines yet.")))
@@ -684,7 +684,7 @@ export default class Settings extends View {
   alerts(t) {
     const sounds = this.person.sounds ?? {};
     const on = sounds.enabled !== false;
-    const file = (f) => (f ? f.split(/[\\/]/).pop() : "Limen's sound");
+    const file = (f) => (f ? f.split(/[\\/]/).pop() : "Kompitum's sound");
     return v_flex()
       .w_full()
       .child(this.heading(t, "Sounds"))
@@ -743,20 +743,20 @@ export default class Settings extends View {
         : c.error
           ? [`The update failed: ${c.error}`, primary("st-core-retry", "Try again", () => run("app.update_core"))]
           : c.ready
-            ? [`${c.ready} is ready. Your terminals keep running through it.`, primary("st-core-update", "Update limen-core", () => run("app.update_core"))]
+            ? [`${c.ready} is ready. Your terminals keep running through it.`, primary("st-core-update", "Update kompitum-core", () => run("app.update_core"))]
             : u.checks
               ? [result, check("st-check-core")]
               : ["Not checked: a build from source looks for no updates.", null];
     return v_flex()
       .w_full()
-      .child(this.heading(t, "Limen"))
-      .child(this.row(t, `Limen ${u.app.version}`, app[0], h_flex().gap(8).flex_none()
+      .child(this.heading(t, "Kompitum"))
+      .child(this.row(t, `Kompitum ${u.app.version}`, app[0], h_flex().gap(8).flex_none()
         .child(this.button(t, "st-whats-new", "What's new", () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
         .when(Boolean(app[1]), (el) => el.child(app[1]))))
       .child(div().h(18))
-      .child(this.heading(t, "limen-core"))
-      .child(this.row(t, `limen-core ${c.version ?? ""}`, core[0], core[1] ?? div()))
-      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Limen looks for both every hour and tells you in the corner. limen-core runs your terminals, so they keep running through its updates."));
+      .child(this.heading(t, "kompitum-core"))
+      .child(this.row(t, `kompitum-core ${c.version ?? ""}`, core[0], core[1] ?? div()))
+      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum looks for both every hour and tells you in the corner. kompitum-core runs your terminals, so they keep running through its updates."));
   }
 
 
@@ -789,7 +789,7 @@ export default class Settings extends View {
     const s = telemetry();
     const on = s ? s.setting : this.person.telemetry !== false;
     const at = (secs) => new Date(secs * 1000).toLocaleString();
-    const why = s?.off_because ? `Off for now: ${s.off_because} is set where Limen started.` : null;
+    const why = s?.off_because ? `Off for now: ${s.off_because} is set where Kompitum started.` : null;
     const body = v_flex()
       .w_full()
       .child(this.heading(t, "Usage data"))
@@ -797,7 +797,7 @@ export default class Settings extends View {
         this.row(
           t,
           "Share anonymous usage data",
-          why ?? "Once a day: which agents and features you use, how many spaces and tabs, your system and Limen's version. Never what's in your terminals, never names of files, folders or projects.",
+          why ?? "Once a day: which agents and features you use, how many spaces and tabs, your system and Kompitum's version. Never what's in your terminals, never names of files, folders or projects.",
           this.toggle(t, "st-telemetry", on, (_e, cx) =>
             this.change((p) => {
               if (on) p.telemetry = false;

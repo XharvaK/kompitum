@@ -9,7 +9,7 @@ license = "Apache-2.0"
 publish = false
 
 [package]
-name = "limen-app"
+name = "kompitum-app"
 version = "0.1.13"
 edition.workspace = true
 license.workspace = true
@@ -70,26 +70,26 @@ winresource = "0.1"
 
 # gpui-shell's LLRT modules must share its quickjs-jit VM; gpui-kit's own workspace does the same.
 [patch.crates-io]
-# LIMEN: production frame capture without test-support dependencies.
+# KOMPITUM: production frame capture without test-support dependencies.
 gpui-pre = { path = "vendor/gpui-pre" }
 gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
 gpui-pre-apple = { path = "vendor/gpui-pre-apple" }
 rquickjs = { path = "vendor/gpui-kit/crates/shell/rquickjs-compat" }
-# Our copy: an idle window stops waking every vsync (patches marked LIMEN:).
+# Our copy: an idle window stops waking every vsync (patches marked KOMPITUM:).
 gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
-# Our copy: snapping a maximized window to a half kept its old size (LIMEN:).
+# Our copy: snapping a maximized window to a half kept its old size (KOMPITUM:).
 gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
-# LIMEN: XIM's Latin-1/COMPOUND_TEXT must decode without panicking.
+# KOMPITUM: XIM's Latin-1/COMPOUND_TEXT must decode without panicking.
 zed-xim = { path = "vendor/zed-xim" }
 xim-ctext = { path = "vendor/xim-ctext" }
-# Our copy: Windows completes dead keys through native text input (LIMEN:).
+# Our copy: Windows completes dead keys through native text input (KOMPITUM:).
 gpui-pre-windows = { path = "vendor/gpui-pre-windows" }
-# Our copy: a flex item's min-content was measured even when unused (LIMEN:).
+# Our copy: a flex item's min-content was measured even when unused (KOMPITUM:).
 taffy = { path = "vendor/taffy" }
 
 # Our copy: the JIT copied all its call feedback on every refresh scan and
 # threw it away, ~40% of the main thread with a mod of many small
-# object-returning functions (longbridge/quickjs-jit#38, LIMEN:).
+# object-returning functions (longbridge/quickjs-jit#38, KOMPITUM:).
 [patch."https://github.com/longbridge/quickjs-jit"]
 quickjs-jit-runtime = { path = "vendor/quickjs-jit-runtime" }
 

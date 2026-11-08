@@ -1,5 +1,5 @@
-//! Mods: folders of JavaScript under ~/.config/limen-app/mods that agents write and
-//! Limen runs live (gpui-shell), plus the `limen` module they import.
+//! Mods: folders of JavaScript under ~/.config/kompitum-app/mods that agents write and
+//! Kompitum runs live (gpui-shell), plus the `kompitum` module they import.
 
 use crate::layout::Node;
 use gpui::App;
@@ -53,18 +53,18 @@ pub fn note_fonts(cx: &gpui::App) {
     *FONTS.lock().unwrap() = names;
 }
 
-/// The app's home: `$LIMEN_APP_HOME` (tests, experiments), else
-/// `$XDG_CONFIG_HOME/limen-app`, else `~/.config/limen-app`, on every OS.
+/// The app's home: `$KOMPITUM_APP_HOME` (tests, experiments), else
+/// `$XDG_CONFIG_HOME/kompitum-app`, else `~/.config/kompitum-app`, on every OS.
 pub fn app_dir() -> PathBuf {
     let env = |k: &str| {
         std::env::var_os(k)
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
     };
-    env("LIMEN_APP_HOME").unwrap_or_else(|| {
+    env("KOMPITUM_APP_HOME").unwrap_or_else(|| {
         env("XDG_CONFIG_HOME")
             .unwrap_or_else(|| home().join(".config"))
-            .join("limen-app")
+            .join("kompitum-app")
     })
 }
 
@@ -84,7 +84,7 @@ pub fn write_workspace() -> std::io::Result<()> {
     if std::fs::read_to_string(dir.join("CLAUDE.md")).is_ok_and(|s| s == "@AGENTS.md\n") {
         let _ = std::fs::remove_file(dir.join("CLAUDE.md"));
     }
-    write_if_changed(&dir.join("limen.d.ts"), DECLARATIONS)?;
+    write_if_changed(&dir.join("kompitum.d.ts"), DECLARATIONS)?;
     let types = gpui_shell::type_declarations(&gpui_shell::FrozenComponentRegistry::default());
     write_if_changed(&dir.join("gpui-kit.d.ts"), &types)?;
     let _ = std::fs::remove_dir_all(frame_dir());
@@ -416,7 +416,7 @@ fn as_shipped(dir: &Path, files: &Files) -> bool {
 
 /// File path (inside the mod) to content fingerprint.
 type Files = std::collections::BTreeMap<String, String>;
-/// Default mods Limen installed, with the files as installed.
+/// Default mods Kompitum installed, with the files as installed.
 type Installed = std::collections::BTreeMap<String, Files>;
 
 /// FNV-1a: stable across builds, unlike std's hasher.
@@ -427,7 +427,7 @@ fn fingerprint(bytes: &[u8]) -> String {
     format!("{h:016x}")
 }
 
-/// Whether every file Limen installed is still there as installed.
+/// Whether every file Kompitum installed is still there as installed.
 fn untouched(dir: &Path, files: &Files) -> bool {
     files
         .iter()
@@ -518,7 +518,7 @@ pub enum Request {
         id: String,
     },
     Refresh,
-    /// From `limen-app do` / `limen-app status` (control.rs); answer on `reply`.
+    /// From `kompitum-app do` / `kompitum-app status` (control.rs); answer on `reply`.
     Control {
         cmd: Value,
         reply: std::sync::mpsc::Sender<Value>,
@@ -528,13 +528,13 @@ pub enum Request {
 static REQUESTS: OnceLock<async_channel::Sender<Request>> = OnceLock::new();
 
 thread_local! {
-    static FINAL_KILLS: RefCell<Option<(std::sync::Arc<crate::lc::Core>, std::time::Instant)>> = const { RefCell::new(None) };
+    static FINAL_KILLS: RefCell<Option<(std::sync::Arc<crate::kom::Core>, std::time::Instant)>> = const { RefCell::new(None) };
 }
 
 /// The event loop stops before queued commands run at quit. Send final terminal
 /// kills to the core now, bounded by the same deadline as the mod's cleanup.
 pub fn final_cleanup(
-    core: std::sync::Arc<crate::lc::Core>,
+    core: std::sync::Arc<crate::kom::Core>,
     deadline: std::time::Instant,
     body: impl FnOnce(),
 ) {
@@ -950,7 +950,7 @@ pub fn from_host(v: &HostValue) -> Value {
     }
 }
 
-pub const DECLARATIONS: &str = include_str!("../defaults/limen.d.ts");
+pub const DECLARATIONS: &str = include_str!("../defaults/kompitum.d.ts");
 
 fn strings(v: Option<&HostValue>) -> Vec<String> {
     v.and_then(HostValue::as_array)
@@ -1053,7 +1053,7 @@ fn run_remote_with_limit(
     limit: Duration,
 ) -> Result<(i32, Vec<u8>, Vec<u8>), String> {
     use base64::Engine;
-    let mut lc_args: Vec<String> = vec![
+    let mut kom_args: Vec<String> = vec![
         "exec".into(),
         "--json".into(),
         "--on".into(),
@@ -1062,21 +1062,21 @@ fn run_remote_with_limit(
         limit.as_secs_f64().to_string(),
     ];
     if let Some(c) = cwd {
-        lc_args.extend(["--cwd".into(), c]);
+        kom_args.extend(["--cwd".into(), c]);
     }
-    lc_args.push("--".into());
-    lc_args.push(command.into());
-    lc_args.extend(args.iter().cloned());
+    kom_args.push("--".into());
+    kom_args.push(command.into());
+    kom_args.extend(args.iter().cloned());
     // Let the remote timeout end the program and deliver its result before the wrapper expires.
-    let (_, out, err) = run_blocking("lc", &lc_args, None, limit + Duration::from_secs(5))?;
+    let (_, out, err) = run_blocking("kom", &kom_args, None, limit + Duration::from_secs(5))?;
     let v: Value = serde_json::from_str(out.trim())
         .or_else(|_| serde_json::from_str(err.trim()))
-        .map_err(|_| format!("lc exec: {}", err.trim()))?;
+        .map_err(|_| format!("kom exec: {}", err.trim()))?;
     if let Some(e) = v.get("error") {
         return Err(e
             .get("message")
             .and_then(Value::as_str)
-            .unwrap_or("lc exec failed")
+            .unwrap_or("kom exec failed")
             .to_owned());
     }
     if v.get("timed_out").and_then(Value::as_bool) == Some(true) {
@@ -1206,12 +1206,49 @@ fn exec_future(
     }
 }
 
-fn module(inst: Instance, copy: u64) -> HostModule {
+struct ModuleState {
+    reads: Rc<RefCell<LiveReads>>,
+    commands: async_channel::Receiver<String>,
+}
+
+fn module_state(inst: &Instance, copy: u64) -> ModuleState {
     let reads = Rc::new(RefCell::new(LiveReads::default()));
     LIVE_READS.with_borrow_mut(|copies| {
         copies.retain(|_, reads| reads.strong_count() > 0);
         copies.insert(copy, Rc::downgrade(&reads));
     });
+    let (cmd_tx, commands) = async_channel::unbounded::<String>();
+    COMMANDS.with_borrow_mut(|commands| {
+        commands.retain(|(_, _, tx)| !tx.is_closed());
+        commands.push((copy, inst.name.clone(), cmd_tx));
+    });
+    ModuleState { reads, commands }
+}
+
+#[cfg(test)]
+fn module(inst: Instance, copy: u64) -> HostModule {
+    let state = module_state(&inst, copy);
+    build_module("kompitum", &inst, state)
+}
+
+fn module_pair(inst: Instance, copy: u64) -> [HostModule; 2] {
+    let state = module_state(&inst, copy);
+    [
+        build_module(
+            "kompitum",
+            &inst,
+            ModuleState {
+                reads: state.reads.clone(),
+                commands: state.commands.clone(),
+            },
+        ),
+        // legacy name: a mod written before the rename still imports this one.
+        build_module("limen", &inst, state),
+    ]
+}
+
+fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
+    let ModuleState { reads, commands } = state;
     let props = inst.props.clone();
     let feedback_frame = inst.name == "frame-feedback";
     let feedback_from = inst
@@ -1226,12 +1263,7 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         .and_then(Value::as_str)
         .unwrap_or("other")
         .to_owned();
-    let (cmd_tx, commands) = async_channel::unbounded::<String>();
-    COMMANDS.with_borrow_mut(|commands| {
-        commands.retain(|(_, _, tx)| !tx.is_closed());
-        commands.push((copy, inst.name.clone(), cmd_tx));
-    });
-    HostModule::new("limen")
+    HostModule::new(name)
         .declarations(DECLARATIONS)
         .async_function("exec", |a| {
             let command = a.string(0)?.to_owned();
@@ -1249,7 +1281,7 @@ fn module(inst: Instance, copy: u64) -> HostModule {
             let expected = a.get(2).and_then(|v| match v { HostValue::Str(s) => Some(s.clone()), _ => None });
             Ok(crate::mod_files::write_text(a.string(0)?.to_owned(), a.string(1)?.to_owned(), expected))
         })
-        .async_function("lc", |a| Ok(exec_future("lc".into(), strings(a.get(0)), None, None, EXEC_LIMIT)))
+        .async_function("kom", |a| Ok(exec_future("kom".into(), strings(a.get(0)), None, None, EXEC_LIMIT)))
         .function("home", |_| Ok(home().to_string_lossy().into_owned().into()))
         .function("appHome", |_| Ok(app_dir().to_string_lossy().into_owned().into()))
         .function("fonts", |_| Ok(to_host(&json!(*FONTS.lock().unwrap()))))
@@ -1426,7 +1458,7 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         })
         .async_function("nextCommand", move |_| {
             let rx = commands.clone();
-            Ok(async move { rx.recv().await.map(HostValue::Str).map_err(|_| HostError::new("limen-app is shutting down")) })
+            Ok(async move { rx.recv().await.map(HostValue::Str).map_err(|_| HostError::new("kompitum-app is shutting down")) })
         })
 }
 
@@ -1489,25 +1521,28 @@ pub fn install_check_policy() {
     install_policy();
 }
 
-/// What mods may touch, and the `limen` module they import.
+/// What mods may touch, and the `kompitum` module they import.
 pub fn install_policy() -> async_channel::Receiver<Request> {
     gpui_shell::policy::update_default(|p| {
+        let [current, legacy] = module_pair(
+            Instance {
+                name: String::new(),
+                props: Value::Null,
+            },
+            0,
+        );
         p.with_capabilities(capabilities())
-            .with_host_module(module(
-                Instance {
-                    name: String::new(),
-                    props: Value::Null,
-                },
-                0,
-            ))
-            .expect("limen module is valid")
+            .with_host_module(current)
+            .expect("kompitum module is valid")
+            .with_host_module(legacy)
+            .expect("legacy-name module is valid")
     });
     let (tx, rx) = async_channel::unbounded();
     let _ = REQUESTS.set(tx);
     rx
 }
 
-/// Gives the next mod copy to load a policy of its own: its `limen` module
+/// Gives the next mod copy to load a policy of its own: its `kompitum` module
 /// (its props, its identity) and its localStorage file. The shell hands every
 /// view a copy of the default that *shares* modules and storage, so each copy
 /// needs a fresh default rather than an edit of the old one.
@@ -1527,12 +1562,15 @@ pub fn prepare_load(inst: &Instance) -> u64 {
         inst.props.to_string().hash(&mut h);
         format!("store-{:016x}.json", h.finish())
     };
+    let [current, legacy] = module_pair(inst.clone(), copy);
     let policy = gpui_shell::policy::Policy::new()
         .with_application(inst.key())
         .with_capabilities(capabilities())
         .with_storage_path(dir.join(file))
-        .with_host_module(module(inst.clone(), copy))
-        .expect("limen module is valid");
+        .with_host_module(current)
+        .expect("kompitum module is valid")
+        .with_host_module(legacy)
+        .expect("legacy-name module is valid");
     gpui_shell::policy::set_default(policy);
     copy
 }
@@ -1592,7 +1630,7 @@ mod tests {
         assert!(matches!(result.get("stderr"), Some(HostValue::Str(s)) if s == "err"));
         assert!(
             exec_future(
-                "limen_test_missing_command_638".into(),
+                "kompitum_test_missing_command_638".into(),
                 vec![],
                 None,
                 None,
@@ -1723,11 +1761,11 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn known_agents_uses_snapshot_and_refreshes_changed_commands() {
-        let snapshot = vec![json!({"key": "claude", "run": ["limen_issue57_not_installed"]})];
+        let snapshot = vec![json!({"key": "claude", "run": ["kompitum_issue57_not_installed"]})];
         let first = std::thread::spawn(move || known_agents(None, snapshot))
             .join()
             .unwrap();
-        assert_eq!(first[0]["run"], json!(["limen_issue57_not_installed"]));
+        assert_eq!(first[0]["run"], json!(["kompitum_issue57_not_installed"]));
         assert_eq!(first[0]["installed"], false);
         let snapshot = vec![
             json!({"key": "claude", "run": ["printf"]}),
@@ -1749,7 +1787,7 @@ mod tests {
         } else {
             std::env::temp_dir()
         };
-        let dir = root.join(format!("limen-shared-stress-{}", std::process::id()));
+        let dir = root.join(format!("kompitum-shared-stress-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("shared.json");
         let reading = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -1804,7 +1842,7 @@ mod tests {
         } else {
             std::env::temp_dir()
         };
-        let dir = root.join(format!("limen-shared-corrupt-{}", std::process::id()));
+        let dir = root.join(format!("kompitum-shared-corrupt-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("shared.json");
         let corrupt = b"{\"kept\":true} old snapshot tail";
@@ -1848,7 +1886,7 @@ mod tests {
 
     #[test]
     fn an_added_file_makes_a_shipped_mod_edited() {
-        let dir = std::env::temp_dir().join(format!("limen-app-shipped-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kompitum-app-shipped-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("icons")).unwrap();
         std::fs::write(dir.join("main.js"), "a").unwrap();
@@ -1873,7 +1911,7 @@ mod tests {
 
     #[test]
     fn cloned_mods_rewrite_assets_and_self_overlays_and_reject_nonobject_metadata() {
-        let root = std::env::temp_dir().join(format!("limen-mod-clone-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("kompitum-mod-clone-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("original")).unwrap();
         std::fs::write(root.join("original/mod.json"), "{}").unwrap();
@@ -1903,8 +1941,10 @@ mod tests {
     fn layout_formatting_is_not_an_edit_and_rescued_clicks_still_apply() {
         use crate::layout::{Node, Size};
         use crate::layout_sync::State;
-        let root =
-            std::env::temp_dir().join(format!("limen-layout-click-rescue-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "kompitum-layout-click-rescue-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let dir = root.join("layouts");
         std::fs::create_dir_all(dir.join(".state")).unwrap();
@@ -1943,7 +1983,8 @@ mod tests {
 
     #[test]
     fn a_0_1_x_layout_is_kept_aside_quietly_not_rescued() {
-        let root = std::env::temp_dir().join(format!("limen-layout-0-1-x-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("kompitum-layout-0-1-x-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let dir = root.join("layouts");
         std::fs::create_dir_all(&dir).unwrap();
@@ -1979,7 +2020,8 @@ mod tests {
 
     #[test]
     fn layouts_restore_preserve_edits_clicks_and_drop_only_untouched() {
-        let root = std::env::temp_dir().join(format!("limen-layout-sync-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("kompitum-layout-sync-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let dir = root.join("layouts");
         sync_layouts(&root, &[("a", "a1"), ("b", "b1"), ("c", "c1")]).unwrap();
@@ -2017,7 +2059,7 @@ mod tests {
 
     #[test]
     fn default_mods_restore_shipped_and_move_edits_to_clones() {
-        let root = std::env::temp_dir().join(format!("limen-app-sync-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("kompitum-app-sync-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (mods, record) = (root.join("mods"), root.join("installed.json"));
         let read = |p: &str| std::fs::read_to_string(mods.join(p)).unwrap_or_default();

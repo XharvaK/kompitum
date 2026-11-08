@@ -4,7 +4,7 @@
 //! terminal is a mod. Commands (commands.rs) are the one way to change
 //! anything: keys, mods, menus and agents all run them.
 
-use crate::lc::Core;
+use crate::kom::Core;
 mod floats;
 mod movable;
 mod pane_drag;
@@ -179,7 +179,7 @@ fn launch_failure(record: &Value, output: &str) -> Option<String> {
     })
 }
 
-/// The shipped layouts (defaults/layouts): `main` is Limen's window (spaces
+/// The shipped layouts (defaults/layouts): `main` is Kompitum's window (spaces
 /// sidebar, tab bar).
 const LAYOUTS: &[(&str, &str)] = &[
     ("main", include_str!("../defaults/layouts/main.json")),
@@ -220,7 +220,7 @@ fn shipped_layout(name: &str) -> &'static str {
         .1
 }
 
-/// A layout as shipped (main for names Limen doesn't ship).
+/// A layout as shipped (main for names Kompitum doesn't ship).
 fn default_layout(name: &str) -> Node {
     serde_json::from_str(shipped_layout(name)).expect("defaults/layouts are valid")
 }
@@ -505,7 +505,7 @@ pub struct AppWindow {
     reply: Option<Value>,
     /// The `where` label last written per terminal address.
     written_where: HashMap<String, String>,
-    /// `limen.seen` turns written but not yet back from the core.
+    /// `kompitum.seen` turns written but not yet back from the core.
     written_seen: HashMap<String, u64>,
     /// Agents the person is looking at, and the turn they were shared as seen at.
     looked: HashMap<String, u64>,
@@ -517,7 +517,7 @@ pub struct AppWindow {
     cwds: HashMap<String, String>,
     /// When each terminal's repo and branch were last read, and what it was doing.
     folders_checked: HashMap<String, FolderCheck>,
-    /// When Limen started each terminal: a listing already in flight can't know them yet.
+    /// When Kompitum started each terminal: a listing already in flight can't know them yet.
     born: RefCell<HashMap<String, Instant>>,
     /// Connection epoch: ignore replies from an old connection.
     core_generation: u64,
@@ -707,7 +707,7 @@ impl AppWindow {
             .and_then(|v| v.as_str().map(str::to_owned))
             .filter(|n| layout_path(n).exists());
         // A layout whose mods are gone (Zen, T4, ADE after the update took
-        // theirs) starts on Limen's instead of a wall of "did not load".
+        // theirs) starts on Kompitum's instead of a wall of "did not load".
         let gone = name.as_deref().map(missing_mods).unwrap_or_default();
         w.load_layout(if gone.is_empty() {
             name.as_deref().unwrap_or("main")
@@ -717,7 +717,7 @@ impl AppWindow {
         w.apply_look(window, cx);
         w.show_layout_notes(window, cx);
         if let (Some(n), false) = (&name, gone.is_empty()) {
-            let note = json!({ "title": format!("{n} needs mods that aren't here"), "body": format!("Showing Limen instead. Missing: {}. Your {n} layout file is still there.", gone.join(", ")), "level": "info", "timeout": 12000 });
+            let note = json!({ "title": format!("{n} needs mods that aren't here"), "body": format!("Showing Kompitum instead. Missing: {}. Your {n} layout file is still there.", gone.join(", ")), "level": "info", "timeout": 12000 });
             w.open_overlay(
                 mods::new_overlay_id(),
                 json!({ "kind": "toast", "notification": note }),
@@ -776,7 +776,7 @@ impl AppWindow {
             // send no events, are asked now and then.
             let mut subscription = None;
             let mut subscribed_generation = u64::MAX;
-            let mut event_lines = crate::lc::EventLines::default();
+            let mut event_lines = crate::kom::EventLines::default();
             let (mut tick, mut relist) = (0u64, false);
             loop {
                 let Ok((core, generation)) =
@@ -786,7 +786,7 @@ impl AppWindow {
                 };
                 if generation != subscribed_generation {
                     drop(subscription.take());
-                    event_lines = crate::lc::EventLines::default();
+                    event_lines = crate::kom::EventLines::default();
                     subscribed_generation = generation;
                     let local_core = core.clone();
                     let (sub, result) = cx
@@ -805,7 +805,7 @@ impl AppWindow {
                         })
                         .await;
                     subscription = sub.map(|(channel, events, snapshot)| {
-                        event_lines = crate::lc::EventLines::new(&snapshot);
+                        event_lines = crate::kom::EventLines::new(&snapshot);
                         (channel, events)
                     });
                     (tick, relist) = (0, true);
@@ -838,14 +838,14 @@ impl AppWindow {
                         if sub.is_none()
                             && let Ok((channel, events, snapshot)) = core.subscribe()
                         {
-                            event_lines = crate::lc::EventLines::new(&snapshot);
+                            event_lines = crate::kom::EventLines::new(&snapshot);
                             sub = Some((channel, events));
                             (refresh, terminals) = (true, true);
                         }
                         let mut closed = false;
                         if let Some((channel, events)) = &sub {
                             while let Ok(event) = events.try_recv() {
-                                if let crate::lc::Stream::Data(bytes) = event {
+                                if let crate::kom::Stream::Data(bytes) = event {
                                     let pushed = event_lines.push(&bytes);
                                     refresh |= pushed.docs;
                                     terminals |= pushed.terminals;
@@ -1037,7 +1037,7 @@ impl AppWindow {
             if let Ok(s) = core.call("server.status", json!({})) {
                 let text = |k: &str| s.get(k).and_then(Value::as_str).map(str::to_owned);
                 crate::update::set_core(
-                    text("version").map(|v| v.trim_start_matches("lc ").to_owned()),
+                    text("version").map(|v| v.trim_start_matches("kom ").to_owned()),
                     text("installed_by"),
                 );
             }
@@ -1380,7 +1380,7 @@ impl AppWindow {
     /// What installing layouts kept of the person's own, as toasts.
     fn show_layout_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         for clone in mods::take_sync_notes() {
-            let n = json!({ "title": format!("Your edits are in {clone}"), "body": "Limen's own layouts and mods can't be changed: clone one to make it yours.", "level": "info", "timeout": 12000 });
+            let n = json!({ "title": format!("Your edits are in {clone}"), "body": "Kompitum's own layouts and mods can't be changed: clone one to make it yours.", "level": "info", "timeout": 12000 });
             self.open_overlay(
                 mods::new_overlay_id(),
                 json!({ "kind": "toast", "notification": n }),
@@ -1919,7 +1919,7 @@ impl AppWindow {
         cx.notify();
     }
 
-    /// Shares what the person looks at as `limen.seen` (docs/labels.md): an
+    /// Shares what the person looks at as `kompitum.seen` (docs/labels.md): an
     /// agent on screen in the active window, once per turn while it stays
     /// there, so a phone marking it unread isn't undone by a screen nobody
     /// watches. Only ever raises it. True when a status changed.
@@ -1952,7 +1952,7 @@ impl AppWindow {
             let core = self.core.clone();
             cx.spawn(async move |this, cx| {
                 let params =
-                    json!({ "terminal": addr, "labels": { "limen.seen": turn.to_string() } });
+                    json!({ "terminal": addr, "labels": { "kompitum.seen": turn.to_string() } });
                 let Err(e) = cx
                     .background_executor()
                     .spawn(async move { core.call("terminal.label", params) })
@@ -2127,7 +2127,7 @@ impl AppWindow {
         let (Some(runtime), Some(folder)) = (&self.runtime, self.folders.get(&copy.inst.name))
         else {
             copy.error = Some(format!(
-                "no mod folder ~/.config/limen-app/mods/{}",
+                "no mod folder ~/.config/kompitum-app/mods/{}",
                 copy.inst.name
             ));
             return copy;
@@ -2248,7 +2248,7 @@ impl AppWindow {
                         "tab": ctx.id, "tab_index": ci + 1, "tab_name": Model::tab_name(pr, ctx),
                         "status": status, "app": a.and_then(|a| a.app.clone()), "program": self.program(addr), "title": title.unwrap_or_default(),
                         "seq": a.map(|a| a.seq).unwrap_or(0),
-                        "pinned": self.live.get(addr).and_then(|r| r.pointer("/labels/limen.pinned")).and_then(Value::as_str).is_some_and(|v| !v.is_empty()),
+                        "pinned": self.live.get(addr).and_then(|r| r.pointer("/labels/kompitum.pinned")).and_then(Value::as_str).is_some_and(|v| !v.is_empty()),
                         "focused": m.active.as_deref() == Some(pr.id.as_str()) && focused_pane.as_deref() == Some(p.id.as_str()),
                     }));
                 }
@@ -2289,9 +2289,9 @@ impl AppWindow {
     }
 
     /// Tells the core where each terminal lives, in words: the `where` label,
-    /// `<space> / <tab>`, which lc shows in its picker and `ls`.
-    /// Sub-agents get their parent's. The ids (`limen.space`,
-    /// `limen.tab`) are what the app groups by; only this follows renames
+    /// `<space> / <tab>`, which kom shows in its picker and `ls`.
+    /// Sub-agents get their parent's. The ids (`kompitum.space`,
+    /// `kompitum.tab`) are what the app groups by; only this follows renames
     /// and moves. Written only when it changes.
     fn write_where(&mut self, cx: &mut Context<Self>) {
         let m = &self.model;
@@ -2621,10 +2621,10 @@ impl AppWindow {
                         .map(str::to_owned)
                         .unwrap_or_else(|| match state {
                             "needs_update" => {
-                                format!("{name} needs a core update; run lc machine update {name}")
+                                format!("{name} needs a core update; run kom machine update {name}")
                             }
                             "needs_login" => {
-                                format!("{name} needs login; run lc machine login {name}")
+                                format!("{name} needs login; run kom machine login {name}")
                             }
                             _ => format!("{name} is {state}"),
                         })
@@ -2672,7 +2672,7 @@ impl AppWindow {
         let to_program = self
             .live
             .get(addr)
-            .and_then(|r| r.pointer("/labels/limen.right-click"))
+            .and_then(|r| r.pointer("/labels/kompitum.right-click"))
             .and_then(Value::as_str)
             == Some("program");
         view.update(cx, |v, _| {
@@ -2755,7 +2755,7 @@ impl AppWindow {
             changed |= self.model.set_word(addr, word, app, looking);
             let turn = rec.get("turn").and_then(Value::as_u64).unwrap_or(0);
             let label = rec
-                .pointer("/labels/limen.seen")
+                .pointer("/labels/kompitum.seen")
                 .and_then(Value::as_str)
                 .and_then(|s| s.parse::<u64>().ok());
             changed |=
@@ -2764,7 +2764,7 @@ impl AppWindow {
         }
         self.written_seen.retain(|a, _| self.live.contains_key(a));
         changed |= self.share_seen(cx);
-        // Changes already made before Limen started aren't news.
+        // Changes already made before Kompitum started aren't news.
         if self.listed_once {
             for (addr, alert, looking) in alerts {
                 self.alert(&addr, alert, looking, window, cx);
@@ -2790,7 +2790,7 @@ impl AppWindow {
         }
     }
 
-    /// Tells the person an agent needs them or finished: Limen's sounds, and a
+    /// Tells the person an agent needs them or finished: Kompitum's sounds, and a
     /// toast (drawn by the `toast` mod; click it to go there) unless they're
     /// looking at that agent.
     fn alert(
@@ -2861,7 +2861,7 @@ impl AppWindow {
 
     /// Keeps the model true to core, on every listing: drops panes whose terminal
     /// is gone (ended while hidden, or while the app was closed) and places
-    /// terminals labeled `limen.space` that aren't shown (started by an
+    /// terminals labeled `kompitum.space` that aren't shown (started by an
     /// agent, a script, or before a restart). Returns whether anything changed.
     fn reconcile(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         // No fresh shells while quitting: the next start brings them back.
@@ -2900,11 +2900,11 @@ impl AppWindow {
                 }
                 let labels = r.get("labels")?;
                 let space = labels
-                    .get("limen.space")?
+                    .get("kompitum.space")?
                     .as_str()
                     .filter(|s| !s.is_empty())?;
                 let tab = labels
-                    .get("limen.tab")
+                    .get("kompitum.tab")
                     .and_then(Value::as_str)
                     .filter(|s| !s.is_empty());
                 Some((
@@ -2970,14 +2970,14 @@ impl AppWindow {
 
     /// Puts a live terminal where its labels say, without changing what's
     /// shown. A space or tab the app doesn't know is made under the label's
-    /// id, unnamed (called Limen's way).
+    /// id, unnamed (called Kompitum's way).
     fn adopt(&mut self, addr: &str, space: &str, ctx: Option<&str>) {
         let machine = addr.split_once('/').map(|(m, _)| m.to_owned());
         let pane = self.model.fresh_id_on("p", machine.as_deref());
         let ctx_id = ctx
             .map(str::to_owned)
             .unwrap_or_else(|| self.model.fresh_id_on("tb", machine.as_deref()));
-        // Found by its labels: no names, so they're called Limen's way.
+        // Found by its labels: no names, so they're called Kompitum's way.
         let new_ctx = Tab::new(&ctx_id, "", &pane, addr);
         if self.model.space(space).is_none() {
             // Its live folder may not be read yet: the core's record has it.
@@ -3133,7 +3133,7 @@ impl AppWindow {
             self.chrome.remove_slot(block);
             self.sync(window, cx);
         }
-        // How its stream ended, for `reconcile` (`lc run --rm` leaves no record).
+        // How its stream ended, for `reconcile` (`kom run --rm` leaves no record).
         if let Some(t) = self.terms.get(block)
             && let Some(why) = t.view.read(cx).ended.clone()
         {
@@ -3177,7 +3177,7 @@ impl AppWindow {
     // ---- creating terminals ------------------------------------------------
 
     /// The folder new terminals in `space` start in: where its shown tab's focused
-    /// pane is now (Limen's "follow"), else the folder the space was made in.
+    /// pane is now (Kompitum's "follow"), else the folder the space was made in.
     fn folder_for(&self, space: &str) -> String {
         let p = self.model.space(space);
         let here = p
@@ -3198,7 +3198,7 @@ impl AppWindow {
             })),
             None => Err(match machine {
                 Some(m) => format!(
-                    "Limen has no machine called {m}. See lc machine ls; machines added with --temp stay out of Limen."
+                    "Kompitum has no machine called {m}. See kom machine ls; machines added with --temp stay out of Kompitum."
                 ),
                 None => {
                     "This machine's layout is unavailable. Try again when it reconnects.".into()
@@ -3227,7 +3227,7 @@ impl AppWindow {
     ) -> Result<(String, String), String> {
         let argv = argv.unwrap_or_default();
         self.require_document(on)?;
-        let labels = json!({ "limen.space": crate::mirror::local(space, on), "limen.tab": crate::mirror::local(ctx, on), "limen.seen": "0" });
+        let labels = json!({ "kompitum.space": crate::mirror::local(space, on), "kompitum.tab": crate::mirror::local(ctx, on), "kompitum.seen": "0" });
         let (addr, cwd) = run_following_folder(cwd, follow, on, |cwd| {
             match self.core.run(
                 argv.clone(),
@@ -3306,7 +3306,7 @@ impl AppWindow {
     }
 
     /// A space with its first tab and terminal, shown at once.
-    /// `machine`: another machine (`lc machine ls`); its space starts in that machine's home.
+    /// `machine`: another machine (`kom machine ls`); its space starts in that machine's home.
     fn new_space(
         &mut self,
         name: &str,
@@ -3531,7 +3531,7 @@ impl AppWindow {
                         .filter(|(_, addr)| {
                             match core.call("terminal.get", json!({"terminal":addr})) {
                                 Ok(v) => matches!(v["reason"].as_str(), Some("exited" | "killed")),
-                                Err(e) => crate::lc::error_kind(&e) == Some("not_found"),
+                                Err(e) => crate::kom::error_kind(&e) == Some("not_found"),
                             }
                         })
                         .collect::<Vec<_>>()
@@ -3667,10 +3667,10 @@ impl AppWindow {
             TerminalChange::Keep { space, tab, .. } => (
                 true,
                 json!({
-                    "limen.space":crate::mirror::local(space, machine), "limen.tab":crate::mirror::local(tab, machine),
+                    "kompitum.space":crate::mirror::local(space, machine), "kompitum.tab":crate::mirror::local(tab, machine),
                 }),
             ),
-            TerminalChange::Park => (false, json!({"limen.space":"","limen.tab":""})),
+            TerminalChange::Park => (false, json!({"kompitum.space":"","kompitum.tab":""})),
         };
         let (tx, rx) = std::sync::mpsc::channel();
         self.changing_terminals.insert(address.clone());
@@ -3784,7 +3784,7 @@ impl AppWindow {
                 let child = rec.get("parent").and_then(Value::as_str) == Some(parent.as_str());
                 let kept = rec
                     .get("labels")
-                    .and_then(|l| l.get("limen.space"))
+                    .and_then(|l| l.get("kompitum.space"))
                     .and_then(Value::as_str)
                     .is_some_and(|w| !w.is_empty());
                 if child && !kept && !doomed.contains(addr) {
@@ -3929,7 +3929,7 @@ impl AppWindow {
                 return json!({ "ok": true });
             }
             tracing::warn!("unknown command {name:?}");
-            return json!({ "error": format!("unknown command {name:?}: see `limen-app commands`; a mod's are <mod>.<command> and need the mod loaded") });
+            return json!({ "error": format!("unknown command {name:?}: see `kompitum-app commands`; a mod's are <mod>.<command> and need the mod loaded") });
         };
         if let Err(error) = crate::commands::validate_args(command, &args) {
             return json!({ "error": error });
@@ -4447,7 +4447,7 @@ impl AppWindow {
                 };
                 // Off the UI thread: a terminal on a slow machine answers late.
                 let core = self.core.clone();
-                let params = json!({ "terminal": t, "labels": { "limen.right-click": to } });
+                let params = json!({ "terminal": t, "labels": { "kompitum.right-click": to } });
                 cx.background_executor()
                     .spawn(async move {
                         if let Err(e) = core.call("terminal.label", params) {
@@ -4465,7 +4465,7 @@ impl AppWindow {
                     return self.fail(format!("no running terminal {t:?}"));
                 }
                 let core = self.core.clone();
-                let params = json!({ "terminal": t, "labels": { "limen.pinned": if pinned { "1" } else { "" } } });
+                let params = json!({ "terminal": t, "labels": { "kompitum.pinned": if pinned { "1" } else { "" } } });
                 cx.background_executor()
                     .spawn(async move {
                         if let Err(e) = core.call("terminal.label", params) {
@@ -4594,7 +4594,7 @@ impl AppWindow {
                     Err(e) => return self.fail(format!("layout: {e}")),
                 };
                 if layout_sync::without_clicks(&self.chrome, &n) != self.chrome {
-                    return self.fail("Only supported click/look fields can change on Limen's own layouts: clone one for other changes");
+                    return self.fail("Only supported click/look fields can change on Kompitum's own layouts: clone one for other changes");
                 }
                 let mut state = layout_sync::State::between(&self.file_chrome, &n);
                 if n.look.theme == self.chrome.look.theme {
@@ -4651,7 +4651,7 @@ impl AppWindow {
             "layout.reset" => {
                 let name = Self::owned(a, "name").unwrap_or_else(|| self.layout_name.clone());
                 let Some((_, text)) = LAYOUTS.iter().find(|(n, _)| *n == name) else {
-                    return self.fail(format!("{name:?} isn't a layout Limen ships"));
+                    return self.fail(format!("{name:?} isn't a layout Kompitum ships"));
                 };
                 // Theirs is kept under a name nothing else has (never over an older one).
                 if layout_path(&name).exists() {
@@ -4753,7 +4753,7 @@ impl AppWindow {
             "app.check_updates" => crate::update::check_now(),
             "app.update_core" => {
                 if crate::update::core().ready.is_none() && crate::update::core().error.is_none() {
-                    return self.fail("limen-core is up to date");
+                    return self.fail("kompitum-core is up to date");
                 }
                 crate::update::update_core();
             }
@@ -5244,7 +5244,7 @@ impl AppWindow {
         if cmd.get("commands").is_some() {
             return crate::commands::listing();
         }
-        // Limen was launched again: this window comes to the front instead.
+        // Kompitum was launched again: this window comes to the front instead.
         if cmd.get("raise").is_some() {
             cx.activate(true);
             window.activate_window();
@@ -5288,7 +5288,7 @@ impl AppWindow {
         json!({ "error": "expected { do }, { ls }, { commands } or { status }" })
     }
 
-    /// Spaces, their tabs and terminals, for `limen-app ls`. Sub-agents are listed
+    /// Spaces, their tabs and terminals, for `kompitum-app ls`. Sub-agents are listed
     /// under the terminal that started them.
     fn world(&self) -> Value {
         let m = &self.model;
@@ -5871,7 +5871,7 @@ impl AppWindow {
                 .text_color(c("blocked"))
                 .overflow_y_scroll()
                 .child(format!(
-                    "{} did not load:\n\n{}\n\nFix the files; Limen retries on save.",
+                    "{} did not load:\n\n{}\n\nFix the files; Kompitum retries on save.",
                     inst.name,
                     error.as_deref().unwrap_or("?")
                 ))
@@ -6217,7 +6217,7 @@ impl AppWindow {
                     .on_click(cx.listener(|this, _, w, cx| {
                         this.run("app.settings", json!({ "section": "updates" }), w, cx)
                     }))
-                    .child(format!("limen-core update failed: {error} · Open Updates"))
+                    .child(format!("kompitum-core update failed: {error} · Open Updates"))
                     .into_any_element(),
             );
         }
@@ -6229,15 +6229,15 @@ impl AppWindow {
 const UPDATE_PILL_HEIGHT: f32 = 34.0;
 
 impl AppWindow {
-    /// "Limen 0.2.0 is ready · Restart": the frame's, so no layout or mod can hide it.
+    /// "Kompitum 0.2.0 is ready · Restart": the frame's, so no layout or mod can hide it.
     /// What's waiting, in words: the pill shows it until clicked or dismissed.
     fn update_label() -> Option<String> {
         let core = crate::update::core();
         let core = core.ready.filter(|_| !core.updating);
         match (crate::update::ready(), core) {
-            (Some(a), Some(c)) => Some(format!("Limen {a} and limen-core {c} are ready")),
-            (Some(a), None) => Some(format!("Limen {a} is ready")),
-            (None, Some(c)) => Some(format!("limen-core {c} is ready")),
+            (Some(a), Some(c)) => Some(format!("Kompitum {a} and kompitum-core {c} are ready")),
+            (Some(a), None) => Some(format!("Kompitum {a} is ready")),
+            (None, Some(c)) => Some(format!("kompitum-core {c} is ready")),
             (None, None) => None,
         }
     }
@@ -6452,7 +6452,7 @@ struct FolderCheck {
     repo: bool,
 }
 
-/// Changes made outside Limen (a commit in another app): looked for this often,
+/// Changes made outside Kompitum (a commit in another app): looked for this often,
 /// in repos, while the window is in front.
 const FOLDER_FALLBACK: Duration = Duration::from_secs(60);
 
@@ -6639,7 +6639,7 @@ fn run_following_folder(
         Err(e)
             if follow
                 && !folder.is_empty()
-                && crate::lc::error_kind(&e) == Some("spawn_failed")
+                && crate::kom::error_kind(&e) == Some("spawn_failed")
                 && !format!("{e:#}").contains("the holder did not answer") =>
         {
             folder = if on.is_some() { String::new() } else { home() };
@@ -6833,10 +6833,10 @@ fn running_argv(rec: &serde_json::Map<String, Value>) -> Option<&Value> {
 /// and labels outlive the program: putting it back would show a dead pane.
 fn adoptable(record: &Value, space: &str, tab: Option<&str>, machine: Option<&str>) -> bool {
     let label = record
-        .pointer("/labels/limen.space")
+        .pointer("/labels/kompitum.space")
         .and_then(Value::as_str);
     let labeled_tab = record
-        .pointer("/labels/limen.tab")
+        .pointer("/labels/kompitum.tab")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty());
     record["state"] == "live"
@@ -6963,10 +6963,10 @@ impl Render for AppWindow {
         let win_tracker = self.window_tracker(cx);
         let pane_drag = self.pane_drag_layer(cx);
         div()
-            .id("limen")
+            .id("kompitum")
             .track_focus(&self.focus)
             // `layout:<name>` key sections apply while that layout shows.
-            .key_context(format!("Limen layout = {}", self.layout_name).as_str())
+            .key_context(format!("Kompitum layout = {}", self.layout_name).as_str())
             .size_full()
             .relative()
             .bg(c("background"))
@@ -7199,7 +7199,7 @@ mod tests {
     #[test]
     fn terminal_folders_retry_only_definite_spawn_failures_in_home() {
         let failed = |message| {
-            anyhow::Error::new(crate::lc::RpcError(
+            anyhow::Error::new(crate::kom::RpcError(
                 serde_json::json!({"message": message, "data": {"kind": "spawn_failed"}}),
             ))
         };
@@ -7320,7 +7320,7 @@ mod tests {
         } else {
             std::env::temp_dir()
         };
-        let home = temp.join(format!("limen-image-atlas-test-{}", std::process::id()));
+        let home = temp.join(format!("kompitum-image-atlas-test-{}", std::process::id()));
         std::fs::create_dir_all(&home).unwrap();
         let file = home.join("image.gif");
         let mut encoder =
@@ -7390,7 +7390,7 @@ mod tests {
         } else {
             std::env::temp_dir()
         };
-        let home = temp.join(format!("limen-image-directory-test-{}", std::process::id()));
+        let home = temp.join(format!("kompitum-image-directory-test-{}", std::process::id()));
         std::fs::create_dir_all(home.join("mods/probe/nested")).unwrap();
         std::fs::write(home.join("mods/probe/nested/icon.svg"), "svg").unwrap();
         for ignored in ["node_modules/pkg", ".git"] {
@@ -7669,7 +7669,7 @@ mod tests {
     /// mods' request channel) that tests beside it would otherwise share.
     fn in_own_process(name: &str) {
         let home = std::path::PathBuf::from(format!(
-            "/var/tmp/limen-window-test-{name}-{}",
+            "/var/tmp/kompitum-window-test-{name}-{}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&home);
@@ -7680,8 +7680,8 @@ mod tests {
                 "--nocapture",
                 "--test-threads=1",
             ])
-            .env("LIMEN_APP_HOME", &home)
-            .env("LIMEN_TEST_WINDOW", name)
+            .env("KOMPITUM_APP_HOME", &home)
+            .env("KOMPITUM_TEST_WINDOW", name)
             .output()
             .unwrap();
         let _ = std::fs::remove_dir_all(&home);
@@ -7695,10 +7695,10 @@ mod tests {
 
     /// In the process `in_own_process` started for `name`: whether to go on.
     fn running_alone(name: &str) -> bool {
-        std::env::var("LIMEN_TEST_WINDOW").as_deref() == Ok(name)
+        std::env::var("KOMPITUM_TEST_WINDOW").as_deref() == Ok(name)
     }
 
-    /// The window on a core that's never there (`lc::offline`), showing
+    /// The window on a core that's never there (`kom::offline`), showing
     /// `layout` with `mod_name` (its `main.js`) in the home, past the first-run
     /// welcome (it lists machines through the core). No other mods: the
     /// shipped ones run programs on threads of their own, which the test
@@ -7726,7 +7726,7 @@ mod tests {
         crate::mods::set_shared("layout".into(), json!("test"));
         crate::mods::set_shared("frame.welcomed".into(), json!("test"));
         let (view, cx) = cx.add_window_view(|window, cx| {
-            super::AppWindow::new(crate::lc::offline(), requests, window, cx)
+            super::AppWindow::new(crate::kom::offline(), requests, window, cx)
         });
         assert_eq!(view.update(cx, |this, _| this.layout_name.clone()), "test");
         (view, cx)
@@ -8099,7 +8099,7 @@ mod tests {
             return;
         }
         let probe = r#"import { View, div } from "gpui-kit";
-import { window, shared, setShared } from "limen";
+import { window, shared, setShared } from "kompitum";
 
 export default class Probe extends View {
   render() {
@@ -8458,7 +8458,7 @@ export default class Probe extends View {
 
     #[test]
     fn a_finished_terminal_is_not_put_back_in_its_tab() {
-        let record = |state: &str| serde_json::json!({ "state": state, "labels": { "limen.space": "sp1", "limen.tab": "tb1" } });
+        let record = |state: &str| serde_json::json!({ "state": state, "labels": { "kompitum.space": "sp1", "kompitum.tab": "tb1" } });
         assert!(super::adoptable(&record("live"), "sp1", Some("tb1"), None));
         assert!(!super::adoptable(
             &record("finished"),

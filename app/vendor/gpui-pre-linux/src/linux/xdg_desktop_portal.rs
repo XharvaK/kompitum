@@ -11,7 +11,7 @@ use std::{future::Future, time::Duration};
 
 use gpui::{BackgroundExecutor, Task, WindowAppearance};
 
-// LIMEN: seed the first window before the event loop starts. The portal's
+// KOMPITUM: seed the first window before the event loop starts. The portal's
 // initial event otherwise arrives after a light frame has already been shown.
 // A missing or unresponsive portal must not hold up opening the app.
 pub(super) fn initial_appearance() -> WindowAppearance {

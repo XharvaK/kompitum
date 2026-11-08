@@ -2,8 +2,8 @@
 # Linux UI regression: paste/copy follow a peek's keyboard focus, not its source pane.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export LIMEN_APP_SANDBOX="peek-paste-test-$$"
-root="/var/tmp/limen-app-$LIMEN_APP_SANDBOX"
+export KOMPITUM_APP_SANDBOX="peek-paste-test-$$"
+root="/var/tmp/kompitum-app-$KOMPITUM_APP_SANDBOX"
 sandbox() { scripts/sandbox "$@"; }
 trap 'sandbox down' EXIT
 sandbox up
@@ -26,16 +26,16 @@ process.stdin.on("data", chunk => {
     received = Buffer.alloc(0);
   }
 });'
-child=$(sandbox lc run --bg --name peek-child bun -e "$probe" | jq -r .address)
+child=$(sandbox kom run --bg --name peek-child bun -e "$probe" | jq -r .address)
 wait_for() {
   local expected=$1
   for _ in {1..100}; do
-    if sandbox lc read "$child" --lines 30 | grep -Fq "$expected"; then return; fi
+    if sandbox kom read "$child" --lines 30 | grep -Fq "$expected"; then return; fi
     sleep 0.1
   done
   echo "missing from peek: $expected" >&2
-  sandbox lc read "$child" --lines 30
-  sandbox lc read "$parent" --lines 30
+  sandbox kom read "$child" --lines 30
+  sandbox kom read "$parent" --lines 30
   sandbox status
   return 1
 }
@@ -67,12 +67,12 @@ sandbox key C Control_L Shift_L
 [[ $(xsel --clipboard --output) == READY ]]
 sandbox do terminal.right_click '{"to":"program"}'
 for _ in {1..100}; do
-  if [[ $(sandbox lc get "$child" | jq -r '.labels["limen.right-click"]') == program ]]; then break; fi
+  if [[ $(sandbox kom get "$child" | jq -r '.labels["kompitum.right-click"]') == program ]]; then break; fi
   sleep 0.1
 done
-[[ $(sandbox lc get "$child" | jq -r '.labels["limen.right-click"]') == program ]]
-[[ $(sandbox lc get "$parent" | jq -r '.labels["limen.right-click"]') == null ]]
-if sandbox lc read "$parent" --lines 30 | grep -Eq 'SENTINEL|PASTE:|CTRL_V'; then
+[[ $(sandbox kom get "$child" | jq -r '.labels["kompitum.right-click"]') == program ]]
+[[ $(sandbox kom get "$parent" | jq -r '.labels["kompitum.right-click"]') == null ]]
+if sandbox kom read "$parent" --lines 30 | grep -Eq 'SENTINEL|PASTE:|CTRL_V'; then
   echo 'input leaked into the parent terminal' >&2
   exit 1
 fi

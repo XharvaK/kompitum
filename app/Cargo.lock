@@ -4405,7 +4405,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "limen-app"
+name = "kompitum-app"
 version = "0.1.13"
 dependencies = [
  "anyhow",

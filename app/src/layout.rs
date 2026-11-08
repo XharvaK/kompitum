@@ -213,7 +213,7 @@ pub struct FocusLook {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum HeaderContent {
-    /// `"tabs"`: Limen's plain built-in tab strip (fallback).
+    /// `"tabs"`: Kompitum's plain built-in tab strip (fallback).
     Builtin(String),
     Mod {
         #[serde(rename = "mod")]

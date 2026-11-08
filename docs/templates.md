@@ -3,11 +3,11 @@
 Save a command and a role once, then start an agent by name with a task.
 Templates do not install agents or configure their status reporting.
 
-[Back to the README](../README.md) · [Command reference](commands.md#lc-templates)
+[Back to the README](../README.md) · [Command reference](commands.md#kom-templates)
 
 ## Make a reviewer
 
-Save this as `~/.config/limen-core/templates/reviewer.md` on Linux or macOS:
+Save this as `~/.config/kompitum-core/templates/reviewer.md` on Linux or macOS:
 
 ```markdown
 ---
@@ -17,22 +17,22 @@ command: pi
 You are a focused review agent. Read the code before giving findings.
 Do not edit files or start other agents.
 Report bugs with file paths, lines, and a short reason.
-If a parent assigned the review, report back with lc send.
+If a parent assigned the review, report back with kom send.
 ```
 
 Use an installed interactive agent command. Put model choices and other agent options in that command.
-On Windows, templates live under `%APPDATA%\limen-core\templates` by default.
+On Windows, templates live under `%APPDATA%\kompitum-core\templates` by default.
 Setting `XDG_CONFIG_HOME` changes the config home on either platform.
 
 ```sh
-lc templates
-lc run --bg --name review --cwd /path/to/repo reviewer "Review src/x.rs only."
-lc read review --lines 100
-lc send review "Recheck the error path."
+kom templates
+kom run --bg --name review --cwd /path/to/repo reviewer "Review src/x.rs only."
+kom read review --lines 100
+kom send review "Recheck the error path."
 ```
 
 Use background mode for agents so their screen does not stream into your caller's output.
-You can still attach and take over with `lc attach review`.
+You can still attach and take over with `kom attach review`.
 
 ## File format
 
@@ -82,7 +82,7 @@ Stay within the assigned files. Ask when blocked.
 
 Quiet output is not proof that an agent is ready. Use this only when you know its startup flow.
 It does not give the program an agent status; core still never guesses status from the screen.
-See `lc keys --help` for key notation and `lc --skill` for the delegation workflow.
+See `kom keys --help` for key notation and `kom --skill` for the delegation workflow.
 
 When a terminal is launched on another machine, that machine resolves the template and runs its command.
 Put the template and agent there first.

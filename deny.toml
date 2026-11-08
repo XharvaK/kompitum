@@ -1,6 +1,6 @@
 # cargo deny check: CI fails on a dependency with a security advisory
 # (RustSec), a license not listed here, or a source other than crates.io.
-# What lc includes is printed by `lc --licenses`.
+# What kom includes is printed by `kom --licenses`.
 
 [graph]
 all-features = true

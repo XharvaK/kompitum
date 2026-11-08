@@ -6,9 +6,9 @@ set -eu
 ref=${1:?usage: scripts/upgrade-test.sh <git ref of the previous release>}
 root=$(git rev-parse --show-toplevel)
 sha=$(git -C "$root" rev-parse --short "$ref")
-bin=/var/tmp/lc-upgrade/$sha/limen-core
+bin=/var/tmp/kom-upgrade/$sha/kompitum-core
 if [ ! -x "$bin" ]; then
-    src=/var/tmp/lc-upgrade/$sha-src
+    src=/var/tmp/kom-upgrade/$sha-src
     rm -rf "$src"
     git -C "$root" worktree add --detach "$src" "$ref"
     # Ghostty: this checkout's when the ref pins the same commit, else fetched.
@@ -17,10 +17,10 @@ if [ ! -x "$bin" ]; then
     else
         git -C "$src" submodule update --init --depth 1 vendor/ghostty
     fi
-    (cd "$src" && CARGO_TARGET_DIR=/var/tmp/lc-upgrade/target cargo build -q --bin limen-core)
+    (cd "$src" && CARGO_TARGET_DIR=/var/tmp/kom-upgrade/target cargo build -q --bin kompitum-core)
     mkdir -p "$(dirname "$bin")"
-    cp /var/tmp/lc-upgrade/target/debug/limen-core "$bin"
+    cp /var/tmp/kom-upgrade/target/debug/kompitum-core "$bin"
     git -C "$root" worktree remove --force "$src"
 fi
 cd "$root"
-LIMEN_OLD_BIN="$bin" cargo test -q --test upgrade -- --nocapture
+KOMPITUM_OLD_BIN="$bin" cargo test -q --test upgrade -- --nocapture

@@ -2,12 +2,12 @@
 # APPLE_CERTIFICATE_P12 is a base64-encoded Developer ID Application .p12.
 set -euo pipefail
 
-bin=${1:?usage: mac-sign limen-core}
+bin=${1:?usage: mac-sign kompitum-core}
 root=$(cd "$(dirname "$0")/.." && pwd)
-options=(--options runtime --entitlements "$root/distribution/macos-entitlements.plist" --identifier dev.limen.core)
+options=(--options runtime --entitlements "$root/distribution/macos-entitlements.plist" --identifier dev.kompitum.core)
 sign_target() {
   if [[ -d $bin/Contents/MacOS ]]; then
-    codesign --force "${options[@]}" "$@" "$bin/Contents/MacOS/limen-core"
+    codesign --force "${options[@]}" "$@" "$bin/Contents/MacOS/kompitum-core"
   fi
   codesign --force "${options[@]}" "$@" "$bin"
   codesign --verify --strict "$bin"

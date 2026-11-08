@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """How much CPU the app uses, and how often it draws, in fixed scenarios.
 
-    scripts/bench.py [--bin target/release/limen-app] [--seconds 20] [--sample]
+    scripts/bench.py [--bin target/release/kompitum-app] [--seconds 20] [--sample]
 
 Runs the app on its own temporary home and core session, so nothing of yours
-is touched; prints the artifact folder and keeps it after cleanup. Requires lc
+is touched; prints the artifact folder and keeps it after cleanup. Requires kom
 on PATH and the Python running this script. Both scenario sets use only Python
 fixture programs. The window must stay
 visible while it runs (hidden windows aren't drawn, which flatters the
@@ -82,15 +82,15 @@ while True:
 def env():
     e = dict(os.environ)
     e.update(
-        LIMEN_APP_HOME=f"{ROOT}/home",
-        LIMEN_SESSION=SESSION,  # Short name avoids macOS socket-path limits.
+        KOMPITUM_APP_HOME=f"{ROOT}/home",
+        KOMPITUM_SESSION=SESSION,  # Short name avoids macOS socket-path limits.
         XDG_STATE_HOME=f"{ROOT}/state",
         PYTHONIOENCODING="utf-8",
-        LIMEN_APP_NO_SOUND="1",
-        LIMEN_APP_BENCH=f"{ROOT}/frames.jsonl",
+        KOMPITUM_APP_NO_SOUND="1",
+        KOMPITUM_APP_BENCH=f"{ROOT}/frames.jsonl",
         WAYLAND_DISPLAY=e.get("WAYLAND_DISPLAY", ""),
     )
-    for key in ("LIMEN_SOCKET", "LIMEN_TERMINAL_ID", "LIMEN_TERMINAL_SOCKET", "LIMEN_SCOPE"):
+    for key in ("KOMPITUM_SOCKET", "KOMPITUM_TERMINAL_ID", "KOMPITUM_TERMINAL_SOCKET", "KOMPITUM_SCOPE"):
         e.pop(key, None)
     e["XDG_CONFIG_HOME"] = f"{ROOT}/config"
     return e
@@ -230,7 +230,7 @@ def rss_mb(pid):
 
 
 def core_pids():
-    out = subprocess.run(["lc", "server", "status", "--json"], env=env(), capture_output=True, text=True).stdout
+    out = subprocess.run(["kom", "server", "status", "--json"], env=env(), capture_output=True, text=True).stdout
     s = json.loads(out or "{}")
     holders = [h["pid"] for h in s.get("holders", [])]
     return s.get("pid"), holders
@@ -239,9 +239,9 @@ def core_pids():
 def end_terminals():
     """Every terminal of the bench's core: they outlive `server stop` (their
     holder keeps them), and runs piling up end in too many open files."""
-    out = subprocess.run(["lc", "ls", "--json"], env=env(), capture_output=True, text=True).stdout
+    out = subprocess.run(["kom", "ls", "--json"], env=env(), capture_output=True, text=True).stdout
     for t in json.loads(out or "{}").get("terminals", []):
-        subprocess.run(["lc", "kill", t["address"]], env=env(), capture_output=True)
+        subprocess.run(["kom", "kill", t["address"]], env=env(), capture_output=True)
 
 
 def frames_since(offset):
@@ -317,7 +317,7 @@ def measure(name, app, seconds, sample):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--bin", default=os.path.join(HERE, "..", "target", "release", "limen-app.exe" if sys.platform == "win32" else "limen-app"))
+    ap.add_argument("--bin", default=os.path.join(HERE, "..", "target", "release", "kompitum-app.exe" if sys.platform == "win32" else "kompitum-app"))
     ap.add_argument("--seconds", type=int, default=20)
     ap.add_argument("--sample", action="store_true")
     ap.add_argument("--zoom", type=float, default=1.0)
@@ -331,7 +331,7 @@ def main():
     ONLY = a.only
     bin = os.path.abspath(a.bin)
 
-    ROOT = tempfile.mkdtemp(prefix="limen-app-bench-", dir=None if sys.platform == "win32" else "/var/tmp")
+    ROOT = tempfile.mkdtemp(prefix="kompitum-app-bench-", dir=None if sys.platform == "win32" else "/var/tmp")
     SESSION = "hb" + os.path.basename(ROOT)[-6:]
     print(f"bench: {ROOT}", flush=True)
     with open(f"{ROOT}/run.json", "w") as f:
@@ -355,7 +355,7 @@ def main():
     app = awake = None
     rows = []
     try:
-        core = subprocess.run(["lc", "server", "start"], env=env(), capture_output=True, text=True)
+        core = subprocess.run(["kom", "server", "start"], env=env(), capture_output=True, text=True)
         if core.returncode:
             sys.exit(f"bench: core startup failed: {core.stdout}{core.stderr}")
         app = subprocess.Popen([bin], env=env(), stdin=subprocess.DEVNULL, stdout=log, stderr=log)
@@ -424,7 +424,7 @@ def main():
             awake.terminate()
             awake.wait()
         end_terminals()
-        subprocess.run(["lc", "server", "stop"], env=env(), capture_output=True)
+        subprocess.run(["kom", "server", "stop"], env=env(), capture_output=True)
         print(f"results: {ROOT}/results.json", flush=True)
 
 

@@ -1,5 +1,5 @@
 # Builds this checkout and installs it for the current Windows user.
-function Install-LimenAppFiles($Binary, $Icon, $Destination) {
+function Install-KompitumAppFiles($Binary, $Icon, $Destination) {
     $ErrorActionPreference = "Stop"
     $Destination = [IO.Path]::GetFullPath($Destination)
     $stage = "$Destination.install-$([guid]::NewGuid().ToString('N'))"
@@ -7,8 +7,8 @@ function Install-LimenAppFiles($Binary, $Icon, $Destination) {
     $installed = $false
     try {
         New-Item -ItemType Directory -Path $stage -Force | Out-Null
-        Copy-Item -LiteralPath $Binary -Destination "$stage\limen-app.exe"
-        Copy-Item -LiteralPath $Icon -Destination "$stage\limen-app.svg"
+        Copy-Item -LiteralPath $Binary -Destination "$stage\kompitum-app.exe"
+        Copy-Item -LiteralPath $Icon -Destination "$stage\kompitum-app.svg"
         # Renaming the folder leaves an already running app alive.
         if (Test-Path -LiteralPath $Destination) {
             Rename-Item -LiteralPath $Destination -NewName (Split-Path $backup -Leaf)
@@ -33,7 +33,7 @@ function Install-LimenAppFiles($Binary, $Icon, $Destination) {
         }
         if ($installed -and (Test-Path -LiteralPath $backup)) {
             try { Remove-Item -LiteralPath $backup -Recurse -Force }
-            catch { Write-Warning "Previous build remains at $backup. Remove it after quitting Limen." }
+            catch { Write-Warning "Previous build remains at $backup. Remove it after quitting Kompitum." }
         }
     }
 }
@@ -46,16 +46,16 @@ if ($env:OS -ne "Windows_NT") { throw "This installer requires Windows." }
 Push-Location "$PSScriptRoot\.."
 try {
     cargo build --release --locked --target-dir target
-    if ($LASTEXITCODE) { throw "Limen build failed (exit $LASTEXITCODE)." }
-    $dir = Join-Path $env:LOCALAPPDATA "Programs\limen-app"
-    Install-LimenAppFiles "target\release\limen-app.exe" "assets\icons\limen-ui-icon-clean.svg" $dir
+    if ($LASTEXITCODE) { throw "Kompitum build failed (exit $LASTEXITCODE)." }
+    $dir = Join-Path $env:LOCALAPPDATA "Programs\kompitum-app"
+    Install-KompitumAppFiles "target\release\kompitum-app.exe" "assets\icons\kompitum-ui-icon-clean.svg" $dir
 } finally {
     Pop-Location
 }
 
-$menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Limen.lnk"
+$menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Kompitum.lnk"
 $link = (New-Object -ComObject WScript.Shell).CreateShortcut($menu)
-$link.TargetPath = Join-Path $dir "limen-app.exe"
+$link.TargetPath = Join-Path $dir "kompitum-app.exe"
 $link.WorkingDirectory = $env:USERPROFILE
 $link.Description = "Terminals and coding agents that keep running"
 $link.Save()
@@ -68,11 +68,11 @@ try {
     if (-not $listed) {
         $kind = if ($key.GetValueNames() -contains "Path") { $key.GetValueKind("Path") } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
         $key.SetValue("Path", $(if ($raw) { "$($raw.TrimEnd(';'));$dir" } else { $dir }), $kind)
-        [Environment]::SetEnvironmentVariable("LIMEN_INSTALLING", "1", "User")
-        [Environment]::SetEnvironmentVariable("LIMEN_INSTALLING", $null, "User")
+        [Environment]::SetEnvironmentVariable("KOMPITUM_INSTALLING", "1", "User")
+        [Environment]::SetEnvironmentVariable("KOMPITUM_INSTALLING", $null, "User")
     }
 } finally {
     $key.Close()
 }
 if (($env:Path -split ";") -notcontains $dir) { $env:Path += ";$dir" }
-Write-Host "Installed limen-app. Quit and reopen Limen to use the new build."
+Write-Host "Installed kompitum-app. Quit and reopen Kompitum to use the new build."

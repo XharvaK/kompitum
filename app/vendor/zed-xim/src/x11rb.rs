@@ -584,7 +584,7 @@ impl<C: HasConnection> X11rbClient<C> {
     ) -> Result<(), ClientError> {
         if msg.format == 32 {
             let [length, atom, ..] = msg.data.as_data32();
-            // LIMEN: read only this message; `length` is in bytes, and fcitx4 appends the next
+            // KOMPITUM: read only this message; `length` is in bytes, and fcitx4 appends the next
             // message to a property we haven't read yet.
             let reply = self
                 .conn()

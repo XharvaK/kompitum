@@ -159,7 +159,7 @@ pub struct ShellRoot {
     /// The performance HUD, while a script has asked for one. See
     /// [`ShellRoot::show_fps_monitor`].
     fps_hud: Option<FpsHudRequest>,
-    /// LIMEN: size to the content instead of filling the parent (floating views).
+    /// KOMPITUM: size to the content instead of filling the parent (floating views).
     fit_content: bool,
 }
 
@@ -243,7 +243,7 @@ impl ShellRoot {
         }
     }
 
-    /// LIMEN: lays the view out at its content's size rather than filling its
+    /// KOMPITUM: lays the view out at its content's size rather than filling its
     /// parent, for views that float and size themselves.
     pub fn set_fit_content(&mut self, fit: bool, cx: &mut Context<Self>) {
         if self.fit_content != fit {
@@ -876,10 +876,10 @@ impl Render for ShellRoot {
             )
             .relative()
             .when(!self.fit_content, |root| root.size_full())
-            // LIMEN: a fitted view still stops at its container's height: a
+            // KOMPITUM: a fitted view still stops at its container's height: a
             // column that can shrink, so a root with `min_h(0)` scrolls.
             .when(self.fit_content, |root| root.flex().flex_col().min_h_0())
-            // LIMEN: no background of its own. The host draws behind every view,
+            // KOMPITUM: no background of its own. The host draws behind every view,
             // and a floating view's rounded corners must show what's under it.
             .text_color(colors.foreground)
             // Painted back to front; see the stacking order on `ShellRoot`.
@@ -892,7 +892,7 @@ impl Render for ShellRoot {
                     .cached(StyleRefinement::default().size_full())
                     .into_any_element()
             })
-            // LIMEN: its view's spinners, so a step doesn't rebuild the view.
+            // KOMPITUM: its view's spinners, so a step doesn't rebuild the view.
             .child({
                 crate::materialize::show_spins_of(self.content.entity_id());
                 crate::materialize::spin_layer(self.content.entity_id())

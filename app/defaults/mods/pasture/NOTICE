@@ -1,5 +1,5 @@
 Pasture comes from https://github.com/herdrdev/herdr-layout-examples (pasture/)
 at commit 0ec9676, Apache License 2.0 (LICENSE), by the herdr authors.
 
-Changed for Limen: the module is imported as "limen" instead of "herdr". Limen's
+Changed for Kompitum: the module is imported as "kompitum" instead of "herdr". Kompitum's
 Pasture layout adds the Board beside the panes and a status row with the Lead pill.

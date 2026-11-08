@@ -830,7 +830,7 @@ fn determine_flex_base_size(
         let style_min_main_size =
             child.min_size.or(child.overflow.map(Overflow::maybe_into_automatic_min_size).into()).main(dir);
 
-        // LIMEN: unwrap_or_else, not unwrap_or: an explicit min size (overflow
+        // KOMPITUM: unwrap_or_else, not unwrap_or: an explicit min size (overflow
         // hidden gives 0) made every flex item measure its whole subtree's
         // min-content anyway, on every layout.
         child.resolved_minimum_main_size = style_min_main_size.unwrap_or_else(|| {

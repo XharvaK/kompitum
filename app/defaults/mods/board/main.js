@@ -1,9 +1,9 @@
 // Every worker from both orchestrators: what waits, the queue, and the rows'
-// actions. Reading is lc status --json; actions are lc task ....
+// actions. Reading is kom status --json; actions are kom task ....
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { lc, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings } from "limen";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings } from "kompitum";
 
 // The two orchestrators keep these colors in the Line panel too.
 const OPUS = "accent";
@@ -55,7 +55,7 @@ function money(value) {
   return n > 0 && n < 0.005 ? "<$0.01" : `$${n.toFixed(2)}`;
 }
 
-// Piped, lc says what went wrong as JSON: {"error": {"message", "hint"}}; show its words.
+// Piped, kom says what went wrong as JSON: {"error": {"message", "hint"}}; show its words.
 function errorText(result) {
   for (const out of [result?.stderr, result?.stdout]) {
     try {
@@ -63,7 +63,7 @@ function errorText(result) {
       if (message) return firstLine(message);
     } catch {}
   }
-  return firstLine(result?.stderr) || firstLine(result?.stdout) || `lc exited ${result?.code ?? "?"}`;
+  return firstLine(result?.stderr) || firstLine(result?.stdout) || `kom exited ${result?.code ?? "?"}`;
 }
 
 function tasksOf(tasks, key) {
@@ -73,7 +73,7 @@ function tasksOf(tasks, key) {
     : [];
 }
 
-// Whatever lc workers --json gives: an array, or an object holding one.
+// Whatever kom workers --json gives: an array, or an object holding one.
 function workersOf(workers) {
   const list = Array.isArray(workers) ? workers : Array.isArray(workers?.workers) ? workers.workers : [];
   return list.filter((w) => w && typeof w === "object"
@@ -133,7 +133,7 @@ export default class Board extends View {
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
-        const result = await lc(["status", "--json"]);
+        const result = await kom(["status", "--json"]);
         if (result.code !== 0) {
           this.error = errorText(result);
         } else {
@@ -184,7 +184,7 @@ export default class Board extends View {
   review(name, cx) {
     cx.spawn(async () => {
       try {
-        const result = await lc(["task", "review", name]);
+        const result = await kom(["task", "review", name]);
         if (result.code !== 0) throw new Error(errorText(result));
         const body = text(result.stdout).trim() || "(no review text)";
         openOverlay({
@@ -218,7 +218,7 @@ export default class Board extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const result = await lc(["task", "accept", name, "--review", line]);
+        const result = await kom(["task", "accept", name, "--review", line]);
         if (result.code !== 0) throw new Error(errorText(result));
         this.refresh(cx);
       } catch (e) {
@@ -243,7 +243,7 @@ export default class Board extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const result = await lc(["task", action, name]);
+        const result = await kom(["task", action, name]);
         if (result.code !== 0) throw new Error(errorText(result));
         this.refresh(cx);
       } catch (e) {

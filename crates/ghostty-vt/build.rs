@@ -5,16 +5,21 @@ use std::process::Command;
 
 fn main() {
     let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    // A git worktree has no submodules: LIMEN_GHOSTTY_SRC names a checkout elsewhere.
-    let src = std::env::var_os("LIMEN_GHOSTTY_SRC")
+    // A git worktree has no submodules: KOMPITUM_GHOSTTY_SRC names a checkout elsewhere.
+    // legacy name: the build config written before the rename.
+    let old_src = std::env::var_os("LIMEN_GHOSTTY_SRC");
+    let src = std::env::var_os("KOMPITUM_GHOSTTY_SRC")
+        .or(old_src)
         .map_or_else(|| manifest.join("../../vendor/ghostty"), PathBuf::from)
         .canonicalize()
-        .expect("vendor/ghostty missing: run `git submodule update --init --depth 1`, or set LIMEN_GHOSTTY_SRC");
+        .expect("vendor/ghostty missing: run `git submodule update --init --depth 1`, or set KOMPITUM_GHOSTTY_SRC");
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     for path in ["src", "build.zig", "build.zig.zon", "include"] {
         println!("cargo:rerun-if-changed={}", src.join(path).display());
     }
     println!("cargo:rerun-if-env-changed=ZIG");
+    println!("cargo:rerun-if-env-changed=KOMPITUM_GHOSTTY_SRC");
+    // legacy name: the build config written before the rename.
     println!("cargo:rerun-if-env-changed=LIMEN_GHOSTTY_SRC");
 
     let (target, host) = (std::env::var("TARGET").unwrap(), std::env::var("HOST").unwrap());
@@ -31,8 +36,8 @@ fn main() {
             Some(std::env::join_paths([zig.parent().unwrap().to_path_buf(), root.join("System32"), root]).unwrap());
     }
     let mut build = Command::new(&zig);
-    // Baseline CPU, never this machine's: lc is copied to other machines
-    // (releases, `lc machine add`), whose CPUs may lack this one's features.
+    // Baseline CPU, never this machine's: kom is copied to other machines
+    // (releases, `kom machine add`), whose CPUs may lack this one's features.
     build.current_dir(&src).args(["build", "-Demit-lib-vt", "-Doptimize=ReleaseFast", "-Dcpu=baseline"]);
     if let Some(path) = clean_path {
         build.env("PATH", path);

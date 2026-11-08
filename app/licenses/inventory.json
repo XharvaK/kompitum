@@ -171,7 +171,7 @@
       ]
     },
     {
-      "name": "Pixelated MS Sans Serif fonts (Limen 98)",
+      "name": "Pixelated MS Sans Serif fonts (Kompitum 98)",
       "source": "https://github.com/jdan/98.css; unchanged font conversion.",
       "files": [
         "defaults/mods/win98/fonts/LICENSE-MSSansSerif.txt",
@@ -179,15 +179,15 @@
       ]
     },
     {
-      "name": "PxPlus IBM VGA font (Limen 98)",
+      "name": "PxPlus IBM VGA font (Kompitum 98)",
       "source": "https://int10h.org/oldschool-pc-fonts/",
       "files": [
         "defaults/mods/win98/fonts/LICENSE-PxPlus.txt"
       ]
     },
     {
-      "name": "Limen logo artwork",
-      "source": "Ram path adapted from https://github.com/herdrdev/herdr/blob/HEAD/assets/logo.svg (Apache-2.0). Limen 98 artwork is drawn by defaults/mods/win98/art/generate.ts, under the app's Apache-2.0 license.",
+      "name": "Kompitum logo artwork",
+      "source": "Ram path adapted from https://github.com/herdrdev/herdr/blob/HEAD/assets/logo.svg (Apache-2.0). Kompitum 98 artwork is drawn by defaults/mods/win98/art/generate.ts, under the app's Apache-2.0 license.",
       "files": [
         "LICENSE"
       ]

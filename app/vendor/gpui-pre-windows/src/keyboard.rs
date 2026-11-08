@@ -17,7 +17,7 @@ use gpui::{
 };
 
 thread_local! {
-    // LIMEN: Native dead-key state belongs to the UI thread, across windows and input handlers.
+    // KOMPITUM: Native dead-key state belongs to the UI thread, across windows and input handlers.
     pub(crate) static DEAD_KEYS: DeadKeyState = const { DeadKeyState(Cell::new(false)) };
     static NATIVE_CHARACTER_INPUT: RefCell<Option<Keystroke>> = const { RefCell::new(None) };
 }

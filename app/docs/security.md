@@ -2,7 +2,7 @@
 
 ## Mods have your access
 
-A mod is trusted JavaScript running inside Limen. It can run programs with your environment, fetch URLs and read files.
+A mod is trusted JavaScript running inside Kompitum. It can run programs with your environment, fetch URLs and read files.
 The built-in file API limits writes to the app home, but a mod can run a program to write elsewhere. That is not a security boundary.
 Mods can also run programs on connected machines.
 
@@ -11,16 +11,16 @@ Layouts can load mods. Check those references too.
 
 ## What stays on disk
 
-The default app home is `~/.config/limen-app`, including on macOS and Windows (under your user home).
-`XDG_CONFIG_HOME` changes the config root. `LIMEN_APP_HOME` selects an app home directly and takes precedence.
+The default app home is `~/.config/kompitum-app`, including on macOS and Windows (under your user home).
+`XDG_CONFIG_HOME` changes the config root. `KOMPITUM_APP_HOME` selects an app home directly and takes precedence.
 
 This folder holds your settings, keys, layouts, mods, generated agent guide and API types.
 It also holds mod data, shared state, window positions, this screen's focus and zoom, update notes and cached media, and telemetry while enabled.
-Mods may store sensitive data here. Limen does not encrypt this folder.
+Mods may store sensitive data here. Kompitum does not encrypt this folder.
 The [installed guide's file map](../defaults/AGENTS.md#the-files) explains the files.
 
 Spaces, tabs and splits are stored in each machine's core document, not in the app home.
-Terminals and their output belong to [limen-core](https://github.com/herdrdev/herdr-core).
+Terminals and their output belong to [kompitum-core](https://github.com/herdrdev/herdr-core).
 Removing the app home does not stop the core or erase its data.
 
 The app exposes a local control socket in its home so agents can inspect and drive the window.
@@ -29,7 +29,7 @@ Remote connections use SSH through the core.
 
 ## Updates and signing
 
-Installed releases check the Limen release service, download an update, and check its SHA-256 checksum against the release manifest before unpacking it.
+Installed releases check the Kompitum release service, download an update, and check its SHA-256 checksum against the release manifest before unpacking it.
 The app switches to the downloaded version on quit. Source builds do not update themselves.
 Core updates are handled separately by the core's updater.
 
@@ -44,7 +44,7 @@ Do not assume every download is notarized or signed.
 
 ## Telemetry
 
-Usage telemetry is **on by default**. Release builds send a small daily report to `https://telemetry.limen.invalid/v1/report` with a random install ID.
+Usage telemetry is **on by default**. Release builds send a small daily report to `https://telemetry.kompitum.invalid/v1/report` with a random install ID.
 Reports include app and core versions, OS and architecture, bucketed usage time and counts, known agent names, built-in layout names, mod counts, app command names, and fixed event counters.
 Custom layout names become `custom`; custom mod names are not sent.
 Terminal text, prompts, file contents, folder paths and free-text names are not included.
@@ -59,10 +59,10 @@ Or set this field in your existing `settings.json`:
 ```
 
 Turning it off deletes the local install ID and unsent reports. It cannot recall reports already sent.
-For one run, set `DO_NOT_TRACK=1` or `LIMEN_TELEMETRY=0`. CI environments disable collection too.
-Ordinary source builds collect locally while enabled but do not send, unless pointed at a test endpoint with `LIMEN_TELEMETRY_URL`.
+For one run, set `DO_NOT_TRACK=1` or `KOMPITUM_TELEMETRY=0`. CI environments disable collection too.
+Ordinary source builds collect locally while enabled but do not send, unless pointed at a test endpoint with `KOMPITUM_TELEMETRY_URL`.
 
 Telemetry being off does not stop update checks, mod network requests or feedback you choose to send.
 Feedback is drafted for you to review and send, not sent silently.
 
-[Back to Limen](../README.md)
+[Back to Kompitum](../README.md)

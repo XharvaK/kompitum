@@ -46,10 +46,10 @@ fn manifest_inputs(manifest: &str) -> String {
 
 #[test]
 fn lock_fingerprint_tracks_third_party_packages_only() {
-    let workspace = BTreeSet::from(["limen-app"]);
+    let workspace = BTreeSet::from(["kompitum-app"]);
     let lock = r#"
 [[package]]
-name = "limen-app"
+name = "kompitum-app"
 version = "0.1.7"
 [[package]]
 name = "registry-dep"

@@ -262,12 +262,12 @@ pub struct WgpuRenderer {
     observed_error_generation: u64,
     last_surface_error: Option<String>,
     needs_redraw: bool,
-    // LIMEN: atlas validity must outlive the consumable redraw request.
+    // KOMPITUM: atlas validity must outlive the consumable redraw request.
     scene_valid: bool,
 }
 
 impl WgpuRenderer {
-    // LIMEN: requesting a redraw must not make the old atlas-backed scene capturable.
+    // KOMPITUM: requesting a redraw must not make the old atlas-backed scene capturable.
     fn invalidate_scene(&mut self) {
         self.scene_valid = false;
         self.needs_redraw = true;
@@ -1129,7 +1129,7 @@ impl WgpuRenderer {
         self.max_texture_size
     }
 
-    /// LIMEN: replay the last scene without touching the presentation surface.
+    /// KOMPITUM: replay the last scene without touching the presentation surface.
     #[cfg(all(not(target_family = "wasm"), feature = "render-to-image"))]
     pub fn render_to_image(&mut self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
         anyhow::ensure!(!self.device_lost(), "GPU device was lost");
@@ -1273,7 +1273,7 @@ impl WgpuRenderer {
     }
 }
 
-// LIMEN: the window and headless tests share byte-for-byte identical readback.
+// KOMPITUM: the window and headless tests share byte-for-byte identical readback.
 #[cfg(all(
     not(target_family = "wasm"),
     any(

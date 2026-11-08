@@ -230,7 +230,7 @@ fn all() -> Vec<Note> {
 }
 
 fn media_path(url: &str) -> std::path::PathBuf {
-    let preview = std::env::var_os("LIMEN_NOTES_MEDIA_DIR").is_some()
+    let preview = std::env::var_os("KOMPITUM_NOTES_MEDIA_DIR").is_some()
         && local_media_path(url, std::path::Path::new("")).is_some();
     path(if preview {
         "update-notes-preview"
@@ -241,7 +241,7 @@ fn media_path(url: &str) -> std::path::PathBuf {
 }
 
 fn local_media_path(url: &str, dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let key = url.strip_prefix("https://media.limen.invalid/")?;
+    let key = url.strip_prefix("https://media.kompitum.invalid/")?;
     let parts: Vec<_> = key.split('/').collect();
     if parts.len() != 2
         || parts.iter().any(|p| {
@@ -259,7 +259,7 @@ fn local_media_path(url: &str, dir: &std::path::Path) -> Option<std::path::PathB
 }
 
 fn preview_media(url: &str) -> bool {
-    let Some(dir) = std::env::var_os("LIMEN_NOTES_MEDIA_DIR") else {
+    let Some(dir) = std::env::var_os("KOMPITUM_NOTES_MEDIA_DIR") else {
         return false;
     };
     let Some(local) = local_media_path(url, std::path::Path::new(&dir)) else {
@@ -411,7 +411,7 @@ mod tests {
     use super::*;
     fn fixture() -> Vec<Note> {
         parse(
-            "## [1.8.0] - 2026-10-23\n<!-- spotlight -->\n- New thing\n![demo](https://releases.limen.invalid/demo.png)\n## [1.7.0] - 2026-10-22\n- Another thing\n## [1.5.0] - 2026-10-20\n- Old thing\n",
+            "## [1.8.0] - 2026-10-23\n<!-- spotlight -->\n- New thing\n![demo](https://releases.kompitum.invalid/demo.png)\n## [1.7.0] - 2026-10-22\n- Another thing\n## [1.5.0] - 2026-10-20\n- Old thing\n",
         )
     }
     fn from(version: Option<&str>, running: &str, fresh: bool) -> Launch {
@@ -545,23 +545,25 @@ mod tests {
     fn local_media_is_limited_to_canonical_media_urls() {
         let dir = std::path::Path::new("/var/tmp/media");
         assert_eq!(
-            local_media_path("https://media.limen.invalid/0.1.4/peek.webp", dir),
+            local_media_path("https://media.kompitum.invalid/0.1.4/peek.webp", dir),
             Some(dir.join("0.1.4/peek.webp"))
         );
         for url in [
             "https://example.com/0.1.4/peek.webp",
-            "https://media.limen.invalid/../peek.webp",
-            "https://media.limen.invalid/0.1.4/a/b.webp",
-            "https://media.limen.invalid/0.1.4/%2e%2e",
-            "https://media.limen.invalid/0.1.4/a.webp?query",
+            "https://media.kompitum.invalid/../peek.webp",
+            "https://media.kompitum.invalid/0.1.4/a/b.webp",
+            "https://media.kompitum.invalid/0.1.4/%2e%2e",
+            "https://media.kompitum.invalid/0.1.4/a.webp?query",
         ] {
             assert!(local_media_path(url, dir).is_none());
         }
     }
     #[test]
     fn cached_media_reads_dimensions_from_extensionless_files() {
-        let root =
-            std::path::PathBuf::from(format!("/var/tmp/limen-media-test-{}", std::process::id()));
+        let root = std::path::PathBuf::from(format!(
+            "/var/tmp/kompitum-media-test-{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&root).unwrap();
         let file = root.join("hashed-image");
         image::RgbaImage::new(12, 7)
@@ -579,7 +581,7 @@ mod tests {
     #[test]
     fn media_cache_reads_once_and_retries_after_download() {
         let root = std::path::PathBuf::from(format!(
-            "/var/tmp/limen-media-cache-test-{}",
+            "/var/tmp/kompitum-media-cache-test-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&root).unwrap();
@@ -620,7 +622,7 @@ mod tests {
         assert!(notes[0].spotlight);
         assert_eq!(
             notes[0].items[0].media[0].path,
-            "https://releases.limen.invalid/demo.png"
+            "https://releases.kompitum.invalid/demo.png"
         );
         assert_eq!(notes[1].items[0].detail, "Another thing");
         assert!(notes[1].items[0].headline.is_empty());

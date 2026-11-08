@@ -2804,7 +2804,7 @@ impl ProductionBackend {
                 });
                 keys
             };
-            // LIMEN: longbridge/quickjs-jit#38. Copy the global call feedback
+            // KOMPITUM: longbridge/quickjs-jit#38. Copy the global call feedback
             // only for refreshes that queue, not for every rejected candidate.
             let refreshes = candidates
                 .into_iter()
@@ -3536,7 +3536,7 @@ impl ProductionBackend {
 ))]
 unsafe impl rquickjs_core::runtime::JitBackend for ProductionBackend {
     fn poll(&mut self) {
-        // LIMEN: rquickjs polls before and after every pending job. A full pass
+        // KOMPITUM: rquickjs polls before and after every pending job. A full pass
         // each time cloned the whole feedback table hundreds of times a second
         // in busy promise loops; the gate still runs it for pending compiles.
         self.maintenance_if_due(false);

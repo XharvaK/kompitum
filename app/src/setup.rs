@@ -2,12 +2,12 @@
 //! that can serve this app runs:
 //! - none found (core_bin.rs): install it for me (the core's own installer),
 //!   or point at one;
-//! - too old (or missing a method the app calls): update it (`lc update`,
+//! - too old (or missing a method the app calls): update it (`kom update`,
 //!   terminals kept);
 //! - a newer generation than this app speaks: update the app.
 //! Then the main window opens.
 
-use crate::lc::{Core, Mismatch};
+use crate::kom::{Core, Mismatch};
 use crate::mods::Request;
 use crate::settings::{self, color as c};
 use gpui::prelude::FluentBuilder as _;
@@ -15,19 +15,19 @@ use gpui::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-const ICON: &[u8] = include_bytes!("../assets/icons/limen-ui-icon-clean.png");
+const ICON: &[u8] = include_bytes!("../assets/icons/kompitum-ui-icon-clean.png");
 #[cfg(not(windows))]
-const APP_INSTALL: &str = "curl -fsSL https://releases.limen.invalid/app/install.sh | sh";
+const APP_INSTALL: &str = "curl -fsSL https://releases.kompitum.invalid/app/install.sh | sh";
 #[cfg(windows)]
 const APP_INSTALL: &str =
-    "powershell -c \"irm https://releases.limen.invalid/app/install.ps1 | iex\"";
+    "powershell -c \"irm https://releases.kompitum.invalid/app/install.ps1 | iex\"";
 #[cfg(not(windows))]
-const CORE_INSTALL: &str = "curl -fsSL https://releases.limen.invalid/core/install.sh | sh";
+const CORE_INSTALL: &str = "curl -fsSL https://releases.kompitum.invalid/core/install.sh | sh";
 #[cfg(windows)]
 const CORE_INSTALL: &str =
-    "powershell -c \"irm https://releases.limen.invalid/core/install.ps1 | iex\"";
+    "powershell -c \"irm https://releases.kompitum.invalid/core/install.ps1 | iex\"";
 const CORE_PLACE: &str = if cfg!(windows) {
-    r"%LOCALAPPDATA%\Programs\limen-core"
+    r"%LOCALAPPDATA%\Programs\kompitum-core"
 } else {
     "~/.local/bin"
 };
@@ -60,10 +60,10 @@ pub fn open(need: Need, requests: async_channel::Receiver<Request>, cx: &mut App
             cx,
         ))),
         titlebar: Some(TitlebarOptions {
-            title: Some("Limen".into()),
+            title: Some("Kompitum".into()),
             ..Default::default()
         }),
-        app_id: Some("limen-app".into()),
+        app_id: Some("kompitum-app".into()),
         ..Default::default()
     };
     let icon = Arc::new(Image::from_bytes(ImageFormat::Png, ICON.to_vec()));
@@ -75,7 +75,7 @@ pub fn open(need: Need, requests: async_channel::Receiver<Request>, cx: &mut App
             icon,
         })
     })
-    .expect("cannot open the Limen window");
+    .expect("cannot open the Kompitum window");
     cx.activate(true);
 }
 
@@ -84,7 +84,7 @@ impl Setup {
     /// opens the main one, else says what's still needed.
     fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match Core::connect() {
-            Ok(core) => match crate::lc::check(&core.hello) {
+            Ok(core) => match crate::kom::check(&core.hello) {
                 Ok(()) => {
                     let Some(requests) = self.requests.take() else {
                         return;
@@ -136,7 +136,7 @@ impl Setup {
 
     fn install(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(
-            "Installing limen-core…",
+            "Installing kompitum-core…",
             || crate::core_bin::install().map(Some),
             window,
             cx,
@@ -145,7 +145,7 @@ impl Setup {
 
     fn update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(
-            "Updating limen-core… your terminals keep running.",
+            "Updating kompitum-core… your terminals keep running.",
             || crate::core_bin::update().map(|_| None),
             window,
             cx,
@@ -157,7 +157,7 @@ impl Setup {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Use this limen-core".into()),
+            prompt: Some("Use this kompitum-core".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
@@ -169,13 +169,13 @@ impl Setup {
             let _ = this.update_in(cx, |this, window, cx| {
                 if crate::core_bin::version(&bin).is_none() {
                     this.state = State::Failed(format!(
-                        "{} isn't limen-core (it should answer `--version` with `lc …`)",
+                        "{} isn't kompitum-core (it should answer `--version` with `kom …`)",
                         bin.display()
                     ));
                     cx.notify();
                     return;
                 }
-                // Remembered: next time Limen looks there first.
+                // Remembered: next time Kompitum looks there first.
                 let mut person = settings::load_person().unwrap_or_default();
                 person.core = Some(bin.to_string_lossy().into_owned());
                 let _ = settings::write_person(&person);
@@ -190,29 +190,29 @@ impl Setup {
     fn words(&self) -> (String, String, String) {
         match &self.need {
             Need::Install => (
-                "Limen needs limen-core".into(),
-                "limen-core runs your terminals and agents, and keeps them alive when this window closes. Limen couldn't find it on this computer.".into(),
-                format!("Install it for me puts it in {CORE_PLACE} (with lc), like its own installer: {CORE_INSTALL}"),
+                "Kompitum needs kompitum-core".into(),
+                "kompitum-core runs your terminals and agents, and keeps them alive when this window closes. Kompitum couldn't find it on this computer.".into(),
+                format!("Install it for me puts it in {CORE_PLACE} (with kom), like its own installer: {CORE_INSTALL}"),
             ),
             Need::Connect(error) => (
-                "Limen can't connect to limen-core".into(),
+                "Kompitum can't connect to kompitum-core".into(),
                 error.clone(),
                 "Once you've resolved this, try again.".into(),
             ),
             Need::Fix(Mismatch::TooOld { have, need }) => (
-                "Limen needs a newer limen-core".into(),
-                format!("Yours is {have}; this Limen needs {need} or newer. Updating keeps your terminals running."),
-                "Or update it yourself: lc update".into(),
+                "Kompitum needs a newer kompitum-core".into(),
+                format!("Yours is {have}; this Kompitum needs {need} or newer. Updating keeps your terminals running."),
+                "Or update it yourself: kom update".into(),
             ),
             Need::Fix(Mismatch::Missing(methods)) => (
-                "Limen needs a newer limen-core".into(),
-                format!("Your limen-core can't do everything this Limen needs ({}). Updating keeps your terminals running.", methods.join(", ")),
-                "Or update it yourself: lc update".into(),
+                "Kompitum needs a newer kompitum-core".into(),
+                format!("Your kompitum-core can't do everything this Kompitum needs ({}). Updating keeps your terminals running.", methods.join(", ")),
+                "Or update it yourself: kom update".into(),
             ),
             Need::Fix(Mismatch::Newer { generation }) => (
-                "This Limen is older than your limen-core".into(),
-                format!("Your limen-core speaks a newer protocol (generation {generation}) than this Limen understands. Update Limen; your terminals keep running."),
-                format!("Update Limen: {APP_INSTALL}"),
+                "This Kompitum is older than your kompitum-core".into(),
+                format!("Your kompitum-core speaks a newer protocol (generation {generation}) than this Kompitum understands. Update Kompitum; your terminals keep running."),
+                format!("Update Kompitum: {APP_INSTALL}"),
             ),
         }
     }
@@ -269,7 +269,7 @@ impl Render for Setup {
                 button("quit", "Quit", false).on_click(cx.listener(|_, _, _, cx| cx.quit())),
             ),
             Need::Fix(_) => div().flex().gap(px(10.0)).child(
-                button("update", "Update limen-core", true).when(!busy, |d| {
+                button("update", "Update kompitum-core", true).when(!busy, |d| {
                     d.on_click(cx.listener(|this, _, w, cx| this.update(w, cx)))
                 }),
             ),

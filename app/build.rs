@@ -1,5 +1,5 @@
 //! Embeds the default mods (defaults/mods/**), the program icons
-//! (defaults/icons/*) and the frame's mods (defaults/frame/**) so Limen can
+//! (defaults/icons/*) and the frame's mods (defaults/frame/**) so Kompitum can
 //! install them.
 //!
 //! Worktrees may share one target dir, and with it this script and its output.
@@ -63,9 +63,9 @@ fn main() {
     // Windows takes the window, taskbar and Start menu icon from the program file.
     #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        println!("cargo:rerun-if-changed=assets/icons/limen-app.ico");
+        println!("cargo:rerun-if-changed=assets/icons/kompitum-app.ico");
         winresource::WindowsResource::new()
-            .set_icon("assets/icons/limen-app.ico")
+            .set_icon("assets/icons/kompitum-app.ico")
             .compile()
             .expect("cannot embed the icon");
     }

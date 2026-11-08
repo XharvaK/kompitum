@@ -5,36 +5,36 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 cargo build --release
 
-app="$HOME/Applications/Limen.app"
+app="$HOME/Applications/Kompitum.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$HOME/.local/bin"
-# Replace atomically so installing does not interrupt a running Limen.
-cp target/release/limen-app "$app/Contents/MacOS/Limen.new"
-mv -f "$app/Contents/MacOS/Limen.new" "$app/Contents/MacOS/Limen"
-chmod +x "$app/Contents/MacOS/Limen"
-cp assets/icons/Limen.icns "$app/Contents/Resources/Limen.icns"
+# Replace atomically so installing does not interrupt a running Kompitum.
+cp target/release/kompitum-app "$app/Contents/MacOS/Kompitum.new"
+mv -f "$app/Contents/MacOS/Kompitum.new" "$app/Contents/MacOS/Kompitum"
+chmod +x "$app/Contents/MacOS/Kompitum"
+cp assets/icons/Kompitum.icns "$app/Contents/Resources/Kompitum.icns"
 
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-    <key>CFBundleExecutable</key><string>Limen</string>
-    <key>CFBundleIdentifier</key><string>dev.limen.app</string>
-    <key>CFBundleName</key><string>Limen</string>
-    <key>CFBundleDisplayName</key><string>Limen</string>
-    <key>CFBundleIconFile</key><string>Limen</string>
+    <key>CFBundleExecutable</key><string>Kompitum</string>
+    <key>CFBundleIdentifier</key><string>dev.kompitum.app</string>
+    <key>CFBundleName</key><string>Kompitum</string>
+    <key>CFBundleDisplayName</key><string>Kompitum</string>
+    <key>CFBundleIconFile</key><string>Kompitum</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.0.1</string>
     <key>CFBundleVersion</key><string>1</string>
-    <key>NSMicrophoneUsageDescription</key><string>Terminal programs running in Limen can use the microphone, for example for voice input.</string>
-    <key>NSCameraUsageDescription</key><string>Terminal programs running in Limen can use the camera.</string>
-    <key>NSAppleEventsUsageDescription</key><string>Terminal programs running in Limen can use AppleScript to control other apps.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Terminal programs running in Kompitum can use the microphone, for example for voice input.</string>
+    <key>NSCameraUsageDescription</key><string>Terminal programs running in Kompitum can use the camera.</string>
+    <key>NSAppleEventsUsageDescription</key><string>Terminal programs running in Kompitum can use AppleScript to control other apps.</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSEnvironment</key><dict/></dict></plist>
 PLIST
-# Finder does not inherit a login shell's PATH; lc must still be discoverable.
+# Finder does not inherit a login shell's PATH; kom must still be discoverable.
 /usr/libexec/PlistBuddy -c "Add :LSEnvironment:PATH string $HOME/.local/bin:/opt/homebrew/bin:$PATH" "$app/Contents/Info.plist"
 codesign --force --sign - "$app"
-ln -sfn "$app/Contents/MacOS/Limen" "$HOME/.local/bin/limen-app"
+ln -sfn "$app/Contents/MacOS/Kompitum" "$HOME/.local/bin/kompitum-app"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
-echo "Installed $app. Quit and reopen Limen to use the new build."
+echo "Installed $app. Quit and reopen Kompitum to use the new build."

@@ -3,7 +3,7 @@ use std::process::Command;
 #[test]
 #[ignore = "requires a native desktop; run cargo test --test commands check_keeps_shared_state_transient -- --ignored"]
 fn check_keeps_shared_state_transient() {
-    let root = std::env::temp_dir().join(format!("limen-check-shared-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("kompitum-check-shared-{}", std::process::id()));
     let home = root.join("home");
     let module = root.join("mod");
     std::fs::create_dir_all(&home).unwrap();
@@ -12,7 +12,7 @@ fn check_keeps_shared_state_transient() {
         module.join("main.js"),
         r#"
 import { View, div } from "gpui-kit";
-import { shared, setShared } from "limen";
+import { shared, setShared } from "kompitum";
 export default class Probe extends View {
   init() {
     if (shared("sentinel") !== null) throw new Error("read desktop state");
@@ -29,20 +29,20 @@ export default class Probe extends View {
         if let Some(text) = original {
             std::fs::write(&path, text).unwrap();
         }
-        let output = Command::new(env!("CARGO_BIN_EXE_limen-app"))
+        let output = Command::new(env!("CARGO_BIN_EXE_kompitum-app"))
             .arg("check")
             .arg(&module)
-            .env("LIMEN_APP_HOME", &home)
+            .env("KOMPITUM_APP_HOME", &home)
             .env(
-                "LIMEN_SESSION",
+                "KOMPITUM_SESSION",
                 format!("check-shared-{}", std::process::id()),
             )
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_STATE_HOME", root.join("state"))
             .env("APPDATA", root.join("appdata"))
-            .env_remove("LIMEN_TERMINAL_ID")
-            .env_remove("LIMEN_TERMINAL_SOCKET")
-            .env_remove("LIMEN_SCOPE")
+            .env_remove("KOMPITUM_TERMINAL_ID")
+            .env_remove("KOMPITUM_TERMINAL_SOCKET")
+            .env_remove("KOMPITUM_SCOPE")
             .output()
             .unwrap();
         assert!(
@@ -66,16 +66,16 @@ export default class Probe extends View {
 #[test]
 fn commands_need_no_window_or_app_home() {
     let home = std::env::temp_dir().join(format!(
-        "limen-app-commands-{}-{}",
+        "kompitum-app-commands-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos(),
     ));
-    let output = Command::new(env!("CARGO_BIN_EXE_limen-app"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kompitum-app"))
         .arg("commands")
-        .env("LIMEN_APP_HOME", &home)
+        .env("KOMPITUM_APP_HOME", &home)
         .output()
         .unwrap();
     assert!(

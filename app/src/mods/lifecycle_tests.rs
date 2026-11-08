@@ -14,7 +14,7 @@ impl Fixture {
     fn new(source: &str) -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = PathBuf::from(format!(
-            "/var/tmp/limen-lifecycle-{}-{}",
+            "/var/tmp/kompitum-lifecycle-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -150,7 +150,7 @@ fn mod_run_rejects_unknown_arguments_before_queueing_a_command(cx: &mut TestAppC
     let fixture = Fixture::new(
         r#"
 import { View, div } from "gpui-kit";
-import { run } from "limen";
+import { run } from "kompitum";
 import { note } from "fixture";
 export default class extends View {
   init() {
@@ -207,7 +207,7 @@ fn focus_command_lets_a_mod_take_arrow_keys(cx: &mut TestAppContext) {
     let fixture = Fixture::new(
         r#"
 import { View, div } from "gpui-kit";
-import { nextCommand } from "limen";
+import { nextCommand } from "kompitum";
 import { note } from "fixture";
 export default class extends View {
   init(_props, cx) {
@@ -478,4 +478,53 @@ export default class extends View {
     window
         .update(cx, |_, window, _| window.remove_window())
         .unwrap();
+}
+
+#[gpui::test]
+fn a_mod_that_imports_the_old_module_name_still_loads(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let fixture = Fixture::new(
+        r#"
+import { View, div } from "gpui-kit";
+import { note } from "fixture";
+// legacy name: a mod written before the rename.
+import { home } from "limen";
+export default class extends View {
+  init() { note(home()); }
+  render() { return div(); }
+}"#,
+    );
+    let notes = Rc::new(RefCell::new(Vec::new()));
+    let calls = notes.clone();
+    let [current, legacy] = module_pair(
+        Instance {
+            name: "legacy-test".into(),
+            props: Value::Null,
+        },
+        77,
+    );
+    gpui_shell::policy::set_default(
+        Policy::new()
+            .with_host_module(current)
+            .unwrap()
+            .with_host_module(legacy)
+            .unwrap()
+            .with_host_module(HostModule::new("fixture").function("note", move |a| {
+                calls.borrow_mut().push(a.string(0)?.to_owned());
+                Ok(HostValue::Null)
+            }))
+            .unwrap(),
+    );
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let window = cx.add_window(|_, _| Empty);
+    let _root = window
+        .update(cx, |_, window, cx| {
+            runtime.try_load(&fixture.0, window, cx).unwrap()
+        })
+        .unwrap();
+    assert_eq!(notes.borrow().len(), 1);
+    assert!(
+        !notes.borrow()[0].is_empty(),
+        "home() answered through the old name"
+    );
 }

@@ -1,5 +1,5 @@
-//! Attention sounds, as Limen plays them: one when an agent needs you, one
-//! when it finished while you weren't looking. Bundled sounds (Limen's), or a
+//! Attention sounds, as Kompitum plays them: one when an agent needs you, one
+//! when it finished while you weren't looking. Bundled sounds (Kompitum's), or a
 //! file from settings.json; played with whichever MP3-capable player exists
 //! (Windows plays them itself).
 
@@ -26,9 +26,9 @@ const PLAYERS: &[(&str, &[&str])] = &[
 #[cfg(not(windows))]
 const PLAYER_LIMIT: Duration = Duration::from_secs(15);
 
-/// `done`, `blocked`, or a file (absolute, or relative to ~/.config/limen-app). Off the UI thread.
+/// `done`, `blocked`, or a file (absolute, or relative to ~/.config/kompitum-app). Off the UI thread.
 pub fn play(sound: &str) {
-    if std::env::var_os("LIMEN_APP_NO_SOUND").is_some() {
+    if std::env::var_os("KOMPITUM_APP_NO_SOUND").is_some() {
         return;
     }
     let sound = sound.to_owned();
@@ -80,7 +80,7 @@ fn bundled(sound: &str) -> Result<PathBuf, String> {
     } else {
         ("blocked", BLOCKED)
     };
-    let path = std::env::temp_dir().join(format!("limen-app-{}-{name}.mp3", std::process::id()));
+    let path = std::env::temp_dir().join(format!("kompitum-app-{}-{name}.mp3", std::process::id()));
     if !path.exists() {
         std::fs::write(&path, bytes)
             .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
@@ -95,7 +95,7 @@ fn play_file(path: &Path) -> Result<(), String> {
     use windows_sys::Win32::Media::Multimedia::mciSendStringW;
     static NEXT: AtomicU32 = AtomicU32::new(0);
     // Its own alias, so two sounds can overlap.
-    let alias = format!("limen{}", NEXT.fetch_add(1, Ordering::Relaxed));
+    let alias = format!("kompitum{}", NEXT.fetch_add(1, Ordering::Relaxed));
     let mci = |cmd: String| {
         let wide: Vec<u16> = cmd.encode_utf16().chain([0]).collect();
         match unsafe {

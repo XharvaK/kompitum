@@ -1,6 +1,6 @@
 use gpui::*;
 
-actions!(limen, [Quit, Hide, HideOthers, ShowAll, Settings]);
+actions!(kompitum, [Quit, Hide, HideOthers, ShowAll, Settings]);
 
 pub fn init(cx: &mut App) {
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -13,16 +13,16 @@ pub fn init(cx: &mut App) {
             args: serde_json::Value::Null,
         })
     });
-    cx.set_menus([Menu::new("Limen").items([
+    cx.set_menus([Menu::new("Kompitum").items([
         MenuItem::action("Settings", Settings),
         MenuItem::separator(),
         MenuItem::os_submenu("Services", SystemMenuType::Services),
         MenuItem::separator(),
-        MenuItem::action("Hide Limen", Hide),
+        MenuItem::action("Hide Kompitum", Hide),
         MenuItem::action("Hide Others", HideOthers),
         MenuItem::action("Show All", ShowAll),
         MenuItem::separator(),
-        MenuItem::action("Quit Limen", Quit),
+        MenuItem::action("Quit Kompitum", Quit),
     ])]);
 }
 

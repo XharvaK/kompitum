@@ -4,7 +4,7 @@
 //! horizontal; its mod reads that with `placement()`.
 //!
 //! A block with `peek` on a side edge is a drawer: the mod draws one full
-//! layout, Limen shows only the `peek` px next to the edge and slides the rest
+//! layout, Kompitum shows only the `peek` px next to the edge and slides the rest
 //! out on hover. Nothing inside moves; only the cut does.
 
 use super::*;
@@ -113,7 +113,7 @@ impl AppWindow {
         Value::Object(out)
     }
 
-    /// Placements plus where each sits in the window (px), for `limen-app status`.
+    /// Placements plus where each sits in the window (px), for `kompitum-app status`.
     pub(super) fn float_status(&self) -> Value {
         let mut v = self.float_placements();
         let bounds = self.bounds.borrow();
@@ -230,7 +230,7 @@ impl AppWindow {
             .absolute()
             .size_full()
         };
-        // Limen draws the frame (like a dialog's), so a closed drawer is a whole
+        // Kompitum draws the frame (like a dialog's), so a closed drawer is a whole
         // slim panel; the mod draws only what's inside, edge to edge.
         let pad = settings::z(FRAME_PAD);
         let border = px(1.0);

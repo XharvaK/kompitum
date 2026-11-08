@@ -3,24 +3,24 @@
 set -eu
 export COPYFILE_DISABLE=1
 if [ "$#" -ne 2 ]; then
-    echo "usage: scripts/package <limen-core binary> <output.tar.gz>" >&2
+    echo "usage: scripts/package <kompitum-core binary> <output.tar.gz>" >&2
     exit 2
 fi
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-work=$(mktemp -d "${TMPDIR:-/var/tmp}/lc-package.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/var/tmp}/kom-package.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 if [ -d "$1/Contents/MacOS" ]; then
-    cp -R "$1" "$work/Limen Core.app"
+    cp -R "$1" "$work/Kompitum Core.app"
     # Old updaters install only this standalone signature. The bundle executable
     # is resource-sealed and cannot be copied out without invalidating it.
-    cp "$(dirname "$1")/limen-core" "$work/limen-core"
+    cp "$(dirname "$1")/kompitum-core" "$work/kompitum-core"
 else
-    cp "$1" "$work/limen-core"
+    cp "$1" "$work/kompitum-core"
 fi
 cp "$root/LICENSE" "$work/LICENSE"
-cp "$root/crates/limen-core/THIRD-PARTY-NOTICES" "$work/THIRD-PARTY-NOTICES"
-if [ -d "$work/Limen Core.app" ]; then
-    tar -czf "$2" -C "$work" limen-core 'Limen Core.app' LICENSE THIRD-PARTY-NOTICES
+cp "$root/crates/kompitum-core/THIRD-PARTY-NOTICES" "$work/THIRD-PARTY-NOTICES"
+if [ -d "$work/Kompitum Core.app" ]; then
+    tar -czf "$2" -C "$work" kompitum-core 'Kompitum Core.app' LICENSE THIRD-PARTY-NOTICES
 else
-    tar -czf "$2" -C "$work" limen-core LICENSE THIRD-PARTY-NOTICES
+    tar -czf "$2" -C "$work" kompitum-core LICENSE THIRD-PARTY-NOTICES
 fi

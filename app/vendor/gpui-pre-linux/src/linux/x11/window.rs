@@ -1744,7 +1744,7 @@ impl PlatformWindow for X11Window {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
-    // LIMEN: capture uses the window's atlas, without acquiring a display surface.
+    // KOMPITUM: capture uses the window's atlas, without acquiring a display surface.
     #[cfg(feature = "render-to-image")]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
         self.0.state.borrow_mut()

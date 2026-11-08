@@ -1,6 +1,6 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, spaces, panes, props, run, setAgentOrder } from "limen";
+import { agents, spaces, panes, props, run, setAgentOrder } from "kompitum";
 
 const wood = "#ab7748", ink = "#414b34";
 const icon = (p) => p?.icon ? (p.tint ? svg(p.icon).text_color(p.color ?? ink) : image(p.icon)).size(17) : div().size(17);

@@ -1,0 +1,10 @@
+{
+  "test_cmd": "python scripts/check_windows.py",
+  "test_timeout_seconds": 1800,
+  "forbid": [
+    "crates/kompitum-core/src/**/*.rs::DETACHED_PROCESS|CREATE_NEW_CONSOLE"
+  ],
+  "warn": [
+    "crates/kompitum-core/src/**/*.rs::Command::new"
+  ]
+}

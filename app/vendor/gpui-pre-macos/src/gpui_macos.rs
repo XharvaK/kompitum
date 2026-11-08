@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-// LIMEN: a vendored copy; upstream builds it with its own lint settings.
+// KOMPITUM: a vendored copy; upstream builds it with its own lint settings.
 #![allow(deprecated, unexpected_cfgs)]
 //! macOS platform implementation for GPUI.
 //!

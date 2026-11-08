@@ -1,5 +1,5 @@
 //! Counts for `scripts/bench.py`: how often the window and terminals are drawn.
-//! With LIMEN_APP_BENCH=<file>, one JSON line per second goes there.
+//! With KOMPITUM_APP_BENCH=<file>, one JSON line per second goes there.
 
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
@@ -65,7 +65,7 @@ pub fn count(c: &AtomicU64) {
 }
 
 pub fn start() {
-    let Some(path) = std::env::var_os("LIMEN_APP_BENCH") else {
+    let Some(path) = std::env::var_os("KOMPITUM_APP_BENCH") else {
         return;
     };
     std::thread::spawn(move || {

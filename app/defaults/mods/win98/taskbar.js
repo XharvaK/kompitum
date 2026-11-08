@@ -5,7 +5,7 @@
 
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { spaces, panes, agents, run, shared, setShared, nextCommand, exec, layouts, home, settings, openOverlay, closeOverlay } from "limen";
+import { spaces, panes, agents, run, shared, setShared, nextCommand, exec, layouts, home, settings, openOverlay, closeOverlay } from "kompitum";
 import {
   C, ASSETS, unit, root, bevel, button, etch, grip, icon, programIcon, sfx, apps, setApp, label, own,
   fitLayout, openMenu, openDialog, dither, perform,
@@ -45,7 +45,7 @@ function longDate(d) {
   return d.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 }
 
-/** Seconds since the Limen app started (exec's parent), or null where ps can't say. */
+/** Seconds since the Kompitum app started (exec's parent), or null where ps can't say. */
 async function appAge() {
   try {
     const r = await exec("sh", ["-c", 'ps -o etime= -p "$PPID"']);
@@ -98,7 +98,7 @@ export default class Taskbar {
       }
     });
     if (shared("win98.start")) setShared("win98.start", null);
-    // Limen just started with this layout on: always boot. Else (a switch to
+    // Kompitum just started with this layout on: always boot. Else (a switch to
     // it, a reload of the mod) the half-hour rule below.
     cx.spawn(async () => {
       const age = await appAge();
@@ -106,7 +106,7 @@ export default class Taskbar {
     });
   }
 
-  // Coming into Limen 98: the boot screen and the welcome (at most every half
+  // Coming into Kompitum 98: the boot screen and the welcome (at most every half
   // hour unless forced), else just the chime (not on every reload of the mod).
   boot(force = false) {
     const now = Date.now();
@@ -207,12 +207,12 @@ export default class Taskbar {
       act: { run: ["space.select", { id: p.id }] },
     }));
     const layoutItems = layouts().map((name) => ({
-      label: name === "win98" ? "Limen 98" : name,
+      label: name === "win98" ? "Kompitum 98" : name,
       radio: name === "win98",
       act: { run: ["layout.switch", { name }] },
     }));
     return [
-      { label: "Limen Update", icon: "update", act: { run: ["app.settings", { section: "updates" }] } },
+      { label: "Kompitum Update", icon: "update", act: { run: ["app.settings", { section: "updates" }] } },
       { sep: true },
       {
         label: "&Programs",
@@ -227,7 +227,7 @@ export default class Taskbar {
                 { label: "Solitaire", icon: "sol", act: { app: "sol" } },
               ] },
               { label: "Office Assistant", icon: "clippy", act: { shared: ["win98.clippy", "on"] } },
-              { label: "Welcome to Limen 98", icon: "start", act: { dialog: { kind: "welcome" } } },
+              { label: "Welcome to Kompitum 98", icon: "start", act: { dialog: { kind: "welcome" } } },
               { label: "Command Palette", icon: "find", act: { run: ["app.palette", {}] } },
             ],
           },

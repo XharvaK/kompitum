@@ -1,10 +1,10 @@
 //! The shell used to check and launch agents on another machine.
 
 pub fn check(commands: &[String]) -> Vec<String> {
-    let posix = "for c; do unalias -- \"$c\" 2>/dev/null; command -v \"$c\" >/dev/null 2>&1 && printf 'limen-has:%s\\n' \"$c\"; done";
+    let posix = "for c; do unalias -- \"$c\" 2>/dev/null; command -v \"$c\" >/dev/null 2>&1 && printf 'kompitum-has:%s\\n' \"$c\"; done";
     in_shell(
         posix,
-        "for c in $argv[2..]; command -v $c >/dev/null 2>&1; and printf 'limen-has:%s\\n' $c; end",
+        "for c in $argv[2..]; command -v $c >/dev/null 2>&1; and printf 'kompitum-has:%s\\n' $c; end",
         posix,
         commands.to_vec(),
     )
@@ -56,14 +56,14 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let dir = std::env::temp_dir().join(format!(
-                "limen-shell-{}-{} 'home",
+                "kompitum-shell-{}-{} 'home",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             std::fs::create_dir_all(dir.join("agent bin")).unwrap();
             let login =
-                "export LIMEN_TEST_LOGIN=loaded\nexport LIMEN_TEST_BIN=\"$HOME/agent bin\"\n";
-            let interactive = "export PATH=\"$LIMEN_TEST_BIN:$PATH\"\nprintf 'rc greeting without newline'\nsleep 0.1\nfixture_function() { :; }\nalias missing_agent='printf alias'\n";
+                "export KOMPITUM_TEST_LOGIN=loaded\nexport KOMPITUM_TEST_BIN=\"$HOME/agent bin\"\n";
+            let interactive = "export PATH=\"$KOMPITUM_TEST_BIN:$PATH\"\nprintf 'rc greeting without newline'\nsleep 0.1\nfixture_function() { :; }\nalias missing_agent='printf alias'\n";
             for (file, text) in [
                 (".zprofile", login.to_owned()),
                 (".zshrc", interactive.to_owned()),
@@ -78,7 +78,7 @@ mod tests {
             let agent = dir.join("agent bin/fixture_agent");
             std::fs::write(
                 &agent,
-                "#!/bin/sh\nprintf '<%s>\\n' \"$LIMEN_TEST_LOGIN\" \"$@\"\n",
+                "#!/bin/sh\nprintf '<%s>\\n' \"$KOMPITUM_TEST_LOGIN\" \"$@\"\n",
             )
             .unwrap();
             std::fs::set_permissions(agent, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -132,15 +132,15 @@ mod tests {
         let out = home.run(check(&commands), Some(shell));
         let stdout = String::from_utf8(out.stdout).unwrap();
         assert!(
-            stdout.contains("limen-has:fixture_agent\n"),
+            stdout.contains("kompitum-has:fixture_agent\n"),
             "{stdout:?}: {}",
             String::from_utf8_lossy(&out.stderr)
         );
         assert!(
-            stdout.contains("limen-has:fixture_function\n"),
+            stdout.contains("kompitum-has:fixture_function\n"),
             "{stdout:?}"
         );
-        assert!(!stdout.contains("limen-has:missing"), "{stdout:?}");
+        assert!(!stdout.contains("kompitum-has:missing"), "{stdout:?}");
     }
 
     fn launches_agent(shell: &str) {
@@ -200,8 +200,11 @@ mod tests {
             Some(shell),
         );
         let stdout = String::from_utf8(out.stdout).unwrap();
-        assert!(stdout.contains("limen-has:fixture_agent\n"), "{stdout:?}");
-        assert!(!stdout.contains("limen-has:missing"), "{stdout:?}");
+        assert!(
+            stdout.contains("kompitum-has:fixture_agent\n"),
+            "{stdout:?}"
+        );
+        assert!(!stdout.contains("kompitum-has:missing"), "{stdout:?}");
         let out = home.run(
             launch(vec![
                 "fixture_agent".into(),
@@ -224,7 +227,7 @@ mod tests {
         assert!(
             String::from_utf8(out.stdout)
                 .unwrap()
-                .contains("limen-has:printf\n")
+                .contains("kompitum-has:printf\n")
         );
         let out = home.run(
             launch(vec![
@@ -273,7 +276,7 @@ mod tests {
         assert!(
             String::from_utf8(out.stdout)
                 .unwrap()
-                .contains("limen-has:fixture_agent\n")
+                .contains("kompitum-has:fixture_agent\n")
         );
         let out = home.run(
             launch(vec!["fixture_agent".into(), "literal".into()]),
@@ -295,7 +298,7 @@ mod tests {
         assert!(
             String::from_utf8(out.stdout)
                 .unwrap()
-                .contains("limen-has:printf\n")
+                .contains("kompitum-has:printf\n")
         );
         let out = home.run(
             launch(vec![

@@ -5,25 +5,25 @@ tests building a fake release):
     scripts/manifest dist > dist/manifest.json
 
 {version, generation, notes, targets: {"<os>-<arch>": {url, sha256}}}.
-Version from crates/limen-core/Cargo.toml, generation from api.rs; the
-notes line from $NOTES, else "limen-core <version>". URLs under
-$RELEASES_URL (default https://releases.limen.invalid)/core/<version>/.
+Version from crates/kompitum-core/Cargo.toml, generation from api.rs; the
+notes line from $NOTES, else "kompitum-core <version>". URLs under
+$RELEASES_URL (default https://releases.kompitum.invalid)/core/<version>/.
 """
 import hashlib, json, os, pathlib, re, sys
 
 root = pathlib.Path(__file__).resolve().parent.parent
-cargo = (root / "crates/limen-core/Cargo.toml").read_text()
+cargo = (root / "crates/kompitum-core/Cargo.toml").read_text()
 version = re.search(r'^version = "(.+)"', cargo, re.M).group(1)
-api = (root / "crates/limen-core/src/api.rs").read_text()
+api = (root / "crates/kompitum-core/src/api.rs").read_text()
 generation = int(re.search(r"pub const GENERATION: u32 = (\d+);", api).group(1))
-base = os.environ.get("RELEASES_URL", "https://releases.limen.invalid").rstrip("/")
+base = os.environ.get("RELEASES_URL", "https://releases.kompitum.invalid").rstrip("/")
 
 targets = {}
-for f in sorted([*pathlib.Path(sys.argv[1]).glob("limen-core-*.tar.gz"), *pathlib.Path(sys.argv[1]).glob("limen-core-*.zip")]):
-    name = f.name.removeprefix("limen-core-").removesuffix(".tar.gz").removesuffix(".zip")
+for f in sorted([*pathlib.Path(sys.argv[1]).glob("kompitum-core-*.tar.gz"), *pathlib.Path(sys.argv[1]).glob("kompitum-core-*.zip")]):
+    name = f.name.removeprefix("kompitum-core-").removesuffix(".tar.gz").removesuffix(".zip")
     targets[name] = {"url": f"{base}/core/{version}/{f.name}", "sha256": hashlib.sha256(f.read_bytes()).hexdigest()}
 if not targets:
-    sys.exit(f"manifest: no limen-core-*.tar.gz or .zip in {sys.argv[1]}")
+    sys.exit(f"manifest: no kompitum-core-*.tar.gz or .zip in {sys.argv[1]}")
 
-doc = {"version": version, "generation": generation, "notes": os.environ.get("NOTES") or f"limen-core {version}", "targets": targets}
+doc = {"version": version, "generation": generation, "notes": os.environ.get("NOTES") or f"kompitum-core {version}", "targets": targets}
 print(json.dumps(doc, indent=2))

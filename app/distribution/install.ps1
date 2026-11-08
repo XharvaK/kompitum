@@ -1,12 +1,12 @@
-# Installs the Limen app on Windows, and limen-core if there's none yet:
+# Installs the Kompitum app on Windows, and kompitum-core if there's none yet:
 #
-#   powershell -c "irm https://releases.limen.invalid/app/install.ps1 | iex"
+#   powershell -c "irm https://releases.kompitum.invalid/app/install.ps1 | iex"
 #
-# The app into %LOCALAPPDATA%\Programs\limen-app (added to your PATH for
-# `limen-app`), Limen in the Start menu. The core, with its own installer,
+# The app into %LOCALAPPDATA%\Programs\kompitum-app (added to your PATH for
+# `kompitum-app`), Kompitum in the Start menu. The core, with its own installer,
 # only if none is there yet; the app keeps it current after that. Running it
 # again updates the app (an open one keeps running until it quits). No admin
-# needed. LIMEN_RELEASES_URL points elsewhere (tests).
+# needed. KOMPITUM_RELEASES_URL points elsewhere (tests).
 
 # Its own scope: under `irm | iex` it would otherwise set the caller's variables.
 & {
@@ -14,10 +14,10 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 # throw, not exit: under `irm | iex`, exit would close the person's window.
-function Fail($why) { throw "limen: $why" }
+function Fail($why) { throw "kompitum: $why" }
 
-$releases = if ($env:LIMEN_RELEASES_URL) { $env:LIMEN_RELEASES_URL.TrimEnd("/") } else { "https://releases.limen.invalid" }
-$dir = Join-Path $env:LOCALAPPDATA "Programs\limen-app"
+$releases = if ($env:KOMPITUM_RELEASES_URL) { $env:KOMPITUM_RELEASES_URL.TrimEnd("/") } else { "https://releases.kompitum.invalid" }
+$dir = Join-Path $env:LOCALAPPDATA "Programs\kompitum-app"
 $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
 if ($arch -ne "AMD64") { Fail "no build for $arch Windows yet (x64 only)" }
 $target = "windows-x86_64"
@@ -27,7 +27,7 @@ if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue) -or -not (Test-Pat
     Fail "needs curl.exe and tar.exe (Windows 10 1803 or newer)"
 }
 
-$tmp = Join-Path ([IO.Path]::GetTempPath()) "limen-install-$PID"
+$tmp = Join-Path ([IO.Path]::GetTempPath()) "kompitum-install-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 try {
     curl.exe -fsSL "$releases/app/latest.json" -o "$tmp\latest.json"
@@ -44,7 +44,7 @@ try {
     $plain = $t.url.StartsWith("$releases/", [StringComparison]::Ordinal) -and $t.url.IndexOfAny([char[]]"?#") -lt 0
     $download = if ($plain) { "$($t.url)?src=$src" } else { $t.url }
 
-    Write-Host "Installing Limen $($m.version) for $target..."
+    Write-Host "Installing Kompitum $($m.version) for $target..."
     curl.exe -fsSL $download -o "$tmp\app.tar.gz"
     if ($LASTEXITCODE) { Fail "download failed: $($t.url)" }
     # .NET, not Get-FileHash: that one fails when PowerShell 7 starts 5.1.
@@ -52,18 +52,18 @@ try {
     try { $got = -join ([Security.Cryptography.SHA256]::Create().ComputeHash($stream) | ForEach-Object { $_.ToString("x2") }) } finally { $stream.Close() }
     if ($got -ne $t.sha256) { Fail "the download is damaged (checksum mismatch); try again" }
     & $tar -xzf "$tmp\app.tar.gz" -C $tmp
-    if ($LASTEXITCODE -or -not (Test-Path "$tmp\limen-app\limen-app.exe")) { Fail "the download holds no complete app" }
+    if ($LASTEXITCODE -or -not (Test-Path "$tmp\kompitum-app\kompitum-app.exe")) { Fail "the download holds no complete app" }
 
     # A running app's folder can be renamed, not deleted: the old one goes
     # now if it can, else on the next install.
     New-Item -ItemType Directory -Force (Split-Path $dir) | Out-Null
     Remove-Item -Recurse -Force "$dir.old" -ErrorAction SilentlyContinue
     if (Test-Path $dir) { Rename-Item $dir "$dir.old" }
-    Move-Item "$tmp\limen-app" $dir
+    Move-Item "$tmp\kompitum-app" $dir
     Remove-Item -Recurse -Force "$dir.old" -ErrorAction SilentlyContinue
 
-    $exe = Join-Path $dir "limen-app.exe"
-    $menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Limen.lnk"
+    $exe = Join-Path $dir "kompitum-app.exe"
+    $menu = Join-Path ([Environment]::GetFolderPath("Programs")) "Kompitum.lnk"
     $link = (New-Object -ComObject WScript.Shell).CreateShortcut($menu)
     $link.TargetPath = $exe
     $link.WorkingDirectory = $env:USERPROFILE
@@ -78,25 +78,25 @@ try {
         $kind = if ($key.GetValueNames() -contains "Path") { $key.GetValueKind("Path") } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
         $key.SetValue("Path", $(if ($raw) { "$($raw.TrimEnd(';'));$dir" } else { $dir }), $kind)
         # Setting any user variable tells running programs the environment changed.
-        [Environment]::SetEnvironmentVariable("LIMEN_INSTALLING", "1", "User")
-        [Environment]::SetEnvironmentVariable("LIMEN_INSTALLING", $null, "User")
+        [Environment]::SetEnvironmentVariable("KOMPITUM_INSTALLING", "1", "User")
+        [Environment]::SetEnvironmentVariable("KOMPITUM_INSTALLING", $null, "User")
     }
     $key.Close()
     if (($env:Path -split ";") -notcontains $dir) { $env:Path += ";$dir" }
 
     # The core: installed only if there's none yet. One that's already there
     # is left alone; the app updates it.
-    $core = Join-Path $env:LOCALAPPDATA "Programs\limen-core\limen-core.exe"
-    if (-not (Test-Path $core) -and -not (Get-Command limen-core -ErrorAction SilentlyContinue)) {
+    $core = Join-Path $env:LOCALAPPDATA "Programs\kompitum-core\kompitum-core.exe"
+    if (-not (Test-Path $core) -and -not (Get-Command kompitum-core -ErrorAction SilentlyContinue)) {
         try {
-            $env:LIMEN_RELEASES_URL = $releases
+            $env:KOMPITUM_RELEASES_URL = $releases
             Invoke-RestMethod "$releases/core/install.ps1" | Invoke-Expression
         } catch {
-            Write-Host "limen-core didn't install; Limen will offer it when it opens."
+            Write-Host "kompitum-core didn't install; Kompitum will offer it when it opens."
         }
     }
 
-    Write-Host "Limen is installed. Open it from the Start menu, or run: limen-app"
+    Write-Host "Kompitum is installed. Open it from the Start menu, or run: kompitum-app"
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }

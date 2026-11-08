@@ -138,7 +138,7 @@ pub fn installed(commands: &[String], on: Option<&str>) -> Vec<String> {
         }
     };
     let found: std::collections::HashSet<&str> = out
-        .split("limen-has:")
+        .split("kompitum-has:")
         .skip(1)
         .filter_map(|s| s.split_whitespace().next())
         .collect();
@@ -156,7 +156,7 @@ fn installed_powershell(commands: &[String]) -> Vec<String> {
         .collect::<Vec<_>>()
         .join(",");
     let script = format!(
-        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); foreach($c in @({list})){{ if(Get-Command $c -ErrorAction SilentlyContinue){{ \"limen-has:$c\" }} }}"
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); foreach($c in @({list})){{ if(Get-Command $c -ErrorAction SilentlyContinue){{ \"kompitum-has:$c\" }} }}"
     );
     vec!["-NoLogo".into(), "-Command".into(), script]
 }
@@ -173,7 +173,7 @@ fn installed_line(commands: &[String], fish: bool) -> String {
                 format!("unalias -- {word} 2>/dev/null; ")
             };
             format!(
-                "{unalias}command -v {word} >/dev/null 2>&1 && printf 'limen-has:%s\\n' {word};"
+                "{unalias}command -v {word} >/dev/null 2>&1 && printf 'kompitum-has:%s\\n' {word};"
             )
         })
         .collect::<Vec<_>>()
@@ -237,7 +237,7 @@ pub fn name(app: &str) -> String {
         .unwrap_or_else(|| app.to_owned())
 }
 
-/// An agent's 7501 `app` as a name Limen ships (`claude` for `claude-code`),
+/// An agent's 7501 `app` as a name Kompitum ships (`claude` for `claude-code`),
 /// else `other` (`unknown` when it gave none): never the person's own words.
 pub fn agent_name(app: Option<&str>) -> String {
     static NAMES: std::sync::OnceLock<BTreeMap<String, String>> = std::sync::OnceLock::new();
@@ -481,11 +481,11 @@ mod tests {
     fn powershell_finds_installed_commands() {
         let out = crate::mods::run_here(
             "powershell.exe",
-            &installed_powershell(&["cmd.exe".into(), "limen_missing_agent_440".into()]),
+            &installed_powershell(&["cmd.exe".into(), "kompitum_missing_agent_440".into()]),
         )
         .unwrap();
-        assert!(out.contains("limen-has:cmd.exe"));
-        assert!(!out.contains("limen-has:limen_missing_agent_440"));
+        assert!(out.contains("kompitum-has:cmd.exe"));
+        assert!(!out.contains("kompitum-has:kompitum_missing_agent_440"));
     }
 
     #[test]
@@ -567,7 +567,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             String::from_utf8(out.stdout).unwrap(),
-            "limen-has:issue57_function\nlimen-has:printf\n"
+            "kompitum-has:issue57_function\nkompitum-has:printf\n"
         );
     }
 

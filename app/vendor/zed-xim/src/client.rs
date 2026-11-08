@@ -49,7 +49,7 @@ impl fmt::Display for ClientError {
 #[cfg(feature = "std")]
 impl std::error::Error for ClientError {}
 
-// LIMEN: malformed or unsupported input from an XIM server must not close the app.
+// KOMPITUM: malformed or unsupported input from an XIM server must not close the app.
 fn decode_text(bytes: &[u8]) -> String {
     xim_ctext::compound_text_to_utf8(bytes).unwrap_or_else(|error| {
         log::warn!("Invalid XIM COMPOUND_TEXT: {}", error);

@@ -1,4 +1,4 @@
-// LIMEN: built-in pure-Rust syntax highlighting for script editors, adapted from Base's showcase.
+// KOMPITUM: built-in pure-Rust syntax highlighting for script editors, adapted from Base's showcase.
 use std::{collections::HashMap, ops::Range, sync::LazyLock};
 
 use gpui::{Context, HighlightStyle, SharedString, Window};
@@ -225,7 +225,7 @@ fn brace_fold_ranges(text: &str) -> Vec<FoldRange> {
     ranges
 }
 
-/// LIMEN: semantic overrides fall back to readable, dark-editor defaults.
+/// KOMPITUM: semantic overrides fall back to readable, dark-editor defaults.
 #[derive(Default)]
 pub(crate) struct SyntaxStyles(pub std::collections::HashMap<String, gpui::Hsla>);
 

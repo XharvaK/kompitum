@@ -4,7 +4,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, props, closeOverlay, theme } from "limen";
+import { run, props, closeOverlay, theme } from "kompitum";
 
 export default class Confirm extends View {
   init(_props, cx) {

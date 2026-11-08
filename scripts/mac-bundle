@@ -1,12 +1,12 @@
 #!/bin/sh
 # Assemble before signing; the same metadata is embedded in the executable.
 set -eu
-bin=${1:?usage: mac-bundle limen-core output.app}
-app=${2:?usage: mac-bundle limen-core output.app}
+bin=${1:?usage: mac-bundle kompitum-core output.app}
+app=${2:?usage: mac-bundle kompitum-core output.app}
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 version=$("$bin" --version)
-version=${version#lc }
+version=${version#kom }
 mkdir -p "$app/Contents/MacOS"
-cp "$bin" "$app/Contents/MacOS/limen-core"
-chmod 755 "$app/Contents/MacOS/limen-core"
+cp "$bin" "$app/Contents/MacOS/kompitum-core"
+chmod 755 "$app/Contents/MacOS/kompitum-core"
 sed "s/@VERSION@/$version/g" "$root/distribution/macos-Info.plist" > "$app/Contents/Info.plist"

@@ -1,5 +1,5 @@
 # Vendored from https://github.com/longbridge/gpui-kit at 1ccf011: only the
-# crates Limen uses. Limen patches are marked `LIMEN:`.
+# crates Kompitum uses. Kompitum patches are marked `KOMPITUM:`.
 [workspace]
 members = [
     "crates/base",

@@ -1,9 +1,9 @@
-// The keybind list (Limen's prefix+?), grouped, filterable by typing.
+// The keybind list (Kompitum's prefix+?), grouped, filterable by typing.
 // Reads keys.json through keys(); edit keys.json to change any of them.
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { keys, props, closeOverlay, theme } from "limen";
+import { keys, props, closeOverlay, theme } from "kompitum";
 
 const GROUPS = [
   ["spaces", /^space\./],

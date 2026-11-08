@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 
 const root = resolve(import.meta.dir, "..");
-const mediaDir = process.env.LIMEN_NOTES_MEDIA_DIR || "/var/tmp/limen-notes-media";
+const mediaDir = process.env.KOMPITUM_NOTES_MEDIA_DIR || "/var/tmp/kompitum-notes-media";
 const limit = 1_500_000;
 export function version(value: string) {
   if (!/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(value)) throw new Error("expected a version such as 0.1.7 (without v)");
@@ -52,13 +52,13 @@ export async function uploadFile(s3: S3Client, key: string, file: ReturnType<typ
 }
 async function upload(v: string) {
   // Parse data, never source credentials as shell code or include them in errors.
-  const credentials = await Bun.file(join(homedir(), ".config/limen-media/env")).text();
+  const credentials = await Bun.file(join(homedir(), ".config/kompitum-media/env")).text();
   const values = Object.fromEntries(credentials.split("\n").flatMap(line => {
     const match = line.match(/^(?:export\s+)?(R2_MEDIA_ACCESS_KEY_ID|R2_MEDIA_SECRET_ACCESS_KEY)=(.*)$/);
     return match ? [[match[1], match[2].trim().replace(/^(['"])(.*)\1$/, "$2")]] : [];
   }));
   if (!values.R2_MEDIA_ACCESS_KEY_ID || !values.R2_MEDIA_SECRET_ACCESS_KEY) throw new Error("missing media credentials");
-  const s3 = new S3Client({ bucket: "limen-media", endpoint: "https://a5347ea585607d822079d0ee4fd5a8aa.r2.cloudflarestorage.com", region: "auto", accessKeyId: values.R2_MEDIA_ACCESS_KEY_ID, secretAccessKey: values.R2_MEDIA_SECRET_ACCESS_KEY });
+  const s3 = new S3Client({ bucket: "kompitum-media", endpoint: "https://a5347ea585607d822079d0ee4fd5a8aa.r2.cloudflarestorage.com", region: "auto", accessKeyId: values.R2_MEDIA_ACCESS_KEY_ID, secretAccessKey: values.R2_MEDIA_SECRET_ACCESS_KEY });
   const dir = join(mediaDir, v);
   const names = (await readdir(dir)).filter(n => /^[a-z0-9-]+\.webp$/.test(n)).sort();
   if (!names.length) throw new Error("no WebP clips to upload");
@@ -72,7 +72,7 @@ async function upload(v: string) {
   for (const name of names) {
     const key = `${v}/${name}`;
     await uploadFile(s3, key, Bun.file(join(dir, name)));
-    console.log(`https://media.limen.invalid/${key}`);
+    console.log(`https://media.kompitum.invalid/${key}`);
   }
 }
 async function clip(scene: string, v: string) {
@@ -80,8 +80,8 @@ async function clip(scene: string, v: string) {
   const script = join(root, "scripts/notes-clips", scene + ".sh");
   if (!await Bun.file(script).exists()) throw new Error(`unknown scene: ${scene}`);
   const name = `notes-clip-${scene}-${process.pid}`;
-  const env = { ...process.env, LIMEN_APP_SANDBOX: name, LIMEN_APP_HOME: `/var/tmp/limen-app-${name}/home` };
-  const frames = await mkdtemp("/var/tmp/limen-notes-frames-");
+  const env = { ...process.env, KOMPITUM_APP_SANDBOX: name, KOMPITUM_APP_HOME: `/var/tmp/kompitum-app-${name}/home` };
+  const frames = await mkdtemp("/var/tmp/kompitum-notes-frames-");
   const pointerFile = join(frames, "pointer.json");
   const crop = (await Bun.$`bash ${script} crop`.cwd(root).quiet().text()).trim();
   if (!/^\d+:\d+:\d+:\d+$/.test(crop)) throw new Error("scene crop must be width:height:x:y");
@@ -91,11 +91,11 @@ async function clip(scene: string, v: string) {
   try {
     await run(["bash", sandbox, "up"], env);
     await run(["bash", script, "setup"], env);
-    action = Bun.spawn(["bash", script, "play"], { cwd: root, env: { ...env, LIMEN_NOTES_POINTER_FILE: pointerFile }, stdout: "inherit", stderr: "inherit" });
+    action = Bun.spawn(["bash", script, "play"], { cwd: root, env: { ...env, KOMPITUM_NOTES_POINTER_FILE: pointerFile }, stdout: "inherit", stderr: "inherit" });
     const start = performance.now();
     for (let i = 0; i < 60; i++) {
       await Bun.sleep(Math.max(0, start + i * 1000 / 12 - performance.now()));
-      await run([join(root, "target/debug/limen-app"), "shot", join(frames, `${String(i).padStart(3, "0")}.png`)], env);
+      await run([join(root, "target/debug/kompitum-app"), "shot", join(frames, `${String(i).padStart(3, "0")}.png`)], env);
       pointers.push(await Bun.file(pointerFile).exists() ? await Bun.file(pointerFile).json() : { x: 650, y: 400, cursor: "arrow" });
     }
     if (performance.now() - start > 5500) throw new Error("capture fell behind 12 fps; close other workloads and retry");

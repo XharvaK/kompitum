@@ -1214,7 +1214,7 @@ impl X11Client {
                         }
                         let composing = compose_state.status() == xkbc::Status::Composing;
                         state.compose_state = Some(compose_state);
-                        // LIMEN: a dead key's physical US key must not reach Kitty input.
+                        // KOMPITUM: a dead key's physical US key must not reach Kitty input.
                         if composing {
                             return Some(());
                         }

@@ -1,6 +1,6 @@
-//! `limen-app do <command> [--arg value ... | json]`, `limen-app ls`, `limen-app commands`
-//! and `limen-app status`: drive a running window from a shell (agents, tests)
-//! over `$LIMEN_APP_HOME/limen-app.sock`, one JSON line each way.
+//! `kompitum-app do <command> [--arg value ... | json]`, `kompitum-app ls`, `kompitum-app commands`
+//! and `kompitum-app status`: drive a running window from a shell (agents, tests)
+//! over `$KOMPITUM_APP_HOME/kompitum-app.sock`, one JSON line each way.
 
 use crate::mods::{self, Request};
 use serde_json::{Value, json};
@@ -13,7 +13,7 @@ use std::time::Duration;
 use uds_windows::{UnixListener, UnixStream};
 
 fn socket() -> PathBuf {
-    mods::app_dir().join("limen-app.sock")
+    mods::app_dir().join("kompitum-app.sock")
 }
 
 /// Serves the socket for this window. A live socket means another window owns this home.
@@ -21,7 +21,7 @@ pub fn listen(tx: async_channel::Sender<Request>) {
     let path = socket();
     if UnixStream::connect(&path).is_ok() {
         tracing::warn!(
-            "another Limen is serving {}; `limen-app do` goes there",
+            "another Kompitum is serving {}; `kompitum-app do` goes there",
             path.display()
         );
         return;
@@ -32,7 +32,7 @@ pub fn listen(tx: async_channel::Sender<Request>) {
         Err(e) => return tracing::warn!("cannot serve {}: {e}", path.display()),
     };
     let _ = std::thread::Builder::new()
-        .name("limen-app-control".into())
+        .name("kompitum-app-control".into())
         .spawn(move || {
             for stream in listener.incoming().flatten() {
                 let tx = tx.clone();
@@ -63,7 +63,7 @@ fn serve(stream: UnixStream, tx: async_channel::Sender<Request>) {
     let _ = (&stream).write_all(format!("{reply}\n").as_bytes());
 }
 
-/// One Limen per home: a second launch brings the running window to the
+/// One Kompitum per home: a second launch brings the running window to the
 /// front and quits. True when one is running (even one too busy to answer:
 /// a second window would ring every alert twice).
 pub fn raise_running() -> bool {
@@ -95,7 +95,11 @@ pub fn client(args: &[String]) -> i32 {
     }
     let cmd = match args {
         [verb, rest @ ..] if verb == "shot" && rest.len() <= 1 => {
-            let path = PathBuf::from(rest.first().map(String::as_str).unwrap_or("limen-shot.png"));
+            let path = PathBuf::from(
+                rest.first()
+                    .map(String::as_str)
+                    .unwrap_or("kompitum-shot.png"),
+            );
             let path = match std::path::absolute(path) {
                 Ok(path) => path,
                 Err(e) => return fail(&format!("cannot resolve screenshot path: {e}")),
@@ -119,7 +123,7 @@ pub fn client(args: &[String]) -> i32 {
         },
         _ => {
             return fail(
-                "usage: limen-app ls | limen-app commands | limen-app status | limen-app shot [file.png] | limen-app do <command> [--arg value ... | json]",
+                "usage: kompitum-app ls | kompitum-app commands | kompitum-app status | kompitum-app shot [file.png] | kompitum-app do <command> [--arg value ... | json]",
             );
         }
     };
@@ -132,11 +136,16 @@ pub fn client(args: &[String]) -> i32 {
                 serde_json::to_string_pretty(&body).unwrap_or_default()
             );
             eprintln!(
-                "Limen must be open to review and send this feedback. Nothing was sent; core version and layout will reflect the open window."
+                "Kompitum must be open to review and send this feedback. Nothing was sent; core version and layout will reflect the open window."
             );
             return 1;
         }
-        Err(e) => return fail(&format!("no Limen window at {}: {e}", socket().display())),
+        Err(e) => {
+            return fail(&format!(
+                "no Kompitum window at {}: {e}",
+                socket().display()
+            ));
+        }
     };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(35)));
     let mut line = String::new();
@@ -201,7 +210,7 @@ pub fn save_shot(window: &gpui::Window, path: &std::path::Path) -> anyhow::Resul
         encoder.write_header()?.write_image_data(image.as_raw())?;
     }
     // A sibling temporary file keeps publication on the same filesystem.
-    let temporary = path.with_file_name(format!(".limen-shot-{}.png", std::process::id()));
+    let temporary = path.with_file_name(format!(".kompitum-shot-{}.png", std::process::id()));
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -220,7 +229,7 @@ pub fn save_shot(window: &gpui::Window, path: &std::path::Path) -> anyhow::Resul
 }
 
 fn fail(message: &str) -> i32 {
-    eprintln!("limen-app: {message}");
+    eprintln!("kompitum-app: {message}");
     2
 }
 
@@ -230,9 +239,9 @@ mod tests {
 
     #[test]
     fn a_second_launch_raises_the_running_window() {
-        let dir = std::env::temp_dir().join(format!("limen-app-raise-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kompitum-app-raise-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("limen-app.sock");
+        let path = dir.join("kompitum-app.sock");
         // Nothing running: this launch opens its own window.
         assert!(!raise_running_at(&path));
         // One running: it gets asked to come to the front.

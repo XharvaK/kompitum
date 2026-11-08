@@ -3540,10 +3540,10 @@ mod tests {
     }
 }
 
-// LIMEN: HTML paragraphs carry no source spans; two inline flows in one HTML
+// KOMPITUM: HTML paragraphs carry no source spans; two inline flows in one HTML
 // block used to share an element id and panic in prepaint.
 #[cfg(test)]
-mod limen_html_inline_flows {
+mod kompitum_html_inline_flows {
     use super::*;
     use gpui::{div, prelude::*, px, TestAppContext};
 

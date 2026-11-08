@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "limen";
+import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;

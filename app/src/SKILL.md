@@ -1,22 +1,22 @@
-# limen-app: drive the person's window
+# kompitum-app: drive the person's window
 
-Limen shows spaces, tabs and panes. limen-core (`lc`) runs their terminals
-and keeps them alive when the window closes. Use `limen-app` only to change
+Kompitum shows spaces, tabs and panes. kompitum-core (`kom`) runs their terminals
+and keeps them alive when the window closes. Use `kompitum-app` only to change
 what the person sees. For starting, reading, messaging, waiting on or cleaning
-up agents and programs, read `lc --skill` and use lc.
-Your terminal address is `$LIMEN_TERMINAL_ID`; it is not a pane ID.
+up agents and programs, read `kom --skill` and use kom.
+Your terminal address is `$KOMPITUM_TERMINAL_ID`; it is not a pane ID.
 
 ## Inspect before acting
 
 ```sh
-limen-app ls          # spaces > tabs > terminals, including pane IDs
-limen-app status      # current layout, focus, overlays, zoom and file/mod errors
-limen-app commands    # available commands, arguments and descriptions
+kompitum-app ls          # spaces > tabs > terminals, including pane IDs
+kompitum-app status      # current layout, focus, overlays, zoom and file/mod errors
+kompitum-app commands    # available commands, arguments and descriptions
 ```
 
 `ls` and `status` talk to the running window, not a new app. `commands`
 prints the built-in command list even without an open window. Do not launch bare
-`limen-app` to inspect it: that opens or raises the window. Do not stop,
+`kompitum-app` to inspect it: that opens or raises the window. Do not stop,
 signal or restart the person's app or core. A window closing does not kill
 its terminals.
 
@@ -31,16 +31,16 @@ default names. Use IDs from `ls` rather than guessing or acting on the wrong
 focused pane.
 
 ```sh
-limen-app do space.new --name api --folder /path/to/api
-limen-app do tab.new --name "fix login" --argv '["claude"]' --task "Look at the login bug"
-limen-app do pane.split --direction right --pane p12
-limen-app do agent.focus --terminal t7
+kompitum-app do space.new --name api --folder /path/to/api
+kompitum-app do tab.new --name "fix login" --argv '["claude"]' --task "Look at the login bug"
+kompitum-app do pane.split --direction right --pane p12
+kompitum-app do agent.focus --terminal t7
 ```
 
 For a remote space:
 
 ```sh
-limen-app do space.new --name "remote api" --machine vps --folder /srv/api
+kompitum-app do space.new --name "remote api" --machine vps --folder /srv/api
 ```
 
 The folder is on that machine; tabs and splits in the space stay there.
@@ -54,8 +54,8 @@ including when `--argv` supplies a program. Without `--folder`, it follows the
 focused terminal's folder. If an inherited local folder was deleted, new spaces,
 tabs and splits retry in that machine's home. An explicit invalid folder
 still fails.
-`lc machine ls` lists machines. Use `lc run --on vps ...`, `lc exec --on vps ...`
-and `lc file ... --on vps ...` for remote work, not your local file tools.
+`kom machine ls` lists machines. Use `kom run --on vps ...`, `kom exec --on vps ...`
+and `kom file ... --on vps ...` for remote work, not your local file tools.
 
 `do` accepts `--key value` arguments (JSON for arrays/objects) or one JSON
 object. Unknown argument names fail and list valid names. Target IDs (`id`,
@@ -64,7 +64,7 @@ the current-target default can apply. Null keeps its omitted-argument meaning.
 Use `commands` to confirm the command's exact shape:
 
 ```sh
-limen-app do pane.split '{"direction":"right","pane":"p12"}'
+kompitum-app do pane.split '{"direction":"right","pane":"p12"}'
 ```
 
 `pane.swap {pane?, direction | target}` trades the places of `pane` (default:
@@ -72,7 +72,7 @@ the focused one) and its neighbor in a direction, or `target`, another pane of
 the same tab. Give `direction` or `target`, not both. Focus stays with the same pane:
 
 ```sh
-limen-app do pane.swap '{"pane":"p12","target":"p14"}'
+kompitum-app do pane.swap '{"pane":"p12","target":"p14"}'
 ```
 
 `terminal.search` opens a find bar in the focused terminal. It searches that
@@ -88,28 +88,29 @@ terminal was created, not that its program started correctly. If it exits
 with a nonzero code within two seconds, the window shows an error toast with
 the exit code and last output lines.
 
-A terminal started with lc opts into the window with `limen.space=<id>`.
-`limen.tab=<id>` chooses its tab; without it, Limen creates a tab in that space.
+A terminal started with kom opts into the window with `kompitum.space=<id>`.
+`kompitum.tab=<id>` chooses its tab; without it, Kompitum creates a tab in that space.
 Unlabeled workers stay hidden. Do not add labels just to run a background
 worker. Use app commands when the
-user wants to see a new tab or split, lc for orchestration that need not change
+user wants to see a new tab or split, kom for orchestration that need not change
 the screen.
 
 ## Customize layouts, keys, or mods
 
-First read `~/.config/limen-app/AGENTS.md` (or `$LIMEN_APP_HOME/AGENTS.md` if
+First read `~/.config/kompitum-app/AGENTS.md` (or `$KOMPITUM_APP_HOME/AGENTS.md` if
 set). It is the installed guide to settings, layouts, commands and mods.
 Read the generated `.d.ts` files beside it for full API details; do not edit
 those files or the generated guide. The app rewrites them on start.
 
-- Home defaults to `~/.config/limen-app`; `LIMEN_APP_HOME` selects another.
+- Home defaults to `~/.config/kompitum-app`; `KOMPITUM_APP_HOME` selects another.
+  Legacy names: `LIMEN_*` settings are still read as the old names of `KOMPITUM_*`, and the old folders are copied on first start.
 - Mods live in `mods/<name>/` with `main.js` and optional `mod.json`.
   They are trusted JavaScript with command and network access.
   `"focusable": true` in `mod.json` lets `pane.go` move onto a copy; it receives
   `"focus"` from `nextCommand()` and focuses its own keyboard handle.
-- Shipped mods belong to Limen: duplicate with `mod.clone` before editing.
+- Shipped mods belong to Kompitum: duplicate with `mod.clone` before editing.
   Shipped layouts likewise use `layout.clone` for a personal copy.
-  Discover required arguments with `limen-app commands`.
+  Discover required arguments with `kompitum-app commands`.
 - Save to reload. A broken save keeps the old version running and reports
   an error in `status`; a still-working screen is not proof the edit worked.
 - Make only the requested change. Don't touch unrelated mods or settings.
@@ -124,9 +125,9 @@ those files or the generated guide. The app rewrites them on start.
 After every mod change:
 
 ```sh
-limen-app check ~/.config/limen-app/mods/<name>
-limen-app status
-limen-app shot /tmp/mod.png   # then look at the picture
+kompitum-app check ~/.config/kompitum-app/mods/<name>
+kompitum-app status
+kompitum-app shot /tmp/mod.png   # then look at the picture
 ```
 
 `check` loads the mod and renders it once. It exits nonzero with the exact
@@ -135,16 +136,16 @@ untouched. Never call a mod done without a passing check. Then confirm it is
 shown correctly in the running window with `shot`; don't claim a visual
 check you haven't made.
 
-`limen-app shot [file.png]` saves the window's last frame and prints its
-absolute path (default: `limen-shot.png` in your current folder). It is the
+`kompitum-app shot [file.png]` saves the window's last frame and prints its
+absolute path (default: `kompitum-shot.png` in your current folder). It is the
 app's own rendering at full pixel size: terminals, images, overlays and
 floats included, even when the window is covered or minimized. No screen
 capture or permissions. It needs a running window that has drawn a frame;
-`LIMEN_APP_HOME` selects the window, as for `status`.
+`KOMPITUM_APP_HOME` selects the window, as for `status`.
 
 ## Problems and safety
 
-If Limen misbehaves, `limen-app feedback "<what happened>"` drafts a report.
+If Kompitum misbehaves, `kompitum-app feedback "<what happened>"` drafts a report.
 The person reviews and sends it; it does not silently send feedback.
 
 Never experiment with pointer/key automation on the person's real display.

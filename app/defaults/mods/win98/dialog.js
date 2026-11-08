@@ -3,9 +3,9 @@
 //   confirm   { title, text, icon, buttons: [{ label, default, act }] }
 //   message   { title, text, icon }
 //   run       Run...: a command line in a new tab
-//   shutdown  Shut Down Limen: stand by, shut down, restart, MS-DOS mode
+//   shutdown  Shut Down Kompitum: stand by, shut down, restart, MS-DOS mode
 //   logoff    back to the main layout
-//   about     About Limen 98
+//   about     About Kompitum 98
 //   taskman   Close Program: every terminal, End Task kills it
 //   display   Display Properties: scale, desktop color, sounds, assistant
 //   datetime  Date/Time Properties
@@ -15,8 +15,8 @@
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import {
-  props, closeOverlay, run, shared, setShared, terminals, spaces, agents, updates, lc, layout, openOverlay, home, settings,
-} from "limen";
+  props, closeOverlay, run, shared, setShared, terminals, spaces, agents, updates, kom, layout, openOverlay, home, settings,
+} from "kompitum";
 import {
   C, ASSETS, FONT, DOS, unit, root, win, bevel, button, field, well, label, plain, icon, programIcon, sfx, perform, etch,
   scale, gradient, openDialog, dosPath, setApp,
@@ -25,13 +25,13 @@ import { userName } from "./taskbar.js";
 
 const KIND_TITLE = {
   run: "Run",
-  shutdown: "Shut Down Limen",
-  logoff: "Log Off Limen",
-  about: "About Limen 98",
+  shutdown: "Shut Down Kompitum",
+  logoff: "Log Off Kompitum",
+  about: "About Kompitum 98",
   taskman: "Close Program",
   display: "Display Properties",
   datetime: "Date/Time Properties",
-  welcome: "Welcome to Limen 98",
+  welcome: "Welcome to Kompitum 98",
   mycomputer: "My Computer",
   network: "Network Neighborhood",
   bin: "Recycle Bin",
@@ -65,7 +65,7 @@ export default class Dialog {
     if ((this.kind === "prompt" && p.machines) || this.kind === "network")
       cx.spawn(async (cx) => {
         try {
-          const r = await lc(["machine", "ls", "--json"]);
+          const r = await kom(["machine", "ls", "--json"]);
           this.machines = r.code === 0 ? (JSON.parse(r.stdout).machines ?? []).filter((m) => !m.temporary) : [];
         } catch {}
         cx.notify();
@@ -128,7 +128,7 @@ export default class Dialog {
             .child("It's now safe to turn off")
             .child("your computer."),
         );
-    const msg = this.p.mode === "shutdown" || this.stage === 0 ? "Limen is shutting down..." : "Starting Limen 98...";
+    const msg = this.p.mode === "shutdown" || this.stage === 0 ? "Kompitum is shutting down..." : "Starting Kompitum 98...";
     return div()
       .size_full()
       .relative()
@@ -394,7 +394,7 @@ export default class Dialog {
           .gap(u(12))
           .items_start()
           .child(icon(u, "run", 32))
-          .child(v_flex().flex_1().children(lines("Type the name of a program, and Limen will\nopen it for you in a new window."))),
+          .child(v_flex().flex_1().children(lines("Type the name of a program, and Kompitum will\nopen it for you in a new window."))),
       )
       .child(
         h_flex()
@@ -473,7 +473,7 @@ export default class Dialog {
             v_flex()
               .flex_1()
               .gap(u(2))
-              .child("Limen 98")
+              .child("Kompitum 98")
               .child(`Version ${up?.app?.version ?? "4.10.1998"} Second Edition`)
               .child("Copyright \u00a9 1981-2026 The Herd Corp.")
               .child(div().h(u(6)))
@@ -485,7 +485,7 @@ export default class Dialog {
               .child(div().h(u(4)))
               .child(`Terminals running:  ${n}`)
               .child(`Agents at work:  ${a}`)
-              .child(`limen-core:  ${up?.core?.version ?? "?"}`)
+              .child(`kompitum-core:  ${up?.core?.version ?? "?"}`)
               .child("Physical memory available to agents:  64.0 MB RAM"),
           ),
       )
@@ -627,7 +627,7 @@ export default class Dialog {
         .child(this.check(u, "snd", "Play &sounds (startup, dialogs, games)", shared("win98.mute") !== true, () => setShared("win98.mute", shared("win98.mute") !== true)))
         .child(this.check(u, "clippy", "Show the &Office Assistant", shared("win98.clippy") !== "off", () => setShared("win98.clippy", shared("win98.clippy") === "off" ? "on" : "off")))
         .child(etch(u))
-        .child(v_flex().text_color(C.gray).children(lines("Sounds also follow Limen's own setting\n(Control Panel > Alerts)."))),
+        .child(v_flex().text_color(C.gray).children(lines("Sounds also follow Kompitum's own setting\n(Control Panel > Alerts)."))),
       v_flex()
         .gap(u(10))
         .p(u(6))
@@ -635,7 +635,7 @@ export default class Dialog {
         .child(this.radio(u, "s1", "&Small Fonts (pixel perfect)", scaleNow === 1, () => setShared("win98.scale", 1)))
         .child(this.radio(u, "s2", "&Large Fonts (every pixel doubled)", scaleNow === 2, () => setShared("win98.scale", 2)))
         .child(etch(u))
-        .child(v_flex().text_color(C.gray).children(lines(`Limen's zoom is ${settings()?.zoom ?? 1}x; Limen 98 draws whole\npixels at any zoom.`))),
+        .child(v_flex().text_color(C.gray).children(lines(`Kompitum's zoom is ${settings()?.zoom ?? 1}x; Kompitum 98 draws whole\npixels at any zoom.`))),
     ][this.page];
     return v_flex()
       .p(u(8))
@@ -777,11 +777,11 @@ export default class Dialog {
 
   renderWelcome(u) {
     const items = [
-      { icon: "programs", title: "Begin an Agent", text: "Limen runs your coding agents in windows,\nlike it's 1998 and the future at once.\n\nStart one from Start > Programs > Agents,\nor open the Run box and type its name.", go: "&Run...", act: { dialog: { kind: "run", value: "claude" } } },
-      { icon: "help", title: "Discover Limen 98", text: "The taskbar is your tabs. The folders on\nthe desktop are your spaces. Each window\nis a pane: double-click its title bar to\nmaximize it, or use _ to minimize the tab.\n\nCtrl+Esc opens the Start menu.", go: "&Help", act: { run: ["app.help", {}] } },
+      { icon: "programs", title: "Begin an Agent", text: "Kompitum runs your coding agents in windows,\nlike it's 1998 and the future at once.\n\nStart one from Start > Programs > Agents,\nor open the Run box and type its name.", go: "&Run...", act: { dialog: { kind: "run", value: "claude" } } },
+      { icon: "help", title: "Discover Kompitum 98", text: "The taskbar is your tabs. The folders on\nthe desktop are your spaces. Each window\nis a pane: double-click its title bar to\nmaximize it, or use _ to minimize the tab.\n\nCtrl+Esc opens the Start menu.", go: "&Help", act: { run: ["app.help", {}] } },
       { icon: "mines", title: "Play Mines", text: "Your agent is thinking.\nYou've earned a break.\n\nSolitaire is on the desktop too.", go: "&Play", act: { app: "mines" } },
-      { icon: "taskman", title: "Maintain Your Computer", text: "See every program Limen runs, and end\nthe ones you don't need anymore.\n\nCtrl+Shift+Esc opens it anytime.", go: "&Open", act: { dialog: { kind: "taskman" } } },
-      { icon: "logoff", title: "Leave Limen 98", text: "Miss the future? Log Off takes you\nback to Limen's normal layout.\nYour terminals keep running.", go: "&Log Off", act: { dialog: { kind: "logoff" } } },
+      { icon: "taskman", title: "Maintain Your Computer", text: "See every program Kompitum runs, and end\nthe ones you don't need anymore.\n\nCtrl+Shift+Esc opens it anytime.", go: "&Open", act: { dialog: { kind: "taskman" } } },
+      { icon: "logoff", title: "Leave Kompitum 98", text: "Miss the future? Log Off takes you\nback to Kompitum's normal layout.\nYour terminals keep running.", go: "&Log Off", act: { dialog: { kind: "logoff" } } },
     ];
     const it = items[this.sel] ?? items[0];
     const show = shared("win98.welcome") !== "off";
@@ -801,7 +801,7 @@ export default class Dialog {
               .gap(u(6))
               .child(icon(u, "start", 32))
               .child(div().text_size(u(22)).line_height(`${u(26)}px`).text_color(C.navy).child("Welcome to"))
-              .child(div().text_size(u(22)).line_height(`${u(26)}px`).font_weight(700).text_color(C.text).child("Limen"))
+              .child(div().text_size(u(22)).line_height(`${u(26)}px`).font_weight(700).text_color(C.text).child("Kompitum"))
               .child(div().text_size(u(22)).line_height(`${u(26)}px`).text_color("#d07000").child("98")),
           ),
       )
@@ -859,7 +859,7 @@ export default class Dialog {
           .p(u(8))
           .justify_between()
           .items_center()
-          .child(this.check(u, "wl-show", "&Show this screen each time Limen 98 starts", show, () => setShared("win98.welcome", show ? "off" : "on")))
+          .child(this.check(u, "wl-show", "&Show this screen each time Kompitum 98 starts", show, () => setShared("win98.welcome", show ? "off" : "on")))
           .child(this.btn(u, "close", "&Close", () => this.close())),
       );
   }
@@ -904,7 +904,7 @@ export default class Dialog {
         .w_full()
         .min_h(0),
     ).child(
-      this.frame(u, p.title ?? KIND_TITLE[this.kind] ?? "Limen", body, {
+      this.frame(u, p.title ?? KIND_TITLE[this.kind] ?? "Kompitum", body, {
         icon: iconFor ? icon(u, iconFor, 16) : null,
         help: !explorerish,
       }),

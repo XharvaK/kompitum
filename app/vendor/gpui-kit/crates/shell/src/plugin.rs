@@ -1254,7 +1254,7 @@ fn load_view_with_policy(
     loaded
 }
 
-// LIMEN: describe the same loaded JS view repeatedly without native materialization.
+// KOMPITUM: describe the same loaded JS view repeatedly without native materialization.
 #[cfg(feature = "render-test-support")]
 pub struct DescriptionSession {
     runtime: Rc<ShellRuntime>,
@@ -1370,7 +1370,7 @@ impl ShellRuntime {
         let object = view.read(cx).object().clone();
         let policy = view.read(cx).policy();
         let snapshot = self.build_snapshot(&object, Some(view), policy, window, cx)?;
-        // LIMEN: retained native state needs a current GPUI view even when
+        // KOMPITUM: retained native state needs a current GPUI view even when
         // checking only constructs elements, without laying out their contents.
         struct CheckView {
             runtime: Rc<ShellRuntime>,

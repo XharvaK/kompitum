@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { lc, exec, theme, notify, openOverlay, closeOverlay, shared, setShared, props } from "limen";
+import { kom, exec, theme, notify, openOverlay, closeOverlay, shared, setShared, props } from "kompitum";
 
 const LEAD_KEY = "lead";
 const DOOR = "grokbot://";
@@ -81,8 +81,8 @@ function errorText(e) {
   return String(e);
 }
 
-async function lcJson(args) {
-  const r = await lc(args);
+async function komJson(args) {
+  const r = await kom(args);
   if (!r || r.code !== 0) throw new Error(errorText(r));
   let data;
   try {
@@ -94,8 +94,8 @@ async function lcJson(args) {
   return data;
 }
 
-async function lcOk(args) {
-  const r = await lc(args);
+async function komOk(args) {
+  const r = await kom(args);
   if (!r || r.code !== 0) throw new Error(errorText(r));
   return r;
 }
@@ -176,8 +176,8 @@ function markdown(parts) {
 
 async function handoffMarkdown() {
   const [status, vault] = await Promise.all([
-    lcJson(["status", "--json"]),
-    lcJson(["vault", "open", "--json", "--as", "opus"]),
+    komJson(["status", "--json"]),
+    komJson(["vault", "open", "--json", "--as", "opus"]),
   ]);
   const parts = [
     "The Owner handed Manager the lead because Claude's quota is out.",
@@ -195,8 +195,8 @@ async function handoffMarkdown() {
 
 async function backMarkdown(at) {
   const [status, vault] = await Promise.all([
-    lcJson(["status", "--json"]),
-    lcJson(["vault", "thread", "manager", "--json", "--as", "opus"]),
+    komJson(["status", "--json"]),
+    komJson(["vault", "thread", "manager", "--json", "--as", "opus"]),
   ]);
   const parts = ["The lead is back with Opus."];
   const tasks = [];
@@ -287,7 +287,7 @@ export default class Lead extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const r = await lcOk([
+        const r = await komOk([
           "vault",
           "post",
           "--as",

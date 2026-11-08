@@ -3,7 +3,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "limen";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -110,7 +110,7 @@ export default class Agents extends View {
     const pending = this.pendingPins.filter((address) => {
       const terminal = listed.get(address);
       if (!terminal) return true;
-      if (terminal.labels?.["limen.pinned"]) return false;
+      if (terminal.labels?.["kompitum.pinned"]) return false;
       if (!this.migratingPins.has(address)) {
         this.migratingPins.add(address);
         run("terminal.pin", { terminal: address, pinned: true });

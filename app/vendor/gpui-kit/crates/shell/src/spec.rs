@@ -262,7 +262,7 @@ pub(crate) enum Component {
     /// out one where the other was asked for, and `Textarea::new` will not take
     /// an `InputState`.
     Textarea(crate::entities::EntityHandle),
-    // LIMEN: source-code editor element, backed by retained EditorState.
+    // KOMPITUM: source-code editor element, backed by retained EditorState.
     Editor(crate::entities::EntityHandle),
 
     /// A spinbutton frame over the same `InputState` a [`Component::Input`]
@@ -686,7 +686,7 @@ impl Component {
             Component::Scrollbar(_) => "Scrollbar",
             Component::Input(_) => "Input",
             Component::Textarea(_) => "Textarea",
-            // LIMEN: source editor in spec diagnostics.
+            // KOMPITUM: source editor in spec diagnostics.
             Component::Editor(_) => "Editor",
             Component::NumberInput(_) => "NumberInput",
             Component::OtpInput(_) => "OtpInput",
@@ -1390,7 +1390,7 @@ impl SpecArena {
             | Component::SliderThumb(handle) => out.push_str(&format!(" #{handle}")),
             Component::Input(handle)
             | Component::Textarea(handle)
-            // LIMEN: editor handles also participate in retained-state reachability.
+            // KOMPITUM: editor handles also participate in retained-state reachability.
             | Component::Editor(handle)
             | Component::NumberInput(handle)
             | Component::OtpInput(handle) => out.push_str(&format!(" #{handle}")),

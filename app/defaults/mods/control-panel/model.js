@@ -68,8 +68,8 @@ export function collectRows(agents = [], terminals = [], spaces = []) {
       const machine = machineOf(t.address);
       const labels = t.labels ?? {};
       const qualify = id => machine && id && !id.startsWith(`${machine}/`) ? `${machine}/${id}` : id;
-      const space = spaces.find(s => (s.machine ?? null) === machine && s.id === qualify(labels["limen.space"]));
-      const tab = space?.tabs?.find(tab => tab.id === qualify(labels["limen.tab"]));
+      const space = spaces.find(s => (s.machine ?? null) === machine && s.id === qualify(labels["kompitum.space"]));
+      const tab = space?.tabs?.find(tab => tab.id === qualify(labels["kompitum.tab"]));
       if (space && tab) return { space: space.id, space_name: space.name, tab: tab.id, tab_name: tab.name, tab_index: tab.index };
       t = raw.get(t.parent) ?? raw.get(qualify(t.parent));
     }

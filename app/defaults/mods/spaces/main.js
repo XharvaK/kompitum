@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, lc, theme, shared, setShared, watchFolder, window, layout, pickFolder } from "limen";
+import { spaces, machines, panes, run, openOverlay, exec, kom, theme, shared, setShared, watchFolder, window, layout, pickFolder } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -30,7 +30,7 @@ const RAIL_CELL = 32;
 const railCell = (el) => h_flex().flex_none().justify_center().child(el);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
-// Changes made outside Limen (an editor's save, a commit in another app): looked
+// Changes made outside Kompitum (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
 
@@ -125,7 +125,7 @@ export default class Spaces extends View {
 
   refreshMachines(cx) {
     cx.spawn(async cx => {
-      try { const r = await lc(["machine", "ls", "--json"]); if (r.code === 0) this.machines = (JSON.parse(r.stdout).machines ?? []).filter((m) => !m.temporary); } catch {}
+      try { const r = await kom(["machine", "ls", "--json"]); if (r.code === 0) this.machines = (JSON.parse(r.stdout).machines ?? []).filter((m) => !m.temporary); } catch {}
       cx.notify();
     });
   }
@@ -145,7 +145,7 @@ export default class Spaces extends View {
     cx.spawn(async cx => {
       try {
         const ask = async args => {
-          const r = await lc([...args, "--json"]);
+          const r = await kom([...args, "--json"]);
           if (r.code !== 0) {
             let error;
             try { error = JSON.parse(r.stdout || r.stderr).error?.message; } catch {}
@@ -365,7 +365,7 @@ export default class Spaces extends View {
     });
   }
 
-  // Only what's unusual, after the name: "limen \u00b7 spike \u21912 \u21931". The repo or
+  // Only what's unusual, after the name: "kompitum \u00b7 spike \u21912 \u21931". The repo or
   // branch goes when the name already says it (a worktree is named after its branch),
   // and master/main go: nearly every space is on one.
   gitTail(g, tree, name, t) {

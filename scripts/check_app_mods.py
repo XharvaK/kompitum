@@ -1,8 +1,8 @@
 """Check app mods with the built app, hidden: `python scripts/check_app_mods.py <mod folder>...`.
 
-Runs `limen-app check` on each folder with a short app home of its own (a long one
+Runs `kompitum-app check` on each folder with a short app home of its own (a long one
 fails on Windows), prints what it said, and fails if any check failed. The app is the
-main checkout's debug build, or LIMEN_APP_EXE.
+main checkout's debug build, or KOMPITUM_APP_EXE.
 """
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_EXE = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Projects/limen-core/app/target/debug/limen-app.exe"
-HOME = Path.home() / ".limen-scratch" / "mod-check"
+DEFAULT_EXE = Path(os.environ.get("USERPROFILE", str(Path.home()))) / "Projects/kompitum/app/target/debug/kompitum-app.exe"
+HOME = Path.home() / ".kompitum-scratch" / "mod-check"
 NO_WINDOW = 0x08000000
 
 
@@ -23,12 +23,12 @@ def main() -> int:
     if not folders:
         print("usage: check_app_mods.py <mod folder>...")
         return 2
-    exe = Path(os.environ.get("LIMEN_APP_EXE", str(DEFAULT_EXE)))
+    exe = Path(os.environ.get("KOMPITUM_APP_EXE", str(DEFAULT_EXE)))
     if not exe.exists():
-        print(f"no built app at {exe}: build it or set LIMEN_APP_EXE")
+        print(f"no built app at {exe}: build it or set KOMPITUM_APP_EXE")
         return 2
     HOME.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, LIMEN_APP_HOME=str(HOME))
+    env = dict(os.environ, KOMPITUM_APP_HOME=str(HOME))
     flags = NO_WINDOW if os.name == "nt" else 0
     failed = 0
     for folder in folders:

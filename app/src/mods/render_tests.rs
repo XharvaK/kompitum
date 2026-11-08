@@ -15,7 +15,7 @@ impl Staged {
     fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = PathBuf::from(format!(
-            "/var/tmp/limen-render-{}-{}",
+            "/var/tmp/kompitum-render-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
@@ -111,7 +111,7 @@ fn fixture(populated: bool, props: Value, update: Value) -> BTreeMap<String, Val
 }
 
 fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostModule {
-    let mut module = HostModule::new("limen");
+    let mut module = HostModule::new("kompitum");
     for (name, value) in values {
         module = module.function(name, move |_| Ok(to_host(&value)));
     }
@@ -187,7 +187,7 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
     }
     for name in [
         "exec",
-        "lc",
+        "kom",
         "readTextFile",
         "writeTextFile",
         "sendFeedback",
@@ -203,18 +203,18 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                     .and_then(|p| p.strip_suffix(".json"))
                     .filter(|n| crate::window::shipped_layouts().contains(n))
                     .map(|_| json!("{}")),
-                "lc" if first == json!(["machine", "ls", "--json"]) => {
+                "kom" if first == json!(["machine", "ls", "--json"]) => {
                     Some(json!({"code":0,"stdout":"{\"machines\":[{\"name\":\"remote\",\"state\":\"online\"}]}","stderr":""}))
                 }
-                "lc" if first == json!(["machine", "add", "host", "--json"]) => {
+                "kom" if first == json!(["machine", "add", "host", "--json"]) => {
                     Some(json!({"code":1,"stdout":"{\"error\":{\"kind\":\"host_key\",\"message\":\"unknown host key\"}}","stderr":""}))
                 }
                 // The Board: one task waiting for review.
-                "lc" if first == json!(["status", "--json"]) => Some(json!({"code":0,"stdout":json!({
-                    "tasks": {"review": [{"name": "fix-docs", "repo": "limen-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []}
+                "kom" if first == json!(["status", "--json"]) => Some(json!({"code":0,"stdout":json!({
+                    "tasks": {"review": [{"name": "fix-docs", "repo": "kompitum-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []}
                 }).to_string(),"stderr":""})),
                 // The Line: one note from Manager.
-                "lc" if first == json!(["vault", "thread", "manager", "--json"]) => Some(json!({"code":0,"stdout":json!({
+                "kom" if first == json!(["vault", "thread", "manager", "--json"]) => Some(json!({"code":0,"stdout":json!({
                     "agent": "opus",
                     "notes": [{"path": "manager/to/opus/2026-11-08-tests-pass.md", "from": "manager", "to": ["opus"], "title": "Tests pass", "date": "2026-11-08T09:00:00+03:00", "status": "open"}]
                 }).to_string(),"stderr":""})),
@@ -996,7 +996,7 @@ fn machine_add_needing_input_keeps_the_picker_and_shows_instructions(cx: &mut Te
             let tree = session.describe(window, cx).unwrap();
             assert!(tree.contains("machine-add"), "{tree}");
             assert!(tree.contains("ma-message-host"), "{tree}");
-            assert!(tree.contains("lc machine add host"), "{tree}");
+            assert!(tree.contains("kom machine add host"), "{tree}");
             window.remove_window();
         })
         .unwrap();
@@ -1243,7 +1243,7 @@ fn local_state_and_overlay_initial_descriptions(cx: &mut TestAppContext) {
         )
         .unwrap();
         let expected = [
-            "Limen runs your terminals in the background",
+            "Kompitum runs your terminals in the background",
             "Add your other machines",
             "Choose your panels",
             "Make it yours",

@@ -5,13 +5,13 @@ Set-Location "$PSScriptRoot\.."
 cargo build --release --locked
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & "$PSScriptRoot\fetch-conpty.ps1" -Dest target\release
-$tmp = Join-Path ([IO.Path]::GetTempPath()) "lc-local-$PID"
+$tmp = Join-Path ([IO.Path]::GetTempPath()) "kom-local-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 # The installer deletes the zip and itself when done: hand it copies.
 Copy-Item distribution\install.ps1 $tmp
-& "$env:SystemRoot\System32\tar.exe" -a -cf "$tmp\lc.zip" -C target\release limen-core.exe limen-shell.exe conpty
+& "$env:SystemRoot\System32\tar.exe" -a -cf "$tmp\kom.zip" -C target\release kompitum-core.exe kompitum-shell.exe conpty
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
-powershell -NoProfile -ExecutionPolicy Bypass -File "$tmp\install.ps1" "$tmp\lc.zip"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$tmp\install.ps1" "$tmp\kom.zip"
 $code = $LASTEXITCODE
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 exit $code

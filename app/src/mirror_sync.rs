@@ -1,6 +1,6 @@
 //! Latest-state CAS flushing, with one request per machine and no operation queue.
 use crate::{
-    lc::{self, Core},
+    kom::{self, Core},
     mirror::Document,
 };
 use serde_json::json;
@@ -69,7 +69,7 @@ pub enum Outcome {
 
 fn rpc_error(error: anyhow::Error) -> Outcome {
     let reason = format!("{error:#}");
-    match lc::error_kind(&error) {
+    match kom::error_kind(&error) {
         Some("needs_update" | "needs_login") => Outcome::Blocked(reason),
         _ => Outcome::Unavailable(reason),
     }
@@ -78,7 +78,7 @@ fn rpc_error(error: anyhow::Error) -> Outcome {
 fn read(core: &Core, machine: &str, timeout: Duration) -> Result<(Document, u64), Outcome> {
     let on = (!machine.is_empty()).then_some(machine);
     let result = core
-        .call_timeout("doc.get", json!({"name":"limen-app", "on":on}), timeout)
+        .call_timeout("doc.get", json!({"name":"kompitum-app", "on":on}), timeout)
         .map_err(rpc_error)?;
     let document = if result["value"].is_null() {
         Document::default()
@@ -102,14 +102,14 @@ pub fn round_timeout(core: &Core, work: Work, timeout: Duration) -> (String, Out
     let result = match work.write {
         Some(document) => match core.call_timeout(
             "doc.set",
-            json!({"name":"limen-app", "on":on, "version":work.version, "value":document}),
+            json!({"name":"kompitum-app", "on":on, "version":work.version, "value":document}),
             timeout,
         ) {
             Ok(v) => match v["version"].as_u64() {
                 Some(version) => Outcome::Written(document, version),
                 None => Outcome::Undecodable("Layout write returned no version".into()),
             },
-            Err(e) if lc::error_kind(&e) == Some("conflict") => match read(
+            Err(e) if kom::error_kind(&e) == Some("conflict") => match read(
                 core,
                 &work.machine,
                 deadline.saturating_duration_since(std::time::Instant::now()),
@@ -203,14 +203,14 @@ mod tests {
     #[test]
     fn login_and_update_errors_keep_the_real_reason_and_hint() {
         for kind in ["needs_login", "needs_update"] {
-            let error = anyhow::Error::new(lc::RpcError(
-                json!({"message":"cannot use machine", "data":{"kind":kind,"hint":"run lc machine login"}}),
+            let error = anyhow::Error::new(kom::RpcError(
+                json!({"message":"cannot use machine", "data":{"kind":kind,"hint":"run kom machine login"}}),
             ));
             let Outcome::Blocked(reason) = rpc_error(error) else {
                 panic!("must not retry this error on a timer")
             };
             assert!(reason.contains("cannot use machine"));
-            assert!(reason.contains("run lc machine login"));
+            assert!(reason.contains("run kom machine login"));
         }
     }
 }

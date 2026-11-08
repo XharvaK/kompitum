@@ -87,7 +87,7 @@ impl fmt::Display for DecodeError {
     }
 }
 
-// LIMEN: COMPOUND_TEXT starts in ASCII + ISO-8859-1, not UTF-8.
+// KOMPITUM: COMPOUND_TEXT starts in ASCII + ISO-8859-1, not UTF-8.
 // A designation changes the high-byte charset until the next designation.
 pub fn compound_text_to_utf8(mut bytes: &[u8]) -> Result<String, DecodeError> {
     let mut out = String::new();

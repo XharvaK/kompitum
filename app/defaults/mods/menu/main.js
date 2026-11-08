@@ -1,11 +1,11 @@
-// Context menus (Limen's items). Opened as a popup with
+// Context menus (Kompitum's items). Opened as a popup with
 // props { tab: "pane" | "tab" | "space" | "global", target }.
 // ↑/↓ move, Enter runs, Esc closes. An item is [label, command, args];
 // a command "worktree" opens the worktree dialog instead.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec } from "limen";
+import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec } from "kompitum";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 function place(s) {
@@ -31,7 +31,7 @@ function items(p, git) {
       const term = all.find((t) => t.address === tg.terminal);
       const parent = term?.parent && all.find((t) => t.address === term.parent);
       // Once they go to the program, Shift+right-click still opens this menu.
-      const toProgram = term?.labels?.["limen.right-click"] === "program";
+      const toProgram = term?.labels?.["kompitum.right-click"] === "program";
       // A terminal shown outside a tab (a layout terminal block, a window) has
       // no pane to split, zoom or close: its pane is the block's id.
       const inTab = panes().some((pane) => pane.pane === tg.pane);
@@ -46,7 +46,7 @@ function items(p, git) {
         ...(term
           ? [
               toProgram
-                ? ["Use Limen right-click menu", "terminal.right_click", { terminal: term.address, to: "menu" }]
+                ? ["Use Kompitum right-click menu", "terminal.right_click", { terminal: term.address, to: "menu" }]
                 : ["Send right-clicks to pane", "terminal.right_click", { terminal: term.address, to: "program" }],
             ]
           : []),

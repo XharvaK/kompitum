@@ -4,7 +4,7 @@
 
 import { View, div, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { props, closeOverlay, run, theme } from "limen";
+import { props, closeOverlay, run, theme } from "kompitum";
 
 const DOT = { error: "blocked", warning: "working", success: "done", info: "accent" };
 

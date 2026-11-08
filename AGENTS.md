@@ -1,15 +1,15 @@
-# Limen
+# Kompitum
 
 If AGENTS.local.md exists, read it too: the Owner's local rules.
 
-`limen-core` (command `lc`) is a terminal runtime for coding agents: it runs
+`kompitum-core` (command `kom`) is a terminal runtime for coding agents: it runs
 programs in terminals, keeps them alive, relays raw bytes to any viewer,
 reads status from OSC 7501, and lets agents start, talk to, read, wait on and
 get notified by other agents. It draws nothing.
 
 This repository began as a fork of
 [herdr-core](https://github.com/herdrdev/herdr-core) and is on its way to
-holding all of Limen: the worker loop, the vault and its bell, then the app.
+holding all of Kompitum: the worker loop, the vault and its bell, then the app.
 [audit/SETTLE.md](audit/SETTLE.md) holds what was decided and the order of
 work. [FORK.md](FORK.md) holds how the fork stays in step with upstream.
 
@@ -17,9 +17,9 @@ Read the code. This file only holds what reading won't tell you: the rules,
 the traps, and the handful of decisions that look arbitrary until you know
 why. The code is authoritative; ask the Owner about conflicting requirements.
 
-`lc --skill` prints the manual in `crates/limen-core/src/SKILL.md`. The
-installable skill is the short stub in `skills/limen-core/SKILL.md`: it says
-when to use lc and points to `lc --skill`, so it rarely changes.
+`kom --skill` prints the manual in `crates/kompitum-core/src/SKILL.md`. The
+installable skill is the short stub in `skills/kompitum-core/SKILL.md`: it says
+when to use kom and points to `kom --skill`, so it rarely changes.
 Keep the manual current when changing agent-facing behavior.
 
 ## The rule
@@ -27,14 +27,14 @@ Keep the manual current when changing agent-facing behavior.
 Core is a runtime, not a multiplexer. If a feature only makes sense with a
 layout or a workspace to return to, it does not belong in the core.
 
-## Limen's rules
+## Kompitum's rules
 
 - Workers run headless: every child process starts without a console window,
   and nothing opens a window unless the Owner asks.
 - Nothing types into an Opus pane, `--force` included. Notes and worker
-  reports reach Opus through MCP, never by `lc send`, and a note does not
+  reports reach Opus through MCP, never by `kom send`, and a note does not
   start an Opus session unattended.
-- Limen runs the real `claude` unmodified. It never reads, stores or routes
+- Kompitum runs the real `claude` unmodified. It never reads, stores or routes
   its login, and never calls Anthropic's API on the plan.
 - The vault is a doorbell and a pen, never a judge: it shows what is open and
   writes where the writer may write. What to do about a note is the reader's
@@ -43,7 +43,7 @@ layout or a workspace to return to, it does not belong in the core.
   words, never skipped in silence.
 - Never commit keys, tokens, ids, hostnames or IP addresses. Test values that
   look like secrets are built from parts at runtime.
-- Upstream's names change only through `scripts/limenize.py`, never by hand.
+- Upstream's names change only through `scripts/kompitumize.py`, never by hand.
   Keep every other change to upstream's files small, since each changed line
   can conflict when an upstream release is merged.
 - Name features after what they do.
@@ -62,7 +62,7 @@ layout or a workspace to return to, it does not belong in the core.
 - One API; the CLI is one call per command. The schema is generated from one
   method table, so params and results in `api/types.rs` are also CLI args and
   the published schema. Change them and regenerate:
-  `LIMEN_UPDATE_SCHEMA=1 cargo test -p limen-core --test m0`, or
+  `KOMPITUM_UPDATE_SCHEMA=1 cargo test -p kompitum-core --test m0`, or
   `--test schema_file` on Windows.
 - Lean, KISS, always. Fewer lines, fewer files, fewer dependencies. No
   abstraction before a second real caller, no config for things nobody asked
@@ -82,11 +82,11 @@ layout or a workspace to return to, it does not belong in the core.
 
 ## Traps
 
-- Tests and smokes run in isolated sessions (`LIMEN_SESSION`) with scratch XDG
+- Tests and smokes run in isolated sessions (`KOMPITUM_SESSION`) with scratch XDG
   paths under `/var/tmp`. Never touch the machine's real core, the Python
-  Limen or its running workers. Clean up scratch data.
+  Kompitum or its running workers. Clean up scratch data.
 - `registry_changes_after_start_are_seen_by_each_new_terminal` in
-  `tests/windows.rs` leaves its session: it writes a throwaway `LIMEN_ENV_*`
+  `tests/windows.rs` leaves its session: it writes a throwaway `KOMPITUM_ENV_*`
   value to the real `HKCU\Environment` and deletes it at the end. A killed run
   leaves the value behind, so skip it unless the Owner agrees:
   `cargo test --locked -- --skip registry_changes_after_start_are_seen_by_each_new_terminal`.
@@ -103,15 +103,15 @@ layout or a workspace to return to, it does not belong in the core.
   `scripts/watch_windows.py` runs a command the same way and records every
   window that opens meanwhile, which is how to check the no-windows rule.
 - A worker's worktree has an empty `vendor/ghostty` and no build. On this PC
-  `.cargo\config.toml` in the folder above Limen's state sets `target-dir`, `ZIG`
-  and `LIMEN_GHOSTTY_SRC`, so a plain `cargo` works there. That build folder is
+  `.cargo\config.toml` in the folder above Kompitum's state sets `target-dir`, `ZIG`
+  and `KOMPITUM_GHOSTTY_SRC`, so a plain `cargo` works there. That build folder is
   shared and Cargo judges freshness by file times, so two worktrees building at
   once can run each other's binaries: one building worker at a time for now.
   `scripts/check_windows.py` touches the crate roots, so a check always builds
   its own worktree. It is `just check` for this PC, and the server's check here.
 - `LC_*` is the locale namespace and SSH configs forward it, so our
-  environment is `LIMEN_*`. The Python Limen owns `LIMEN_VAULT`, `LIMEN_AGENT`,
-  `LIMEN_POLL_SECONDS`, `LIMEN_SEEN_FILE`, `LIMEN_LISTEN` and `LIMEN_BELL_*`,
+  environment is `KOMPITUM_*`. The Python Kompitum owns `KOMPITUM_VAULT`, `KOMPITUM_AGENT`,
+  `KOMPITUM_POLL_SECONDS`, `KOMPITUM_SEEN_FILE`, `KOMPITUM_LISTEN` and `KOMPITUM_BELL_*`,
   and the rename script refuses them.
 - `just install` replaces the installed binary and restarts core. Running
   terminals are kept.
@@ -122,9 +122,9 @@ layout or a workspace to return to, it does not belong in the core.
 - `rustfmt.toml` width 120 is the format: `just fmt`, or `cargo fmt --all`.
   `just lint` is fmt, clippy, and clippy for Windows from Linux. `just check`
   is lint plus the whole suite. Run it before proposing a commit.
-- `docs/commands.md` is generated, and `tests/cli_docs.rs` checks every `lc`
+- `docs/commands.md` is generated, and `tests/cli_docs.rs` checks every `kom`
   command and flag it finds in the README and `docs/`, in prose too.
-- A contained terminal's `COMSPEC` is `limen-shell`, which can't be a terminal's
+- A contained terminal's `COMSPEC` is `kompitum-shell`, which can't be a terminal's
   first program, since a GUI program can't attach to a pseudo console.
-  `shell_line` reads `LIMEN_COMSPEC` first for that reason, and tests set the
+  `shell_line` reads `KOMPITUM_COMSPEC` first for that reason, and tests set the
   real `COMSPEC` in `cmd_at` for when they run inside a worker.

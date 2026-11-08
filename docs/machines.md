@@ -3,29 +3,29 @@
 Run a program on another machine and come back to it from here.
 The program lives there. Losing your connection does not end it.
 
-[Back to the README](../README.md) · [Command reference](commands.md#lc-machine)
+[Back to the README](../README.md) · [Command reference](commands.md#kom-machine)
 
 ## Add a machine over SSH
 
 Use the same target you would give SSH, including a Host from your SSH config:
 
 ```sh
-lc machine add user@host --name box
-lc machine ls
-lc run --on box --cwd /srv/app cargo test
+kom machine add user@host --name box
+kom machine ls
+kom run --on box --cwd /srv/app cargo test
 ```
 
-The other machine needs lc. In an interactive terminal, add asks before copying lc there if it is missing or too old to talk to.
-For a script, `lc machine add user@host --name box --install` allows that copy without asking.
+The other machine needs kom. In an interactive terminal, add asks before copying kom there if it is missing or too old to talk to.
+For a script, `kom machine add user@host --name box --install` allows that copy without asking.
 When the OS and CPU match, it copies your current build. Otherwise it uses this version's released build for that target.
 
 SSH passwords, codes, and host-key prompts need a person at a terminal.
-On Windows, use SSH keys or an SSH agent; lc does not share interactive password logins there.
+On Windows, use SSH keys or an SSH agent; kom does not share interactive password logins there.
 
 To reach a separate core session on the same host:
 
 ```sh
-lc machine add user@host --name sandbox --session scratch
+kom machine add user@host --name sandbox --session scratch
 ```
 
 Sessions separate terminals and state, not permissions. See [security](security.md).
@@ -36,11 +36,11 @@ A custom connection command receives a shell line as its last argument.
 It must carry stdin and stdout unchanged and ask no questions:
 
 ```sh
-lc machine add --name box --via 'ssh -p 2222 -i /home/me/.ssh/key user@host'
-lc machine add --name sandbox --temp --via 'fly ssh console -a my-app --pty=false -C'
+kom machine add --name box --via 'ssh -p 2222 -i /home/me/.ssh/key user@host'
+kom machine add --name sandbox --temp --via 'fly ssh console -a my-app --pty=false -C'
 ```
 
-The command runs on your local machine. The shell line runs on the destination and connects to lc there.
+The command runs on your local machine. The shell line runs on the destination and connects to kom there.
 Log in with that tool first if it needs credentials.
 The temporary marker only helps clients show short-lived machines apart; it does not delete anything for you.
 
@@ -53,8 +53,8 @@ when it stops, its terminals stop with it.
 
 ```sh
 sandbox create --name my-box --timeout 1h
-lc machine add --name my-box --temp --install --via '/path/to/vercel-sandbox.py my-box'
-lc run --bg --on my-box --cwd /vercel/app npm run build
+kom machine add --name my-box --temp --install --via '/path/to/vercel-sandbox.py my-box'
+kom run --bg --on my-box --cwd /vercel/app npm run build
 ```
 
 ## What runs where
@@ -64,10 +64,10 @@ The remote core owns its programs, terminal history, and files.
 A local name such as `box` is your name for that connection, not a remote hostname requirement.
 
 ```sh
-lc run --bg --on box --cwd /srv/app --name build cargo build
-lc ls
-lc read box/build --lines 100
-lc attach box/build
+kom run --bg --on box --cwd /srv/app --name build cargo build
+kom ls
+kom read box/build --lines 100
+kom attach box/build
 ```
 
 A returned address such as `box/t3` points to a terminal on box.
@@ -82,31 +82,31 @@ Local paths start at your current folder. Prefer explicit remote paths.
 Use exec for a short command whose exact output you need:
 
 ```sh
-lc exec --on box --cwd /srv/app git diff
-printf 'hello\n' | lc exec -i --on box cat
+kom exec --on box --cwd /srv/app git diff
+printf 'hello\n' | kom exec -i --on box cat
 ```
 
 Use file for remote reads and exact edits:
 
 ```sh
-lc file read --on box --cwd /srv/app src/main.rs --offset 1 --limit 100
-lc file edit --on box --cwd /srv/app config.txt --old 'port=3000' --new 'port=4000'
-lc file write --on box --cwd /srv/app note.txt < note.txt
+kom file read --on box --cwd /srv/app src/main.rs --offset 1 --limit 100
+kom file edit --on box --cwd /srv/app config.txt --old 'port=3000' --new 'port=4000'
+kom file write --on box --cwd /srv/app note.txt < note.txt
 ```
 
 Write replaces the whole file and creates parent folders.
 Edit requires the old text exactly once. Add context if it is missing or repeated.
 Repeat old/new pairs for several edits; all succeed or none do. A call stays inside `--root`, by default `--cwd`: a path or link that leads out is refused.
-`lc put box/build ./report.txt` sends a local file beside that terminal and prints where it landed.
+`kom put box/build ./report.txt` sends a local file beside that terminal and prints where it landed.
 
 ## When something goes wrong
 
-- Check `lc machine ls` first. It shows the connection state and the last observed lc version.
-- If SSH needs a password or code again, run `lc machine login box` in a terminal. On Windows, fix the keys first and use login to reconnect.
-- If lc is missing or incompatible, use `lc machine update box` to copy this lc there and restart that core. Its terminals keep running.
+- Check `kom machine ls` first. It shows the connection state and the last observed kom version.
+- If SSH needs a password or code again, run `kom machine login box` in a terminal. On Windows, fix the keys first and use login to reconnect.
+- If kom is missing or incompatible, use `kom machine update box` to copy this kom there and restart that core. Its terminals keep running.
 - If the connection closes at once, check that the remote login prints no extra text to stdout. The connection carries a byte protocol, not a terminal session.
 - With a custom connection, check that it passes bytes unchanged and does not prompt. Do not request a remote PTY.
 - If a socket path is too long, use a shorter session name or socket path. See [state and endpoints](security.md#state-and-endpoints).
 
 Once a machine is added, core retries a lost connection. Reattach after it returns.
-To forget the connection here, use `lc machine rm box`. That does not stop its remote terminals.
+To forget the connection here, use `kom machine rm box`. That does not stop its remote terminals.

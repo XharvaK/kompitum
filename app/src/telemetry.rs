@@ -1,5 +1,5 @@
 //! Anonymous usage data: one small report per install per UTC day, so we
-//! know how Limen is used. Never what's in a terminal, never from the core,
+//! know how Kompitum is used. Never what's in a terminal, never from the core,
 //! never free text: every field is a number, a bucket, a yes/no or a name
 //! from a list the app ships (anything else is `other`).
 //!
@@ -10,9 +10,9 @@
 //! never waits on anything, and every error just loses data.
 //!
 //! On unless settings.json says `"telemetry": false` (that also deletes the
-//! id and anything not sent yet). `DO_NOT_TRACK`, `LIMEN_TELEMETRY=0` and CI
-//! turn it off for one run. Only release builds (`LIMEN_APP_RELEASE`) send,
-//! or a build pointed at a test server with `LIMEN_TELEMETRY_URL`: a build
+//! id and anything not sent yet). `DO_NOT_TRACK`, `KOMPITUM_TELEMETRY=0` and CI
+//! turn it off for one run. Only release builds (`KOMPITUM_APP_RELEASE`) send,
+//! or a build pointed at a test server with `KOMPITUM_TELEMETRY_URL`: a build
 //! from source and the sandbox collect and show, but never send.
 
 use serde::{Deserialize, Serialize};
@@ -25,7 +25,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 pub const VERSION: u32 = 1;
-const ENDPOINT: &str = "https://telemetry.limen.invalid/v1/report";
+const ENDPOINT: &str = "https://telemetry.kompitum.invalid/v1/report";
 /// Frozen reports older than this are dropped unsent.
 const KEEP_DAYS: i64 = 7;
 const TICK: Duration = Duration::from_secs(30);
@@ -90,13 +90,13 @@ fn read_env_off() -> Option<&'static str> {
     if set("DO_NOT_TRACK").is_some_and(truthy) {
         return Some("DO_NOT_TRACK");
     }
-    if set("LIMEN_TELEMETRY").is_some_and(|v| {
+    if set("KOMPITUM_TELEMETRY").is_some_and(|v| {
         matches!(
             v.trim().to_ascii_lowercase().as_str(),
             "0" | "false" | "off" | "no"
         )
     }) {
-        return Some("LIMEN_TELEMETRY");
+        return Some("KOMPITUM_TELEMETRY");
     }
     const CI: &[&str] = &[
         "CI",
@@ -112,12 +112,12 @@ fn read_env_off() -> Option<&'static str> {
 
 /// Where reports go, if this build sends at all.
 fn endpoint() -> Option<String> {
-    match std::env::var("LIMEN_TELEMETRY_URL")
+    match std::env::var("KOMPITUM_TELEMETRY_URL")
         .ok()
         .filter(|u| !u.is_empty())
     {
         Some(url) => Some(url),
-        None => option_env!("LIMEN_APP_RELEASE").map(|_| ENDPOINT.to_owned()),
+        None => option_env!("KOMPITUM_APP_RELEASE").map(|_| ENDPOINT.to_owned()),
     }
 }
 
@@ -336,7 +336,7 @@ fn startup_bucket(ms: u64) -> &'static str {
 
 /// A release version (`0.2.0`, `0.2.0-rc.1`), else `other`: never a free string.
 pub(crate) fn version(v: &str) -> String {
-    let v = v.trim().trim_start_matches("lc ").trim_start_matches('v');
+    let v = v.trim().trim_start_matches("kom ").trim_start_matches('v');
     let number = |s: &str| !s.is_empty() && s.len() <= 4 && s.bytes().all(|b| b.is_ascii_digit());
     let (core, pre) = v.split_once('-').map_or((v, None), |(c, p)| (c, Some(p)));
     let parts: Vec<&str> = core.split('.').collect();
@@ -797,10 +797,10 @@ mod tests {
     #[test]
     fn versions_are_releases_or_other() {
         assert_eq!(version("0.2.0"), "0.2.0");
-        assert_eq!(version("lc 0.1.5"), "0.1.5");
+        assert_eq!(version("kom 0.1.5"), "0.1.5");
         assert_eq!(version("0.2.0-rc.1"), "0.2.0-rc.1");
         assert_eq!(version("0.2.0-my/secret path"), "other");
-        assert_eq!(version("lc 0.1.5-acmeclient"), "other");
+        assert_eq!(version("kom 0.1.5-acmeclient"), "other");
         assert_eq!(version("0.1.5-rc.x"), "other");
         assert_eq!(version("dev"), "other");
     }
@@ -824,7 +824,7 @@ mod tests {
             ..Observation::default()
         };
         day.observe(o, &["main", "terminals"]);
-        day.core = Some("lc /home/me/build".into());
+        day.core = Some("kom /home/me/build".into());
         let text = day.report("0123456789abcdef0123456789abcdef").to_string();
         for leak in ["secret", "private", "/home", "my-theme", "frame-"] {
             assert!(!text.contains(leak), "{leak} leaked: {text}");

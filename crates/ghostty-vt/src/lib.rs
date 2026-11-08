@@ -1,4 +1,4 @@
-//! The few libghostty-vt calls limen-core needs, behind a safe `Terminal`.
+//! The few libghostty-vt calls kompitum-core needs, behind a safe `Terminal`.
 
 use std::ffi::c_void;
 use std::ptr;

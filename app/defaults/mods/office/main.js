@@ -5,11 +5,11 @@
 // Sub-agents sit by their parent's desk as interns and graduate when they finish.
 // Three finishes in five minutes and pizza arrives. A cat lives here. Lights go down after
 // dark, it snows in the windows in winter, and the office decorates for the season.
-// From DustyPolk/herdr-office (MIT, see LICENSE), renamed for Limen; the real-weather lookup
+// From DustyPolk/herdr-office (MIT, see LICENSE), renamed for Kompitum; the real-weather lookup
 // (ipapi.co and Open-Meteo) is removed, so this mod reaches no network.
 // Hover anyone to see what they're working on; click them to go to their terminal.
 import { View, div, svg } from "gpui-kit";
-import { agents, terminals, spaces, panes, shared, run, setAgentOrder } from "limen";
+import { agents, terminals, spaces, panes, shared, run, setAgentOrder } from "kompitum";
 import * as A from "./art.js";
 import * as D from "./decor.js";
 

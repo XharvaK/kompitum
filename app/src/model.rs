@@ -1,7 +1,7 @@
 //! The app's shared world, the same for every layout: spaces, each with
 //! tabs (named pieces of work), each tab holding its terminals and
 //! how they're split. Plus which pane has focus and agent attention (done vs
-//! seen) with Limen's rollup. Pure data; the window drives it.
+//! seen) with Kompitum's rollup. Pure data; the window drives it.
 
 use crate::layout::{Axis, Content, Node};
 use serde::{Deserialize, Serialize};
@@ -29,10 +29,10 @@ pub struct Tab {
 pub struct Space {
     pub id: String,
     /// The name someone gave it; empty: named after where its first
-    /// terminal is (Limen's way, `Model::space_name`).
+    /// terminal is (Kompitum's way, `Model::space_name`).
     pub name: String,
     pub folder: String,
-    /// The machine its terminals run on (`lc machine ls`); None: this one.
+    /// The machine its terminals run on (`kom machine ls`); None: this one.
     pub machine: Option<String>,
     pub tabs: Vec<Tab>,
     /// The selected tab.
@@ -65,7 +65,7 @@ pub struct Agent {
     pub seen: bool,
     /// Core's turn counter: goes up each time it stops working.
     pub turn: u64,
-    /// The last turn a person looked at on any client (`limen.seen`, docs/labels.md).
+    /// The last turn a person looked at on any client (`kompitum.seen`, docs/labels.md).
     /// None: no client shares it yet, so `seen` decides.
     pub seen_turn: Option<u64>,
     /// Bumped on every state change (for "most recent" ordering).
@@ -88,7 +88,7 @@ pub struct Model {
     pub folder_info: HashMap<String, FolderInfo>,
 }
 
-/// Limen's attention priority: blocked > done > working > idle > nothing.
+/// Kompitum's attention priority: blocked > done > working > idle > nothing.
 pub fn priority(status: Option<&str>) -> u8 {
     match status {
         Some("blocked") => 4,
@@ -275,7 +275,7 @@ impl Model {
 
     /// Adds a space at the end and selects it.
     /// What a space is called: its name, else its first terminal's checkout
-    /// (a worktree's own folder; outside git its folder), as Limen names workspaces.
+    /// (a worktree's own folder; outside git its folder), as Kompitum names workspaces.
     pub fn space_name(&self, p: &Space, home: &str) -> String {
         if !p.name.is_empty() {
             return p.name.clone();
@@ -566,7 +566,7 @@ impl Model {
         self.tabs().flat_map(|c| addresses(&c.root)).collect()
     }
 
-    /// Applies a status word from core (Limen's seen rules).
+    /// Applies a status word from core (Kompitum's seen rules).
     pub fn set_word(
         &mut self,
         address: &str,
@@ -599,7 +599,7 @@ impl Model {
         true
     }
 
-    /// Limen's attention rule for a change of 7501 word: needing you always
+    /// Kompitum's attention rule for a change of 7501 word: needing you always
     /// alerts; finishing alerts only if the person wasn't looking.
     pub fn alert(prev: Option<&str>, new: Option<&str>, looking: bool) -> Option<Alert> {
         let blocked = |w: Option<&str>| matches!(w, Some("blocked" | "error"));
@@ -751,7 +751,7 @@ pub struct FolderInfo {
 }
 
 /// A space as mods see it. `name` is what to call it; `named`: someone gave it
-/// (else it's Limen's automatic name, which a mod may show its own way).
+/// (else it's Kompitum's automatic name, which a mod may show its own way).
 pub fn space_json(m: &Model, p: &Space, index: usize, branch: Option<&str>, home: &str) -> Value {
     let active = p.active_tab().map(|c| c.id.clone());
     let tabs: Vec<Value> = p
@@ -795,12 +795,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn folders_name_as_in_limen_on_every_system() {
+    fn folders_name_as_in_kompitum_on_every_system() {
         assert_eq!(folder_name("/home/can", "/home/can"), "~");
         assert_eq!(folder_name("/home/can/", "/home/can"), "~");
         assert_eq!(
-            folder_name("/Users/can/Projects/limen", "/Users/can"),
-            "limen"
+            folder_name("/Users/can/Projects/kompitum", "/Users/can"),
+            "kompitum"
         );
         assert_eq!(folder_name("/", "/home/can"), "/");
         assert_eq!(folder_name("", "/home/can"), "~");
@@ -825,11 +825,11 @@ mod tests {
         m.folder_info.insert(
             "t1".into(),
             FolderInfo {
-                top: "/src/limen".into(),
+                top: "/src/kompitum".into(),
                 branch: Some("main".into()),
             },
         );
-        assert_eq!(m.space_name(&p, "/home/me"), "limen");
+        assert_eq!(m.space_name(&p, "/home/me"), "kompitum");
         let names: Vec<String> = p.tabs.iter().map(|c| Model::tab_name(&p, c)).collect();
         assert_eq!(
             names.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -840,7 +840,7 @@ mod tests {
     }
 
     #[test]
-    fn alerts_follow_limen() {
+    fn alerts_follow_kompitum() {
         let alert = Model::alert;
         assert_eq!(
             alert(Some("working"), Some("blocked"), true),

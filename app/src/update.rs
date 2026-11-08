@@ -1,14 +1,14 @@
-//! The app's own updates. An installed app (Linux: `~/.local/share/limen-app`,
-//! macOS: `Limen.app`) checks `releases.limen.invalid/app/latest.json` a little
+//! The app's own updates. An installed app (Linux: `~/.local/share/kompitum-app`,
+//! macOS: `Kompitum.app`) checks `releases.kompitum.invalid/app/latest.json` a little
 //! after it opens and every hour, downloads a newer build for this
 //! machine, checks its sha256 and unpacks it next to itself (`<install>.new`).
 //! The frame then shows "Restart"; the swap happens on restart or the next
 //! quit, or before opening the next window after a crash. The first start
-//! after a swap runs `lc update` for the core.
+//! after a swap runs `kom update` for the core.
 //!
 //! A build from source never updates: only `scripts/package` (the release
-//! builds) sets `LIMEN_APP_RELEASE`. `scripts/install-macos` makes a
-//! Limen.app too, so the install's shape alone can't tell.
+//! builds) sets `KOMPITUM_APP_RELEASE`. `scripts/install-macos` makes a
+//! Kompitum.app too, so the install's shape alone can't tell.
 //!
 //! The core is checked on the same clock (`core/latest.json`): a newer core
 //! of the same generation is offered (also applied after an app update), unless
@@ -35,12 +35,12 @@ fn find_root() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
     let dir = exe.parent()?;
     if cfg!(target_os = "macos") {
-        // Limen.app/Contents/MacOS/Limen
+        // Kompitum.app/Contents/MacOS/Kompitum
         let bundle = dir.parent()?.parent()?;
         (bundle.extension()? == "app").then(|| bundle.to_path_buf())
     } else {
         // The release folder holds the binary and its icon; cargo's target/ doesn't.
-        dir.join("limen-app.svg")
+        dir.join("kompitum-app.svg")
             .is_file()
             .then(|| dir.to_path_buf())
     }
@@ -48,16 +48,16 @@ fn find_root() -> Option<PathBuf> {
 
 /// The folder or bundle name inside a release tarball.
 const PACKED: &str = if cfg!(target_os = "macos") {
-    "Limen.app"
+    "Kompitum.app"
 } else {
-    "limen-app"
+    "kompitum-app"
 };
 
 fn beside(root: &Path, suffix: &str) -> PathBuf {
     let mut name = root.file_name().unwrap_or_default().to_os_string();
     name.push(suffix);
     // macOS: Spotlight skips a folder ending in `.noindex`, so a staged
-    // `Limen.app.new` never shows up in search under that name.
+    // `Kompitum.app.new` never shows up in search under that name.
     if cfg!(target_os = "macos") {
         name.push(".noindex");
     }
@@ -76,7 +76,8 @@ fn target() -> String {
 }
 
 fn releases() -> String {
-    std::env::var("LIMEN_RELEASES_URL").unwrap_or_else(|_| "https://releases.limen.invalid".into())
+    std::env::var("KOMPITUM_RELEASES_URL")
+        .unwrap_or_else(|_| "https://releases.kompitum.invalid".into())
 }
 
 /// The version downloaded and waiting for a restart.
@@ -130,14 +131,15 @@ pub fn set_core(version: Option<String>, managed: Option<String>) {
 
 fn checks_app() -> Option<PathBuf> {
     root().filter(|_| {
-        option_env!("LIMEN_APP_RELEASE").is_some()
-            || std::env::var_os("LIMEN_RELEASES_URL").is_some()
+        option_env!("KOMPITUM_APP_RELEASE").is_some()
+            || std::env::var_os("KOMPITUM_RELEASES_URL").is_some()
     })
 }
 
 /// A release build checks the core; a source build only when pointed at a test release server.
 fn checks_core() -> bool {
-    option_env!("LIMEN_APP_RELEASE").is_some() || std::env::var_os("LIMEN_RELEASES_URL").is_some()
+    option_env!("KOMPITUM_APP_RELEASE").is_some()
+        || std::env::var_os("KOMPITUM_RELEASES_URL").is_some()
 }
 
 /// For the settings screen: both programs, what's waiting, when we last looked.
@@ -228,7 +230,7 @@ fn check_core() -> Result<(), String> {
         return Ok(());
     }
     let latest = latest_core()?;
-    let same = latest.generation == Some(crate::lc::GENERATION);
+    let same = latest.generation == Some(crate::kom::GENERATION);
     CORE.lock().unwrap().ready = (same && newer(&latest.version, &have)).then_some(latest.version);
     Ok(())
 }
@@ -261,7 +263,7 @@ fn after_update_target<'a>(
     })
 }
 
-/// `lc update` (terminals keep running; the app reconnects when the core restarts).
+/// `kom update` (terminals keep running; the app reconnects when the core restarts).
 pub fn update_core() {
     {
         let mut c = CORE.lock().unwrap();
@@ -277,7 +279,7 @@ pub fn update_core() {
         c.updating = false;
         match result {
             Ok(now) => {
-                c.version = Some(now.trim_start_matches("lc ").to_owned());
+                c.version = Some(now.trim_start_matches("kom ").to_owned());
                 c.ready = None;
                 crate::telemetry::count("core_update_ok");
             }
@@ -319,7 +321,7 @@ fn check_from(root: &Path, releases: &str) -> Result<Option<String>, String> {
     let (Some(url), Some(sha)) = (entry["url"].as_str(), entry["sha256"].as_str()) else {
         return Ok(None);
     };
-    tracing::info!("downloading Limen {version}");
+    tracing::info!("downloading Kompitum {version}");
     let work = beside(root, ".download");
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
@@ -468,13 +470,13 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 
 fn exe_in(app: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
-        app.join("Contents/MacOS/Limen")
+        app.join("Contents/MacOS/Kompitum")
     } else {
-        app.join(format!("limen-app{}", std::env::consts::EXE_SUFFIX))
+        app.join(format!("kompitum-app{}", std::env::consts::EXE_SUFFIX))
     }
 }
 
-/// What `limen-app --version` says in this folder or bundle (`0.2.0`).
+/// What `kompitum-app --version` says in this folder or bundle (`0.2.0`).
 fn version_of(app: &Path) -> Option<String> {
     let out = crate::spawn::command(exe_in(app))
         .arg("--version")
@@ -486,7 +488,7 @@ fn version_of(app: &Path) -> Option<String> {
     if !out.status.success() {
         return None;
     }
-    text.trim().strip_prefix("limen-app ").map(str::to_owned)
+    text.trim().strip_prefix("kompitum-app ").map(str::to_owned)
 }
 
 /// `a` is a later version than `b` (semver; `0.2.0-rc.1` comes before `0.2.0`).
@@ -547,11 +549,11 @@ fn startup_target<'a>(
 /// Recover a staged hotfix even when the previous window never quit cleanly.
 /// The inherited expected version allows only one automatic relaunch.
 pub fn apply_on_startup() -> bool {
-    let expected = std::env::var("LIMEN_APP_UPDATE_EXPECTED").ok();
+    let expected = std::env::var("KOMPITUM_APP_UPDATE_EXPECTED").ok();
     if let Some(expected) = &expected {
         // SAFETY: startup runs before any app threads. Do not leak the guard
         // into the core's environment and every terminal it later starts.
-        unsafe { std::env::remove_var("LIMEN_APP_UPDATE_EXPECTED") };
+        unsafe { std::env::remove_var("KOMPITUM_APP_UPDATE_EXPECTED") };
         if expected != env!("CARGO_PKG_VERSION") {
             tracing::warn!(
                 "update: relaunched as {}, expected {expected}; not retrying",
@@ -630,7 +632,7 @@ fn relaunch_expected(expected: Option<&str>) -> bool {
     );
     let mut command = crate::spawn::command("powershell");
     if let Some(expected) = expected {
-        command.env("LIMEN_APP_UPDATE_EXPECTED", expected);
+        command.env("KOMPITUM_APP_UPDATE_EXPECTED", expected);
     }
     let spawned = command
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
@@ -654,19 +656,19 @@ fn relaunch_expected(expected: Option<&str>) -> bool {
     // LaunchServices need not preserve the startup guard or an isolated home.
     let open = if cfg!(target_os = "macos") {
         if expected.is_some() {
-            "exec \"$1/Contents/MacOS/Limen\""
+            "exec \"$1/Contents/MacOS/Kompitum\""
         } else {
             "open \"$1\""
         }
     } else {
-        "exec \"$1/limen-app\""
+        "exec \"$1/kompitum-app\""
     };
     let script = format!("while kill -0 \"$0\" 2>/dev/null; do sleep 0.1; done; {open}");
     let spawned = {
         use std::os::unix::process::CommandExt;
         let mut command = Command::new("sh");
         if let Some(expected) = expected {
-            command.env("LIMEN_APP_UPDATE_EXPECTED", expected);
+            command.env("KOMPITUM_APP_UPDATE_EXPECTED", expected);
         }
         command
             .arg("-c")
@@ -694,10 +696,10 @@ fn marker() -> PathBuf {
 }
 
 /// The first start after an app update brings the core to the latest release
-/// of this app's generation (`lc update --version`, terminals kept). If the
+/// of this app's generation (`kom update --version`, terminals kept). If the
 /// release check fails or offers another generation, keep the minimum pin.
 /// Cores before 0.1.5 lack `--version`: they keep their same-generation update
-/// path. A core a package manager owns is left alone (lc says so).
+/// path. A core a package manager owns is left alone (kom says so).
 pub fn after_update() {
     if std::fs::remove_file(marker()).is_err() {
         return;
@@ -709,10 +711,10 @@ pub fn after_update() {
             .map_err(|e| tracing::warn!("core release check after app update: {e}"))
             .ok();
         let target = after_update_target(
-            have.trim_start_matches("lc "),
+            have.trim_start_matches("kom "),
             latest.as_ref(),
-            crate::lc::GENERATION,
-            crate::lc::core_min(),
+            crate::kom::GENERATION,
+            crate::kom::core_min(),
         );
         let result = crate::core_bin::update_to(target);
         let mut core = CORE.lock().unwrap();
@@ -722,12 +724,12 @@ pub fn after_update() {
                 if let Some(root) = root() {
                     let _ = std::fs::remove_dir_all(beside(&root, ".old"));
                 }
-                tracing::info!("limen-core is {now}");
-                core.version = Some(now.trim_start_matches("lc ").to_owned());
+                tracing::info!("kompitum-core is {now}");
+                core.version = Some(now.trim_start_matches("kom ").to_owned());
                 core.error = None;
             }
             Err(e) => {
-                tracing::warn!("limen-core update: {e}");
+                tracing::warn!("kompitum-core update: {e}");
                 core.error = Some(e);
             }
         }
@@ -771,7 +773,8 @@ mod tests {
                 }
             }
         });
-        let home = std::env::temp_dir().join(format!("limen-offline-check-{}", std::process::id()));
+        let home =
+            std::env::temp_dir().join(format!("kompitum-offline-check-{}", std::process::id()));
         let mut checked = checked_at(true, 100);
         assert_eq!(checked, Some(100));
         let failed = check_from(&home, &url);
@@ -803,13 +806,13 @@ mod tests {
     #[test]
     fn stages_need_a_receipt_and_a_matching_executable() {
         use std::os::unix::fs::PermissionsExt;
-        let work = std::env::temp_dir().join(format!("limen-update-{}", std::process::id()));
+        let work = std::env::temp_dir().join(format!("kompitum-update-{}", std::process::id()));
         let root = work.join(PACKED);
         let staged = beside(&root, ".new");
         let receipt = beside(&root, ".new.json");
         let exe = exe_in(&staged);
         std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
-        std::fs::write(&exe, "#!/bin/sh\necho limen-app 0.1.8\n").unwrap();
+        std::fs::write(&exe, "#!/bin/sh\necho kompitum-app 0.1.8\n").unwrap();
         std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(staged_version(&root), None);
         assert!(staged.is_dir()); // Legacy stages are left for the checker.
@@ -856,7 +859,7 @@ mod tests {
     fn unknown_signature_does_not_modify_the_bundle() {
         use std::os::unix::process::ExitStatusExt;
         let work =
-            std::env::temp_dir().join(format!("limen-unknown-signature-{}", std::process::id()));
+            std::env::temp_dir().join(format!("kompitum-unknown-signature-{}", std::process::id()));
         let plist = work.join("Contents/Info.plist");
         std::fs::create_dir_all(plist.parent().unwrap()).unwrap();
         std::fs::write(&plist, "unchanged plist").unwrap();
@@ -884,7 +887,7 @@ mod tests {
         )
         .unwrap();
         let work =
-            std::env::temp_dir().join(format!("limen-signature-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("kompitum-signature-test-{}", std::process::id()));
         let signed = work.join("signed");
         let reference = work.join("reference");
         std::fs::create_dir_all(&signed).unwrap();
@@ -920,7 +923,7 @@ mod tests {
         .unwrap();
         for file in [
             "Contents/Info.plist",
-            "Contents/MacOS/Limen",
+            "Contents/MacOS/Kompitum",
             "Contents/_CodeSignature/CodeResources",
         ] {
             assert_eq!(

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""The bench's scenarios in Ghostty alone and in Limen 1.x inside Ghostty,
+"""The bench's scenarios in Ghostty alone and in Kompitum 1.x inside Ghostty,
 measured the same way (macOS: instructions, energy, wakeups) for a CPU
 baseline comparison.
 
-    scripts/bench_compare.py ghostty|limen --root <bench artifact folder>
+    scripts/bench_compare.py ghostty|kompitum --root <bench artifact folder>
 
-Limen 1.x runs in a throwaway session (`limen --session hb1`), stopped and
+Kompitum 1.x runs in a throwaway session (`kompitum --session hb1`), stopped and
 deleted after. Run `scripts/bench.py` first: it writes the fake agent.
 """
 
@@ -51,7 +51,7 @@ def kill(pid):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("target", choices=["ghostty", "limen"])
+    ap.add_argument("target", choices=["ghostty", "kompitum"])
     ap.add_argument("--root", required=True, help="artifact folder printed by scripts/bench.py")
     args = ap.parse_args()
     AGENT = os.path.join(args.root, "agent.py")
@@ -70,11 +70,11 @@ def main():
         measure("tui", [g])
         kill(g)
         return
-    env = dict(os.environ, LIMEN_SESSION="hb1", PATH=os.path.expanduser("~/.local/bin") + ":/opt/homebrew/bin:" + os.environ["PATH"])
-    h = lambda *a: json.loads(subprocess.run(["limen", *a], env=env, capture_output=True, text=True).stdout or "{}")
-    g = ghostty(os.path.expanduser("~/.local/bin/limen"), "--session", "hb1")
-    client = int(subprocess.run(["pgrep", "-fx", "limen --session hb1"], capture_output=True, text=True).stdout)
-    server = int(subprocess.run(["pgrep", "-P", str(client), "-f", "limen server"], capture_output=True, text=True).stdout)
+    env = dict(os.environ, KOMPITUM_SESSION="hb1", PATH=os.path.expanduser("~/.local/bin") + ":/opt/homebrew/bin:" + os.environ["PATH"])
+    h = lambda *a: json.loads(subprocess.run(["kompitum", *a], env=env, capture_output=True, text=True).stdout or "{}")
+    g = ghostty(os.path.expanduser("~/.local/bin/kompitum"), "--session", "hb1")
+    client = int(subprocess.run(["pgrep", "-fx", "kompitum --session hb1"], capture_output=True, text=True).stdout)
+    server = int(subprocess.run(["pgrep", "-P", str(client), "-f", "kompitum server"], capture_output=True, text=True).stdout)
     procs = [g, client, server]
     focused = lambda: [p["pane_id"] for p in h("pane", "list")["result"]["panes"] if p["focused"]][0]
     try:
@@ -102,7 +102,7 @@ def main():
     finally:
         kill(g)
         for cmd in (["session", "stop", "hb1"], ["session", "delete", "hb1"]):
-            subprocess.run(["limen", *cmd], env=env, capture_output=True)
+            subprocess.run(["kompitum", *cmd], env=env, capture_output=True)
         subprocess.run(["pkill", "-f", AGENT])
 
 

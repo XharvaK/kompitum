@@ -577,7 +577,7 @@ impl MetalRenderer {
             (viewport_size.width.ceil() as i32).into(),
             (viewport_size.height.ceil() as i32).into(),
         );
-        // LIMEN: never acquire a drawable: it can block while covered/minimized.
+        // KOMPITUM: never acquire a drawable: it can block while covered/minimized.
         self.render_scene_to_image(scene, viewport_size)
     }
 

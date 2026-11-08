@@ -1,6 +1,6 @@
 Office comes from https://github.com/DustyPolk/herdr-office at commit 1a176d5,
 MIT licence (LICENSE), by DustyPolk.
 
-Changed for Limen: the module is imported as "limen" instead of "herdr", and the
+Changed for Kompitum: the module is imported as "kompitum" instead of "herdr", and the
 real-weather lookup (ipapi.co and Open-Meteo) is removed, so the mod reaches no
 network. The windows still snow in winter.

@@ -462,7 +462,7 @@ fn check(arguments: CheckArguments, components: crate::FrozenComponentRegistry) 
         .unwrap_or_else(|_| arguments.directory.clone());
 
     gpui_platform::application()
-        // LIMEN: checks need a hidden native window, not a Dock/LaunchServices
+        // KOMPITUM: checks need a hidden native window, not a Dock/LaunchServices
         // foreground app. Apply this before AppKit's run loop, not in its callback.
         .with_activation_policy(gpui::ActivationPolicy::Prohibited)
         .with_assets(AppAssets::new(asset_root))

@@ -18,9 +18,9 @@ function setup(result: any) {
     openOverlay: (...args: unknown[]) => overlays.push(args),
     exec: async (_cmd: string, _args: string[], options: any) => {
       probes.push(options.on);
-      return { stdout: "Darwin\n/remote/limen-core\n" };
+      return { stdout: "Darwin\n/remote/kompitum-core\n" };
     },
-    lc: async (args: string[]) => {
+    kom: async (args: string[]) => {
       calls.push(args);
       if (args[1] === "add") {
         if (result.code === 0) machines.push({ target: args[2], name: args[2] });
@@ -48,13 +48,13 @@ function setup(result: any) {
   };
 }
 
-for (const kind of ["lc_missing", "incompatible", "login_needed", "auth_failed", "host_key"]) {
+for (const kind of ["kom_missing", "incompatible", "login_needed", "auth_failed", "host_key"]) {
   test(`${kind} gives terminal instructions without starting a terminal`, async () => {
     const s = setup({ code: 1, stdout: JSON.stringify({ error: { kind, message: "needs attention" } }) });
     await s.add();
     expect(s.view.state["my-host"]).toContain("Couldn't add my-host here");
-    expect(s.view.state["my-host"]).toContain("`lc machine add my-host`");
-    expect(s.view.state["my-host"]).toContain("`lc machine --help`");
+    expect(s.view.state["my-host"]).toContain("`kom machine add my-host`");
+    expect(s.view.state["my-host"]).toContain("`kom machine --help`");
     expect(s.view.isAdded("my-host")).toBe(false);
     expect(s.calls.every((args) => args[0] === "machine")).toBe(true);
     expect(s.overlays).toEqual([]);
@@ -65,7 +65,7 @@ for (const message of ["Enter password", "Enter passphrase", "new host key", "Pe
   test(`${message} also gives instructions`, async () => {
     const s = setup({ code: 1, stderr: JSON.stringify({ error: { kind: "other", message } }) });
     await s.add();
-    expect(s.view.state["my-host"]).toContain("`lc machine add my-host`");
+    expect(s.view.state["my-host"]).toContain("`kom machine add my-host`");
   });
 }
 
@@ -76,7 +76,7 @@ for (const [target, quoted] of [
   test(`instructions quote ${target} as one shell argument`, async () => {
     const s = setup({ code: 1, stdout: JSON.stringify({ error: { kind: "host_key" } }) });
     await s.add(target);
-    expect(s.view.state[target]).toContain(`\`lc machine add ${quoted}\``);
+    expect(s.view.state[target]).toContain(`\`kom machine add ${quoted}\``);
     expect(s.calls.find((args) => args[1] === "add")?.[2]).toBe(target);
     const shell = Bun.spawnSync(["sh", "-c", `printf '%s' ${quoted}`]);
     expect(shell.exitCode).toBe(0);
@@ -89,7 +89,7 @@ test("pending guidance clears when another terminal adds the host and checks Mac
   await s.add();
   await s.poll();
   expect(s.view.pending.has("my-host")).toBe(true);
-  expect(s.view.state["my-host"]).toContain("lc machine add my-host");
+  expect(s.view.state["my-host"]).toContain("kom machine add my-host");
   expect(s.probes).toEqual([]);
   s.machines.push({ target: "my-host", name: "remote" });
   await s.poll();
@@ -97,7 +97,7 @@ test("pending guidance clears when another terminal adds the host and checks Mac
   expect(s.view.state["my-host"]).toBeUndefined();
   expect(s.view.pending.size).toBe(0);
   expect(s.view.typed).toBe("");
-  expect(s.view.macs["my-host"]).toEqual({ name: "remote", core: "/remote/limen-core" });
+  expect(s.view.macs["my-host"]).toEqual({ name: "remote", core: "/remote/kompitum-core" });
   expect(s.probes).toEqual(["remote"]);
   const count = s.calls.length;
   await s.poll();

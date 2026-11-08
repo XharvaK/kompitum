@@ -19,10 +19,10 @@ A status of blocked can prevent a normal send, but it is not an access boundary 
 
 These stop accidents and wrong defaults, not a program set on getting past them: anything running as your account can reach the API.
 
-- A terminal started with `lc run --person` takes typing only from `lc attach`. `send`, `keys`, `interrupt` and notes are refused, `--force` included.
+- A terminal started with `kom run --person` takes typing only from `kom attach`. `send`, `keys`, `interrupt` and notes are refused, `--force` included.
 - `send`, `keys` and `interrupt` refuse a blocked program, since typing could answer its dialog, unless told `--force`. A plain send is held and goes in when the program leaves `blocked`.
-- A program in a terminal can't name another terminal as its caller: its `LIMEN_SCOPE` gives it away. A call from outside any terminal is taken at its word.
-- `lc file` stays inside `--root`, by default `--cwd`, following links. What leads out is refused.
+- A program in a terminal can't name another terminal as its caller: its `KOMPITUM_SCOPE` gives it away. A call from outside any terminal is taken at its word.
+- `kom file` stays inside `--root`, by default `--cwd`, following links. What leads out is refused.
 - A machine reaches a terminal here only while that terminal has work there, and for a minute after, so the news of its end arrives. Forgetting the machine ends it at once.
 
 A status is only what a program's output said, and a file it prints can say it too. Read it as a hint about when to look, not as proof.
@@ -45,10 +45,10 @@ Do not expose the socket or forward the raw API to people you would not trust wi
 ## Sessions
 
 The default session is named default.
-Setting `LIMEN_SESSION` selects a separate core, terminals, and state directory:
+Setting `KOMPITUM_SESSION` selects a separate core, terminals, and state directory:
 
 ```sh
-LIMEN_SESSION=scratch lc ls
+KOMPITUM_SESSION=scratch kom ls
 ```
 
 Sessions are useful for tests and separate sets of work.
@@ -62,7 +62,7 @@ SSH handles login, host keys, and encryption. Core carries its protocol through 
 A custom connection command must provide its own trust and transport guarantees.
 Core does not add another encryption layer or authenticate a remote user itself.
 
-Adding a machine gives local clients access to its lc account's commands, files, and terminals.
+Adding a machine gives local clients access to its kom account's commands, files, and terminals.
 Trust the destination, the SSH target, and any custom connection command.
 Machine installation or update copies executable code there and restarts that session's core.
 Forgetting a machine removes the connection here, not its remote programs or state.
@@ -72,19 +72,19 @@ See [machines](machines.md).
 
 | Item | Default |
 | --- | --- |
-| Unix state | `~/.local/state/limen-core/<session>/` |
-| Unix config | `~/.config/limen-core/config.toml` |
-| Windows state | `%LOCALAPPDATA%\limen-core\<session>\` |
-| Windows config | `%APPDATA%\limen-core\config.toml` |
+| Unix state | `~/.local/state/kompitum-core/<session>/` |
+| Unix config | `~/.config/kompitum-core/config.toml` |
+| Windows state | `%LOCALAPPDATA%\kompitum-core\<session>\` |
+| Windows config | `%APPDATA%\kompitum-core\config.toml` |
 | Templates | A templates directory beside the config file |
 
 `XDG_STATE_HOME` and `XDG_CONFIG_HOME` override the state and config homes on both platforms.
-On Unix, sockets live under `$XDG_RUNTIME_DIR/limen-core/` when set.
-Otherwise core uses `/run/user/<uid>/limen-core/` if that runtime directory exists, then falls back to the session's state directory.
+On Unix, sockets live under `$XDG_RUNTIME_DIR/kompitum-core/` when set.
+Otherwise core uses `/run/user/<uid>/kompitum-core/` if that runtime directory exists, then falls back to the session's state directory.
 The client socket is named `<session>.sock`; holder sockets sit beside it.
 On Windows, pipe names include the account name and session.
 
-`LIMEN_SOCKET` overrides the client endpoint. Otherwise the socket setting in config can override it.
+`KOMPITUM_SOCKET` overrides the client endpoint. Otherwise the socket setting in config can override it.
 A custom endpoint does not move the state directory.
 Keep Unix socket paths short; the OS limits their length.
 
@@ -95,8 +95,8 @@ State is not encrypted by core. Removing state is destructive, not a way to stop
 ## Updates and signing
 
 ```sh
-lc update
-lc update --version 0.1.5
+kom update
+kom update --version 0.1.5
 ```
 
 The version form means at least that version, not an exact downgrade.
@@ -104,7 +104,7 @@ Updates restart the core while holders keep the terminals running.
 An update may also restart an older running core when the installed binary is already current.
 
 Release installers and updates download a manifest and check the archive's SHA-256 against it.
-The default release service is HTTPS at releases.limen.invalid.
+The default release service is HTTPS at releases.kompitum.invalid.
 This trusts the release service and HTTPS; a checksum is not an independently signed release manifest.
 The manifest is not verified with a separate signing key.
 
@@ -113,5 +113,5 @@ When the signing profile is configured, the workflow signs and verifies the exec
 If the profile is unset, it publishes unsigned builds. Windows may block those builds.
 Do not assume every downloaded build is signed.
 
-`lc update --from /path/to/limen-core` installs a local build instead of downloading one.
+`kom update --from /path/to/kompitum-core` installs a local build instead of downloading one.
 Only use a build you trust. The updater's compatibility checks are not a review of its code.

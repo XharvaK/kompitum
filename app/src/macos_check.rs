@@ -12,8 +12,8 @@ use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const SENTINEL: &str = "--limen-check-job";
-const DIRECT: &str = "LIMEN_CHECK_DIRECT";
+const SENTINEL: &str = "--kompitum-check-job";
+const DIRECT: &str = "KOMPITUM_CHECK_DIRECT";
 static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
 
 extern "C" fn interrupt(signal: libc::c_int) {
@@ -75,7 +75,7 @@ pub fn startup(args: &[String]) {
             .ok_or_else(|| io::Error::other("missing checker job directory or target"))
             .and_then(|(dir, target)| worker(Path::new(dir), target));
         if let Err(error) = result {
-            eprintln!("limen-app: checker job failed: {error}");
+            eprintln!("kompitum-app: checker job failed: {error}");
             std::process::exit(1);
         }
         std::process::exit(0);
@@ -101,7 +101,7 @@ pub fn startup(args: &[String]) {
                 std::process::exit(128 + signal);
             }
             eprintln!(
-                "limen-app: launchd checker submission failed; checking in this process (shares the caller's coalition): {error}"
+                "kompitum-app: launchd checker submission failed; checking in this process (shares the caller's coalition): {error}"
             );
         }
     }
@@ -232,9 +232,12 @@ fn submit(args: &[String]) -> io::Result<i32> {
         .duration_since(UNIX_EPOCH)
         .map_err(io::Error::other)?
         .as_nanos();
-    let label = format!("dev.limen.check.{}.{stamp}", std::process::id());
+    let label = format!("dev.kompitum.check.{}.{stamp}", std::process::id());
     let domain = format!("gui/{}", unsafe { libc::getuid() });
-    let dir = PathBuf::from(format!("/tmp/limen-check-{}-{stamp}", std::process::id()));
+    let dir = PathBuf::from(format!(
+        "/tmp/kompitum-check-{}-{stamp}",
+        std::process::id()
+    ));
     fs::DirBuilder::new().mode(0o700).create(&dir)?;
     let mut job = Job {
         dir,
@@ -341,7 +344,7 @@ fn submit(args: &[String]) -> io::Result<i32> {
         Ok(code) => Ok(code),
         Err(error) => {
             let _ = relay(&job.dir, "worker-stderr", &mut io::stderr().lock());
-            eprintln!("limen-app: isolated checker failed: {error}");
+            eprintln!("kompitum-app: isolated checker failed: {error}");
             Ok(1)
         }
     }

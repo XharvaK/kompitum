@@ -1,7 +1,7 @@
 // The room's fixtures: wall pieces, the door, weather in the windows, seasonal touches.
 // Each function returns elements positioned in the scene's px.
 import { div } from "gpui-kit";
-import { run } from "limen";
+import { run } from "kompitum";
 import * as A from "./art.js";
 
 const WOOD = "#7a5c3e";

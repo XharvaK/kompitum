@@ -37,8 +37,8 @@ SW_SHOWMINNOACTIVE = 7
 
 CONSOLE_CLASSES = {"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS", "PseudoConsoleWindow"}
 TREE_PROGRAMS = {
-    "bash.exe", "bun.exe", "cargo.exe", "claude.exe", "cmd.exe", "commandcode.exe", "conhost.exe", "git.exe", "lc.exe",
-    "limen-core.exe", "link.exe", "node.exe", "npx.exe", "opencode.exe", "openconsole.exe", "ping.exe",
+    "bash.exe", "bun.exe", "cargo.exe", "claude.exe", "cmd.exe", "commandcode.exe", "conhost.exe", "git.exe", "kom.exe",
+    "kompitum-core.exe", "link.exe", "node.exe", "npx.exe", "opencode.exe", "openconsole.exe", "ping.exe",
     "powershell.exe", "pwsh.exe", "python.exe", "reg.exe", "rustc.exe", "scp.exe", "sh.exe", "ssh.exe", "tar.exe",
     "tasklist.exe", "timeout.exe", "uv.exe", "uvx.exe", "whoami.exe", "windowsterminal.exe", "zig.exe",
 }

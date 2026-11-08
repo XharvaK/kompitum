@@ -1,6 +1,6 @@
 // Add a machine: the hosts in ~/.ssh/config to pick from (or type one),
-// each added with one click (`lc machine add`). When the machine needs
-// something first (limen-core installed there, a password, a new host
+// each added with one click (`kom machine add`). When the machine needs
+// something first (kompitum-core installed there, a password, a new host
 // key), the picker explains what to run in a terminal. Machines that need
 // no answers are added quietly. Opened as a dialog
 // (`mod.open machine-add`); the sidebars' Add machine and the welcome
@@ -8,7 +8,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
-import { lc, exec, home, readTextFile, theme, props, closeOverlay } from "limen";
+import { kom, exec, home, readTextFile, theme, props, closeOverlay } from "kompitum";
 
 const I = (name) => `mods/workspace-chrome/${name}.svg`;
 
@@ -89,7 +89,7 @@ export default class MachineAdd extends View {
   }
 
   async refresh() {
-    const r = await lc(["machine", "ls", "--json"]).catch(() => null);
+    const r = await kom(["machine", "ls", "--json"]).catch(() => null);
     try {
       this.added = r?.code === 0 ? (JSON.parse(r.stdout).machines ?? []).filter((m) => !m.temporary) : [];
     } catch {
@@ -118,7 +118,7 @@ export default class MachineAdd extends View {
     this.state[target] = "adding";
     cx.notify();
     cx.spawn(async (cx) => {
-      const r = await lc(["machine", "add", target, "--json"]).catch((e) => ({ code: 1, stderr: String(e), stdout: "" }));
+      const r = await kom(["machine", "add", target, "--json"]).catch((e) => ({ code: 1, stderr: String(e), stdout: "" }));
       let why = null;
       try {
         why = r.code === 0 ? null : (JSON.parse(r.stdout || r.stderr).error ?? { message: (r.stderr || r.stdout).trim() });
@@ -131,10 +131,10 @@ export default class MachineAdd extends View {
         this.typed = "";
         await this.refresh();
         await this.checkMac(target);
-      } else if (["lc_missing", "incompatible", "login_needed", "auth_failed", "host_key"].includes(why.kind) || /password|passphrase|host key|permission denied|login/i.test(why.message ?? "")) {
+      } else if (["kom_missing", "incompatible", "login_needed", "auth_failed", "host_key"].includes(why.kind) || /password|passphrase|host key|permission denied|login/i.test(why.message ?? "")) {
         const quoted = /^[a-z0-9_@%+=:,./-]+$/i.test(target) ? target : "'" + target.replace(/'/g, "'\\''") + "'";
         this.pending.add(target);
-        this.state[target] = `Couldn't add ${target} here: it needs you to answer something (a password, a new host key, or installing limen-core there). Run \`lc machine add ${quoted}\` in a terminal. \`lc machine --help\` shows the options.`;
+        this.state[target] = `Couldn't add ${target} here: it needs you to answer something (a password, a new host key, or installing kompitum-core there). Run \`kom machine add ${quoted}\` in a terminal. \`kom machine --help\` shows the options.`;
       } else this.state[target] = why.message || "it didn't work";
       await this.refresh();
       cx.notify();
@@ -147,9 +147,9 @@ export default class MachineAdd extends View {
   async checkMac(target) {
     const m = this.added.find((x) => x.target === target || x.name === target);
     if (!m) return;
-    const r = await exec("sh", ["-c", 'uname; command -v limen-core || echo "$HOME/.local/bin/limen-core"'], { on: m.name }).catch(() => null);
+    const r = await exec("sh", ["-c", 'uname; command -v kompitum-core || echo "$HOME/.local/bin/kompitum-core"'], { on: m.name }).catch(() => null);
     const [os, core] = (r?.stdout ?? "").trim().split("\n");
-    if (os === "Darwin") this.macs[target] = { name: m.name, core: core ?? "~/.local/bin/limen-core" };
+    if (os === "Darwin") this.macs[target] = { name: m.name, core: core ?? "~/.local/bin/kompitum-core" };
   }
 
   macCard(t, target) {
@@ -169,7 +169,7 @@ export default class MachineAdd extends View {
           .text_size(12.5)
           .line_height("18px")
           .text_color(t.muted)
-          .child("macOS asks on the Mac's own screen before an agent reads Desktop, Documents or Downloads, and waits until someone answers. Give limen-core Full Disk Access there and it never asks again: in the list, press + and pick this file:"),
+          .child("macOS asks on the Mac's own screen before an agent reads Desktop, Documents or Downloads, and waits until someone answers. Give kompitum-core Full Disk Access there and it never asks again: in the list, press + and pick this file:"),
       )
       .child(div().px(8).py(4).rounded(6).bg(t.background).border_1().border_color(t.border).text_size(12).text_color(t.foreground).child(mac.core))
       .child(
@@ -278,7 +278,7 @@ export default class MachineAdd extends View {
           .text_size(12.8)
           .line_height("19px")
           .text_color(t.muted)
-          .child("A VPS, a Mac mini, a box at home: Limen reaches it over ssh, and agents there keep running while your laptop sleeps."),
+          .child("A VPS, a Mac mini, a box at home: Kompitum reaches it over ssh, and agents there keep running while your laptop sleeps."),
       )
       .child(div().pt(16).pb(6).text_size(11.5).font_medium().text_color(t.dim).child(hosts.length ? "From your ssh config" : "Your ssh config lists no hosts"))
       .child(

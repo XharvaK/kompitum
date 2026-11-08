@@ -24,7 +24,7 @@ pub(crate) struct Scrollable<E: InteractiveElement + Styled + ParentElement + El
     id: ElementId,
     element: E,
     axis: ScrollbarAxis,
-    // LIMEN: `mode(...)` on an `overflow_*_scrollbar` element.
+    // KOMPITUM: `mode(...)` on an `overflow_*_scrollbar` element.
     mode: Option<gpui_base::ScrollbarMode>,
 }
 

@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-const dir=`${resolve(process.argv[2]??'/var/tmp/limen98')}/mods/win98/sounds`;
+const dir=`${resolve(process.argv[2]??'/var/tmp/kompitum98')}/mods/win98/sounds`;
 mkdirSync(dir,{recursive:true});
 const pi='2*PI';
 const tone=(f:number,delay=0,decay=2)=>`sin(${pi}*${f}*(t-${delay}))*exp(-${decay}*(t-${delay}))*gte(t,${delay})`;

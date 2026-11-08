@@ -1,5 +1,5 @@
 //! Every command the app runs, defined once. Keys, menus, mods and
-//! `limen-app do` all run these; key checks, `limen-app commands` and the docs come
+//! `kompitum-app do` all run these; key checks, `kompitum-app commands` and the docs come
 //! from this list. Mods' own commands are `<mod>.<command>`.
 
 use serde_json::{Value, json};
@@ -45,7 +45,7 @@ pub const COMMANDS: &[Command] = &[
             opt("task"),
             opt("machine"),
         ],
-        "Make a space: its name (default: none, so it's called after where its first terminal is), the folder its terminals start in (default: the focused terminal's), its first tab's name (default: none, so it's called by its number), optionally an agent (argv) and its first message (task), and the machine it lives on (`lc machine ls`; default the focused space's machine for keys and clicks, this computer for scripts; empty string: this computer; its terminals start in that machine's home unless folder).",
+        "Make a space: its name (default: none, so it's called after where its first terminal is), the folder its terminals start in (default: the focused terminal's), its first tab's name (default: none, so it's called by its number), optionally an agent (argv) and its first message (task), and the machine it lives on (`kom machine ls`; default the focused space's machine for keys and clicks, this computer for scripts; empty string: this computer; its terminals start in that machine's home unless folder).",
     ),
     cmd(
         "space.close",
@@ -124,12 +124,12 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "terminal.right_click",
         &[req("to"), opt("terminal")],
-        "Where right-clicks in a terminal (default: the focused one) go when its program takes the mouse: \"program\" or \"menu\" (Limen's, the default). Shift+right-click is always the menu.",
+        "Where right-clicks in a terminal (default: the focused one) go when its program takes the mouse: \"program\" or \"menu\" (Kompitum's, the default). Shift+right-click is always the menu.",
     ),
     cmd(
         "terminal.pin",
         &[req("terminal"), req("pinned")],
-        "Pin an agent to the top of the agent lists (pinned true) or unpin it (false). Pins are kept with the terminal, so every Limen client shows them, and end with it.",
+        "Pin an agent to the top of the agent lists (pinned true) or unpin it (false). Pins are kept with the terminal, so every Kompitum client shows them, and end with it.",
     ),
     cmd(
         "terminal.kill",
@@ -199,7 +199,7 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "terminal.scroll",
         &[opt("lines"), opt("pages"), opt("to"), opt("terminal")],
-        "Scroll a terminal's view of its history (default: the focused one). Give exactly one of: lines (a whole number; negative goes up, toward history), pages (a number, fractions allowed; one page is the terminal's rows), to: \"top\" (oldest history) or \"bottom\" (the live screen). This scrolls Limen's view, not the program.",
+        "Scroll a terminal's view of its history (default: the focused one). Give exactly one of: lines (a whole number; negative goes up, toward history), pages (a number, fractions allowed; one page is the terminal's rows), to: \"top\" (oldest history) or \"bottom\" (the live screen). This scrolls Kompitum's view, not the program.",
     ),
     cmd(
         "terminal.paste",
@@ -301,12 +301,12 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "app.check_updates",
         &[],
-        "Look for a newer Limen and limen-core now.",
+        "Look for a newer Kompitum and kompitum-core now.",
     ),
     cmd(
         "app.update_core",
         &[],
-        "Update limen-core to its latest release of this generation; terminals keep running.",
+        "Update kompitum-core to its latest release of this generation; terminals keep running.",
     ),
     cmd(
         "app.reset",
@@ -324,7 +324,7 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "app.update",
         &[],
-        "Restart into the update Limen downloaded (your terminals keep running).",
+        "Restart into the update Kompitum downloaded (your terminals keep running).",
     ),
     cmd("app.quit", &[], "Quit (macOS)."),
     cmd("app.hide", &[], "Hide the app (macOS)."),
@@ -411,7 +411,7 @@ pub fn missing(c: &Command, args: &Value) -> Option<&'static str> {
         })
 }
 
-/// The list as data, for `limen-app commands` and mods.
+/// The list as data, for `kompitum-app commands` and mods.
 pub fn listing() -> Value {
     Value::Array(
         COMMANDS
@@ -515,7 +515,7 @@ mod tests {
             Some("id")
         );
         assert_eq!(missing(move_, &json!({ "id": "sp1", "index": 1 })), None);
-        // Names are optional: none is Limen's automatic one.
+        // Names are optional: none is Kompitum's automatic one.
         assert_eq!(missing(find("space.new").unwrap(), &json!({})), None);
     }
 }

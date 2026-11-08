@@ -1,1 +1,1 @@
-Limen.app: code object is not signed at all
+Kompitum.app: code object is not signed at all

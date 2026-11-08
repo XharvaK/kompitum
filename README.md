@@ -1,30 +1,30 @@
-# Limen
+# Kompitum
 
-`lc` runs programs and coding agents in terminals that stay alive after you leave.
+`kom` runs programs and coding agents in terminals that stay alive after you leave.
 Agents can start other agents, send them work, and hear back; you can attach to any terminal and take over.
 
 Core draws nothing. Use it from your shell, an agent, or your own app.
 
 This is a fork of [herdr-core](https://github.com/herdrdev/herdr-core). So far it is herdr-core with new names.
-Limen's own parts still live in its Python repository and come over as [the plan](audit/SETTLE.md) says: the worker loop, the vault, the MCP front, and then the app.
+Kompitum's own parts still live in its Python repository and come over as [the plan](audit/SETTLE.md) says: the worker loop, the vault, the MCP front, and then the app.
 
 ## Where it stands
 
 - The rename is done and it builds on Windows, debug and release, with no code changes. Clippy is clean on the Windows code and on the Linux code.
 - On Windows the whole suite passes, 156 tests with real cores and terminals among them, and none of it opened a window. One test is skipped because it writes to the real user environment.
-- Claude Code runs in an `lc` terminal on its own login, with Limen's `cwmcp` and its workers under it, and nothing it started opened a window. `lc` follows its state, down to the command a permission dialog is asking about. So far that is one test run on Windows.
+- Claude Code runs in an `kom` terminal on its own login, with Kompitum's `cwmcp` and its workers under it, and nothing it started opened a window. `kom` follows its state, down to the command a permission dialog is asking about. So far that is one test run on Windows.
 - The Unix suite, 273 tests and most of what checks the core's logic, has only been type-checked since the rename. We have no Linux machine or CI for it yet.
-- There are no releases. `lc update` and the install scripts point at `releases.limen.invalid`, a name that can never resolve, so they fail loudly and can never fetch upstream's build. Build from source and copy the binary.
+- There are no releases. `kom update` and the install scripts point at `releases.kompitum.invalid`, a name that can never resolve, so they fail loudly and can never fetch upstream's build. Build from source and copy the binary.
 - macOS builds are not planned: Windows and Linux are what we run.
 
 ## Run it and come back
 
 ```sh
-lc run cargo test                  # stream output and wait for it
-lc run --bg --name web bun dev     # start it and return
-lc ls                             # see live terminals
-lc attach web                     # take over; Ctrl+\ detaches
-lc read web --lines 100            # read without attaching
+kom run cargo test                  # stream output and wait for it
+kom run --bg --name web bun dev     # start it and return
+kom ls                             # see live terminals
+kom attach web                     # take over; Ctrl+\ detaches
+kom read web --lines 100            # read without attaching
 ```
 
 Closing your viewer does not end the program.
@@ -32,16 +32,16 @@ Closing your viewer does not end the program.
 A waiting run checks in after 180 seconds by default, leaving the program running.
 It prints the terminal's address so you can read it or wait again.
 
-For a terminal you want to keep even if its program is lost, use `lc run --keep`.
+For a terminal you want to keep even if its program is lost, use `kom run --keep`.
 Recovery starts a fresh shell, never reruns the task.
 A normal exit or an explicit kill still ends it.
 
 ## Default shell
 
-With no program, `lc run --bg` starts the machine's shell: `$SHELL` (or
+With no program, `kom run --bg` starts the machine's shell: `$SHELL` (or
 `/bin/sh`) on Unix, PowerShell 7 on Windows if available, else Windows PowerShell.
-Override it in `~/.config/limen-core/config.toml` (Windows:
-`%APPDATA%\limen-core\config.toml`, or `$XDG_CONFIG_HOME/limen-core/config.toml`
+Override it in `~/.config/kompitum-core/config.toml` (Windows:
+`%APPDATA%\kompitum-core\config.toml`, or `$XDG_CONFIG_HOME/kompitum-core/config.toml`
 when set):
 
 ```toml
@@ -60,37 +60,37 @@ reports `spawn_failed`. Recovery stays pending and retries, with errors in
 
 ## Agents run agents
 
-Give an agent `lc --skill`. It prints the agent docs in one read, including how to delegate, wait, report back, and clean up.
+Give an agent `kom --skill`. It prints the agent docs in one read, including how to delegate, wait, report back, and clean up.
 
 [Templates](docs/templates.md) give an agent a command and a role.
 After saving the reviewer example from that page:
 
 ```sh
-lc templates
-lc run --bg --name review reviewer "Review src/x.rs. Read-only."
-lc send review "Focus on the error path."
-lc read review --lines 100
+kom templates
+kom run --bg --name review reviewer "Review src/x.rs. Read-only."
+kom send review "Focus on the error path."
+kom read review --lines 100
 ```
 
-Agents started inside an lc terminal become its children.
-They can report back with `lc send` and wait for their children with `lc wait --children all`.
-A terminal started with `lc run --person` is a person's: only `lc attach` types into it, `--force` included. News of its children waits for its next `lc wait`.
+Agents started inside an kom terminal become its children.
+They can report back with `kom send` and wait for their children with `kom wait --children all`.
+A terminal started with `kom run --person` is a person's: only `kom attach` types into it, `--force` included. News of its children waits for its next `kom wait`.
 The parent gets notes when a child needs attention or ends.
 Children end with their parent unless started with `--outlive-parent`.
 
 ## What ends with a terminal
 
-Everything a program starts ends with its terminal, detached or not. To keep a daemon running, give it a terminal of its own: `lc run --bg --no-parent --name proxy node proxy.js`.
+Everything a program starts ends with its terminal, detached or not. To keep a daemon running, give it a terminal of its own: `kom run --bg --no-parent --name proxy node proxy.js`.
 On Windows a program can also leave by asking to break away from the terminal's job, which `detached` in Node and Bun does not do.
 
-`lc run --contain` shuts that door, for work where a kill must be total. Nothing can break away, and on Windows a shell started through `COMSPEC` gets a hidden console, so a detached program below it opens no window.
+`kom run --contain` shuts that door, for work where a kill must be total. Nothing can break away, and on Windows a shell started through `COMSPEC` gets a hidden console, so a detached program below it opens no window.
 
 ## Every machine
 
 ```sh
-lc machine add my-ssh-host --name box
-lc run --on box --cwd /srv/app cargo test
-lc attach box/t3
+kom machine add my-ssh-host --name box
+kom run --on box --cwd /srv/app cargo test
+kom attach box/t3
 ```
 
 Use the address returned by your run, not the example's `box/t3`.
@@ -103,13 +103,13 @@ An agent can say it is working, done, blocked, or in error through OSC 7501, the
 Core stores what it reports. It does not guess from screen text or recognize agent brands.
 A program that does not report status has none.
 
-Use `lc get review` for a snapshot or `lc events` to follow changes.
+Use `kom get review` for a snapshot or `kom events` to follow changes.
 
 ## Build your own client
 
-`lc schema` prints the request/response API as OpenRPC with JSON Schema.
+`kom schema` prints the request/response API as OpenRPC with JSON Schema.
 [The API docs](schema/README.md) cover connecting, terminal streams, events, and status.
-Use `lc connect` to carry the protocol over stdin and stdout, including through SSH.
+Use `kom connect` to carry the protocol over stdin and stdout, including through SSH.
 
 ## Docs
 
@@ -119,8 +119,8 @@ Use `lc connect` to carry the protocol over stdin and stdout, including through 
 - [Security](docs/security.md): access, state, and updates.
 - [API](schema/README.md): build a client.
 
-For a quick lookup, run `lc --help` or a command's help, such as `lc run --help`.
-For agents, use `lc --skill`.
+For a quick lookup, run `kom --help` or a command's help, such as `kom run --help`.
+For agents, use `kom --skill`.
 
 ## Build from source
 
@@ -131,8 +131,8 @@ git submodule update --init --depth 1 vendor/ghostty
 cargo build --release --locked
 ```
 
-The program is `target/release/limen-core` (`limen-core.exe` on Windows). The installers put it on your PATH as `lc`; until we have releases, copy it there yourself.
-`cargo build` puts `limen-shell.exe` beside it too. `lc run --contain` needs it on Windows, so copy it along.
+The program is `target/release/kompitum-core` (`kompitum-core.exe` on Windows). The installers put it on your PATH as `kom`; until we have releases, copy it there yourself.
+`cargo build` puts `kompitum-shell.exe` beside it too. `kom run --contain` needs it on Windows, so copy it along.
 On Windows it needs Microsoft's ConPTY in a `conpty` folder beside it, and the tests need the same in `target\debug`:
 
 ```powershell
@@ -145,5 +145,5 @@ With [just](https://github.com/casey/just), `just check` runs the format check, 
 
 [FORK.md](FORK.md) says how this relates to upstream and how to take an upstream release. [AGENTS.md](AGENTS.md) holds the rules for working here.
 
-License: [Apache-2.0](LICENSE). `lc --licenses` prints the included third-party licenses.
+License: [Apache-2.0](LICENSE). `kom --licenses` prints the included third-party licenses.
 After a dependency change, regenerate them with `just notices`.

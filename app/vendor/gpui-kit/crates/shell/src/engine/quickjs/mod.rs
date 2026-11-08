@@ -1186,7 +1186,7 @@ pub(crate) mod exports {
         "Input",
         "InputState",
         "NumberInput",
-        // LIMEN: source editor exports in gpui-base.
+        // KOMPITUM: source editor exports in gpui-base.
         "Editor",
         "EditorState",
         "Textarea",
@@ -1659,7 +1659,7 @@ impl ShellRuntime {
         )
     }
 
-    // LIMEN: the plain interpreter. In a long-lived window the JIT's upkeep ran
+    // KOMPITUM: the plain interpreter. In a long-lived window the JIT's upkeep ran
     // on the main thread and grew with every loaded mod copy (module
     // generations are never freed), freezing the window for seconds; mod JS
     // ran no faster with it outside tight numeric loops.
@@ -5922,7 +5922,7 @@ globalThis.__gpui = (() => {
     return this;
   };
 
-  // LIMEN: looping animation that never re-enters the script. `frames` shows
+  // KOMPITUM: looping animation that never re-enters the script. `frames` shows
   // one string after another as the element's text (a spinner); `loop` swings
   // a property between two values. Both run on a clock shared by every view,
   // so spinners stay in step, and only while the element is drawn.
@@ -5960,7 +5960,7 @@ globalThis.__gpui = (() => {
     return this;
   };
 
-  // LIMEN: an svg turning once every `ms`, forever (a spinner), natively.
+  // KOMPITUM: an svg turning once every `ms`, forever (a spinner), natively.
   methods.spin = function (ms) {
     const period = finiteDuration(ms ?? 1000, "spin period");
     if (period < 100) throw new RangeError("spin period must be at least 100 milliseconds");
@@ -7088,7 +7088,7 @@ globalThis.__gpui = (() => {
     NumberInput: {
       new: (state) => element(__number_input_element(state.__handle)),
     },
-    // LIMEN: code editor uses the same value/event lifecycle as TextareaState.
+    // KOMPITUM: code editor uses the same value/event lifecycle as TextareaState.
     EditorState: {
       new: (options = {}) => {
         const handle = __editor_state_new(JSON.stringify(options));

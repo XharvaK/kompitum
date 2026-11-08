@@ -339,7 +339,7 @@ impl WindowFrameSource {
         Ok(())
     }
 
-    // LIMEN: lets an idle window park its frames (window.rs `step`).
+    // KOMPITUM: lets an idle window park its frames (window.rs `step`).
     pub fn is_running(&self) -> bool {
         self.registration.is_some()
     }

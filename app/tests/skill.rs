@@ -2,7 +2,7 @@ use std::process::Command;
 
 #[test]
 fn skill_prints_the_window_manual() {
-    let output = Command::new(env!("CARGO_BIN_EXE_limen-app"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kompitum-app"))
         .arg("--skill")
         .output()
         .unwrap();
@@ -13,6 +13,6 @@ fn skill_prints_the_window_manual() {
         skill.lines().count() < 500,
         "skill must stay under 500 lines"
     );
-    assert!(skill.starts_with("# limen-app:"));
-    assert!(skill.contains("lc --skill"));
+    assert!(skill.starts_with("# kompitum-app:"));
+    assert!(skill.contains("kom --skill"));
 }

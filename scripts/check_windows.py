@@ -6,7 +6,7 @@ each on its own build folder, since several whole suites at once slow each other
 
 Run it in a hidden console: a worker's, or through scripts/hidden_run.py on the Owner's PC. It runs every
 step even after a failure, then repeats the end of each failed step and prints unittest-shaped lines,
-which is what Limen's checks read.
+which is what Kompitum's checks read.
 """
 import collections
 import json
@@ -71,15 +71,15 @@ def main() -> int:
     linux = dict(os.environ, ZIG=str(ROOT / "scripts" / "zig-stub.cmd"), CARGO_TARGET_DIR=str(target / "lint-linux"))
     # A test binary's watchdog is set for a quiet PC. On a busy one it aborts a healthy run, and the abort
     # loses the words of any failure that run had already found.
-    patient = dict(os.environ, LIMEN_TEST_WATCHDOG_S="300")
+    patient = dict(os.environ, KOMPITUM_TEST_WATCHDOG_S="300")
     if "--focused" in sys.argv:
         tests = [
             ("the worker loop's unit tests",
-             ["cargo", "test", "--locked", "-p", "limen-core", "--lib", "--no-fail-fast", "--", "task::"], patient),
+             ["cargo", "test", "--locked", "-p", "kompitum-core", "--lib", "--no-fail-fast", "--", "task::"], patient),
             ("the worker loop's tests",
-             ["cargo", "test", "--locked", "-p", "limen-core", "--test", "task", "--no-fail-fast"], patient),
+             ["cargo", "test", "--locked", "-p", "kompitum-core", "--test", "task", "--no-fail-fast"], patient),
             ("the docs and the schema",
-             ["cargo", "test", "--locked", "-p", "limen-core", "--test", "cli_docs", "--test", "schema_file"], None),
+             ["cargo", "test", "--locked", "-p", "kompitum-core", "--test", "cli_docs", "--test", "schema_file"], None),
         ]
     else:
         tests = [("the Windows suite", ["cargo", "test", "--locked", "--no-fail-fast", "--", "--skip", SKIP], patient)]

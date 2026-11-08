@@ -1,7 +1,7 @@
 //! A pane showing one core terminal: bytes in from the core, frames drawn
 //! with GPUI, keys and mouse encoded by libghostty-vt and sent back.
 
-use crate::lc::{Core, Stream};
+use crate::kom::{Core, Stream};
 use crate::links;
 use crate::vt::{self, CursorShape, Rgb, Select, Vt};
 use ghostty_sys::*;
@@ -419,7 +419,7 @@ impl TerminalView {
 
     fn attached(
         &mut self,
-        attached: anyhow::Result<crate::lc::Attached>,
+        attached: anyhow::Result<crate::kom::Attached>,
         attached_size: (u16, u16),
         cx: &mut Context<Self>,
     ) -> Option<async_channel::Receiver<Stream>> {
@@ -453,7 +453,7 @@ impl TerminalView {
             }
             // Gone for good (removed, finished, unknown) versus a connection problem.
             Err(e)
-                if crate::lc::error_kind(&e) == Some("unavailable")
+                if crate::kom::error_kind(&e) == Some("unavailable")
                     || format!("{e:#}").contains("lost the core")
                     || format!("{e:#}").contains("no reply") =>
             {
@@ -462,7 +462,7 @@ impl TerminalView {
             }
             // It ended between being listed and being attached: its pane goes,
             // like one whose program exits while shown.
-            Err(e) if crate::lc::error_kind(&e) == Some("finished") => {
+            Err(e) if crate::kom::error_kind(&e) == Some("finished") => {
                 self.ended = Some("finished".into());
                 cx.emit(TerminalEvent::Ended);
                 None
@@ -660,7 +660,7 @@ impl TerminalView {
 
     /// Files dropped on the terminal: their paths typed in, quoted, as a paste
     /// (agents read a dropped image that way). A terminal on another machine
-    /// gets each file copied there first (`lc put`), and its path there.
+    /// gets each file copied there first (`kom put`), and its path there.
     fn dropped(&mut self, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
         if !self.address.contains('/') {
             let text = quote_paths(paths.iter().map(|p| p.to_string_lossy().into_owned()));
@@ -670,7 +670,7 @@ impl TerminalView {
         self.put_there(paths, false, cx);
     }
 
-    /// Copies files to this terminal's machine (`lc put`) and pastes their
+    /// Copies files to this terminal's machine (`kom put`) and pastes their
     /// paths there; `copies`: the local files were only for sending.
     fn put_there(&self, paths: Vec<std::path::PathBuf>, copies: bool, cx: &mut Context<Self>) {
         let addr = self.address.clone();
@@ -904,7 +904,7 @@ impl TerminalView {
             return;
         }
         let k = &ev.keystroke;
-        // Typing clears a selection, as in Limen.
+        // Typing clears a selection, as in Kompitum.
         if !k.key.starts_with("shift") && !k.key.starts_with("control") && !k.key.starts_with("alt")
         {
             self.grid.borrow_mut().vt.clear_selection();
@@ -972,13 +972,13 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// The program tracks the mouse and Shift isn't held (Shift keeps the mouse Limen's).
+    /// The program tracks the mouse and Shift isn't held (Shift keeps the mouse Kompitum's).
     fn takes_mouse(&self, mods: Modifiers) -> bool {
         self.grid.borrow().vt.mouse_tracking() && !mods.shift
     }
 
     /// Sends a mouse event to a program that tracks the mouse. Returns whether it did
-    /// (shift keeps the mouse for Limen: selecting, the menu).
+    /// (shift keeps the mouse for Kompitum: selecting, the menu).
     fn mouse(
         &mut self,
         action: GhosttyMouseAction,
@@ -1102,7 +1102,7 @@ impl TerminalView {
         g.vt.select(step, col, row, x, y, cw, height);
         drop(g);
         if matches!(step, Select::Release) {
-            // Copy on select, as in Limen.
+            // Copy on select, as in Kompitum.
             self.copy(cx);
         }
         cx.notify();
@@ -1185,7 +1185,7 @@ fn selection_scroll_lines(y: f32, cell_height: f32, rows: u16) -> isize {
 /// A scroll thumb's top and length in px inside a `track` px lane: the
 /// scrollable area is `total` rows, the `len`-row viewport sits `offset` rows
 /// from its top. None when nothing scrolls; `min` keeps a huge scrollback
-/// grabbable. The proportions are Limen's scrollbar's.
+/// grabbable. The proportions are Kompitum's scrollbar's.
 fn scrollbar_thumb(total: u64, offset: u64, len: u64, track: f32, min: f32) -> Option<(f32, f32)> {
     if total <= len || len == 0 || track <= 0.0 {
         return None;
@@ -1237,7 +1237,7 @@ fn scrollbar_row_at(total: u64, len: u64, track: f32, min: f32, top: f32) -> usi
 }
 
 /// A title as it's shown: an agent's spinner in front of it (`\u{2733} Fix the
-/// tests`, braille dots) is no part of it. Limen draws its own, and a title
+/// tests`, braille dots) is no part of it. Kompitum draws its own, and a title
 /// that spins would redraw every mod that shows titles, 10 times a second.
 pub(crate) fn shown_title(title: &str) -> &str {
     // Frames agents spin, not status icons (\u{2713} build stays): braille dots,
@@ -1303,7 +1303,7 @@ fn image_file(item: &ClipboardItem) -> Option<std::path::PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("limen-paste-{stamp}.{ext}"));
+    let path = std::env::temp_dir().join(format!("kompitum-paste-{stamp}.{ext}"));
     std::fs::write(&path, bytes).ok()?;
     Some(path)
 }
@@ -2273,7 +2273,7 @@ fn paint_grid(
         g.cursor_at = frame
             .cursor_cell
             .map(|(x, y)| Bounds::new(at(x as usize, y as usize), cell));
-        // As in Limen, hide on the alternate screen and below five columns.
+        // As in Kompitum, hide on the alternate screen and below five columns.
         g.thumb = None;
         g.track = None;
         let sb = g.vt.scrollbar();
@@ -2566,14 +2566,14 @@ impl Render for TerminalView {
                         ev.position,
                         ev.modifiers,
                     ) {
-                        // The program took the click: Limen's old selection ends, so a copy can't repeat it.
+                        // The program took the click: Kompitum's old selection ends, so a copy can't repeat it.
                         this.clear_selection(cx);
                     } else {
                         this.start_selection(ev.position, cx);
                     }
                 }),
             )
-            // Right-click is Limen's menu, even when the program tracks the mouse
+            // Right-click is Kompitum's menu, even when the program tracks the mouse
             // (agent TUIs do, and then a pane had no menu at all), unless the pane
             // sends right-clicks to its program.
             .on_mouse_down(
@@ -2835,7 +2835,7 @@ mod tests {
     fn attach_errors_do_not_announce_a_terminal_exit(cx: &mut gpui::TestAppContext) {
         use gpui::*;
         let view = cx.new(|cx| {
-            super::TerminalView::attach(crate::lc::offline(), "remote/t1".into(), (40, 5), cx)
+            super::TerminalView::attach(crate::kom::offline(), "remote/t1".into(), (40, 5), cx)
         });
         let ends = cx.new(|cx| {
             cx.subscribe(
@@ -2852,7 +2852,7 @@ mod tests {
         cx.run_until_parked();
         for kind in ["not_found", "unavailable", "permission_denied"] {
             view.update(cx, |view, cx| {
-                let error = crate::lc::RpcError(
+                let error = crate::kom::RpcError(
                     json!({ "message": "attach failed", "data": { "kind": kind } }),
                 );
                 view.attached(Err(error.into()), (40, 5), cx);
@@ -2861,7 +2861,7 @@ mod tests {
             assert_eq!(ends.read_with(cx, |count, _| *count), 0, "{kind}");
         }
         view.update(cx, |view, cx| {
-            let error = crate::lc::RpcError(
+            let error = crate::kom::RpcError(
                 json!({ "message": "program finished", "data": { "kind": "finished" } }),
             );
             view.attached(Err(error.into()), (40, 5), cx);
@@ -2875,7 +2875,7 @@ mod tests {
         use gpui::*;
 
         let terminal = cx.new(|cx| {
-            super::TerminalView::attach(crate::lc::offline(), "t1".into(), (120, 40), cx)
+            super::TerminalView::attach(crate::kom::offline(), "t1".into(), (120, 40), cx)
         });
         cx.run_until_parked();
         terminal.read_with(cx, |terminal, _| {
@@ -2896,7 +2896,7 @@ mod tests {
         use gpui::*;
 
         let terminal = cx.new(|cx| {
-            super::TerminalView::attach(crate::lc::offline(), "t1".into(), (120, 40), cx)
+            super::TerminalView::attach(crate::kom::offline(), "t1".into(), (120, 40), cx)
         });
         cx.run_until_parked();
         cx.executor()
@@ -2917,12 +2917,12 @@ mod tests {
         use gpui::*;
 
         let terminal = cx.new(|cx| {
-            super::TerminalView::attach(crate::lc::offline(), "t1".into(), (120, 40), cx)
+            super::TerminalView::attach(crate::kom::offline(), "t1".into(), (120, 40), cx)
         });
         let (tx, rx) = async_channel::unbounded();
         terminal.update(cx, |terminal, cx| {
             terminal.fit(114, 30, size(px(8.), px(18.)), 1.);
-            let attached = crate::lc::Attached {
+            let attached = crate::kom::Attached {
                 channel: 7,
                 stream: rx,
                 terminal: json!({"title": "outdated replay"}),
@@ -2963,7 +2963,7 @@ mod tests {
         cx.update(gpui_base::init);
         let (root, cx) = cx.add_window_view(|_, cx| Root {
             terminal: cx.new(|cx| {
-                super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 5), cx)
+                super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 5), cx)
             }),
             text: cx.new(|cx| {
                 TextViewState::markdown("Move the pointer over this selectable text.", cx)
@@ -3022,13 +3022,13 @@ mod tests {
         let (root, cx) = cx.add_window_view(|_, cx| Root {
             first: cx.new(|cx| {
                 let terminal =
-                    super::TerminalView::attach(crate::lc::offline(), "t1".into(), (32, 6), cx);
+                    super::TerminalView::attach(crate::kom::offline(), "t1".into(), (32, 6), cx);
                 terminal.grid.borrow_mut().vt.write(b"alpha result");
                 terminal
             }),
             second: cx.new(|cx| {
                 let terminal =
-                    super::TerminalView::attach(crate::lc::offline(), "t2".into(), (32, 6), cx);
+                    super::TerminalView::attach(crate::kom::offline(), "t2".into(), (32, 6), cx);
                 terminal.grid.borrow_mut().vt.write(b"beta result");
                 terminal
             }),
@@ -3084,7 +3084,7 @@ mod tests {
         let (root, cx) = cx.add_window_view(|_, cx| {
             Root(cx.new(|cx| {
                 let terminal =
-                    super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 6), cx);
+                    super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 6), cx);
                 terminal.grid.borrow_mut().vt.write(b"needle appears here");
                 terminal
             }))
@@ -3125,13 +3125,13 @@ mod tests {
 
         cx.update(gpui_base::init);
         let terminal = cx
-            .new(|cx| super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 6), cx));
+            .new(|cx| super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 6), cx));
         let (_, cx) = cx.add_window_view(|_, _| gpui::Empty);
         cx.update(|window, app| {
             terminal.update(app, |terminal, cx| {
                 terminal.open_search(window, cx);
                 terminal.search_query = "needle".into();
-                terminal.reattach(crate::lc::offline(), cx);
+                terminal.reattach(crate::kom::offline(), cx);
                 let mut grid = terminal.grid.borrow_mut();
                 grid.vt.write(b"replayed needle\r\n");
                 for _ in 0..1000 {
@@ -3167,7 +3167,7 @@ mod tests {
         impl Render for Root {
             fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
                 div()
-                    .key_context("Limen")
+                    .key_context("Kompitum")
                     .size_full()
                     .on_action(cx.listener(
                         |this, action: &gpui_shell::action::ShellAction, _, cx| match action.id() {
@@ -3189,7 +3189,7 @@ mod tests {
         cx.update(|app| crate::keys::install(bindings, app));
         let (root, cx) = cx.add_window_view(|_, cx| {
             Root(cx.new(|cx| {
-                super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 6), cx)
+                super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 6), cx)
             }))
         });
         cx.run_until_parked();
@@ -3261,7 +3261,7 @@ mod tests {
         let (root, cx) = cx.add_window_view(|_, cx| {
             Root(cx.new(|cx| {
                 let terminal =
-                    super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 6), cx);
+                    super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 6), cx);
                 terminal.grid.borrow_mut().vt.write(b"needle appears here");
                 terminal
             }))
@@ -3323,7 +3323,7 @@ mod tests {
         let (root, cx) = cx.add_window_view(|_, cx| {
             Root(cx.new(|cx| {
                 let terminal =
-                    super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 5), cx);
+                    super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 5), cx);
                 terminal
                     .grid
                     .borrow_mut()
@@ -3402,7 +3402,7 @@ mod tests {
         cx.update(gpui_base::init);
         let (root, cx) = cx.add_window_view(|_, cx| {
             Root(cx.new(|cx| {
-                super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 6), cx)
+                super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 6), cx)
             }))
         });
         cx.run_until_parked();
@@ -3469,7 +3469,7 @@ mod tests {
         cx.update(gpui_base::init);
         let (root, cx) = cx.add_window_view(|_, cx| {
             Root(cx.new(|cx| {
-                super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 6), cx)
+                super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 6), cx)
             }))
         });
         cx.run_until_parked();
@@ -3538,7 +3538,7 @@ mod tests {
         impl Render for Root {
             fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
                 div()
-                    .key_context("Limen")
+                    .key_context("Kompitum")
                     .size_full()
                     .on_action(cx.listener(
                         |this, action: &gpui_shell::action::ShellAction, window, cx| {
@@ -3559,7 +3559,7 @@ mod tests {
         cx.update(|app| crate::keys::install(bindings, app));
         let (root, cx) = cx.add_window_view(|_, cx| {
             Root(cx.new(|cx| {
-                super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 6), cx)
+                super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 6), cx)
             }))
         });
         cx.run_until_parked();
@@ -3863,7 +3863,7 @@ mod tests {
                     }
                 }
             }
-            if let Ok(path) = std::env::var("LIMEN_SYMBOL_PIXELS") {
+            if let Ok(path) = std::env::var("KOMPITUM_SYMBOL_PIXELS") {
                 image.save(path).unwrap();
             }
             let scale = window.scale_factor();
@@ -3990,7 +3990,7 @@ mod tests {
         cx.update(gpui_base::init);
         let (root, cx) = cx.add_window_view(|_, cx| {
             Root(cx.new(|cx| {
-                super::TerminalView::attach(crate::lc::offline(), "t1".into(), (40, 5), cx)
+                super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 5), cx)
             }))
         });
         cx.run_until_parked();
@@ -4288,8 +4288,8 @@ mod tests {
         assert_eq!(shown_title("\u{280b} working"), "working", "braille");
         assert_eq!(shown_title("\u{25d0} \u{2733}  two of them"), "two of them");
         assert_eq!(
-            shown_title("~/Projects/limen"),
-            "~/Projects/limen",
+            shown_title("~/Projects/kompitum"),
+            "~/Projects/kompitum",
             "a folder keeps its ~"
         );
         assert_eq!(
@@ -4685,7 +4685,7 @@ mod tests {
         let _guard = OPTION_AS_ALT_TEST_LOCK.lock().unwrap();
         #[cfg(target_os = "macos")]
         gpui_macos::set_option_as_alt(Some(gpui_macos::OptionAsAlt::None));
-        // Limen keeps native Option text on macOS (libghostty's default
+        // Kompitum keeps native Option text on macOS (libghostty's default
         // option-as-alt=false); other platforms prefix an unconsumed Alt.
         const ALT_B: &[u8] = if cfg!(target_os = "macos") {
             b"b"

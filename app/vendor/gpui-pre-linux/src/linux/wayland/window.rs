@@ -1112,7 +1112,7 @@ impl WaylandWindowStatePtr {
                             state.resize_throttle = true;
                         }
                         if !configure.fullscreen && !configure.maximized {
-                            // LIMEN: restore the windowed size only when the compositor leaves
+                            // KOMPITUM: restore the windowed size only when the compositor leaves
                             // it to us; a size it sends (e.g. tiling a maximized window) wins.
                             configure.size = if got_unmaximized && configure.size.is_none() {
                                 Some(state.window_bounds.size)
@@ -1960,7 +1960,7 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
-    // LIMEN: capture uses the window's atlas, without acquiring a display surface.
+    // KOMPITUM: capture uses the window's atlas, without acquiring a display surface.
     #[cfg(feature = "render-to-image")]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
         self.borrow_mut()

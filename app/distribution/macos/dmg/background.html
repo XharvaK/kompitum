@@ -30,8 +30,8 @@
   <div class="ram"></div>
   <svg class="path" width="660" height="400" viewBox="0 0 660 400" id="art"></svg>
   <div class="label" id="label"></div>
-  <img class="icon app" src="limen-icon.png"><img class="icon apps" src="appsfolder.png">
-  <div class="name app">Limen</div><div class="name apps">Applications</div>
+  <img class="icon app" src="kompitum-icon.png"><img class="icon apps" src="appsfolder.png">
+  <div class="name app">Kompitum</div><div class="name apps">Applications</div>
 </div>
 <script>
 const q = new URLSearchParams(location.search);
@@ -53,7 +53,7 @@ if (q.get('style') === 'arrow') {
   h.setAttribute('stroke-width', '1.5'); h.setAttribute('stroke-linecap', 'round'); h.setAttribute('stroke-linejoin', 'round');
   h.setAttribute('transform', `translate(${end.x} ${end.y}) rotate(${a})`);
   svg.appendChild(h);
-  document.getElementById('label').innerHTML = '<b>drag</b> Limen to Applications';
+  document.getElementById('label').innerHTML = '<b>drag</b> Kompitum to Applications';
 } else {
   // Cloven hoof prints: two halves, alternating left and right of the path, walking right.
   const steps = 6;
@@ -73,7 +73,7 @@ if (q.get('style') === 'arrow') {
     }
     svg.appendChild(g);
   }
-  document.getElementById('label').innerHTML = '<b>drag</b> Limen to Applications';
+  document.getElementById('label').innerHTML = '<b>drag</b> Kompitum to Applications';
 }
 </script>
 </body>

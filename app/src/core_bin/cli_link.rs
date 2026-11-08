@@ -3,12 +3,12 @@
 use std::io;
 use std::path::Path;
 
-fn limen_bundle(exe: &Path) -> bool {
-    exe.is_absolute() && exe.ends_with("Limen.app/Contents/MacOS/Limen")
+fn kompitum_bundle(exe: &Path) -> bool {
+    exe.is_absolute() && exe.ends_with("Kompitum.app/Contents/MacOS/Kompitum")
 }
 
 fn installed_bundle(exe: &Path) -> bool {
-    limen_bundle(exe)
+    kompitum_bundle(exe)
         && !exe.starts_with("/Volumes")
         && !exe
             .components()
@@ -19,7 +19,7 @@ pub(super) fn ensure(home: &Path, exe: &Path) -> io::Result<()> {
     if !installed_bundle(exe) {
         return Ok(());
     }
-    let link = home.join(".local/bin/limen-app");
+    let link = home.join(".local/bin/kompitum-app");
     match std::fs::symlink_metadata(&link) {
         Ok(meta) if meta.file_type().is_symlink() => {
             let target = std::fs::read_link(&link)?;
@@ -31,7 +31,7 @@ pub(super) fn ensure(home: &Path, exe: &Path) -> io::Result<()> {
             } else {
                 link.parent().unwrap().join(target)
             };
-            if !limen_bundle(&resolved) {
+            if !kompitum_bundle(&resolved) {
                 return Ok(());
             }
             std::fs::remove_file(&link)?;
@@ -51,11 +51,11 @@ mod tests {
 
     #[test]
     fn repairs_only_our_cli_link() {
-        let home = std::env::temp_dir().join(format!("limen-cli-link-{}", std::process::id()));
+        let home = std::env::temp_dir().join(format!("kompitum-cli-link-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        let exe = home.join("Applications/Limen.app/Contents/MacOS/Limen");
-        let link = home.join(".local/bin/limen-app");
+        let exe = home.join("Applications/Kompitum.app/Contents/MacOS/Kompitum");
+        let link = home.join(".local/bin/kompitum-app");
         ensure(&home, &exe).unwrap();
         assert_eq!(std::fs::read_link(&link).unwrap(), exe);
         // Running it again leaves the same link alone.
@@ -63,17 +63,18 @@ mod tests {
         assert_eq!(std::fs::read_link(&link).unwrap(), exe);
 
         for old in [
-            home.join("old/Limen.app/Contents/MacOS/Limen"),
-            "../../Applications/Limen.app/Contents/MacOS/Limen".into(),
-            "/Volumes/Limen/Limen.app/Contents/MacOS/Limen".into(),
-            "/private/var/folders/AppTranslocation/old/d/Limen.app/Contents/MacOS/Limen".into(),
+            home.join("old/Kompitum.app/Contents/MacOS/Kompitum"),
+            "../../Applications/Kompitum.app/Contents/MacOS/Kompitum".into(),
+            "/Volumes/Kompitum/Kompitum.app/Contents/MacOS/Kompitum".into(),
+            "/private/var/folders/AppTranslocation/old/d/Kompitum.app/Contents/MacOS/Kompitum"
+                .into(),
         ] {
             std::fs::remove_file(&link).unwrap();
             symlink(old, &link).unwrap();
             ensure(&home, &exe).unwrap();
             assert_eq!(std::fs::read_link(&link).unwrap(), exe);
         }
-        let old = home.join("previous/Limen.app/Contents/MacOS/Limen");
+        let old = home.join("previous/Kompitum.app/Contents/MacOS/Kompitum");
         std::fs::create_dir_all(old.parent().unwrap()).unwrap();
         std::fs::write(&old, "previous executable").unwrap();
         std::fs::remove_file(&link).unwrap();
@@ -97,11 +98,11 @@ mod tests {
         std::fs::remove_file(&link).unwrap();
 
         for skipped in [
-            "/Volumes/Limen/Limen.app/Contents/MacOS/Limen",
-            "/private/var/folders/AppTranslocation/random/d/Limen.app/Contents/MacOS/Limen",
-            "/work/target/debug/Limen.app/Contents/MacOS/Limen",
-            "/work/target/debug/limen-app",
-            "/Applications/Other.app/Contents/MacOS/Limen",
+            "/Volumes/Kompitum/Kompitum.app/Contents/MacOS/Kompitum",
+            "/private/var/folders/AppTranslocation/random/d/Kompitum.app/Contents/MacOS/Kompitum",
+            "/work/target/debug/Kompitum.app/Contents/MacOS/Kompitum",
+            "/work/target/debug/kompitum-app",
+            "/Applications/Other.app/Contents/MacOS/Kompitum",
         ] {
             ensure(&home, Path::new(skipped)).unwrap();
             assert!(link.symlink_metadata().is_err(), "{skipped}");

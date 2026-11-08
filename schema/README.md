@@ -1,9 +1,9 @@
-# limen-core API
+# kompitum-core API
 
-`lc.openrpc.json` is the whole request/response API as an
+`kom.openrpc.json` is the whole request/response API as an
 [OpenRPC](https://open-rpc.org) document: every method with its params,
 result and errors in JSON Schema. It is generated from the Rust types (a
-test fails when it is stale), and `lc schema` or the `rpc.discover` method
+test fails when it is stale), and `kom schema` or the `rpc.discover` method
 returns the same document from a running core.
 
 This file covers what OpenRPC does not describe: the two connection modes,
@@ -15,15 +15,15 @@ The API only grows. `released.openrpc.json` is the API as last released;
 a test fails on any change that would break a client of it: a removed
 method, param or result field, a new required input, an input that accepts
 less, or an answer that can carry a new kind of value or loses its type.
-At each release, copy `lc.openrpc.json` over it. A real break needs a new
+At each release, copy `kom.openrpc.json` over it. A real break needs a new
 protocol generation, decided on purpose.
 
 ## Connecting
 
 On Unix, core listens on a Unix socket; on Windows, it uses a named pipe.
 See [endpoint rules](../docs/security.md#state-and-endpoints) for default paths,
-fallbacks, and overrides. `lc connect` speaks the same protocol over
-stdin/stdout, so `ssh box lc connect` is a remote core.
+fallbacks, and overrides. `kom connect` speaks the same protocol over
+stdin/stdout, so `ssh box kom connect` is a remote core.
 
 A connection starts in **plain mode**: JSON-RPC 2.0, one message per line.
 Any language or `socat` works.
@@ -195,7 +195,7 @@ making terminals unavailable. These methods are API-only, with no CLI verb.
 Unfiltered event subscribers receive changes as:
 
 ```
-{"jsonrpc":"2.0","method":"event","params":{"seq":43,"type":"doc","data":{"name":"limen-app","version":2}}}
+{"jsonrpc":"2.0","method":"event","params":{"seq":43,"type":"doc","data":{"name":"kompitum-app","version":2}}}
 ```
 
 There is no `terminal` on a doc event. Changes on an added machine arrive in
@@ -215,5 +215,5 @@ watched machines after it.
 
 A terminal's status is whatever its program reported through OSC 7501, the
 Program Status Protocol (`idle`, `working`,
-`done`, `blocked`, `error`, ...), stored as reported. lc never infers status
+`done`, `blocked`, `error`, ...), stored as reported. kom never infers status
 from the screen. Programs that don't speak 7501 have no status.

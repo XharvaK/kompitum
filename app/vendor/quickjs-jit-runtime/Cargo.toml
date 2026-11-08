@@ -1,5 +1,5 @@
-# LIMEN: quickjs-jit's `jit` crate at our pinned rev 96593cd with
-# longbridge/quickjs-jit#38 applied (src/lib.rs, marked LIMEN:). Only the
+# KOMPITUM: quickjs-jit's `jit` crate at our pinned rev 96593cd with
+# longbridge/quickjs-jit#38 applied (src/lib.rs, marked KOMPITUM:). Only the
 # library: tests, benches and binaries stay upstream. Drop once merged.
 [package]
 name = "quickjs-jit-runtime"

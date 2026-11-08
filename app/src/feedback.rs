@@ -6,13 +6,13 @@ use std::path::PathBuf;
 pub const MAX_IMAGES: usize = 3;
 const MAX_IMAGE_BYTES: usize = 5 * 1024 * 1024;
 
-const ENDPOINT: &str = "https://telemetry.limen.invalid/v1/feedback";
+const ENDPOINT: &str = "https://telemetry.kompitum.invalid/v1/feedback";
 
 fn endpoint() -> Option<String> {
-    std::env::var("LIMEN_FEEDBACK_URL")
+    std::env::var("KOMPITUM_FEEDBACK_URL")
         .ok()
         .filter(|u| !u.is_empty())
-        .or_else(|| option_env!("LIMEN_APP_RELEASE").map(|_| ENDPOINT.to_owned()))
+        .or_else(|| option_env!("KOMPITUM_APP_RELEASE").map(|_| ENDPOINT.to_owned()))
 }
 
 pub fn draft(message: &str, email: &str, images: usize, from: &str, layout: &str) -> Value {
@@ -55,7 +55,7 @@ pub fn attach(bytes: &[u8]) -> Result<String, String> {
         Some(ext) => (bytes.to_vec(), ext),
         None => {
             let img = image::load_from_memory(bytes)
-                .map_err(|_| "That isn't an image Limen can read.".to_owned())?;
+                .map_err(|_| "That isn't an image Kompitum can read.".to_owned())?;
             let mut png = std::io::Cursor::new(Vec::new());
             img.write_to(&mut png, image::ImageFormat::Png)
                 .map_err(|_| "Couldn't convert that image.".to_owned())?;

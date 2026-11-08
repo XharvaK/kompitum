@@ -1,9 +1,9 @@
 // The notes between Opus and Manager, oldest first and scrolled to the newest.
-// Reads only lc vault thread: lc vault read would write a read mark in Opus's name.
+// Reads only kom vault thread: kom vault read would write a read mark in Opus's name.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
-import { lc, theme, notify, playSound, openOverlay, closeOverlay, props } from "limen";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props } from "kompitum";
 
 // The same two colors the Board's chips use.
 const OPUS = "accent";
@@ -34,7 +34,7 @@ function stamp(value) {
   return today ? clock(d) : `${MONTHS[d.getMonth()]} ${d.getDate()} ${clock(d)}`;
 }
 
-// Piped, lc says what went wrong as JSON: {"error": {"message", "hint"}}; show its words.
+// Piped, kom says what went wrong as JSON: {"error": {"message", "hint"}}; show its words.
 function errorText(result) {
   for (const out of [result?.stderr, result?.stdout]) {
     try {
@@ -42,7 +42,7 @@ function errorText(result) {
       if (message) return firstLine(message);
     } catch {}
   }
-  return firstLine(result?.stderr) || firstLine(result?.stdout) || `lc exited ${result?.code ?? "?"}`;
+  return firstLine(result?.stderr) || firstLine(result?.stdout) || `kom exited ${result?.code ?? "?"}`;
 }
 
 function problemText(problem) {
@@ -124,7 +124,7 @@ export default class Line extends View {
     this.loading = true;
     cx.spawn(async (cx) => {
       try {
-        const result = await lc(["vault", "thread", this.other, "--json"]);
+        const result = await kom(["vault", "thread", this.other, "--json"]);
         if (result.code !== 0) {
           this.error = errorText(result);
         } else {

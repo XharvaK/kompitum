@@ -1,7 +1,7 @@
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, terminals, spaces, panes, props, run, theme, window as appWindow,
-  shared, setShared, setAgentOrder, lc, layout, openOverlay, closeOverlay } from "limen";
+  shared, setShared, setAgentOrder, kom, layout, openOverlay, closeOverlay } from "kompitum";
 import frames from "./frames.js";
 import { CELL, FONT, ROW, HISTORY_LIMIT, READ_INTERVAL, EXIT_INTERVAL, STATUS, plain, lastLine,
   truncate, elapsed, collectRows, sortRows, remember, missingRows, confirmExits, gridSpec,
@@ -96,7 +96,7 @@ export default class ControlPanel extends View {
           const at = Date.now();
           this.cache.set(row.address, { at, text: previous?.text ?? "", error: false });
           try {
-            const reply = await lc(["read", row.address, "--lines", "8"]);
+            const reply = await kom(["read", row.address, "--lines", "8"]);
             if (reply.code !== 0) throw new Error("Read unavailable");
             if (this.closed || !active() || !this.visibleRows().some(a => a.address === row.address)) {
               this.cache.delete(row.address); continue;
@@ -120,7 +120,7 @@ export default class ControlPanel extends View {
     this.exitPending = true;
     cx.spawn(async cx => {
       try {
-        const reply = await lc(["ls", "--all", "--json"]);
+        const reply = await kom(["ls", "--all", "--json"]);
         if (reply.code !== 0) throw new Error("Exit check unavailable");
         if (this.closed) return;
         this.history = confirmExits(this.history, JSON.parse(reply.stdout), new Set(terminals().map(t => t.address)));

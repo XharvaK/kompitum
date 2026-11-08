@@ -86,7 +86,7 @@ struct DirectXResources {
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
-    // LIMEN: shaders for plain quads; they read `quad_pipeline`'s buffer.
+    // KOMPITUM: shaders for plain quads; they read `quad_pipeline`'s buffer.
     plain_quad_vertex: ID3D11VertexShader,
     plain_quad_fragment: ID3D11PixelShader,
     path_rasterization_pipeline: PipelineState<PathRasterizationSprite>,
@@ -1681,7 +1681,7 @@ fn update_buffer<T>(
 }
 
 #[inline]
-// LIMEN: a solid background with no border and no rounded corner, which
+// KOMPITUM: a solid background with no border and no rounded corner, which
 // `quad_fragment` would fill with exactly its solid color.
 fn is_plain_quad(quad: &Quad) -> bool {
     // Every field by name: a new `Quad` field fails to build here, so whoever
@@ -1704,7 +1704,7 @@ fn is_plain_quad(quad: &Quad) -> bool {
         && [b.top, b.right, b.bottom, b.left] == [zero; 4]
 }
 
-// LIMEN: draw a quad batch as runs of plain quads (plain shaders) and other
+// KOMPITUM: draw a quad batch as runs of plain quads (plain shaders) and other
 // quads (full shaders). Runs keep the batch's order, so overlapping quads
 // still blend the same way. `start` is the batch's offset in the quad buffer.
 fn draw_quad_runs(
@@ -2170,7 +2170,7 @@ mod dxgi {
     }
 }
 
-// LIMEN: plain quads must look exactly like `quad_fragment` draws them, and
+// KOMPITUM: plain quads must look exactly like `quad_fragment` draws them, and
 // the plain pixel shader must stay tiny: WARP (no GPU) runs it on the CPU.
 #[cfg(test)]
 mod plain_quad_tests {
