@@ -6,5 +6,6 @@
   ],
   "warn": [
     "crates/kompitum-core/src/**/*.rs::Command::new"
-  ]
+  ],
+  "one_at_a_time": true
 }
