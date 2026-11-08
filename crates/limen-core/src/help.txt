@@ -30,6 +30,16 @@ No terminal
                               a file here or there: print it, write what is piped
                               in, or replace exact text (--old X --new Y)
 
+Workers and notes
+  status                      agents, tasks, workers and Claude's limits at once
+                              (--line: Claude Code's status line)
+  task start|wait|review|accept|redo|discard
+                              a job for a cheap worker in its own worktree
+  workers                     which workers can take a task; --block cc --until 3h
+  ledger                      what each worker run cost
+  vault open|read|post|done|thread|find
+                              notes between agents in the shared vault
+
 More
   templates                   list templates
   events                      follow changes live
