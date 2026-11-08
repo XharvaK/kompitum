@@ -1,7 +1,7 @@
 // The notes between Opus and Manager, oldest first and scrolled to the newest.
 // Reads only lc vault thread: lc vault read would write a read mark in Opus's name.
 
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
 import { lc, theme, notify, playSound, openOverlay, closeOverlay, props } from "limen";
 
@@ -195,7 +195,7 @@ export default class Line extends View {
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => closeOverlay(props().overlay))
-        .child("✕"));
+        .child(svg("mods/workspace-chrome/x.svg").size(12)));
   }
 
   chip(t, label, color) {
@@ -283,7 +283,7 @@ export default class Line extends View {
           .tooltip("Refresh")
           .hover((s) => s.bg(t.hover).text_color(t.foreground))
           .on_click((_e, cx) => this.refresh(cx))
-          .child("↻")))
+          .child(svg("frame/settings/refresh.svg").size(13))))
       .when(this.unpushed > 0, (el) => el.child(div().px(12).pt(6).text_size(11).text_color(t.muted)
         .child(`${this.unpushed} unpushed`)))
       .children(this.problems.map((problem, i) => div()

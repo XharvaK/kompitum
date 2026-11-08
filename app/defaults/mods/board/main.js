@@ -1,7 +1,7 @@
 // Every worker from both orchestrators: what waits, the queue, and the rows'
 // actions. Reading is lc status --json; actions are lc task ....
 
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { lc, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings } from "limen";
 
@@ -292,7 +292,7 @@ export default class Board extends View {
         .hover((s) => s.bg(t.hover).text_color(t.foreground))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => closeOverlay(props().overlay))
-        .child("✕"));
+        .child(svg("mods/workspace-chrome/x.svg").size(12)));
   }
 
   chip(t, label, color) {

@@ -572,6 +572,24 @@ fn shipped_initial_descriptions(cx: &mut TestAppContext) {
     );
 }
 
+/// The Lead pill opens its hand-off as an overlay of the same mod, told so by
+/// its props. The overlay must draw the hand-off with its close button, not a
+/// second pill in an empty window with no way out.
+#[gpui::test]
+fn the_lead_overlay_draws_the_hand_off_with_a_way_out(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["mode"] = json!("handoff");
+    p["title"] = json!("Hand the lead to Manager");
+    p["markdown"] = json!("Nothing is open.");
+    p["send"] = json!("manager");
+    let tree = describe(cx, &staged, "mods/lead", true, p, updates("current", "current"), None).unwrap();
+    assert!(tree.contains("Hand the lead to Manager"), "{tree}");
+    assert!(tree.contains("lead-close"), "{tree}");
+    assert!(!tree.contains("Lead · "), "the pill drew instead: {tree}");
+}
+
 /// A mod's localStorage write lands on the executor; one that lands after the
 /// staged folder's drop recreates it, and the folder outlives the test.
 #[gpui::test]

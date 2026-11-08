@@ -3,7 +3,7 @@
 // gathered or sent on its own: the pill opens a window, and the window's send
 // button posts the note.
 
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
 import { lc, exec, theme, notify, openOverlay, closeOverlay, shared, setShared, props } from "limen";
 
@@ -222,7 +222,9 @@ async function backMarkdown(at) {
 }
 
 export default class Lead extends View {
-  init(p, cx) {
+  init(_props, cx) {
+    // An overlay's props come through props(), as in every other mod; init's own argument does not carry them.
+    const p = props();
     this.handle = cx.focus_handle();
     this.handoff = Boolean(p && p.mode === "handoff" && typeof p.markdown === "string");
     this.sending = false;
@@ -431,7 +433,7 @@ export default class Lead extends View {
               .hover((s) => s.bg(t.hover))
               .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
               .on_click(() => closeOverlay(p.overlay))
-              .child("✕"),
+              .child(svg("mods/workspace-chrome/x.svg").size(12)),
           ),
       )
       .child(
