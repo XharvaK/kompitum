@@ -10,7 +10,7 @@ cargo build --release
 data=${XDG_DATA_HOME:-$HOME/.local/share}
 mkdir -p "$HOME/.local/bin" "$data/applications" "$data/icons/hicolor/scalable/apps"
 ln -sfn "$PWD/target/release/kompitum-app" "$HOME/.local/bin/kompitum-app"
-cp assets/icons/kompitum-ui-icon-clean.svg "$data/icons/hicolor/scalable/apps/kompitum-app.svg"
+cp assets/icons/kompitum-icon.svg "$data/icons/hicolor/scalable/apps/kompitum-app.svg"
 cat > "$data/applications/kompitum-app.desktop" <<EOF
 [Desktop Entry]
 Type=Application

@@ -65,7 +65,7 @@ if [[ $os == linux || $os == windows ]]; then
   dir="$work/kompitum-app"
   mkdir -p "$dir"
   if [[ $os == windows ]]; then cp "$bin/kompitum-app.exe" "$dir/"; else cp "$bin/kompitum-app" "$dir/"; fi
-  cp assets/icons/kompitum-ui-icon-clean.svg "$dir/kompitum-app.svg"
+  cp assets/icons/kompitum-icon.svg "$dir/kompitum-app.svg"
   cp LICENSE THIRD-PARTY-NOTICES "$dir/"
   notices_path=kompitum-app/THIRD-PARTY-NOTICES
   tar -czf "$out" -C "$work" kompitum-app

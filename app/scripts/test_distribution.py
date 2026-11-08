@@ -231,7 +231,7 @@ printf 'dev PATH added' >> "$3"''')
         checkout = self.bin / "checkout"
         for path in [
             "Cargo.toml", "LICENSE", "THIRD-PARTY-NOTICES", "scripts/package",
-            "assets/icons/kompitum-ui-icon-clean.svg", "assets/icons/Kompitum.icns",
+            "assets/icons/kompitum-icon.svg", "assets/icons/Kompitum.icns",
         ]:
             destination = checkout / path
             destination.parent.mkdir(parents=True, exist_ok=True)

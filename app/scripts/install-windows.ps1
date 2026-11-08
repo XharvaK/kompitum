@@ -48,7 +48,7 @@ try {
     cargo build --release --locked --target-dir target
     if ($LASTEXITCODE) { throw "Kompitum build failed (exit $LASTEXITCODE)." }
     $dir = Join-Path $env:LOCALAPPDATA "Programs\kompitum-app"
-    Install-KompitumAppFiles "target\release\kompitum-app.exe" "assets\icons\kompitum-ui-icon-clean.svg" $dir
+    Install-KompitumAppFiles "target\release\kompitum-app.exe" "assets\icons\kompitum-icon.svg" $dir
 } finally {
     Pop-Location
 }

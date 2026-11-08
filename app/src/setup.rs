@@ -15,7 +15,7 @@ use gpui::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-const ICON: &[u8] = include_bytes!("../assets/icons/kompitum-ui-icon-clean.png");
+const ICON: &[u8] = include_bytes!("../assets/icons/kompitum-icon.png");
 #[cfg(not(windows))]
 const APP_INSTALL: &str = "curl -fsSL https://releases.kompitum.invalid/app/install.sh | sh";
 #[cfg(windows)]
