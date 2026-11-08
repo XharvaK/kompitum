@@ -32,6 +32,7 @@ pub mod sweep;
 pub mod task;
 pub mod templates;
 pub mod terminals;
+pub mod vault;
 pub mod viewers;
 pub mod wait;
 pub mod wire;
