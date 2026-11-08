@@ -99,5 +99,11 @@ quickjs-jit-runtime = { path = "vendor/quickjs-jit-runtime" }
 [profile.release.build-override]
 strip = "none"
 
+# Dev and test builds keep file and line for our own code and no debug info for
+# dependencies, which was most of the build folder.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 2
+debug = false

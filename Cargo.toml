@@ -13,6 +13,14 @@ lto = "fat"
 codegen-units = 1
 strip = true
 
+# Dev and test builds keep file and line for our own code and no debug info for
+# dependencies, which was most of the build folder (KOMPITUM:).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # On top of clippy's defaults (CI denies warnings).
 [workspace.lints.clippy]
 dbg_macro = "warn"
