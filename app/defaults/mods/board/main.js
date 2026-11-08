@@ -50,7 +50,9 @@ function duration(seconds) {
 function money(value) {
   if (value == null || value === "") return "";
   const n = Number(value);
-  return Number.isFinite(n) ? `$${n.toFixed(2)}` : "";
+  if (!Number.isFinite(n)) return "";
+  // A run of a tenth of a cent is not free: say it is under a cent.
+  return n > 0 && n < 0.005 ? "<$0.01" : `$${n.toFixed(2)}`;
 }
 
 // Piped, lc says what went wrong as JSON: {"error": {"message", "hint"}}; show its words.
