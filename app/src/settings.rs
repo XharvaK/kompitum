@@ -472,6 +472,12 @@ pub struct Person {
     /// Agent systems joined to Kompitum, by system id (Settings › Connect).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub connect: BTreeMap<String, Connection>,
+    /// The lead the composer will start: program, model and reasoning level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lead: Option<Lead>,
+    /// The plan picked for a worker CLI, by program key.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub plans: BTreeMap<String, String>,
 }
 
 /// One agent system's way into Kompitum: Connect was copied, then its Joined
@@ -483,6 +489,21 @@ pub struct Connection {
     pub since: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+}
+
+/// The lead agent's choices, applied to the next conversation.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Lead {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    /// Claude workers that run inside the lead as its own subagents: sonnet, haiku.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub subagents: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -542,6 +563,8 @@ impl Default for Person {
             theme: None,
             colors: BTreeMap::new(),
             connect: BTreeMap::new(),
+            lead: None,
+            plans: BTreeMap::new(),
         }
     }
 }
@@ -834,7 +857,10 @@ pub fn write_person(person: &Person) -> std::io::Result<()> {
 /// Installs new settings; returns whether anything changed.
 pub fn set(s: Settings) -> bool {
     NOTES_BETWEEN_AGENTS.store(s.notes_between_agents, std::sync::atomic::Ordering::Relaxed);
-    QUIET_WHILE_FULLSCREEN.store(s.quiet_while_fullscreen, std::sync::atomic::Ordering::Relaxed);
+    QUIET_WHILE_FULLSCREEN.store(
+        s.quiet_while_fullscreen,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     #[cfg(target_os = "macos")]
     gpui_macos::set_option_as_alt(match s.option_as_alt {
         OptionAsAlt::Auto => None,
@@ -846,8 +872,7 @@ pub fn set(s: Settings) -> bool {
     CURRENT.with(|c| {
         // Read the theme even when the settings are the same: its file may
         // have new colors under the same name.
-        let (p, mut colors) =
-            palette(&s.theme).unwrap_or_else(|_| (INK.clone(), BTreeMap::new()));
+        let (p, mut colors) = palette(&s.theme).unwrap_or_else(|_| (INK.clone(), BTreeMap::new()));
         colors.extend(s.colors.clone());
         let theme = resolve(&p, &colors);
         if *c.borrow().0 == s && *c.borrow().1 == theme {
@@ -1221,6 +1246,13 @@ mod tests {
                 },
             )]
             .into(),
+            lead: Some(Lead {
+                program: Some(String::new()),
+                model: Some(String::new()),
+                effort: Some(String::new()),
+                subagents: vec![String::new()],
+            }),
+            plans: [("opencode".into(), String::new())].into(),
             ..Person::default()
         };
         let keys: Vec<String> = serde_json::to_value(&all)

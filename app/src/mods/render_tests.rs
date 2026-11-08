@@ -138,8 +138,11 @@ fn vault_report(notes: Vec<Value>, unpushed: u32, problems: Vec<&str>) -> String
     .to_string()
 }
 
-fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostModule {
+fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostModule {
     let person = values.get("person").cloned();
+    let known_agents = values.remove("knownAgents");
+    let workers_json = values.remove("workersJson");
+    let status_json = values.remove("statusJson");
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
         if name == "person" {
@@ -194,8 +197,9 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
             })
         });
     }
-    module = module.async_function("knownAgents", |_| {
-        Ok(async { Ok(HostValue::Array(vec![])) })
+    module = module.async_function("knownAgents", move |_| {
+        let list = known_agents.clone();
+        Ok(async move { Ok(to_host(&list.unwrap_or(Value::Array(vec![])))) })
     });
     module = module.async_function("pickFolder", |_| Ok(async { Ok(HostValue::Null) }));
     for name in ["nextCommand", "watchFolder"] {
@@ -206,6 +210,8 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
     for name in ["exec", "kom", "readTextFile", "writeTextFile"] {
         let calls = calls.clone();
         let person = person.clone();
+        let workers_json = workers_json.clone();
+        let status_json = status_json.clone();
         module = module.async_function(name, move |a| {
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
             let reply = match name {
@@ -255,9 +261,22 @@ fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostMod
                     Some(json!({"code":1,"stdout":"{\"error\":{\"kind\":\"host_key\",\"message\":\"unknown host key\"}}","stderr":""}))
                 }
                 // The Board: one task waiting for review.
-                "kom" if first == json!(["status", "--json"]) => Some(json!({"code":0,"stdout":json!({
-                    "tasks": {"review": [{"name": "fix-docs", "repo": "kompitum-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []}
-                }).to_string(),"stderr":""})),
+                // The Agents page: the core's workers and Claude's own limits.
+                "kom" if first == json!(["workers", "--json"]) => {
+                    let body = workers_json.clone().unwrap_or_else(|| json!({
+                        "mode": "auto", "order": ["cc", "go"], "chain": ["cc", "go"], "next": "cc",
+                        "all_out": null, "warnings": [], "clis": [], "asking": [],
+                        "workers": [
+                            {"key":"cc","label":"Command Code","cli":"command_code","route":"commandcode/deepseek/deepseek-v4.1-flash#max","state":"ready","until_ms":0,"source":null,"window":"","message":"","sentence":"","refusals":0,"spend":{"five_hours":{"runs":0,"cost_usd":0.0},"week":{"runs":0,"cost_usd":0.0},"month":{"runs":0,"cost_usd":0.0}}},
+                            {"key":"go","label":"opencode Go","cli":"opencode","route":"opencode-go/deepseek-v4.1-flash#max","state":"ready","until_ms":0,"source":null,"window":"","message":"","sentence":"","refusals":0,"spend":{"five_hours":{"runs":0,"cost_usd":0.0},"week":{"runs":0,"cost_usd":0.0},"month":{"runs":0,"cost_usd":0.0}}}
+                        ]
+                    }));
+                    Some(json!({"code":0,"stdout":body.to_string(),"stderr":""}))
+                }
+                "kom" if first == json!(["status", "--json"]) => Some(json!({"code":0,"stdout":status_json.clone().unwrap_or_else(|| json!({
+                    "tasks": {"review": [{"name": "fix-docs", "repo": "kompitum-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []},
+                    "claude": null
+                })).to_string(),"stderr":""})),
                 // The Line: one note from Manager.
                 "kom" if first == json!(["vault", "thread", "manager", "--json"]) => Some(json!({"code":0,"stdout":json!({
                     "agent": "opus",
@@ -552,6 +571,17 @@ fn describe_with_values(
     values: BTreeMap<String, Value>,
     setup: Option<&str>,
 ) -> anyhow::Result<String> {
+    describe_values(cx, staged, entry, values, setup, false)
+}
+
+fn describe_values(
+    cx: &mut TestAppContext,
+    staged: &Staged,
+    entry: &str,
+    values: BTreeMap<String, Value>,
+    setup: Option<&str>,
+    settle: bool,
+) -> anyhow::Result<String> {
     let calls = Rc::new(RefCell::new(Calls::default()));
     static NEXT_STORE: AtomicU64 = AtomicU64::new(0);
     let policy = Policy::new()
@@ -570,16 +600,29 @@ fn describe_with_values(
         .map(|s| staged.wrapper(entry, s))
         .unwrap_or_else(|| staged.0.join(entry));
     let window = cx.add_window(|_, _| Empty);
-    let result = window.update(cx, |_, window, cx| {
-        let mut session = DescriptionSession::load(runtime, root, policy, window, cx)?;
-        let first = session.describe(window, cx)?;
-        let second = session.describe(window, cx)?;
-        assert!(
-            !first.is_empty() && !second.is_empty(),
-            "empty description: {entry}"
-        );
-        Ok(second)
-    })?;
+    let result = if settle {
+        let mut session = window.update(cx, |_, window, cx| {
+            let mut session = DescriptionSession::load(runtime, root, policy, window, cx)?;
+            session.describe(window, cx)?;
+            Ok::<_, anyhow::Error>(session)
+        })??;
+        // Let the async reads that init and the first render started land.
+        cx.run_until_parked();
+        let settled = window.update(cx, |_, window, cx| session.describe(window, cx))??;
+        assert!(!settled.is_empty(), "empty description: {entry}");
+        Ok(settled)
+    } else {
+        window.update(cx, |_, window, cx| {
+            let mut session = DescriptionSession::load(runtime, root, policy, window, cx)?;
+            let first = session.describe(window, cx)?;
+            let second = session.describe(window, cx)?;
+            assert!(
+                !first.is_empty() && !second.is_empty(),
+                "empty description: {entry}"
+            );
+            Ok(second)
+        })?
+    };
     window.update(cx, |_, window, _| window.remove_window())?;
     // localStorage writes land on the executor: let them finish while the
     // staged folder is still there, or they recreate it after its drop.
@@ -601,39 +644,7 @@ fn describe_settled(
     values: BTreeMap<String, Value>,
     setup: Option<&str>,
 ) -> anyhow::Result<String> {
-    let calls = Rc::new(RefCell::new(Calls::default()));
-    static NEXT_STORE: AtomicU64 = AtomicU64::new(0);
-    let policy = Policy::new()
-        .with_storage_path(staged.0.join(format!(
-            "store-{}.json",
-            NEXT_STORE.fetch_add(1, Ordering::Relaxed)
-        )))
-        .with_capabilities(
-            Capabilities::new()
-                .storage(true)
-                .read_roots([staged.0.clone()]),
-        )
-        .with_host_module(module(values, calls.clone()))?;
-    let runtime = ShellRuntime::new_isolated()?;
-    let root = setup
-        .map(|s| staged.wrapper(entry, s))
-        .unwrap_or_else(|| staged.0.join(entry));
-    let window = cx.add_window(|_, _| Empty);
-    let mut session = window.update(cx, |_, window, cx| {
-        let mut session = DescriptionSession::load(runtime, root, policy, window, cx)?;
-        session.describe(window, cx)?;
-        Ok::<_, anyhow::Error>(session)
-    })??;
-    cx.run_until_parked();
-    let result = window.update(cx, |_, window, cx| session.describe(window, cx))??;
-    window.update(cx, |_, window, _| window.remove_window())?;
-    cx.run_until_parked();
-    assert!(
-        calls.borrow().unexpected.is_empty(),
-        "{entry}: {:?}",
-        calls.borrow().unexpected
-    );
-    Ok(result)
+    describe_values(cx, staged, entry, values, setup, true)
 }
 
 fn props() -> Value {
@@ -824,7 +835,7 @@ fn font_pickers_contain_scroll_on_the_wrapper(cx: &mut TestAppContext) {
     let staged = Staged::new();
     for which in ["font", "ui_font"] {
         let mut p = props();
-        p["section"] = json!("look");
+        p["section"] = json!("appearance");
         let tree = describe(
             cx,
             &staged,
@@ -1148,7 +1159,7 @@ fn settings_sections_and_updates(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let start = Instant::now();
     let staged = Staged::new();
-    for section in ["look", "alerts", "about"] {
+    for section in ["appearance", "agents", "notifications", "machines", "about"] {
         let mut p = props();
         p["section"] = json!(section);
         describe(
@@ -1225,6 +1236,259 @@ fn settings_sections_and_updates(cx: &mut TestAppContext) {
         );
     }
     eprintln!("27 settings cases, each twice: {:?}", start.elapsed());
+}
+
+fn agent_catalog() -> Value {
+    json!([
+        {
+            "key": "claude", "name": "Claude Code", "icon": "icons/claude.svg", "tint": false,
+            "tile": "#1c1d21", "color": "#ffffff", "shell": false, "agent": true,
+            "run": ["claude"], "installed": true,
+            "flags": {"model": ["--model", "{model}"], "effort": ["--effort", "{effort}"]},
+            "efforts": ["low", "medium", "high", "xhigh", "max"],
+            "models": [{"id": "default", "label": "Default"}, {"id": "sonnet", "label": "Sonnet"}],
+            "reports": "status_line"
+        },
+        {
+            "key": "command-code", "name": "Command Code", "icon": "icons/command-code.svg", "tint": true,
+            "tile": "#1c1d21", "color": "#ffffff", "shell": false, "agent": true,
+            "run": ["commandcode"], "installed": true,
+            "flags": {"model": ["-m", "{model}"], "effort": ["--effort", "{effort}"]},
+            "efforts": ["low", "medium", "high", "max"],
+            "models": [{"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6"}],
+            "worker": "command_code", "route": "commandcode/{model}#{effort}",
+            "plans": [{"id": "go", "label": "Go", "windows": {"5H": 3, "Week": 6, "Month": 10}}]
+        },
+        {
+            "key": "opencode", "name": "OpenCode", "icon": "icons/opencode.svg", "tint": true,
+            "tile": "#1c1d21", "color": "#ffffff", "shell": false, "agent": true,
+            "run": ["opencode"], "installed": true,
+            "flags": {"model": ["-m", "{model}#{effort}"]},
+            "efforts": ["low", "medium", "high", "max"],
+            "models": [{"id": "opencode-go/deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash"}],
+            "worker": "opencode", "route": "{model}#{effort}",
+            "plans": [{"id": "go", "label": "Go", "models": {"opencode-go/deepseek-v4.1-flash": {"5H": 20, "Week": 50, "Month": 100}}}]
+        }
+    ])
+}
+
+fn agent_workers(order: Value, workers: Value) -> Value {
+    json!({
+        "mode": "auto", "order": order, "chain": order, "next": null, "all_out": null,
+        "warnings": [], "clis": [], "asking": [], "workers": workers
+    })
+}
+
+fn agent_worker(
+    key: &str,
+    label: &str,
+    cli: &str,
+    route: &str,
+    state: &str,
+    window: &str,
+    until: u64,
+) -> Value {
+    json!({
+        "key": key, "label": label, "cli": cli, "route": route, "state": state,
+        "until_ms": until, "source": null, "window": window, "message": "",
+        "sentence": if window.is_empty() { String::new() } else { format!("{label} is out of its {window} limit, back at 10:00.") },
+        "refusals": 0,
+        "spend": {
+            "five_hours": {"runs": 0, "cost_usd": 0.0},
+            "week": {"runs": 0, "cost_usd": 0.0},
+            "month": {"runs": 0, "cost_usd": 0.0}
+        }
+    })
+}
+
+fn agents_values(known: Value, workers: Value, status: Value) -> BTreeMap<String, Value> {
+    let mut p = props();
+    p["section"] = json!("agents");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("knownAgents".into(), known);
+    values.insert("workersJson".into(), workers);
+    values.insert("statusJson".into(), status);
+    values
+}
+
+#[gpui::test]
+fn setting_search_finds_rows_and_says_when_nothing_matches(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        props(),
+        updates("current", "current"),
+        Some("this.search = 'zoom';"),
+    )
+    .unwrap();
+    assert!(tree.contains("Appearance › Zoom"), "{tree}");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        props(),
+        updates("current", "current"),
+        Some("this.search = 'qqq';"),
+    )
+    .unwrap();
+    assert!(tree.contains(r#"No setting matches \"qqq\""#), "{tree}");
+}
+
+#[gpui::test]
+fn agent_plans_show_claude_limits_and_exhaustion(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let workers = agent_workers(
+        json!(["cc", "go"]),
+        json!([
+            agent_worker(
+                "cc",
+                "Command Code",
+                "command_code",
+                "commandcode/deepseek/deepseek-v4.1-flash#max",
+                "ready",
+                "",
+                0
+            ),
+            agent_worker(
+                "go",
+                "opencode Go",
+                "opencode",
+                "opencode-go/deepseek-v4.1-flash#max",
+                "ready",
+                "",
+                0
+            )
+        ]),
+    );
+    let status = json!({
+        "tasks": {"review": [], "running": [], "queued": []},
+        "claude": {
+            "five_hour_used_percentage": 42.0, "five_hour_resets_at": 4102444800u64,
+            "seven_day_used_percentage": 61.0, "seven_day_resets_at": 4102444800u64
+        }
+    });
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        agents_values(agent_catalog(), workers.clone(), status),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("5H 42% · resets"), "{tree}");
+    assert!(tree.contains("Week 61% · resets"), "{tree}");
+    let status = json!({
+        "tasks": {"review": [], "running": [], "queued": []},
+        "claude": {
+            "five_hour_used_percentage": 100.0, "five_hour_resets_at": 4102444800u64,
+            "seven_day_used_percentage": 61.0, "seven_day_resets_at": 4102444800u64
+        }
+    });
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        agents_values(agent_catalog(), workers, status),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("5H exhausted · resets"), "{tree}");
+}
+
+#[gpui::test]
+fn agent_workers_follow_the_core_order_and_show_out_windows(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let workers = agent_workers(
+        json!(["go", "cc"]),
+        json!([
+            agent_worker(
+                "cc",
+                "Command Code",
+                "command_code",
+                "commandcode/deepseek/deepseek-v4.1-flash#max",
+                "ready",
+                "",
+                0
+            ),
+            agent_worker(
+                "go",
+                "opencode Go",
+                "opencode",
+                "opencode-go/deepseek-v4.1-flash#max",
+                "out",
+                "5-hour",
+                4102444800000u64
+            )
+        ]),
+    );
+    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        agents_values(agent_catalog(), workers, status),
+        None,
+    )
+    .unwrap();
+    let go = tree
+        .find("st-worker-go")
+        .unwrap_or_else(|| panic!("go row missing: {tree}"));
+    let cc = tree
+        .find("st-worker-cc")
+        .unwrap_or_else(|| panic!("cc row missing: {tree}"));
+    assert!(go < cc, "workers must follow the core's order: {tree}");
+    assert!(tree.contains("5H exhausted · resets"), "{tree}");
+}
+
+#[gpui::test]
+fn agent_lead_pickers_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let workers = agent_workers(
+        json!(["cc", "go"]),
+        json!([
+            agent_worker(
+                "cc",
+                "Command Code",
+                "command_code",
+                "commandcode/deepseek/deepseek-v4.1-flash#max",
+                "ready",
+                "",
+                0
+            ),
+            agent_worker(
+                "go",
+                "opencode Go",
+                "opencode",
+                "opencode-go/deepseek-v4.1-flash#max",
+                "ready",
+                "",
+                0
+            )
+        ]),
+    );
+    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        agents_values(agent_catalog(), workers, status),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("st-lead-cli-claude"), "{tree}");
+    assert!(tree.contains("st-lead-cli-opencode"), "{tree}");
+    assert!(tree.contains("st-lead-model"), "{tree}");
+    assert!(tree.contains("Default"), "{tree}");
+    assert!(tree.contains("st-lead-effort-low"), "{tree}");
+    assert!(tree.contains("st-lead-effort-max"), "{tree}");
 }
 
 #[gpui::test]
@@ -1710,11 +1974,11 @@ fn the_vault_section_draws_its_folder_and_mailbox_button(cx: &mut TestAppContext
 }
 
 #[gpui::test]
-fn the_alerts_section_draws_the_popup_toggles(cx: &mut TestAppContext) {
+fn the_notifications_section_draws_the_popup_toggles(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let mut p = props();
-    p["section"] = json!("alerts");
+    p["section"] = json!("notifications");
     let tree = describe(
         cx,
         &staged,

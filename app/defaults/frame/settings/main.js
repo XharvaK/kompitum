@@ -5,18 +5,51 @@ import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
 import { kom, run, theme, fonts, updates, settings, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "kompitum";
 import { loadVault, vaultSection } from "./vault.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
+import { agentsPage, loadAgents } from "./agents.js";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
 const SECTIONS = [
-  { id: "look", title: "Look", icon: "palette" },
-  ...(window()?.platform === "macos" ? [{ id: "keyboard", title: "Keyboard", icon: "keyboard" }] : []),
-  { id: "machines", title: "Machines", icon: "server" },
+  { id: "appearance", title: "Appearance", icon: "palette" },
+  { id: "agents", title: "Agents", icon: "bot" },
   { id: "vault", title: "Vault", icon: "mail" },
   { id: "connect", title: "Connect", icon: "link" },
-  { id: "alerts", title: "Alerts", icon: "bell" },
+  { id: "notifications", title: "Notifications", icon: "bell" },
+  { id: "machines", title: "Machines", icon: "server" },
+  ...(window()?.platform === "macos" ? [{ id: "keyboard", title: "Keyboard", icon: "keyboard" }] : []),
   { id: "about", title: "About", icon: "info" },
 ];
+
+// What the search field finds: one entry per row the sections draw, so search
+// never reads the drawn tree. `key` matches the row's highlight key.
+const SEARCH = [
+  { section: "appearance", key: "appearance", title: "Appearance", words: "light dark system theme" },
+  { section: "appearance", key: "zoom", title: "Zoom", words: "size scale bigger smaller interface" },
+  { section: "appearance", key: "font", title: "Terminal font", words: "typeface monospace ligatures" },
+  { section: "appearance", key: "ui_font", title: "Interface font", words: "typeface panels" },
+  { section: "agents", key: "plans", title: "Plans", words: "usage limits subscription quota resets claude command code opencode grok" },
+  { section: "agents", key: "lead", title: "CLI", words: "lead agent program claude command code opencode grok" },
+  { section: "agents", key: "lead_model", title: "Model", words: "provider models list other" },
+  { section: "agents", key: "lead_effort", title: "Reasoning", words: "effort levels low medium high xhigh max" },
+  { section: "agents", key: "workers", title: "Workers", words: "order add remove drag subagents claude sonnet haiku" },
+  { section: "agents", key: "clis", title: "CLI versions", words: "update version releases" },
+  { section: "vault", key: "Folder", title: "Vault folder", words: "notes git mailbox" },
+  { section: "vault", key: "Needs you", title: "Notes that need you", words: "mailbox notes requests questions" },
+  { section: "connect", key: "connect", title: "Connect", words: "agent systems join prompt grok hermes openclaw manager" },
+  { section: "notifications", key: "sounds", title: "Play sounds", words: "sound audio notification" },
+  { section: "notifications", key: "blocked", title: "An agent needs you", words: "sound blocked attention" },
+  { section: "notifications", key: "done", title: "An agent finished", words: "sound done finished" },
+  { section: "notifications", key: "Notes between agents", title: "Notes between agents", words: "pop-ups toast vault mail" },
+  { section: "notifications", key: "Quiet while a game is fullscreen", title: "Quiet while a game is fullscreen", words: "game fullscreen mute do not disturb" },
+  { section: "machines", key: "this", title: "This computer", words: "local version kom" },
+  { section: "machines", key: "add", title: "Add a machine", words: "ssh remote host" },
+  { section: "keyboard", key: "option", title: "Option key", words: "alt macos accents keyboard" },
+  { section: "about", key: "app", title: "Kompitum", words: "version update what's new release" },
+  { section: "about", key: "core", title: "kompitum-core", words: "version update core terminals" },
+];
+
+// Sections that were named differently before; old links still open their page.
+const RENAMED_SECTIONS = { look: "appearance", alerts: "notifications" };
 
 const APPEARANCES = [
   [null, "System"],
@@ -31,9 +64,18 @@ const DEFAULT_UI_FONT = "Geist";
 export default class Settings extends View {
   init(_props, cx) {
     const asked = props()?.section;
-    this.section = SECTIONS.some((s) => s.id === asked) ? asked : "look";
+    const wanted = RENAMED_SECTIONS[asked] ?? asked;
+    this.section = SECTIONS.some((s) => s.id === wanted) ? wanted : "appearance";
     this.picking = null; // "font" | "ui_font" while its list is open
     this.filter = "";
+    this.search = "";
+    this.highlight = null; // { section, key } while a search result's row is lit
+    this.searchInput = InputState.new({ placeholder: "Search or ask" });
+    this.searchInput.on("change", (_e, cx) => { this.search = this.searchInput.value(); cx.notify(); });
+    this.searchInput.on("submit", (_e, cx) => {
+      const first = this.searchMatches()[0];
+      if (first) this.openMatch(first, cx);
+    });
     this.fontInput = InputState.new({ placeholder: "Type to search fonts" });
     this.fontInput.on("change", (_e, cx) => { this.filter = this.fontInput.value(); cx.notify(); });
     this.renameInput = InputState.new();
@@ -62,7 +104,13 @@ export default class Settings extends View {
       await this.load();
       if (this.section === "machines") await this.loadMachines();
       if (this.section === "vault") loadVault(this, cx);
+      if (this.section === "agents") loadAgents(this, cx);
       cx.notify();
+    });
+    // While the Agents page is open, its plans, workers and lead stay current.
+    cx.timer.every(5000, (cx) => {
+      if (this.section !== "agents") return;
+      loadAgents(this, cx);
     });
     // After "Check now": follow the look (the answer comes from the app), then
     // "Up to date" for a moment.
@@ -117,14 +165,59 @@ export default class Settings extends View {
     closeOverlay(props().overlay);
   }
 
+  // Search ---------------------------------------------------------------
+
+  searchMatches() {
+    const words = this.search.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const live = new Set(SECTIONS.map((s) => s.id));
+    return SEARCH.filter((e) => live.has(e.section)).filter((e) => {
+      const text = `${e.title} ${e.words}`.toLowerCase();
+      return words.every((w) => text.includes(w));
+    });
+  }
+
+  clearSearch(cx) {
+    this.search = "";
+    this.searchInput.set_value("");
+    this.searchInput.focus();
+    cx.notify();
+  }
+
+  openMatch(match, cx) {
+    this.section = match.section;
+    this.picking = null;
+    this.machineEdit = null;
+    const at = Date.now();
+    this.highlight = { section: match.section, key: match.key, at };
+    this.search = "";
+    this.searchInput.set_value("");
+    this.handle.focus();
+    if (match.section === "machines") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
+    if (match.section === "agents") loadAgents(this, cx, true);
+    cx.timer.after(1500, (cx) => {
+      if (this.highlight?.at === at) {
+        this.highlight = null;
+        cx.notify();
+      }
+    });
+    cx.notify();
+  }
+
+  lit(key) {
+    return Boolean(this.highlight) && this.highlight.section === this.section && this.highlight.key === key;
+  }
+
   // Pieces ---------------------------------------------------------------
 
   heading(t, text) {
     return div().pt(6).pb(8).text_size(12).font_semibold().text_color(t.dim).child(text.toUpperCase());
   }
 
-  // One setting: what it is on the left, the control on the right.
-  row(t, title, about, control) {
+  // One setting: what it is on the left, the control on the right. `key` names
+  // the row for the search field's highlight (default: its title).
+  row(t, title, about, control, key = title) {
+    const lit = this.lit(key);
     return h_flex()
       .w_full()
       .gap(16)
@@ -132,6 +225,7 @@ export default class Settings extends View {
       .items_center()
       .border_b(1)
       .border_color(t.border)
+      .when(lit, (el) => el.bg(t.selected).rounded(7))
       .child(
         v_flex()
           .flex_1()
@@ -331,13 +425,14 @@ export default class Settings extends View {
               .child(this.fontButton(t, which, family))
               // The panels' text follows zoom: they size their rows to it.
               .when(Boolean(sizeKey), (el) => el.child(this.stepper(t, `st-${sizeKey}`, `${Math.round(sizeNow)}`, (_e, cx) => size(sizeKey, sizeNow, -1, cx), (_e, cx) => size(sizeKey, sizeNow, 1, cx)))),
+            which,
           ),
         )
         .when(this.picking === which, (el) => el.child(this.fontList(t, which, def)));
     return v_flex()
       .w_full()
       .child(this.heading(t, "Appearance"))
-      .child(this.row(t, "", "Light or dark, or as your system is now.", this.appearancePicker(t, cx)))
+      .child(this.row(t, "", "Light or dark, or as your system is now.", this.appearancePicker(t, cx), "appearance"))
       .child(div().h(18))
       .child(this.heading(t, "Size and fonts"))
       .child(
@@ -350,6 +445,7 @@ export default class Settings extends View {
             .items_center()
             .child(this.stepper(t, "st-zoom", `${Math.round(s.zoom * 100)}%`, () => run("app.zoom_out"), () => run("app.zoom_in")))
             .child(this.button(t, "st-zoom-reset", "Reset", () => run("app.zoom_reset"))),
+          "zoom",
         ),
       )
       .child(fontRow("font", "font_size", "Terminal font", s.font_family, DEFAULT_FONT, s.font_size))
@@ -378,6 +474,7 @@ export default class Settings extends View {
           .rounded(7)
           .items_center()
           .cursor_pointer()
+          .when(this.lit("option"), (el) => el.bg(t.selected))
           .hover((s) => s.bg(t.hover))
           .on_click((_e, cx) => this.change((p) => { p.option_as_alt = value; }, cx))
           .child(div().text_color(on ? t.accent : t.muted).child(on ? "◉" : "○"))
@@ -504,13 +601,13 @@ export default class Settings extends View {
     return v_flex().w_full()
       .child(this.heading(t, "Machines"))
       .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim).child("Your computers, reached over ssh. Their terminals keep running when you disconnect."))
-      .child(this.row(t, "This computer", `Connected · ${version ? `kom ${version}` : "kom version unknown"}`, div().w(7).h(7).rounded(4).bg(t.ansi2)))
+      .child(this.row(t, "This computer", `Connected · ${version ? `kom ${version}` : "kom version unknown"}`, div().w(7).h(7).rounded(4).bg(t.ansi2), "this"))
       .children((this.machineList ?? []).map((m) => this.machineRow(t, m, version)))
       .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12.5).text_color(t.dim).child("Reading machines…"))))
       .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(12.5).text_color(t.dim).child("No other machines yet.")))
       .when(Boolean(this.machineError), (el) => el.child(div().py(10).text_size(12.5).text_color(t.blocked).child(this.machineError)))
       .when(Boolean(this.machineNotice), (el) => el.child(div().py(10).text_size(12.5).text_color(t.ansi2).child(this.machineNotice)))
-      .child(h_flex().pt(16).child(this.button(t, "st-m-add", "Add a machine", () => run("mod.open", { name: "machine-add" }))));
+      .child(this.row(t, "Add a machine", "Another computer, reached over ssh.", this.button(t, "st-m-add", "Add", () => run("mod.open", { name: "machine-add" })), "add"));
   }
 
   // Alerts ---------------------------------------------------------------
@@ -530,10 +627,11 @@ export default class Settings extends View {
           "Play sounds",
           "When an agent needs you, and when one finishes while you're not looking. A note shows in the corner either way.",
           this.toggle(t, "st-sounds", on, (_e, cx) => this.change((p) => (p.sounds = { ...(p.sounds ?? {}), enabled: !on }), cx)),
+          "sounds",
         ),
       )
-      .child(this.row(t, "An agent needs you", file(sounds.blocked), this.button(t, "st-play-blocked", "Play", () => playSound("blocked"))))
-      .child(this.row(t, "An agent finished", file(sounds.done), this.button(t, "st-play-done", "Play", () => playSound("done"))))
+      .child(this.row(t, "An agent needs you", file(sounds.blocked), this.button(t, "st-play-blocked", "Play", () => playSound("blocked")), "blocked"))
+      .child(this.row(t, "An agent finished", file(sounds.done), this.button(t, "st-play-done", "Play", () => playSound("done")), "done"))
       .child(div().h(18))
       .child(this.heading(t, "Pop-ups"))
       .child(this.row(t, "Notes between agents", "Show a note for a few seconds when agents write to each other.", this.toggle(t, "st-notes-between-agents", between, (_e, cx) => this.change((p) => (p.notes_between_agents = !between), cx))))
@@ -592,10 +690,10 @@ export default class Settings extends View {
       .child(this.heading(t, "Kompitum"))
       .child(this.row(t, `Kompitum ${u.app.version}`, app[0], h_flex().gap(8).flex_none()
         .child(this.button(t, "st-whats-new", "What's new", () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
-        .when(Boolean(app[1]), (el) => el.child(app[1]))))
+        .when(Boolean(app[1]), (el) => el.child(app[1])), "app"))
       .child(div().h(18))
       .child(this.heading(t, "kompitum-core"))
-      .child(this.row(t, `kompitum-core ${c.version ?? ""}`, core[0], core[1] ?? div()))
+      .child(this.row(t, `kompitum-core ${c.version ?? ""}`, core[0], core[1] ?? div(), "core"))
       .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum looks for both every hour and tells you in the corner. kompitum-core runs your terminals, so they keep running through its updates."))
       .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum sends nothing: no usage data, no crash reports. Send feedback opens an issue on GitHub."))
       .child(div().text_size(12.5).line_height("18px").text_color(t.dim).child("Built on herdr (Apache 2.0)."));
@@ -608,6 +706,8 @@ export default class Settings extends View {
     const t = theme();
     const u = updates();
     const waiting = Boolean(u.app.ready || (u.core.ready && !u.core.managed));
+    const query = this.search.trim();
+    const matches = query ? this.searchMatches() : [];
     const nav = v_flex()
       .flex_none()
       .w(190)
@@ -616,7 +716,39 @@ export default class Settings extends View {
       .border_r(1)
       .border_color(t.border)
       .child(div().px(10).pt(6).pb(12).text_size(16).font_semibold().text_color(t.foreground).child("Settings"))
-      .children(
+      .child(
+        div().px(6).pb(10).child(
+          Input.new(this.searchInput)
+            .w_full()
+            .h(30)
+            .px(9)
+            .rounded(7)
+            .border_1()
+            .border_color(t.input)
+            .bg(t.background)
+            .text_size(13)
+            .text_color(t.foreground),
+        ),
+      )
+      .when(Boolean(query), (el) =>
+        el.children(
+          matches.length
+            ? matches.map((m, i) => {
+                const section = SECTIONS.find((s) => s.id === m.section);
+                return h_flex()
+                  .id(`st-search-${i}`)
+                  .px(10)
+                  .py(7)
+                  .rounded(7)
+                  .cursor_pointer()
+                  .hover((st) => st.bg(t.raised))
+                  .on_click((_e, cx) => this.openMatch(m, cx))
+                  .child(div().text_size(12.5).text_color(t.muted).child(`${section?.title ?? m.section} › ${m.title}`));
+              })
+            : [div().px(10).py(6).text_size(12.5).line_height("18px").text_color(t.dim).child(`No setting matches "${query}".`)],
+        ),
+      )
+      .when(!query, (el) => el.children(
         SECTIONS.map((s) => {
           const on = s.id === this.section;
           return h_flex()
@@ -633,17 +765,19 @@ export default class Settings extends View {
               this.section = s.id;
               this.picking = null;
               this.machineEdit = null;
+              this.highlight = null;
               this.handle.focus();
               if (s.id === "machines") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
               if (s.id === "vault") loadVault(this, cx);
               if (s.id === "connect" && this.connect.vault === null) loadConnect(this, cx);
+              if (s.id === "agents") loadAgents(this, cx);
               cx.notify();
             })
             .child(svg(I(s.icon)).size(15).text_color(on ? t.accent : t.dim))
             .child(div().flex_1().text_size(13.5).text_color(on ? t.foreground : t.muted).child(s.title))
             .when(s.id === "about" && waiting, (el) => el.child(div().w(7).h(7).rounded(4).bg(t.accent)));
         }),
-      );
+      ));
     return h_flex()
       .id("settings")
       .track_focus(this.handle)
@@ -662,7 +796,8 @@ export default class Settings extends View {
           return;
         }
         if (k === "escape") {
-          if (this.picking) this.picking = null;
+          if (this.search) this.clearSearch(cx);
+          else if (this.picking) this.picking = null;
           else return this.close();
           this.handle.focus();
         } else return;
@@ -690,8 +825,10 @@ export default class Settings extends View {
                   .px(28)
                   .py(22)
                   .child(
-                    this.section === "look"
+                    this.section === "appearance"
                       ? this.look(t, cx)
+                      : this.section === "agents"
+                        ? agentsPage(this, t, cx)
                       : this.section === "keyboard"
                         ? this.keyboard(t)
                       : this.section === "machines"
@@ -700,7 +837,7 @@ export default class Settings extends View {
                         ? vaultSection(this, t, cx)
                       : this.section === "connect"
                         ? connectPage(this, t, cx)
-                      : this.section === "alerts"
+                      : this.section === "notifications"
                         ? this.alerts(t)
                         : this.about(t),
                   ),

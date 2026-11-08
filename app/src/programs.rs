@@ -43,6 +43,58 @@ struct Entry {
     /// How to start it, for an agent people can start from a menu (`knownAgents()`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     run: Vec<String>,
+    /// How its interactive command takes a model and a reasoning level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    flags: Option<Flags>,
+    /// The reasoning levels, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    efforts: Vec<String>,
+    /// The models the CLI is known to take.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    models: Vec<Model>,
+    /// The argv that prints the CLI's own model list, one per line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    list_models: Vec<String>,
+    /// The core reader that runs it as a worker: command_code or opencode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    worker: Option<String>,
+    /// The core's route template for this worker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    route: Option<String>,
+    /// Its subscription plans and their limits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    plans: Vec<Plan>,
+    /// status_line: the numbers come from the CLI's own status line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reports: Option<String>,
+    /// The argv with which the CLI reports its own plan.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    usage: Vec<String>,
+}
+
+#[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
+struct Flags {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    model: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    effort: Vec<String>,
+}
+
+#[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
+struct Model {
+    id: String,
+    label: String,
+}
+
+/// A plan's limits by window: `windows`, or per model where they differ.
+#[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
+struct Plan {
+    id: String,
+    label: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    windows: BTreeMap<String, f64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    models: BTreeMap<String, BTreeMap<String, f64>>,
 }
 
 impl Entry {
@@ -57,6 +109,25 @@ impl Entry {
         }
         if !mine.run.is_empty() {
             self.run = mine.run;
+        }
+        self.flags = mine.flags.or(self.flags.take());
+        if !mine.efforts.is_empty() {
+            self.efforts = mine.efforts;
+        }
+        if !mine.models.is_empty() {
+            self.models = mine.models;
+        }
+        if !mine.list_models.is_empty() {
+            self.list_models = mine.list_models;
+        }
+        self.worker = mine.worker.or(self.worker.take());
+        self.route = mine.route.or(self.route.take());
+        if !mine.plans.is_empty() {
+            self.plans = mine.plans;
+        }
+        self.reports = mine.reports.or(self.reports.take());
+        if !mine.usage.is_empty() {
+            self.usage = mine.usage;
         }
     }
 }
@@ -91,6 +162,33 @@ pub fn startable() -> Vec<Value> {
                 let e = &t.programs[k];
                 let mut v = shown(k, e, None, false, true);
                 v["run"] = json!(e.run);
+                if let Some(flags) = &e.flags {
+                    v["flags"] = json!(flags);
+                }
+                if !e.efforts.is_empty() {
+                    v["efforts"] = json!(e.efforts);
+                }
+                if !e.models.is_empty() {
+                    v["models"] = json!(e.models);
+                }
+                if !e.list_models.is_empty() {
+                    v["list_models"] = json!(e.list_models);
+                }
+                if let Some(worker) = &e.worker {
+                    v["worker"] = json!(worker);
+                }
+                if let Some(route) = &e.route {
+                    v["route"] = json!(route);
+                }
+                if !e.plans.is_empty() {
+                    v["plans"] = json!(e.plans);
+                }
+                if let Some(reports) = &e.reports {
+                    v["reports"] = json!(reports);
+                }
+                if !e.usage.is_empty() {
+                    v["usage"] = json!(e.usage);
+                }
                 v
             })
             .collect()
@@ -581,5 +679,36 @@ mod tests {
                 "{k}: {icon} not shipped"
             );
         }
+    }
+
+    #[test]
+    fn shipped_agents_carry_their_flags_models_and_workers() {
+        let table = t();
+        for key in ["claude", "command-code", "opencode", "grok"] {
+            let e = &table.programs[key];
+            assert!(e.flags.is_some(), "{key} has no flags");
+            assert!(!e.efforts.is_empty(), "{key} has no efforts");
+            assert!(!e.models.is_empty(), "{key} has no models");
+        }
+        for (key, e) in &table.programs {
+            if e.worker.is_some() {
+                assert!(!e.models.is_empty(), "{key} has a worker but no models");
+                assert!(e.route.is_some(), "{key} has a worker but no route");
+            }
+        }
+    }
+
+    #[test]
+    fn known_agents_carry_the_catalog_fields() {
+        let list = startable();
+        let claude = list.iter().find(|a| a["key"] == "claude").unwrap();
+        assert_eq!(claude["flags"]["model"], json!(["--model", "{model}"]));
+        assert_eq!(claude["reports"], json!("status_line"));
+        let opencode = list.iter().find(|a| a["key"] == "opencode").unwrap();
+        assert_eq!(opencode["worker"], json!("opencode"));
+        assert_eq!(opencode["route"], json!("{model}#{effort}"));
+        assert!(
+            opencode["plans"][0]["models"]["opencode-go/deepseek-v4.1-flash"]["5H"].is_number()
+        );
     }
 }

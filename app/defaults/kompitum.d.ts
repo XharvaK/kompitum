@@ -28,11 +28,46 @@ export function readTextFile(path: string, options?: { on?: string | null }): Pr
  * Rejects on a stale snapshot; existing files are replaced atomically. */
 export function writeTextFile(path: string, text: string, expected: string | null): Promise<null>;
 
+/** How an agent CLI takes a model and a reasoning level, as argv templates. */
+export interface AgentFlags {
+  model: string[];
+  /** Absent when the level goes inside the model id. */
+  effort?: string[];
+}
+
+export interface AgentModel {
+  /** Exactly what the CLI takes. */
+  id: string;
+  label: string;
+}
+
+export interface AgentPlan {
+  id: string;
+  label: string;
+  /** Limits by window (5H, Week, Month), in USD; or per model where they differ. */
+  windows?: Record<string, number>;
+  models?: Record<string, Record<string, number>>;
+}
+
 /** The agents people can start from a menu (entries with `run` in programs.json), most picked
  *  first, and whether each is installed: asked of the shell agents start in (on another machine,
  *  `on`, its login/interactive shell when supported), at most once a minute per machine.
- *  Start one with its `run` as `argv`. */
-export function knownAgents(options?: { on?: string | null }): Promise<(Program & { run: string[]; installed: boolean })[]>;
+ *  Start one with its `run` as `argv`. An entry that can lead carries `flags`, `efforts`, `models`
+ *  and sometimes `list_models`; an entry the core can run as a worker carries `worker` and `route`,
+ *  and the models it knows; `plans` and `usage` say what its subscription reports. */
+export function knownAgents(options?: { on?: string | null }): Promise<(Program & {
+  run: string[];
+  installed: boolean;
+  flags?: AgentFlags;
+  efforts?: string[];
+  models?: AgentModel[];
+  list_models?: string[];
+  worker?: "command_code" | "opencode";
+  route?: string;
+  plans?: AgentPlan[];
+  reports?: "status_line";
+  usage?: string[];
+})[]>;
 
 /** Opens the system's folder picker (this machine). Resolves with the chosen folder, or null
  *  when the person cancels. `prompt`: the confirm button's text (default "Open"). */

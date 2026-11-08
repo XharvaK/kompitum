@@ -296,7 +296,7 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "app.settings",
         &[opt("section")],
-        "Open the settings (section: look, alerts, about).",
+        "Open the settings (section: appearance, agents, vault, connect, notifications, machines, keyboard, about).",
     ),
     cmd(
         "app.mailbox",

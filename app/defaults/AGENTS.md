@@ -612,7 +612,7 @@ The main ones:
   `layout.reset {name?}` (reset a shipped layout and its clicks),
   `layout.clone {name, as?}` (duplicate, then switch; default `<name>-copy`).
 - App: `mod.clone {name, as?}` (duplicate; default `<name>-copy`), `mod.open {name}` (again: closes it), `overlay.close {id?}`, `app.help` (again: closes it), `app.palette` (again: closes it), `app.settings {section?}`
-  (sections: `look`, `keyboard` on macOS, `machines`, `connect`, `alerts`, `about`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
+  (sections: `appearance`, `agents`, `vault`, `connect`, `notifications`, `machines`, `keyboard` on macOS, `about`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
   `app.check_updates` (only a successful check reports Up to date; a failed check clears the checked time and can be retried), `app.update_core` (a newer kompitum-core of this generation, terminals kept;
   never one a package manager owns), `app.welcome`, `app.whats_new`, `app.feedback {message?, from?}` (from `"person"` or `"agent"`; opens a new issue on Kompitum's GitHub in the browser, filled in with the message and the versions; nothing is sent until the person submits it there), `app.reset`,
   `app.theme {name}`, `app.zoom_in`, `app.zoom_out`, `app.zoom_reset`,
@@ -661,7 +661,7 @@ What's about the user, never a look:
   it, Kompitum plays a sound and (unless they're looking) posts a toast that
   goes there when clicked. `done` / `blocked` replace the bundled MP3s
   (path absolute or relative to `~/.config/kompitum-app`). Changes apply live,
-  including the Play buttons in Settings > Alerts.
+  including the Play buttons in Settings > Notifications.
 - `core`: the kompitum-core binary to use, when it isn't where Kompitum looks
   (PATH, the login shell's PATH, `~/.local/bin`, Homebrew, mise, Nix,
   cargo). Read at start.
@@ -680,6 +680,12 @@ What's about the user, never a look:
   `{ "grokbot": { "since": "<when Connect was pressed>", "agent": "<the name its Joined note gave>" } }`.
   Settings › Connect writes it; both fields are optional, `since` alone means the
   prompt was copied and the system hasn't joined yet.
+- `lead`: the lead the next conversation starts with: `program` (a program key
+  such as `claude`), `model` (what that CLI takes) and `effort` (one of its
+  reasoning levels). `lead.subagents` names Claude Code subagents that run
+  inside the lead, `sonnet` and/or `haiku`.
+- `plans`: the subscription picked for each worker CLI, by program key
+  (`{"opencode": "go"}`), so the Agents page knows which limits to count against.
 - Updates: an installed app downloads them by itself and offers Restart and
   What changed. If the app crashes or is killed with a verified newer update
   waiting, the next launch installs it before opening a window. The first
