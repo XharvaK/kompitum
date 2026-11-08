@@ -7,6 +7,7 @@ mod control;
 mod core_bin;
 mod feedback;
 mod files;
+mod inflight;
 mod keys;
 mod kom;
 mod layout;
@@ -195,6 +196,10 @@ fn main() {
                     }
                 }
                 mods::finish_shared();
+                let left = inflight::wait(std::time::Duration::from_secs(3));
+                if left > 0 {
+                    tracing::warn!("{left} handed-off job(s) did not finish before quit");
+                }
                 telemetry::quit();
                 update::apply();
                 async {}

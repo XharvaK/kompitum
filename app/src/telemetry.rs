@@ -7,7 +7,7 @@
 //! `command`, `count`); a thread of its own keeps the day's counts in
 //! `telemetry/today.json`, freezes a finished day into `telemetry/queue/`
 //! and sends it. Nothing here may affect the app: it runs off the UI thread,
-//! never waits on anything, and every error just loses data.
+//! waits on nothing but a short while at quit, and every error just loses data.
 //!
 //! On unless settings.json says `"telemetry": false` (that also deletes the
 //! id and anything not sent yet). `DO_NOT_TRACK`, `KOMPITUM_TELEMETRY=0` and CI
@@ -29,6 +29,8 @@ const ENDPOINT: &str = "https://telemetry.kompitum.invalid/v1/report";
 /// Frozen reports older than this are dropped unsent.
 const KEEP_DAYS: i64 = 7;
 const TICK: Duration = Duration::from_secs(30);
+/// How long a quit waits for the worker to save the day and clear the marker.
+const QUIT_WAIT: Duration = Duration::from_millis(300);
 
 /// What the window sees, every few seconds while telemetry is on.
 #[derive(Default)]
@@ -55,9 +57,9 @@ enum Event {
     Startup(u64),
     /// Consent changed: look at `ON` now (a lost one is seen on the next tick).
     Wake,
-    /// A clean quit: save the day, clear the unclean-exit marker. Best
-    /// effort; quitting never waits for it.
-    Quit,
+    /// A clean quit: save the day, clear the unclean-exit marker, then answer
+    /// the quit's sender. Quitting waits a short while for it.
+    Quit(SyncSender<()>),
 }
 
 /// Events carry the consent epoch they were made in (`EPOCH`).
@@ -179,11 +181,15 @@ pub fn status() -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// A clean quit, handed to the worker (never waited for).
+/// A clean quit: waits briefly for the worker to save the day, then removes
+/// `running` itself; a quit the app chose is a clean exit, losing only unsaved counts.
 pub fn quit() {
     if collecting() {
-        send(Event::Quit);
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        send(Event::Quit(tx));
+        let _ = rx.recv_timeout(QUIT_WAIT);
     }
+    let _ = std::fs::remove_file(dir().join("running"));
 }
 
 /// When the app started, for how long the window took.
@@ -536,10 +542,11 @@ impl Worker {
                 }
             }
             Event::Wake => return,
-            Event::Quit => {
+            Event::Quit(done) => {
                 self.dirty = true;
                 self.save();
                 let _ = std::fs::remove_file(dir().join("running"));
+                let _ = done.send(());
                 return;
             }
         }

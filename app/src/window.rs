@@ -1950,14 +1950,15 @@ impl AppWindow {
             changed |= self.model.set_turn(&addr, turn, Some(turn));
             self.written_seen.insert(addr.clone(), turn);
             let core = self.core.clone();
+            let guard = crate::inflight::track();
+            let params =
+                json!({ "terminal": addr, "labels": { "kompitum.seen": turn.to_string() } });
+            let job = cx.background_executor().spawn(async move {
+                let _guard = guard;
+                core.call("terminal.label", params)
+            });
             cx.spawn(async move |this, cx| {
-                let params =
-                    json!({ "terminal": addr, "labels": { "kompitum.seen": turn.to_string() } });
-                let Err(e) = cx
-                    .background_executor()
-                    .spawn(async move { core.call("terminal.label", params) })
-                    .await
-                else {
+                let Err(e) = job.await else {
                     return;
                 };
                 tracing::warn!("seen label for {addr}: {e:#}");
@@ -2335,13 +2336,14 @@ impl AppWindow {
             // failed write is forgotten so the next publish tries again.
             self.written_where.insert(addr.clone(), place.clone());
             let core = self.core.clone();
+            let guard = crate::inflight::track();
+            let params = json!({ "terminal": addr, "labels": { "where": place } });
+            let job = cx.background_executor().spawn(async move {
+                let _guard = guard;
+                core.call("terminal.label", params)
+            });
             cx.spawn(async move |this, cx| {
-                let params = json!({ "terminal": addr, "labels": { "where": place } });
-                let Err(e) = cx
-                    .background_executor()
-                    .spawn(async move { core.call("terminal.label", params) })
-                    .await
-                else {
+                let Err(e) = job.await else {
                     return;
                 };
                 tracing::warn!("where label for {addr}: {e:#}");
@@ -3796,15 +3798,21 @@ impl AppWindow {
         self.closing_terminals
             .extend(doomed.iter().cloned().map(|a| (a, false)));
         // Off the UI thread: a kill waits for the program to go, and for slow machines.
-        let core = self.core.clone();
+        // All start now, so a quit sees and waits for every one of them.
+        let mut jobs = Vec::with_capacity(doomed.len());
+        for address in doomed {
+            let core = self.core.clone();
+            let addr = address.clone();
+            let guard = crate::inflight::track();
+            let job = cx.background_executor().spawn(async move {
+                let _guard = guard;
+                core.call("terminal.kill", json!({ "terminal": addr }))
+            });
+            jobs.push((address, job));
+        }
         cx.spawn(async move |this, cx| {
-            for address in doomed {
-                let core = core.clone();
-                let addr = address.clone();
-                let result = cx
-                    .background_executor()
-                    .spawn(async move { core.call("terminal.kill", json!({ "terminal": addr })) })
-                    .await;
+            for (address, job) in jobs {
+                let result = job.await;
                 let _ = this.update(cx, |this, _| {
                     if result.is_ok() && this.live.contains_key(&address) {
                         // The live snapshot may still predate the kill's reply.
@@ -4448,8 +4456,10 @@ impl AppWindow {
                 // Off the UI thread: a terminal on a slow machine answers late.
                 let core = self.core.clone();
                 let params = json!({ "terminal": t, "labels": { "kompitum.right-click": to } });
+                let guard = crate::inflight::track();
                 cx.background_executor()
                     .spawn(async move {
+                        let _guard = guard;
                         if let Err(e) = core.call("terminal.label", params) {
                             tracing::warn!("right-click label: {e:#}");
                         }
@@ -4466,8 +4476,10 @@ impl AppWindow {
                 }
                 let core = self.core.clone();
                 let params = json!({ "terminal": t, "labels": { "kompitum.pinned": if pinned { "1" } else { "" } } });
+                let guard = crate::inflight::track();
                 cx.background_executor()
                     .spawn(async move {
+                        let _guard = guard;
                         if let Err(e) = core.call("terminal.label", params) {
                             tracing::warn!("pin label: {e:#}");
                         }

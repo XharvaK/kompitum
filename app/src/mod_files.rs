@@ -99,7 +99,9 @@ pub fn write_text(
     expected: Option<String>,
 ) -> impl std::future::Future<Output = Result<HostValue, HostError>> + Send {
     let (tx, rx) = async_channel::bounded(1);
+    let guard = crate::inflight::track();
     std::thread::spawn(move || {
+        let _guard = guard;
         let _ = tx.send_blocking(write(Path::new(&path), &text, expected.as_deref()));
     });
     async move {
