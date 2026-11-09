@@ -8,7 +8,7 @@ use super::listing::{clean_path, inside, read_text, stem};
 use super::notes::{self, Meta, Value};
 use super::pen::valid_name;
 use super::privacy;
-use super::store::{Vault, Written, unavailable, written};
+use super::store::{Vault, Written, unavailable, with_lock, written};
 use crate::rpc::RpcError;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -62,41 +62,47 @@ impl MemoryReport {
 impl Vault {
     /// Write one memory, then commit and push it.
     pub fn remember(&self, draft: MemoryDraft) -> Result<Written, RpcError> {
-        let pulled = git::pull(&self.root, git::TIMEOUT);
-        if !pulled.ok {
-            return Err(unavailable(format!(
-                "The vault could not be pulled, so nothing was written: {}",
-                pulled.error
-            )));
-        }
-        let path = write_memory(self, &draft, &Moment::now())?;
-        let mut paths = vec![path.clone()];
-        let marks_path = format!("{}/reads.jsonl", self.agent);
-        if self.root.join(&marks_path).exists() {
-            paths.push(marks_path);
-        }
-        let result = git::commit_and_push(&self.root, &paths, &format!("{}: memory {}", self.agent, stem(&path)));
-        Ok(written(&self.root, path, result, "Wrote"))
+        with_lock(&self.root, "nothing was written", || {
+            let pulled = git::pull_under_lock(&self.root, git::TIMEOUT);
+            if !pulled.ok {
+                return Err(unavailable(format!(
+                    "The vault could not be pulled, so nothing was written: {}",
+                    pulled.error
+                )));
+            }
+            let path = write_memory(self, &draft, &Moment::now())?;
+            let mut paths = vec![path.clone()];
+            let marks_path = format!("{}/reads.jsonl", self.agent);
+            if self.root.join(&marks_path).exists() {
+                paths.push(marks_path);
+            }
+            let result =
+                git::commit_and_push_under_lock(&self.root, &paths, &format!("{}: memory {}", self.agent, stem(&path)));
+            Ok(written(&self.root, path, result, "Wrote"))
+        })
     }
 
     /// Mark one of my memory notes superseded, then commit and push it.
     pub fn forget(&self, path: &str, why: &str) -> Result<Written, RpcError> {
         let path = own_memory(&self.agent, path)?;
-        let pulled = git::pull(&self.root, git::TIMEOUT);
-        if !pulled.ok {
-            return Err(unavailable(format!(
-                "The vault could not be pulled, so nothing was changed: {}",
-                pulled.error
-            )));
-        }
-        forget_note(&self.root, &path, why, &Moment::now())?;
-        let mut paths = vec![path.clone()];
-        let marks_path = format!("{}/reads.jsonl", self.agent);
-        if self.root.join(&marks_path).exists() {
-            paths.push(marks_path);
-        }
-        let result = git::commit_and_push(&self.root, &paths, &format!("{}: forget {}", self.agent, stem(&path)));
-        Ok(written(&self.root, path, result, "Forgot"))
+        with_lock(&self.root, "nothing was changed", || {
+            let pulled = git::pull_under_lock(&self.root, git::TIMEOUT);
+            if !pulled.ok {
+                return Err(unavailable(format!(
+                    "The vault could not be pulled, so nothing was changed: {}",
+                    pulled.error
+                )));
+            }
+            forget_note(&self.root, &path, why, &Moment::now())?;
+            let mut paths = vec![path.clone()];
+            let marks_path = format!("{}/reads.jsonl", self.agent);
+            if self.root.join(&marks_path).exists() {
+                paths.push(marks_path);
+            }
+            let result =
+                git::commit_and_push_under_lock(&self.root, &paths, &format!("{}: forget {}", self.agent, stem(&path)));
+            Ok(written(&self.root, path, result, "Forgot"))
+        })
     }
 
     /// The packet the lead wakes with, or the memories due for review.

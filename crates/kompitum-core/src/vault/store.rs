@@ -190,22 +190,27 @@ impl Vault {
     }
 
     pub fn post(&self, post: Post) -> Result<Written, RpcError> {
-        let pulled = git::pull(&self.root, git::TIMEOUT);
-        if !pulled.ok {
-            return Err(unavailable(format!(
-                "The vault could not be pulled, so nothing was written: {}",
-                pulled.error
-            )));
-        }
-        let path = write_message(self, &post, &Moment::now())?;
-        let mut paths = vec![path.clone()];
-        let marks_path = format!("{}/reads.jsonl", self.agent);
-        if self.root.join(&marks_path).exists() {
-            paths.push(marks_path);
-        }
-        let result =
-            git::commit_and_push(&self.root, &paths, &format!("{}: {} {}", self.agent, post.kind, stem(&path)));
-        Ok(written(&self.root, path, result, "Wrote"))
+        with_lock(&self.root, "nothing was written", || {
+            let pulled = git::pull_under_lock(&self.root, git::TIMEOUT);
+            if !pulled.ok {
+                return Err(unavailable(format!(
+                    "The vault could not be pulled, so nothing was written: {}",
+                    pulled.error
+                )));
+            }
+            let path = write_message(self, &post, &Moment::now())?;
+            let mut paths = vec![path.clone()];
+            let marks_path = format!("{}/reads.jsonl", self.agent);
+            if self.root.join(&marks_path).exists() {
+                paths.push(marks_path);
+            }
+            let result = git::commit_and_push_under_lock(
+                &self.root,
+                &paths,
+                &format!("{}: {} {}", self.agent, post.kind, stem(&path)),
+            );
+            Ok(written(&self.root, path, result, "Wrote"))
+        })
     }
 
     pub fn mark(&self, path: &str, status: &str) -> Result<Written, RpcError> {
@@ -227,38 +232,49 @@ impl Vault {
         if !STATUSES.contains(&status) {
             return Err(RpcError::new("usage", format!("status is one of: {}.", STATUSES.join(", ")), ""));
         }
-        let pulled = git::pull(&self.root, git::TIMEOUT);
-        if !pulled.ok {
-            return Err(unavailable(format!(
-                "The vault could not be pulled, so nothing was changed: {}",
-                pulled.error
-            )));
-        }
-        mark_note(&self.root, &path, status)?;
-        let mut paths = vec![path.clone()];
-        let marks_path = format!("{}/reads.jsonl", self.agent);
-        if self.root.join(&marks_path).exists() {
-            paths.push(marks_path);
-        }
-        let result =
-            git::commit_and_push(&self.root, &paths, &format!("{}: mark {status} {}", self.agent, stem(&path)));
-        Ok(written(&self.root, path, result, "Marked"))
+        with_lock(&self.root, "nothing was changed", || {
+            let pulled = git::pull_under_lock(&self.root, git::TIMEOUT);
+            if !pulled.ok {
+                return Err(unavailable(format!(
+                    "The vault could not be pulled, so nothing was changed: {}",
+                    pulled.error
+                )));
+            }
+            mark_note(&self.root, &path, status)?;
+            let mut paths = vec![path.clone()];
+            let marks_path = format!("{}/reads.jsonl", self.agent);
+            if self.root.join(&marks_path).exists() {
+                paths.push(marks_path);
+            }
+            let result = git::commit_and_push_under_lock(
+                &self.root,
+                &paths,
+                &format!("{}: mark {status} {}", self.agent, stem(&path)),
+            );
+            Ok(written(&self.root, path, result, "Marked"))
+        })
     }
 
     pub fn done(&self, path: &str, why: Option<&str>) -> Result<Written, RpcError> {
         let path = clean_path(path);
-        let pulled = git::pull(&self.root, git::TIMEOUT);
-        if !pulled.ok {
-            return Err(unavailable(format!(
-                "The vault could not be pulled, so nothing was changed: {}",
-                pulled.error
-            )));
-        }
-        read_one(&self.root, &path)?;
-        let mark = marks::done_mark(&path, Moment::now().mark_stamp(), why.map(str::to_string));
-        let mark_path = marks::append(&self.root, &self.agent, &mark).map_err(unavailable)?;
-        let result = git::commit_and_push(&self.root, &[mark_path], &format!("{}: done {}", self.agent, stem(&path)));
-        Ok(written(&self.root, path, result, "Closed"))
+        with_lock(&self.root, "nothing was changed", || {
+            let pulled = git::pull_under_lock(&self.root, git::TIMEOUT);
+            if !pulled.ok {
+                return Err(unavailable(format!(
+                    "The vault could not be pulled, so nothing was changed: {}",
+                    pulled.error
+                )));
+            }
+            read_one(&self.root, &path)?;
+            let mark = marks::done_mark(&path, Moment::now().mark_stamp(), why.map(str::to_string));
+            let mark_path = marks::append(&self.root, &self.agent, &mark).map_err(unavailable)?;
+            let result = git::commit_and_push_under_lock(
+                &self.root,
+                &[mark_path],
+                &format!("{}: done {}", self.agent, stem(&path)),
+            );
+            Ok(written(&self.root, path, result, "Closed"))
+        })
     }
 }
 
@@ -437,6 +453,16 @@ fn sync_read(root: &Path) -> (usize, Vec<String>) {
         problems.push(problem);
     }
     (unpushed, problems)
+}
+
+/// Run a vault write under one lock, from before its pull to after its push.
+pub(super) fn with_lock<T>(
+    root: &Path,
+    nothing: &str,
+    body: impl FnOnce() -> Result<T, RpcError>,
+) -> Result<T, RpcError> {
+    git::with_vault_lock(root, body)
+        .map_err(|error| unavailable(format!("The vault could not be pulled, so {nothing}: {error}")))?
 }
 
 pub(super) fn written(root: &Path, path: String, result: git::GitResult, verb: &str) -> Written {

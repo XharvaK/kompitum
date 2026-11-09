@@ -35,7 +35,7 @@ struct LockLimits {
 }
 
 /// The lock while this process holds it; dropping it lets the next kom in.
-struct VaultLock {
+pub struct VaultLock {
     path: PathBuf,
     /// What this process wrote into it, so it only ever removes its own lock.
     token: String,
@@ -89,7 +89,20 @@ fn lock_mtime(path: &Path) -> Option<i64> {
 }
 
 /// Take the vault's lock, waiting for another kom or removing a stale one.
-fn take(dir: &Path, limits: LockLimits) -> Result<VaultLock, String> {
+/// Hold it across `pull_under_lock`, the edit, and
+/// `commit_and_push_under_lock`; dropping it lets the next kom in.
+pub fn take(dir: &Path) -> Result<VaultLock, String> {
+    take_with(dir, LIMITS)
+}
+
+/// Run `body` while holding the vault's lock, so its pull, edit, commit and
+/// push are one piece of work to every other kom.
+pub fn with_vault_lock<T>(dir: &Path, body: impl FnOnce() -> T) -> Result<T, String> {
+    let _lock = take(dir)?;
+    Ok(body())
+}
+
+fn take_with(dir: &Path, limits: LockLimits) -> Result<VaultLock, String> {
     let path = lock_path(dir);
     let started = Instant::now();
     loop {
@@ -219,14 +232,14 @@ pub fn run(dir: &Path, args: &[&str], timeout: Duration) -> GitResult {
 
 /// Bring the vault up to date. A vault with no remote is left as it is.
 pub fn pull(dir: &Path, timeout: Duration) -> GitResult {
-    match take(dir, LIMITS) {
+    match take(dir) {
         Ok(_lock) => pull_under_lock(dir, timeout),
         Err(error) => GitResult { ok: false, output: String::new(), error },
     }
 }
 
 /// The pull itself, with the lock already held. Success is remembered.
-fn pull_under_lock(dir: &Path, timeout: Duration) -> GitResult {
+pub fn pull_under_lock(dir: &Path, timeout: Duration) -> GitResult {
     let result = pull_once(dir, timeout);
     if result.ok {
         mark_pulled(dir);
@@ -264,13 +277,14 @@ pub fn pull_for_reading(dir: &Path) -> String {
 /// Commit the given vault paths with the message and push. Retries a rejected
 /// push after a pull, up to three times.
 pub fn commit_and_push(dir: &Path, paths: &[String], message: &str) -> GitResult {
-    match take(dir, LIMITS) {
+    match take(dir) {
         Ok(_lock) => commit_and_push_under_lock(dir, paths, message),
         Err(error) => GitResult { ok: false, output: String::new(), error },
     }
 }
 
-fn commit_and_push_under_lock(dir: &Path, paths: &[String], message: &str) -> GitResult {
+/// The commit and push themselves, with the lock already held.
+pub fn commit_and_push_under_lock(dir: &Path, paths: &[String], message: &str) -> GitResult {
     let mut add: Vec<&str> = vec!["add", "--"];
     add.extend(paths.iter().map(String::as_str));
     let added = run(dir, &add, TIMEOUT);
@@ -487,13 +501,13 @@ mod tests {
         let root = scratch("lock");
         command(&root, &["init", "-q", "-b", "main"]);
         let limits = short_limits(Duration::from_secs(2));
-        let first = take(&root, limits).unwrap();
+        let first = take_with(&root, limits).unwrap();
         assert!(lock_path(&root).exists());
         let waiter = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(100));
             drop(first);
         });
-        let second = take(&root, limits).expect("the second taker gets it after the first lets go");
+        let second = take_with(&root, limits).expect("the second taker gets it after the first lets go");
         waiter.join().unwrap();
         assert!(lock_path(&root).exists(), "the second taker holds it");
         drop(second);
@@ -501,7 +515,7 @@ mod tests {
 
         let old = Moment::now().epoch - 61;
         std::fs::write(lock_path(&root), format!("999 {old} 2020-01-01T00:00:00+00:00\n")).unwrap();
-        let taken = take(&root, limits).expect("a stale lock is removed and taken");
+        let taken = take_with(&root, limits).expect("a stale lock is removed and taken");
         assert!(lock_path(&root).exists());
         drop(taken);
         std::fs::remove_dir_all(root).unwrap();
@@ -511,7 +525,7 @@ mod tests {
     fn a_holder_never_removes_a_lock_another_kom_took_over() {
         let root = scratch("lock-owner");
         command(&root, &["init", "-q", "-b", "main"]);
-        let mine = take(&root, short_limits(Duration::from_secs(1))).unwrap();
+        let mine = take_with(&root, short_limits(Duration::from_secs(1))).unwrap();
         std::fs::write(
             lock_path(&root),
             "4242 1 2020-01-01T00:00:00+00:00
@@ -529,7 +543,8 @@ mod tests {
         command(&root, &["init", "-q", "-b", "main"]);
         let since = Moment::now().mark_stamp();
         std::fs::write(lock_path(&root), format!("999 {} {since}\n", Moment::now().epoch)).unwrap();
-        let error = take(&root, short_limits(Duration::from_millis(50))).err().expect("a held lock is never taken");
+        let error =
+            take_with(&root, short_limits(Duration::from_millis(50))).err().expect("a held lock is never taken");
         assert_eq!(error, format!("Another kom is still working in the vault (since {since}). Nothing was pulled."));
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -598,6 +613,97 @@ mod tests {
         let first = failed.error.lines().next().unwrap().trim();
         let line = pull_for_reading(&root);
         assert_eq!(line, format!("The vault couldn't be updated, so this may be behind (git: {first})."));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn clone_with_remote(name: &str) -> (PathBuf, PathBuf) {
+        let root = scratch(name);
+        let remote = root.join("remote.git");
+        let clone = root.join("clone");
+        command(&root, &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+        command(&root, &["init", "-q", "-b", "main", clone.to_str().unwrap()]);
+        configure(&clone);
+        std::fs::write(clone.join("shared.md"), "# Shared\n").unwrap();
+        command(&clone, &["add", "."]);
+        command(&clone, &["commit", "-q", "-m", "seed"]);
+        command(&clone, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        command(&clone, &["push", "-q", "-u", "origin", "main"]);
+        (root, clone)
+    }
+
+    fn edit_shared(root: &Path, text: &str) {
+        std::fs::write(root.join("shared.md"), text).unwrap();
+    }
+
+    /// Pull, edit and commit with one lock held across all three.
+    fn locked_edit(root: &Path, text: &str) -> GitResult {
+        let lock = take(root).expect("the vault's lock");
+        let pulled = pull_under_lock(root, TIMEOUT);
+        if !pulled.ok {
+            drop(lock);
+            return pulled;
+        }
+        edit_shared(root, text);
+        let result = commit_and_push_under_lock(root, &["shared.md".to_string()], "locked edit");
+        drop(lock);
+        result
+    }
+
+    #[test]
+    fn one_lock_across_pull_edit_commit_keeps_two_writers_that_split_takes_lose() {
+        use std::sync::{Arc, Barrier};
+
+        // Split takes: A pulls and edits the tracked note without a lock, and
+        // B's pull arrives before A commits. The edit is still uncommitted, so
+        // B's pull collides with it.
+        let (root, clone) = clone_with_remote("split-race");
+        let edited = Arc::new(Barrier::new(2));
+        let attempted = Arc::new(Barrier::new(2));
+        let slow = clone.clone();
+        let fast = clone;
+        let (slow_edited, fast_edited) = (Arc::clone(&edited), Arc::clone(&edited));
+        let (slow_attempted, fast_attempted) = (Arc::clone(&attempted), Arc::clone(&attempted));
+        let slow = std::thread::spawn(move || {
+            let pulled = pull(&slow, TIMEOUT);
+            assert!(pulled.ok, "{}", pulled.error);
+            edit_shared(&slow, "A\n");
+            slow_edited.wait();
+            slow_attempted.wait();
+            commit_and_push(&slow, &["shared.md".to_string()], "a: edit")
+        });
+        let fast = std::thread::spawn(move || {
+            fast_edited.wait();
+            let pulled = pull(&fast, TIMEOUT);
+            fast_attempted.wait();
+            pulled
+        });
+        let slow = slow.join().unwrap();
+        let fast = fast.join().unwrap();
+        assert!(slow.ok, "A commits its edit: {}", slow.error);
+        assert!(!fast.ok, "B's pull collides with A's uncommitted edit");
+        assert!(!fast.error.is_empty(), "the collision is said in words");
+        std::fs::remove_dir_all(root).unwrap();
+
+        // One held lock: each writer pulls, edits, commits and pushes under
+        // it. The second waits, then works on top of the first; both succeed.
+        let (root, clone) = clone_with_remote("locked-race");
+        let start = Arc::new(Barrier::new(2));
+        let one = clone.clone();
+        let two = clone.clone();
+        let (one_start, two_start) = (Arc::clone(&start), Arc::clone(&start));
+        let first = std::thread::spawn(move || {
+            one_start.wait();
+            locked_edit(&one, "A\n")
+        });
+        let second = std::thread::spawn(move || {
+            two_start.wait();
+            locked_edit(&two, "B\n")
+        });
+        let one = first.join().unwrap();
+        let two = second.join().unwrap();
+        assert!(one.ok, "the first held write succeeds: {}", one.error);
+        assert!(two.ok, "the second held write waits and succeeds: {}", two.error);
+        assert_eq!(command(&clone, &["rev-list", "--count", "HEAD"]).trim(), "3", "both edits are commits on the seed");
         std::fs::remove_dir_all(root).unwrap();
     }
 }
