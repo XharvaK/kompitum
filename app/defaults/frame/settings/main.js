@@ -6,10 +6,12 @@ import { kom, run, theme, fonts, updates, settings, appHome, readTextFile, write
 import { loadVault, vaultSection } from "./vault.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
 import { agentsPage, loadAgents } from "./agents.js";
+import { generalPage } from "./general.js";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
 const SECTIONS = [
+  { id: "general", title: "General", icon: "settings" },
   { id: "appearance", title: "Appearance", icon: "palette" },
   { id: "agents", title: "Agents", icon: "bot" },
   { id: "vault", title: "Vault", icon: "mail" },
@@ -23,6 +25,8 @@ const SECTIONS = [
 // What the search field finds: one entry per row the sections draw, so search
 // never reads the drawn tree. `key` matches the row's highlight key.
 const SEARCH = [
+  { section: "general", key: "folder", title: "Home folder", words: "lead starts projects user drive working directory" },
+  { section: "general", key: "welcome", title: "Welcome", words: "show again onboarding first start setup" },
   { section: "appearance", key: "appearance", title: "Appearance", words: "light dark system theme" },
   { section: "appearance", key: "zoom", title: "Zoom", words: "size scale bigger smaller interface" },
   { section: "appearance", key: "font", title: "Terminal font", words: "typeface monospace ligatures" },
@@ -848,8 +852,10 @@ export default class Settings extends View {
                   .px(28)
                   .py(22)
                   .child(
-                    this.section === "appearance"
-                      ? this.look(t, cx)
+                    this.section === "general"
+                      ? generalPage(this, t, cx)
+                      : this.section === "appearance"
+                        ? this.look(t, cx)
                       : this.section === "agents"
                         ? agentsPage(this, t, cx)
                       : this.section === "keyboard"

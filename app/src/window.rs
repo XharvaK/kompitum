@@ -5222,6 +5222,22 @@ impl AppWindow {
                 let r = self.lead_open(window, cx);
                 self.answer(r);
             }
+            "lead.setup" => {
+                let program = match settings::load_person() {
+                    Ok(person) => person
+                        .lead
+                        .and_then(|lead| lead.program)
+                        .unwrap_or_else(|| "claude".into()),
+                    Err(error) => return self.fail(format!("settings.json: {error}")),
+                };
+                if program != "claude" {
+                    return self.fail(format!(
+                        "lead.setup is for Claude Code; the lead is {program:?}"
+                    ));
+                }
+                let r = crate::lead::setup(&crate::core_bin::path(), &mods::home());
+                self.answer(r);
+            }
             "agent.focus" => {
                 let t = Self::arg(a, "terminal").unwrap_or_default().to_owned();
                 if !self.live.contains_key(&t) {

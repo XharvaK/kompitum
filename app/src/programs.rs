@@ -58,6 +58,15 @@ struct Entry {
     /// The argv that prints the CLI's own model list, one per line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     list_models: Vec<String>,
+    /// How to install it on each OS (`std::env::consts::OS` values), or where.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    install: Option<Install>,
+    /// The argv that signs in.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    login: Vec<String>,
+    /// An argv whose exit code says whether the CLI is signed in (0 yes).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    signed_in: Vec<String>,
     /// The core reader that runs it as a worker: codex, command_code or opencode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     worker: Option<String>,
@@ -100,6 +109,33 @@ struct Model {
     label: String,
 }
 
+/// How a CLI installs on each OS, keyed by `std::env::consts::OS`; the ones
+/// with no command are left out, and `page` is its install page.
+#[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
+struct Install {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    windows: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    macos: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    linux: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    page: Option<String>,
+}
+
+impl Install {
+    /// The install argv for an OS; None when it has no command there.
+    #[cfg(test)]
+    fn argv(&self, os: &str) -> Option<&[String]> {
+        match os {
+            "windows" => self.windows.as_deref(),
+            "macos" => self.macos.as_deref(),
+            "linux" => self.linux.as_deref(),
+            _ => None,
+        }
+    }
+}
+
 /// A plan's limits by window: `windows`, or per model where they differ.
 #[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
 struct Plan {
@@ -134,6 +170,13 @@ impl Entry {
         }
         if !mine.list_models.is_empty() {
             self.list_models = mine.list_models;
+        }
+        self.install = mine.install.or(self.install.take());
+        if !mine.login.is_empty() {
+            self.login = mine.login;
+        }
+        if !mine.signed_in.is_empty() {
+            self.signed_in = mine.signed_in;
         }
         self.worker = mine.worker.or(self.worker.take());
         self.route = mine.route.or(self.route.take());
@@ -191,6 +234,15 @@ pub fn startable() -> Vec<Value> {
                 }
                 if !e.list_models.is_empty() {
                     v["list_models"] = json!(e.list_models);
+                }
+                if let Some(install) = &e.install {
+                    v["install"] = json!(install);
+                }
+                if !e.login.is_empty() {
+                    v["login"] = json!(e.login);
+                }
+                if !e.signed_in.is_empty() {
+                    v["signed_in"] = json!(e.signed_in);
                 }
                 if let Some(worker) = &e.worker {
                     v["worker"] = json!(worker);
@@ -731,11 +783,59 @@ mod tests {
     }
 
     #[test]
+    fn shipped_leads_carry_their_install_login_and_signed_in() {
+        let table = t();
+        for key in ["claude", "codex", "command-code", "opencode", "grok"] {
+            let e = &table.programs[key];
+            let install = e.install.as_ref().unwrap_or_else(|| panic!("{key} has no install"));
+            assert!(
+                install.page.as_deref().is_some_and(|p| p.starts_with("https://")),
+                "{key} has no install page"
+            );
+            assert!(!e.login.is_empty(), "{key} has no login");
+        }
+        assert_eq!(table.programs["claude"].signed_in, ["claude", "auth", "status"]);
+        assert!(table.programs["codex"].signed_in.is_empty(), "codex's help promises no exit code");
+        assert_eq!(
+            table.programs["opencode"].install.as_ref().unwrap().argv("windows"),
+            None,
+            "OpenCode has no Windows install command"
+        );
+        let codex = table.programs["codex"].install.as_ref().unwrap().argv("windows").unwrap();
+        assert_eq!(
+            &codex[..5],
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]
+        );
+        assert_eq!(
+            codex[5],
+            "$env:Path = \"$env:SystemRoot\\System32;$env:Path\"; irm https://chatgpt.com/codex/install.ps1 | iex"
+        );
+    }
+
+    #[test]
+    fn install_argv_is_picked_for_the_os_and_absent_elsewhere() {
+        let install: Install = serde_json::from_value(json!({
+            "windows": ["install.exe"], "macos": ["sh", "-c", "install"], "page": "https://example.invalid"
+        }))
+        .unwrap();
+        assert_eq!(install.argv("windows").map(|a| a.join(" ")).as_deref(), Some("install.exe"));
+        assert_eq!(install.argv("macos").map(|a| a.join(" ")).as_deref(), Some("sh -c install"));
+        assert!(install.argv("linux").is_none());
+        assert!(install.argv("freebsd").is_none());
+    }
+
+    #[test]
     fn known_agents_carry_the_catalog_fields() {
         let list = startable();
         let claude = list.iter().find(|a| a["key"] == "claude").unwrap();
         assert_eq!(claude["flags"]["model"], json!(["--model", "{model}"]));
         assert_eq!(claude["reports"], json!("status_line"));
+        assert_eq!(claude["login"], json!(["claude", "auth", "login"]));
+        assert_eq!(claude["signed_in"], json!(["claude", "auth", "status"]));
+        assert_eq!(
+            claude["install"]["linux"],
+            json!(["sh", "-c", "curl -fsSL https://claude.ai/install.sh | bash"])
+        );
         let opencode = list.iter().find(|a| a["key"] == "opencode").unwrap();
         assert_eq!(opencode["worker"], json!("opencode"));
         assert_eq!(opencode["route"], json!("{model}#{effort}"));

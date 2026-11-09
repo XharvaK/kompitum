@@ -203,6 +203,9 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     });
     module = module.function("pasteImage", |_| Ok(HostValue::Null));
     module = module.async_function("pickFolder", |_| Ok(async { Ok(HostValue::Null) }));
+    module = module.async_function("leadSetup", |_| {
+        Ok(async { Ok(to_host(&json!({"mcp": "present", "skill": "present"}))) })
+    });
     for name in ["nextCommand", "watchFolder"] {
         module = module.async_function(name, |_| {
             Ok(std::future::pending::<gpui_shell::HostResult>())
@@ -233,6 +236,10 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     .map(|_| json!("{}")),
                 "kom" if first == json!(["machine", "ls", "--json"]) => {
                     Some(json!({"code":0,"stdout":"{\"machines\":[{\"name\":\"remote\",\"state\":\"online\"}]}","stderr":""}))
+                }
+                // The welcome: a signed-in check asks the core for its exit code only.
+                "kom" if first.as_array().and_then(|a| a.first()).and_then(Value::as_str) == Some("exec") => {
+                    Some(json!({"code":0,"stdout":"","stderr":""}))
                 }
                 // The mailbox: one note that needs the Owner, one between agents.
                 "kom" if first == json!(["vault", "open", "--json", "--as", "owner"]) => Some(json!({
@@ -1259,6 +1266,88 @@ fn settings_sections_and_updates(cx: &mut TestAppContext) {
     eprintln!("27 settings cases, each twice: {:?}", start.elapsed());
 }
 
+fn welcome_values(person: Value, known: Value) -> BTreeMap<String, Value> {
+    let mut values = fixture(false, props(), updates("current", "current"));
+    values.insert("person".into(), person);
+    values.insert("knownAgents".into(), known);
+    values
+}
+
+#[gpui::test]
+fn welcome_step_one_offers_install_and_the_command_for_this_os(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/welcome",
+        welcome_values(json!({"lead": {"program": "opencode"}}), welcome_agents()),
+        Some("this.step = 1;"),
+    )
+    .unwrap();
+    assert!(tree.contains("Install"), "{tree}");
+    assert!(
+        tree.contains("curl -fsSL https://opencode.ai/v2/install | bash"),
+        "OpenCode's Linux command: {tree}"
+    );
+    assert!(!tree.contains("w-get-opencode"), "it has a command here: {tree}");
+}
+
+#[gpui::test]
+fn welcome_step_two_draws_the_folder_from_settings(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/welcome",
+        welcome_values(
+            json!({"lead": {"program": "claude", "folder": "/fixture/projects"}}),
+            welcome_agents(),
+        ),
+        Some("this.step = 2;"),
+    )
+    .unwrap();
+    assert!(tree.contains("/fixture/projects"), "{tree}");
+    assert!(tree.contains("w-choose-folder"), "{tree}");
+}
+
+#[gpui::test]
+fn welcome_step_three_shows_the_toggle_only_for_claude(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for (program, shown) in [("claude", true), ("opencode", false)] {
+        let tree = describe_settled(
+            cx,
+            &staged,
+            "frame/welcome",
+            welcome_values(json!({"lead": {"program": program}}), welcome_agents()),
+            Some("this.step = 3;"),
+        )
+        .unwrap();
+        assert_eq!(
+            tree.contains("Let Claude Code use Kompitum"),
+            shown,
+            "{program}: {tree}"
+        );
+    }
+}
+
+#[gpui::test]
+fn settings_general_draws_the_home_folder_row(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("general");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("person".into(), json!({"lead": {"folder": "/fixture/projects"}}));
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    assert!(tree.contains("Home folder"), "{tree}");
+    assert!(tree.contains("/fixture/projects"), "{tree}");
+    assert!(tree.contains("st-general-folder"), "{tree}");
+    assert!(tree.contains("Show again"), "{tree}");
+}
+
 fn agent_catalog() -> Value {
     json!([
         {
@@ -1289,6 +1378,41 @@ fn agent_catalog() -> Value {
             "models": [{"id": "opencode-go/deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash"}],
             "worker": "opencode", "route": "{model}#{effort}",
             "plans": [{"id": "go", "label": "Go", "models": {"opencode-go/deepseek-v4.1-flash": {"5H": 20, "Week": 50, "Month": 100}}}]
+        }
+    ])
+}
+
+/// The welcome's catalog: the fields part 2 added and part 6's install, login and signed-in.
+fn welcome_agents() -> Value {
+    json!([
+        {
+            "key": "opencode", "name": "OpenCode", "icon": "icons/opencode.svg", "tint": true,
+            "tile": "#1c1d21", "color": "#ffffff", "shell": false, "agent": true,
+            "run": ["opencode"], "installed": false,
+            "flags": {"model": ["-m", "{model}#{effort}"]},
+            "efforts": ["low", "medium", "high", "max"],
+            "models": [{"id": "opencode-go/deepseek-v4.1-flash", "label": "DeepSeek V4.1 Flash"}],
+            "install": {
+                "macos": ["sh", "-c", "curl -fsSL https://opencode.ai/v2/install | bash"],
+                "linux": ["sh", "-c", "curl -fsSL https://opencode.ai/v2/install | bash"],
+                "page": "https://opencode.ai/docs/"
+            },
+            "login": ["opencode", "auth", "login"]
+        },
+        {
+            "key": "claude", "name": "Claude Code", "icon": "icons/claude.svg", "tint": false,
+            "tile": "#1c1d21", "color": "#ffffff", "shell": false, "agent": true,
+            "run": ["claude"], "installed": true,
+            "flags": {"model": ["--model", "{model}"], "effort": ["--effort", "{effort}"]},
+            "efforts": ["low", "medium", "high", "xhigh", "max"],
+            "models": [{"id": "default", "label": "Default"}, {"id": "sonnet", "label": "Sonnet"}],
+            "install": {
+                "windows": ["powershell", "-NoProfile", "-Command", "irm https://claude.ai/install.ps1 | iex"],
+                "linux": ["sh", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
+                "page": "https://code.claude.com/docs/en/setup"
+            },
+            "login": ["claude", "auth", "login"],
+            "signed_in": ["claude", "auth", "status"]
         }
     ])
 }
@@ -1631,14 +1755,10 @@ fn local_state_and_overlay_initial_descriptions(cx: &mut TestAppContext) {
             true,
             props(),
             updates("current", "current"),
-            Some(&format!("this.page = {page};")),
+            Some(&format!("this.step = {page};")),
         )
         .unwrap();
-        let expected = [
-            "Kompitum runs your terminals in the background",
-            "Add your other machines",
-            "Make it yours",
-        ][page - 1];
+        let expected = ["Pick your lead", "Pick a home folder", "Connect agents"][page - 1];
         assert!(tree.contains(expected), "welcome page {page}: {tree}");
     }
     for query in ["settings", "no-such-command"] {

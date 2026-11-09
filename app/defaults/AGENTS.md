@@ -612,14 +612,15 @@ The main ones:
   Terminals display Kitty graphics, including Unicode placeholder images used by
   programs such as yazi; partial images and scrolling follow the placeholder cells.
 - Agents: `agent.next`, `agent.prev`, `agent.focus {terminal}`, `lead.open`
-  (focus the lead and put the composer under it, starting it when needed).
+  (focus the lead and put the composer under it, starting it when needed),
+  `lead.setup` (add Kompitum's MCP tools and kom skill to the `claude` lead).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`
   (personal tree edits; on shipped layouts only click/look fields change),
   `layout.reset {name?}` (reset a shipped layout and its clicks),
   `layout.clone {name, as?}` (duplicate, then switch; default `<name>-copy`).
 - App: `mod.clone {name, as?}` (duplicate; default `<name>-copy`), `mod.open {name}` (again: closes it), `overlay.close {id?}`, `app.help` (again: closes it), `app.palette` (again: closes it), `app.settings {section?}`
-  (sections: `appearance`, `agents`, `vault`, `connect`, `notifications`, `machines`, `keyboard` on macOS, `about`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
+  (sections: `general`, `appearance`, `agents`, `vault`, `connect`, `notifications`, `machines`, `keyboard` on macOS, `about`; Machines lists, updates, renames and removes ssh machines; settings edit the same files you do).
   `app.check_updates` (only a successful check reports Up to date; a failed check clears the checked time and can be retried), `app.update_core` (a newer kompitum-core of this generation, terminals kept;
   never one a package manager owns), `app.welcome`, `app.whats_new`, `app.feedback {message?, from?}` (from `"person"` or `"agent"`; opens a new issue on Kompitum's GitHub in the browser, filled in with the message and the versions; nothing is sent until the person submits it there), `app.reset`,
   `app.theme {name}`, `app.zoom_in`, `app.zoom_out`, `app.zoom_reset`,

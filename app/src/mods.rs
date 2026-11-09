@@ -972,7 +972,7 @@ fn opt_str(v: Option<&HostValue>, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-const EXEC_LIMIT: Duration = Duration::from_secs(30);
+pub(crate) const EXEC_LIMIT: Duration = Duration::from_secs(30);
 const EXEC_MAX: Duration = Duration::from_secs(600);
 const EXEC_OUTPUT: u64 = 8 << 20;
 
@@ -989,7 +989,7 @@ fn exec_limit(options: Option<&HostValue>) -> Result<Duration, HostError> {
     }
 }
 
-fn run_blocking(
+pub(crate) fn run_blocking(
     command: &str,
     args: &[String],
     cwd: Option<String>,
@@ -1291,6 +1291,20 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 let _ = tx.send_blocking(known_agents(on, list));
             });
             Ok(async move { Ok(to_host(&rx.recv().await.unwrap_or(Value::Array(Vec::new())))) })
+        })
+        .async_function("leadSetup", |_| {
+            let (tx, rx) = async_channel::bounded(1);
+            std::thread::spawn(move || {
+                let result = crate::lead::setup(&crate::core_bin::path(), &home())
+                    .map(|value| to_host(&value))
+                    .map_err(HostError::new);
+                let _ = tx.send_blocking(result);
+            });
+            Ok(async move {
+                rx.recv()
+                    .await
+                    .unwrap_or_else(|_| Err(HostError::new("lead.setup stopped")))
+            })
         })
         .async_function("pickFolder", |a| {
             let prompt = a.get(0).map(from_host).and_then(|v| v.get("prompt").and_then(Value::as_str).map(str::to_owned)).unwrap_or_else(|| "Open".into());

@@ -41,6 +41,15 @@ export interface AgentModel {
   label: string;
 }
 
+/** How a CLI installs on each OS, keyed by `std::env::consts::OS`. An OS with
+ *  no install command is left out; `page` is its install page. */
+export interface AgentInstall {
+  windows?: string[];
+  macos?: string[];
+  linux?: string[];
+  page?: string;
+}
+
 export interface AgentPlan {
   id: string;
   label: string;
@@ -74,6 +83,12 @@ export function knownAgents(options?: { on?: string | null }): Promise<(Program 
   efforts?: string[];
   models?: AgentModel[];
   list_models?: string[];
+  /** How to install it on this OS (or its page, when it has no command). */
+  install?: AgentInstall;
+  /** The argv that signs in. */
+  login?: string[];
+  /** An argv whose exit code says whether it is signed in (0 yes); only where the CLI documents it. */
+  signed_in?: string[];
   worker?: "codex" | "command_code" | "opencode";
   route?: string;
   plans?: AgentPlan[];
@@ -84,6 +99,12 @@ export function knownAgents(options?: { on?: string | null }): Promise<(Program 
 /** Opens the system's folder picker (this machine). Resolves with the chosen folder, or null
  *  when the person cancels. `prompt`: the confirm button's text (default "Open"). */
 export function pickFolder(options?: { prompt?: string }): Promise<string | null>;
+
+/** Adds Kompitum's tools and skill to Claude Code, for the `claude` lead: `claude mcp get/add`
+ *  through kompitum-core's exec, and the kom skill in the person's `~/.claude/skills/` when it
+ *  isn't there yet. Rejects with the step and the first line of what failed. Never touches
+ *  Claude's settings or login files. */
+export function leadSetup(): Promise<{ mcp: "added" | "present"; skill: "installed" | "present" }>;
 
 /** Plays "done" or "blocked" (the attention sounds, or the files settings.json names), or an MP3
  *  file (absolute, or relative to ~/.config/kompitum-app). */

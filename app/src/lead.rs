@@ -294,6 +294,101 @@ pub fn write_claude_settings(app_dir: &Path, app: &Path, core: &Path) -> Result<
     Ok(path)
 }
 
+/// The kompitum-core skill, installed into Claude Code by `lead.setup`.
+pub const SKILL: &str = include_str!("../../skills/kompitum-core/SKILL.md");
+
+/// The two `claude mcp` argvs: asking whether the tools are there, and adding
+/// them for every project with this core's path.
+pub fn mcp_argvs(kom: &Path) -> (Vec<String>, Vec<String>) {
+    let get = vec!["mcp".into(), "get".into(), "kompitum".into()];
+    let add = vec![
+        "mcp".into(),
+        "add".into(),
+        "--scope".into(),
+        "user".into(),
+        "kompitum".into(),
+        "--".into(),
+        kom.to_string_lossy().into_owned(),
+        "mcp".into(),
+    ];
+    (get, add)
+}
+
+/// Runs one `claude` command through the core's `exec`, so a CLI an installer
+/// has just put on PATH is found: its exit code, stdout and stderr.
+fn claude_exec(kom: &Path, args: &[String]) -> Result<(i32, String, String), String> {
+    let mut argv = vec!["exec".into(), "--".into(), "claude".into()];
+    argv.extend(args.iter().cloned());
+    crate::mods::run_blocking(
+        &kom.to_string_lossy(),
+        &argv,
+        None,
+        crate::mods::EXEC_LIMIT,
+    )
+}
+
+fn first_line(stderr: &str, stdout: &str, code: i32) -> String {
+    stderr
+        .lines()
+        .chain(stdout.lines())
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("exit {code}"))
+}
+
+/// Writes the kom skill below the person's home, only when it isn't there.
+fn install_skill(home: &Path, skill: &str) -> Result<&'static str, String> {
+    let path = home
+        .join(".claude")
+        .join("skills")
+        .join("kompitum-core")
+        .join("SKILL.md");
+    if std::fs::symlink_metadata(&path).is_ok() {
+        return Ok("present");
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Couldn't install Kompitum's skill at {}: {error}",
+                path.display()
+            )
+        })?;
+    }
+    crate::persist::write_atomic(&path, skill).map_err(|error| {
+        format!(
+            "Couldn't install Kompitum's skill at {}: {error}",
+            path.display()
+        )
+    })?;
+    Ok("installed")
+}
+
+/// `lead.setup`: Kompitum's MCP tools and skill for the Claude Code lead.
+/// It changes nothing of Claude's own settings or login.
+pub fn setup(kom: &Path, home: &Path) -> Result<Value, String> {
+    let (get, add) = mcp_argvs(kom);
+    let mcp = match claude_exec(kom, &get) {
+        Ok((0, _, _)) => "present",
+        _ => match claude_exec(kom, &add) {
+            Ok((0, _, _)) => "added",
+            Ok((code, out, err)) => {
+                return Err(format!(
+                    "Couldn't add Kompitum's tools to Claude Code: {}",
+                    first_line(&err, &out, code)
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Couldn't add Kompitum's tools to Claude Code: {error}"
+                ));
+            }
+        },
+    };
+    let skill = install_skill(home, SKILL)?;
+    Ok(json!({ "mcp": mcp, "skill": skill }))
+}
+
 /// A SessionStart from the lead's own terminal records the id the app should
 /// resume. Anything else changes nothing.
 pub fn record_session_start(
@@ -591,6 +686,42 @@ mod tests {
                 .unwrap_or_default(),
             4
         );
+    }
+
+    #[test]
+    fn setup_builds_the_two_claude_mcp_argvs() {
+        let (get, add) = mcp_argvs(Path::new("/apps/kom"));
+        assert_eq!(get, ["mcp", "get", "kompitum"]);
+        assert_eq!(
+            add,
+            [
+                "mcp",
+                "add",
+                "--scope",
+                "user",
+                "kompitum",
+                "--",
+                "/apps/kom",
+                "mcp"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_skill_is_installed_only_when_absent() {
+        let home = std::env::temp_dir().join(format!(
+            "kompitum-lead-skill-{}-{}",
+            std::process::id(),
+            now_nanos()
+        ));
+        let path = home.join(".claude/skills/kompitum-core/SKILL.md");
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(install_skill(&home, SKILL), Ok("installed"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), SKILL);
+        std::fs::write(&path, "the person's own").unwrap();
+        assert_eq!(install_skill(&home, SKILL), Ok("present"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "the person's own");
+        std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]

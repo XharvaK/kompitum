@@ -233,6 +233,11 @@ pub const COMMANDS: &[Command] = &[
         "Open the lead: focus its terminal and put the composer under it, starting it in its home folder when it isn't running.",
     ),
     cmd(
+        "lead.setup",
+        &[],
+        "Add Kompitum's tools and skill to Claude Code, for the claude lead.",
+    ),
+    cmd(
         "layout.switch",
         &[opt("name")],
         "Show a layout (layouts/<name>.json), or the next one.",
@@ -301,7 +306,7 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "app.settings",
         &[opt("section")],
-        "Open the settings (section: appearance, agents, vault, connect, notifications, machines, keyboard, about).",
+        "Open the settings (section: general, appearance, agents, vault, connect, notifications, machines, keyboard, about).",
     ),
     cmd(
         "app.mailbox",
