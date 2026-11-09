@@ -822,6 +822,10 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
   *.js, *.svg   more modules ("./ui.js"), its own icons
 ```
 
+- `"title"` in `mod.json` is the title its panes show in `panes()`, instead of the
+  folder name (`"title": "Composer"`). `"pane_header": false` draws no pane header
+  over that mod's panes; the header's height goes to the mod.
+
 - `"focusable": true` in `mod.json` lets `pane.go` give a shown copy the keyboard.
   It gets `"focus"` from `nextCommand()`: focus your own handle then
   (`this.handle.focus()`) and handle keys with `on_key_down`. The copy gets `"focus"`

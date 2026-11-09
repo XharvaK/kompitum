@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings, knownAgents } from "kompitum";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings, knownAgents, lead } from "kompitum";
 
 // The two orchestrators keep these colors in the Line panel too.
 const OPUS = "accent";
@@ -101,6 +101,11 @@ function workerName(catalog, worker) {
   const label = text(worker.label);
   if (!entry?.name) return label;
   return label.toLowerCase().startsWith(cli.toLowerCase()) ? entry.name + label.slice(cli.length) : entry.name;
+}
+
+// The lead's program name, in the composer's words ("Claude", not its catalog name).
+function leadName(catalog, key) {
+  return key === "claude" ? "Claude" : catalog.find((item) => item.key === key)?.name ?? key;
 }
 
 function workerWords(catalog, worker) {
@@ -449,6 +454,10 @@ export default class Board extends View {
     const waits = [];
     if (reviewCount > 0) waits.push(`${reviewCount} to review`);
     if (blockedCount > 0) waits.push(`${blockedCount} ${blockedCount === 1 ? "agent" : "agents"} blocked`);
+    if (lead()?.ask) {
+      const program = settings()?.lead?.program ?? "claude";
+      waits.push(`${leadName(this.catalog, program)} waits for you`);
+    }
     const headline = waits.length ? waits.join(" · ") : "Nothing waits for you";
     const workers = workersOf(data.workers);
     const ready = workers.filter((w) => w.status === "ready").length;

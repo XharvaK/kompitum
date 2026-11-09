@@ -26,7 +26,7 @@
       "efforts":["low","medium","high","max"],
       "models":[{"id":"opencode-go/deepseek-v4.1-flash","label":"DeepSeek V4.1 Flash"},{"id":"opencode-go/glm-5.3-flash","label":"GLM-5.3-Flash"},{"id":"opencode-go/kimi-k2.7-code","label":"Kimi K2.7 Code"}],
       "list_models":["models"],
-      "session":{"new":["--session","{id}"],"resume":["--session","{id}"]},
+      "session":{"new":["--session","ses_{id}"],"resume":["--session","ses_{id}"]},
       "install":{"macos":["sh","-c","curl -fsSL https://opencode.ai/v2/install | bash"],"linux":["sh","-c","curl -fsSL https://opencode.ai/v2/install | bash"],"page":"https://opencode.ai/docs/"},
       "login":["opencode","auth","login"],
       "worker":"opencode","route":"{model}#{effort}",

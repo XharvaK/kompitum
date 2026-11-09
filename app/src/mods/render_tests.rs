@@ -788,6 +788,62 @@ fn the_composer_needs_a_live_lead(cx: &mut TestAppContext) {
     assert!(tree.contains("composer-open"), "{tree}");
 }
 
+/// Under a lead that isn't running, the button starts that lead, model and all.
+#[gpui::test]
+fn the_composer_starts_the_lead_it_names(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(false, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.insert("person".into(), json!({"lead": {"program": "claude", "model": "sonnet"}}));
+    let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
+    assert!(tree.contains("Start Claude (Sonnet)"), "{tree}");
+    assert!(tree.contains("composer-open"), "{tree}");
+}
+
+/// The header says the lead, its effort as a word, and one status word where
+/// the dot used to be.
+#[gpui::test]
+fn the_composer_header_names_the_lead_and_its_status(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut catalog = agent_catalog();
+    catalog[0]["models"] = json!([
+        {"id": "default", "label": "Default"},
+        {"id": "haiku", "label": "Haiku"}
+    ]);
+    catalog[0]["efforts"] = json!(["low", "medium", "high", "xhigh", "max", "careful"]);
+    for (state, expected) in [
+        (json!("working"), Some("Working")),
+        (json!("asking"), Some("Waiting for you")),
+        (json!("waiting"), Some("Your turn")),
+        (Value::Null, None),
+    ] {
+        let mut values = fixture(true, props(), updates("current", "current"));
+        values.insert("knownAgents".into(), catalog.clone());
+        values.insert(
+            "person".into(),
+            json!({"lead": {"program": "claude", "model": "haiku", "effort": "low"}}),
+        );
+        values.insert("lead".into(), json!({"state": state, "ask": null}));
+        let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
+        assert!(tree.contains("Claude · Haiku · low effort"), "{state}: {tree}");
+        for word in ["Working", "Waiting for you", "Your turn"] {
+            assert_eq!(tree.contains(word), expected == Some(word), "{state}/{word}: {tree}");
+        }
+    }
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), catalog);
+    values.insert(
+        "person".into(),
+        json!({"lead": {"program": "claude", "model": "haiku", "effort": "careful"}}),
+    );
+    values.insert("lead".into(), json!({"state": "working", "ask": null}));
+    let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
+    assert!(tree.contains("Claude · Haiku · careful"), "{tree}");
+    assert!(!tree.contains("careful effort"), "{tree}");
+}
+
 fn composer_with_ask(kind: &str, input: Value) -> BTreeMap<String, Value> {
     let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("knownAgents".into(), agent_catalog());
@@ -840,10 +896,10 @@ fn allow_always_says_where_the_rule_is_kept(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     for (destination, words) in [
-        ("session", "for this session"),
-        ("localSettings", "in this project"),
-        ("projectSettings", "in this project"),
-        ("userSettings", "for all your projects"),
+        ("session", "Allow always for this session"),
+        ("localSettings", "Allow always in this project"),
+        ("projectSettings", "Allow always in this project"),
+        ("userSettings", "Allow always for all your projects"),
     ] {
         let values = composer_with_ask(
             "permission",
@@ -856,6 +912,107 @@ fn allow_always_says_where_the_rule_is_kept(cx: &mut TestAppContext) {
         let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
         assert!(tree.contains("composer-allow-always"), "{destination}: {tree}");
         assert!(tree.contains(words), "{destination}: {tree}");
+    }
+    let values = composer_with_ask(
+        "permission",
+        json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "permission_suggestions": [{"destination": "somewhereElse"}],
+        }),
+    );
+    let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
+    assert!(tree.contains("composer-allow-always"), "{tree}");
+    assert!(tree.contains("Allow always"), "{tree}");
+    assert!(!tree.contains("Allow always for"), "{tree}");
+}
+
+/// A permission card says where the command runs and which keys answer it;
+/// Deny is a quiet text button, not one of the bordered answers.
+#[gpui::test]
+fn the_permission_card_says_where_it_runs_and_how_to_answer(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let values = composer_with_ask(
+        "permission",
+        json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"},
+            "cwd": "/fixture/project",
+            "permission_suggestions": [{"destination": "localSettings"}],
+        }),
+    );
+    let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
+    assert!(tree.contains("Runs in /fixture/project"), "{tree}");
+    assert!(tree.contains("Enter to allow · Esc to deny"), "{tree}");
+    assert!(tree.contains("Allow always in this project"), "{tree}");
+    let deny = tree
+        .lines()
+        .find(|line| line.contains("composer-deny"))
+        .unwrap_or_else(|| panic!("no deny button: {tree}"));
+    let base = deny.split(":hover").next().unwrap();
+    assert!(
+        !base.contains("border") && !base.contains(".bg["),
+        "Deny is quiet text, not a bordered button: {deny}"
+    );
+}
+
+/// Each card carries its kind, and only the permission card warns with the
+/// blocked colour.
+#[gpui::test]
+fn each_card_says_its_kind(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let theme = fixture(false, props(), updates("current", "current"))["theme"].clone();
+    let blocked = theme["blocked"].as_str().unwrap();
+    let border = theme["border"].as_str().unwrap();
+    for (kind, input, tag) in [
+        (
+            "permission",
+            json!({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
+            "Permission",
+        ),
+        (
+            "plan",
+            json!({"tool_name": "ExitPlanMode", "tool_input": {"plan": "Do it."}}),
+            "Plan",
+        ),
+        (
+            "question",
+            json!({"tool_name": "AskUserQuestion", "tool_input": {"questions": [
+                {"question": "Which?", "options": [{"label": "One"}]}
+            ]}}),
+            "Question",
+        ),
+    ] {
+        let tree = describe_settled(
+            cx,
+            &staged,
+            "mods/composer",
+            composer_with_ask(kind, input),
+            None,
+        )
+        .unwrap();
+        assert!(tree.contains(tag), "{kind} misses its tag: {tree}");
+        let card = tree
+            .lines()
+            .find(|line| line.contains("composer-card"))
+            .unwrap_or_else(|| panic!("no card for {kind}: {tree}"));
+        if kind == "permission" {
+            assert!(
+                card.contains(&format!(".border_color[Str(\"{blocked}\")]")),
+                "the permission card uses the blocked border: {card}"
+            );
+        } else {
+            assert!(
+                card.contains(&format!(".border_color[Str(\"{border}\")]")),
+                "{kind} keeps the plain border: {card}"
+            );
+            assert!(
+                !card.contains(&format!(".border_color[Str(\"{blocked}\")]")),
+                "{kind} keeps the plain border: {card}"
+            );
+        }
     }
 }
 
@@ -875,6 +1032,9 @@ fn the_plan_card_offers_approve_and_keep_planning(cx: &mut TestAppContext) {
     assert!(tree.contains("Claude's plan is ready"), "{tree}");
     assert!(tree.contains("composer-approve"), "{tree}");
     assert!(tree.contains("composer-keep-planning"), "{tree}");
+    assert!(tree.contains("Change the plan…"), "{tree}");
+    assert!(!tree.contains("Keep planning"), "{tree}");
+    assert!(tree.contains("or answer in the terminal"), "{tree}");
     assert!(tree.contains("composer-terminal-answer"), "{tree}");
     assert!(!tree.contains("composer-allow"), "{tree}");
 }
@@ -919,7 +1079,7 @@ fn the_question_card_shows_every_question_and_option(cx: &mut TestAppContext) {
                         "multiSelect": false,
                         "options": [
                             {"label": "Postgres", "description": "The server's own"},
-                            {"label": "SQLite", "description": "A single file"},
+                            {"label": "SQLite", "description": "Choose SQLite"},
                         ],
                     },
                     {
@@ -943,6 +1103,8 @@ fn the_question_card_shows_every_question_and_option(cx: &mut TestAppContext) {
         "Postgres",
         "The server's own",
         "SQLite",
+        "Question",
+        "or answer in the terminal",
         "Checks",
         "Which checks?",
         "Tests",
@@ -952,6 +1114,93 @@ fn the_question_card_shows_every_question_and_option(cx: &mut TestAppContext) {
     ] {
         assert!(tree.contains(expected), "missing {expected:?}: {tree}");
     }
+    assert!(
+        !tree.contains("Choose SQLite"),
+        "a description that only repeats its label is dropped: {tree}"
+    );
+}
+
+fn two_questions() -> Value {
+    json!({
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [
+            {
+                "question": "Which database?",
+                "header": "Database",
+                "multiSelect": false,
+                "options": [{"label": "Postgres", "description": "The server's own"}],
+            },
+            {
+                "question": "Which checks?",
+                "header": "Checks",
+                "multiSelect": true,
+                "options": [{"label": "Tests", "description": "Run the suite"}],
+            },
+        ]},
+    })
+}
+
+/// Send answers is filled only once every question has one, and Enter then
+/// answers through the hook.
+#[gpui::test]
+fn send_answers_waits_for_every_question(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let theme = fixture(false, props(), updates("current", "current"))["theme"].clone();
+    let accent_fill = theme["accent_fill"].as_str().unwrap();
+    let hover = theme["hover"].as_str().unwrap();
+    let disabled = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        composer_with_ask("question", two_questions()),
+        None,
+    )
+    .unwrap();
+    let button = disabled
+        .lines()
+        .find(|line| line.contains("composer-send-answers"))
+        .unwrap_or_else(|| panic!("no send button: {disabled}"));
+    assert!(
+        !button.contains(accent_fill),
+        "not every question is answered: {button}"
+    );
+    assert!(button.contains(hover), "it is drawn disabled: {button}");
+
+    let enabled = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        composer_with_ask("question", two_questions()),
+        Some("this.askId = 'a1'; this.answers = {'Which database?': 'Postgres', 'Which checks?': ['Tests']};"),
+    )
+    .unwrap();
+    let button = enabled
+        .lines()
+        .find(|line| line.contains("composer-send-answers"))
+        .unwrap_or_else(|| panic!("no send button: {enabled}"));
+    assert!(
+        button.contains(accent_fill),
+        "every question is answered, so it is filled: {button}"
+    );
+
+    let answered = composer_run_effects_after_keys(
+        cx,
+        composer_with_ask("question", two_questions()),
+        "enter",
+        Some("this.askId = 'a1'; this.answers = {'Which database?': 'Postgres', 'Which checks?': ['Tests']};"),
+    );
+    assert!(
+        answered.iter().any(|args| {
+            args.first() == Some(&json!("lead.answer"))
+                && args.get(1)
+                    == Some(&json!({"id": "a1", "answer": {
+                        "action": "answers",
+                        "answers": {"Which database?": "Postgres", "Which checks?": ["Tests"]}
+                    }}))
+        }),
+        "Enter must send the answers: {answered:?}"
+    );
 }
 
 struct Mounted(Entity<ShellRoot>);
@@ -1038,6 +1287,7 @@ fn enter_answers_a_permission_card(cx: &mut TestAppContext) {
         cx,
         composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
         "enter",
+        None,
     );
     assert!(
         answered.iter().any(|args| {
@@ -1056,6 +1306,7 @@ fn escape_denies_a_permission_card(cx: &mut TestAppContext) {
         cx,
         composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
         "escape",
+        None,
     );
     assert!(
         answered.iter().any(|args| {
@@ -1070,6 +1321,7 @@ fn composer_run_effects_after_keys(
     cx: &mut TestAppContext,
     values: BTreeMap<String, Value>,
     keys: &str,
+    setup: Option<&str>,
 ) -> Vec<Vec<Value>> {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
@@ -1081,8 +1333,11 @@ fn composer_run_effects_after_keys(
         .unwrap();
     gpui_shell::policy::set_default(policy);
     let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = setup
+        .map(|s| staged.wrapper("mods/composer", s))
+        .unwrap_or_else(|| staged.0.join("mods/composer"));
     let window =
-        cx.add_window(|window, cx| Mounted(runtime.try_load(staged.0.join("mods/composer"), window, cx).unwrap()));
+        cx.add_window(|window, cx| Mounted(runtime.try_load(root, window, cx).unwrap()));
     let mut visual = VisualTestContext::from_window(*window.deref(), cx);
     visual.run_until_parked();
     visual.update(|window, cx| window.draw(cx).clear(cx));
@@ -1648,6 +1903,49 @@ fn welcome_step_one_offers_install_and_the_command_for_this_os(cx: &mut TestAppC
         "OpenCode's Linux command: {tree}"
     );
     assert!(!tree.contains("w-get-opencode"), "it has a command here: {tree}");
+    assert!(!tree.contains("Drag to move"), "{tree}");
+    assert!(!tree.contains("Kompitum can't check whether"), "{tree}");
+    let install = tree
+        .lines()
+        .find(|line| line.contains("w-install-opencode"))
+        .unwrap_or_else(|| panic!("no install button: {tree}"));
+    let base = install.split(":hover").next().unwrap();
+    assert!(
+        !base.contains("border") && !base.contains(".bg["),
+        "Install is a quiet text button: {install}"
+    );
+    assert!(
+        tree.contains("path fill") && tree.contains(".h[Number(24.0)]"),
+        "the list fades at its bottom edge: {tree}"
+    );
+}
+
+/// An installed CLI with no signed-in check gets no note, and its Sign in is
+/// quiet text too.
+#[gpui::test]
+fn the_welcome_rows_keep_signing_in_quiet(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut agents = welcome_agents();
+    agents[0]["installed"] = json!(true);
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/welcome",
+        welcome_values(json!({"lead": {"program": "opencode"}}), agents),
+        Some("this.step = 1; this.signedIn = {};"),
+    )
+    .unwrap();
+    assert!(!tree.contains("Kompitum can't check whether"), "{tree}");
+    let signin = tree
+        .lines()
+        .find(|line| line.contains("w-signin-opencode"))
+        .unwrap_or_else(|| panic!("no sign in button: {tree}"));
+    let base = signin.split(":hover").next().unwrap();
+    assert!(
+        !base.contains("border") && !base.contains(".bg["),
+        "Sign in is a quiet text button: {signin}"
+    );
 }
 
 #[gpui::test]
@@ -1755,30 +2053,52 @@ fn settings_nav_lists_every_section_and_an_unknown_one_opens_appearance(cx: &mut
     assert!(tree.contains("st-s-appearance"), "{tree}");
 }
 
+/// One look: Appearance has light or dark and a way back to the shipped Desk, and no layout or colour
+/// pickers.
 #[gpui::test]
-fn appearance_draws_theme_colours_and_layout_rows(cx: &mut TestAppContext) {
+fn appearance_has_no_layout_or_colour_pickers(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let mut p = props();
     p["section"] = json!("appearance");
-    let tree = describe(
-        cx,
-        &staged,
-        "frame/settings",
-        true,
-        p,
-        updates("current", "current"),
-        Some("this.themeOpen = true;"),
-    )
-    .unwrap();
+    let tree = describe(cx, &staged, "frame/settings", true, p, updates("current", "current"), None).unwrap();
     assert!(tree.contains("Theme"), "{tree}");
-    assert!(tree.contains("Colours"), "{tree}");
-    assert!(tree.contains("Layout"), "{tree}");
-    assert!(tree.contains("st-colours-graphite"), "{tree}");
-    for layout in ["main", "desk", "win98", "terminals"] {
-        assert!(tree.contains(&format!("st-layout-{layout}")), "missing {layout}: {tree}");
-    }
-    assert!(!tree.contains("Everything: terminals, panels, text."), "{tree}");
+    assert!(tree.contains("st-layout-reset"), "{tree}");
+    assert!(!tree.contains("Colours"), "{tree}");
+    assert!(!tree.contains("st-layout-desk"), "{tree}");
+}
+
+/// A picked plan pill is raised, in the foreground colour; the control hugs its pills instead of
+/// stretching like an input.
+#[gpui::test]
+fn agent_plan_pills_show_the_pick(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let workers = agent_workers(
+        json!(["cc", "go"]),
+        json!([
+            agent_worker("cc", "Command Code", "command_code", "commandcode/deepseek/deepseek-v4.1-flash#max", "ready", "", 0),
+            agent_worker("go", "opencode Go", "opencode", "opencode-go/deepseek-v4.1-flash#max", "ready", "", 0)
+        ]),
+    );
+    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
+    let mut values = agents_values(agent_catalog(), workers, status);
+    values.insert("person".into(), json!({"plans": {"opencode": "go", "command-code": "go"}}));
+    let theme = values["theme"].clone();
+    let raised = theme["raised"].as_str().unwrap();
+    let foreground = theme["foreground"].as_str().unwrap();
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    let pill = tree
+        .lines()
+        .find(|line| line.contains("st-plan-opencode-go"))
+        .unwrap_or_else(|| panic!("no picked plan: {tree}"));
+    assert!(pill.contains(raised), "picked fill: {pill}");
+    assert!(pill.contains(foreground), "picked text colour: {pill}");
+    let control = tree
+        .lines()
+        .find(|line| line.contains(":id[Str(\"st-plan-command-code\")]"))
+        .unwrap_or_else(|| panic!("no pill control: {tree}"));
+    assert!(control.contains(".self_start"), "a lone pill hugs its content: {control}");
 }
 
 #[gpui::test]
@@ -2565,6 +2885,104 @@ fn board_counts_ready_workers_and_names_them_as_the_catalog_does(cx: &mut TestAp
         "the tooltip names it: {tree}"
     );
     assert!(!tree.contains("opencode Go ready"), "{tree}");
+}
+
+/// An open ask is the lead waiting for the Owner, joined with the Board's
+/// other waits.
+#[gpui::test]
+fn the_board_counts_the_lead_waiting_for_you(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.insert(
+        "lead".into(),
+        json!({"state": "asking", "ask": {"id": "a1", "terminal": "t1", "kind": "permission", "input": {}}}),
+    );
+    values.insert(
+        "statusJson".into(),
+        json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null}),
+    );
+    let tree = describe_settled(cx, &staged, "mods/board", values.clone(), None).unwrap();
+    assert!(tree.contains("Claude waits for you"), "{tree}");
+
+    values.insert(
+        "statusJson".into(),
+        json!({
+            "tasks": {
+                "review": [{
+                    "name": "fix-docs", "repo": "kompitum-core", "worker": "opencode",
+                    "by": "manager", "seconds": 540, "cost_usd": 0.06
+                }],
+                "running": [], "queued": []
+            },
+            "claude": null
+        }),
+    );
+    let tree = describe_settled(cx, &staged, "mods/board", values, None).unwrap();
+    assert!(tree.contains("1 to review · Claude waits for you"), "{tree}");
+}
+
+fn lead_terminal() -> Value {
+    json!({
+        "address": "t9", "name": "Lead", "title": "Lead", "argv": ["claude"], "parent": null,
+        "labels": {"lead": "claude"}, "state": "live", "status": null, "report": {},
+        "program": {
+            "key": "claude", "name": "Claude Code", "icon": null, "tint": true,
+            "tile": "#1c1d21", "color": "#ffffff", "shell": false, "agent": true
+        },
+        "cwd": "/fixture/project"
+    })
+}
+
+fn with_lead_terminal() -> BTreeMap<String, Value> {
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values
+        .get_mut("terminals")
+        .unwrap()
+        .as_array_mut()
+        .unwrap()
+        .push(lead_terminal());
+    values.insert(
+        "lead".into(),
+        json!({"state": "asking", "ask": {"id": "a1", "terminal": "t9", "kind": "permission", "input": {}}}),
+    );
+    values
+}
+
+/// The live lead, which reports no OSC status, still leads the sidebar with
+/// the composer's status word.
+#[gpui::test]
+fn the_sidebar_shows_the_live_lead_first(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_with_values(
+        cx,
+        &staged,
+        "mods/agents",
+        with_lead_terminal(),
+        None,
+    )
+    .unwrap();
+    let lead = tree.find("ag-lead").unwrap_or_else(|| panic!("no lead row: {tree}"));
+    let first = tree.find("ag-t1").unwrap_or_else(|| panic!("no agent row: {tree}"));
+    assert!(lead < first, "the lead comes first: {tree}");
+    assert!(tree.contains("Claude"), "{tree}");
+    assert!(tree.contains("Waiting for you"), "{tree}");
+}
+
+/// The bottom bar counts the live lead once, even if another row already is it.
+#[gpui::test]
+fn the_status_bar_counts_the_live_lead(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_with_values(cx, &staged, "mods/workspace-status", with_lead_terminal(), None).unwrap();
+    assert!(tree.contains("3 agents"), "{tree}");
+
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.get_mut("terminals").unwrap().as_array_mut().unwrap()[0]["labels"] = json!({"lead": "claude"});
+    let tree = describe_with_values(cx, &staged, "mods/workspace-status", values, None).unwrap();
+    assert!(tree.contains("2 agents"), "the lead is already an agent: {tree}");
 }
 
 #[gpui::test]

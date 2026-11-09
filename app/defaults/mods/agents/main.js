@@ -3,7 +3,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "kompitum";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, lead, knownAgents } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -59,6 +59,10 @@ const SORTS = [
 const sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[0];
 const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
+const leadWord = (state) =>
+  state === "working" ? "Working" : state === "asking" ? "Waiting for you" : state === "waiting" ? "Your turn" : null;
+const leadColor = (t, state) => (state === "asking" ? t.working : state === "waiting" ? t.done : t.accent);
+const leadName = (key, entry) => (key === "claude" ? "Claude" : entry?.name ?? key);
 
 function duration(ms) {
   const m = Math.floor(ms / 60000);
@@ -83,6 +87,14 @@ export default class Agents extends View {
     this.pendingPins = JSON.parse(localStorage.getItem("pins") ?? "[]");
     if (!this.pendingPins.length) localStorage.removeItem("pins");
     this.migratingPins = new Set();
+    // The CLIs by key, for the lead's name: its terminal's program is the shell that wraps it.
+    this.known = [];
+    cx.spawn(async (cx) => {
+      try {
+        this.known = await knownAgents();
+      } catch {}
+      cx.notify();
+    });
     cx.timer.every(30000, (cx) => cx.notify());
   }
 
@@ -228,6 +240,9 @@ export default class Agents extends View {
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
+    const leadTerminal = all.find((terminal) => terminal.state === "live" && terminal.labels?.lead);
+    const leadState = lead()?.state ?? null;
+    const leadListed = leadTerminal && list.some((agent) => agent.address === leadTerminal.address);
     this.migratePins(all);
     const shown = focused()?.agent;
     const now = Date.now();
@@ -412,9 +427,52 @@ export default class Agents extends View {
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
-    const rows = collapsed
-      ? list.flatMap(withKids)
-      : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
+    // The live lead comes first: it reports no OSC 7501 status, so agents()
+    // leaves it out; a lead that does report one keeps its own row.
+    const leadRow = () => {
+      const key = leadTerminal.labels?.lead ?? leadTerminal.program?.key ?? "claude";
+      const entry = this.known?.find((known) => known.key === key);
+      // Its icon and name are the CLI's, not those of the shell around it.
+      const program = entry ?? leadTerminal.program;
+      const name = leadName(key, entry);
+      const word = leadWord(leadState);
+      const on = focused()?.terminal === leadTerminal.address;
+      if (collapsed) {
+        return h_flex()
+          .id("ag-lead")
+          .h(26)
+          .px(8)
+          .flex_none()
+          .items_center()
+          .justify_center()
+          .when(on, (el) => el.bg(t.raised))
+          .hover((s) => s.bg(t.hover))
+          .on_click(() => run("lead.open"))
+          .when(Boolean(icon(program, 14, t.foreground)), (el) => el.child(icon(program, 14, t.foreground)));
+      }
+      return h_flex()
+        .id("ag-lead")
+        .px(8)
+        .h(30)
+        .flex_none()
+        .rounded(8)
+        .items_center()
+        .gap(9)
+        .when(on, (el) => el.bg(t.selected))
+        .cursor_pointer()
+        .hover((s) => s.bg(t.hover))
+        .on_click(() => run("lead.open"))
+        .when(Boolean(icon(program, 16, t.foreground)), (el) => el.child(icon(program, 16, t.foreground)))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
+        .when(Boolean(word), (el) => el.child(div().flex_none().text_size(11).text_color(leadColor(t, leadState)).child(word)));
+    };
+    const leadRows = leadTerminal && !leadListed ? [leadRow()] : [];
+    const rows = [
+      ...leadRows,
+      ...(collapsed
+        ? list.flatMap(withKids)
+        : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))])),
+    ];
 
     return v_flex()
       .size_full()

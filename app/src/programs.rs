@@ -859,11 +859,12 @@ mod tests {
         );
         assert_eq!(
             table.programs["opencode"].session.as_ref().unwrap().new,
-            Some(vec!["--session".into(), "{id}".into()])
+            Some(vec!["--session".into(), "ses_{id}".into()]),
+            "OpenCode takes only ids that start with ses"
         );
         assert_eq!(
             table.programs["opencode"].session.as_ref().unwrap().resume,
-            Some(vec!["--session".into(), "{id}".into()])
+            Some(vec!["--session".into(), "ses_{id}".into()])
         );
         assert_eq!(
             table.programs["grok"].session.as_ref().unwrap().resume,

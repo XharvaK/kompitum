@@ -29,8 +29,7 @@ const SEARCH = [
   { section: "general", key: "folder", title: "Home folder", words: "lead starts projects user drive working directory" },
   { section: "general", key: "welcome", title: "Welcome", words: "show again onboarding first start setup" },
   { section: "appearance", key: "theme", title: "Theme", words: "light dark system appearance" },
-  { section: "appearance", key: "colours", title: "Colours", words: "theme palette colors schemes" },
-  { section: "appearance", key: "layout", title: "Layout", words: "window shape desk control" },
+  { section: "appearance", key: "layout", title: "Window", words: "layout reset desk window shape back" },
   { section: "appearance", key: "zoom", title: "Zoom", words: "size scale bigger smaller interface" },
   { section: "appearance", key: "font", title: "Terminal font", words: "typeface monospace ligatures" },
   { section: "appearance", key: "ui_font", title: "Interface font", words: "typeface panels" },
@@ -301,9 +300,11 @@ export default class Settings extends View {
       .child(label);
   }
 
-  // A segmented control: the chosen segment is filled, the rest stay quiet.
+  // A segmented control: the chosen segment is raised, the rest stay quiet.
   segmented(t, id, items, selected, onPick) {
     return h_flex()
+      .id(id)
+      .self_start()
       .p(2)
       .gap(2)
       .rounded(8)
@@ -320,7 +321,7 @@ export default class Settings extends View {
             .rounded(6)
             .text_size(13)
             .cursor_pointer()
-            .when(on, (el) => el.bg(t.accent_fill).text_color(t.accent_foreground).font_semibold())
+            .when(on, (el) => el.bg(t.raised).text_color(t.foreground).font_medium())
             .when(!on, (el) => el.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
             .on_click((_e, cx) => onPick(value, cx))
             .child(label);

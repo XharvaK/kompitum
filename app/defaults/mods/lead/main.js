@@ -173,8 +173,9 @@ function leadInfo(agents) {
   const key = lead.program || "claude";
   const entry = agents.find((agent) => agent.key === key) ?? { key, name: key === "claude" ? "Claude" : key, models: [] };
   const name = key === "claude" ? "Claude" : entry.name ?? key;
-  const model = modelLabel(entry, lead.model);
-  return { name, model };
+  // No model picked: the CLI's own default, which needs no word.
+  const model = lead.model ? modelLabel(entry, lead.model) : "";
+  return { name, model, line: [name, model].filter(Boolean).join(" "), words: [name, model].filter(Boolean).join(", ") };
 }
 
 function noteLines(notes) {
@@ -372,47 +373,37 @@ export default class Lead extends View {
       .child(text);
   }
 
+  // Two quiet items in the status bar's own type: the lead ("Claude Haiku"),
+  // and the way to Manager's chat. No pills: they read as part of the bar.
   renderPill(t) {
     const lead = leadInfo(this.agents);
+    const item = (id) => h_flex().id(id).h_full().px(6).gap(5).items_center().rounded(5).cursor_pointer()
+      .text_color(t.muted).hover((s) => s.text_color(t.foreground))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation());
     return h_flex()
       .id("lead-root")
-      .h_full()
+      .size_full()
+      .justify_end()
       .items_center()
       .gap(6)
-      .text_size(11.5)
+      .pr(10)
+      .bg(t.chrome)
+      .border_t(1)
+      .border_color(t.border)
+      .text_size(11.8)
       .child(
-        h_flex()
-          .id("lead-pill")
-          .h(20)
-          .px(8)
-          .items_center()
-          .rounded(10)
-          .border_1()
-          .border_color(t.border)
-          .bg(t.raised)
-          .text_color(t.foreground)
-          .cursor_pointer()
-          .hover((s) => s.bg(t.hover))
-          .tooltip(`The lead: ${lead.name}, ${lead.model}. Click to open it.`)
+        item("lead-pill")
+          .tooltip(`The lead: ${lead.words}. Click to open it.`)
           .on_click(() => run("lead.open"))
-          .child(lead.model),
+          .child(lead.line),
       )
+      .child(div().w(1).h(12).bg(t.border))
       .child(
-        h_flex()
-          .id("lead-door")
-          .h(20)
-          .px(7)
-          .items_center()
-          .rounded(7)
-          .border_1()
-          .border_color(t.border)
-          .bg(t.raised)
-          .text_color(t.muted)
-          .cursor_pointer()
-          .hover((s) => s.bg(t.hover))
+        item("lead-door")
           .tooltip("Open Manager's chat")
           .on_click(() => this.door())
-          .child("Manager ↗"),
+          .child("Manager")
+          .child(svg("mods/lead/arrow-up-right.svg").size(11)),
       );
   }
 

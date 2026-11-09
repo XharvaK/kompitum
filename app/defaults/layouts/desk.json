@@ -26,7 +26,7 @@
             { "id": "agents", "type": "block", "size": { "weight": 1 }, "min": 90, "content": { "mod": "agents" } }
           ]
         },
-        { "id": "sidebar-footer", "type": "block", "size": { "px": 69 }, "content": { "mod": "workspace-chrome", "props": { "footer": true } } }
+        { "id": "sidebar-footer", "type": "block", "size": { "px": 28 }, "content": { "mod": "workspace-chrome", "props": { "footer": true } } }
       ]
     },
     {

@@ -468,38 +468,62 @@ function leadSection(view, t, cx, s) {
   const model = lead.model ?? defaultModel(entry);
   const effort = lead.effort;
   const sState = ensureAgents(view);
-  const cliRow = view.segmented(
-    t,
-    "st-lead-cli",
-    list.map((item) => [item.key, item.name ?? item.key]),
-    entry.key,
-    (key, cx) => {
-      const item = list.find((candidate) => candidate.key === key);
-      if (!item) return;
-      const next = defaultModel(item);
-      const keep = (item.efforts ?? []).includes(effort) ? effort : null;
-      saveLead(view, { program: item.key, model: next, effort: keep }, cx);
-      sState.modelOpen = false;
-      sState.effortOpen = false;
-      sState.otherModel = false;
-      cx.notify();
-    },
-  );
+  const pick = (item, cx) => {
+    const next = defaultModel(item);
+    const keep = (item.efforts ?? []).includes(effort) ? effort : null;
+    saveLead(view, { program: item.key, model: next, effort: keep }, cx);
+    sState.modelOpen = false;
+    sState.effortOpen = false;
+    sState.otherModel = false;
+    cx.notify();
+  };
+  // The CLIs that can lead, as one list you pick from: the chosen one has the check.
+  const cliList = v_flex()
+    .id("st-lead-cli")
+    .w_full()
+    .rounded(10)
+    .border_1()
+    .border_color(t.border)
+    .bg(t.surface)
+    .overflow_hidden()
+    .when(view.lit("lead"), (el) => el.border_color(t.accent))
+    .children(list.map((item, index) => {
+      const on = item.key === entry.key;
+      return h_flex()
+        .id(`st-lead-cli-${item.key}`)
+        .w_full()
+        .h(40)
+        .px(12)
+        .gap(10)
+        .items_center()
+        .cursor_pointer()
+        .when(index > 0, (el) => el.border_t(1).border_color(t.border))
+        .hover((el) => el.bg(t.hover))
+        .on_click((_e, cx) => pick(item, cx))
+        .child(programIcon(item, 16, t))
+        .child(div().flex_1().min_w(0).truncate().text_size(13.5).text_color(on ? t.foreground : t.muted)
+          .when(on, (el) => el.font_medium()).child(item.name ?? item.key))
+        .when(on, (el) => el.child(svg("frame/settings/check.svg").size(14).flex_none().text_color(t.accent)));
+    }));
   const menuButton = (id, label, open, onClick) =>
-    div()
+    h_flex()
       .id(id)
-      .px(12)
-      .py(6)
+      .h(28)
+      .pl(10)
+      .pr(8)
+      .gap(6)
+      .items_center()
       .rounded(7)
       .border_1()
-      .border_color(open ? t.accent : t.border)
+      .border_color(open ? t.accent : t.input)
       .bg(t.raised)
       .cursor_pointer()
       .text_size(13)
       .text_color(t.foreground)
       .hover((el) => el.bg(t.hover))
       .on_click(onClick)
-      .child(label);
+      .child(label)
+      .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim));
   const modelMenu = menuButton("st-lead-model", model ? modelLabel(entry, model) : "Its own default", sState.modelOpen, (_e, cx) => {
     sState.modelOpen = !sState.modelOpen;
     sState.effortOpen = false;
@@ -513,18 +537,17 @@ function leadSection(view, t, cx, s) {
         cx.notify();
       })
     : null;
-  const menus = h_flex()
-    .gap(10)
-    .items_center()
-    .child(v_flex().gap(3).child(div().text_size(11).text_color(t.dim).child("Model")).child(modelMenu))
-    .when(Boolean(effortMenu), (el) => el.child(v_flex().gap(3).child(div().text_size(11).text_color(t.dim).child("Reasoning")).child(effortMenu)));
+  const card = (child) => div().w_full().mt(6).p(4).rounded(10).border_1().border_color(t.border).bg(t.surface).child(child);
   return v_flex().w_full()
     .child(view.heading(t, "Lead"))
-    .child(view.row(t, "CLI", "Pick the CLI, then its model and reasoning.", cliRow, "lead"))
-    .child(view.row(t, "Model and reasoning", null, menus, "lead_model"))
-    .when(Boolean(sState.modelOpen), (el) => el.child(modelPicker(view, t, cx, entry)))
-    .when(Boolean(sState.effortOpen), (el) => el.child(effortPicker(view, t, cx, entry, effort)))
-    .child(div().pt(8).text_size(12.5).text_color(t.dim).child("Applies to your next conversation."));
+    .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
+      .child("The agent you talk to. It plans, asks you, and hands work to the workers below."))
+    .child(cliList)
+    .child(view.row(t, "Model", null, modelMenu, "lead_model"))
+    .when(Boolean(sState.modelOpen), (el) => el.child(card(modelPicker(view, t, cx, entry))))
+    .when(Boolean(effortMenu), (el) => el.child(view.row(t, "Reasoning", null, effortMenu, "lead_model")))
+    .when(Boolean(sState.effortOpen), (el) => el.child(card(effortPicker(view, t, cx, entry, effort))))
+    .child(div().pt(8).text_size(12).text_color(t.dim).child("Changes apply to the lead's next conversation."));
 }
 
 function workerState(t, worker) {
@@ -827,13 +850,13 @@ export function agentsPage(view, t, cx) {
   return v_flex().w_full()
     .when(s.errors.length > 0, (el) => el.children(s.errors.map((error) =>
       div().pb(8).text_size(12.5).line_height("18px").text_color(t.blocked).child(error))))
+    .child(leadSection(view, t, cx, s))
+    .child(div().h(24))
+    .child(workersSection(view, t, cx, s))
+    .child(div().h(24))
     .child(v_flex().w_full().when(view.lit("plans"), (el) => el.bg(t.selected).rounded(7))
       .child(view.heading(t, "Plans"))
       .child(div().pb(6).text_size(12.5).text_color(t.dim).child("How much of each plan is used."))
       .child(claudeRow(t, s.status?.claude, s.known))
-      .children(planEntries(s).map((entry) => planRow(view, t, cx, s, entry))))
-    .child(div().h(18))
-    .child(leadSection(view, t, cx, s))
-    .child(div().h(18))
-    .child(workersSection(view, t, cx, s));
+      .children(planEntries(s).map((entry) => planRow(view, t, cx, s, entry))));
 }

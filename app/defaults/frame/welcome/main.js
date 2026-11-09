@@ -1,7 +1,7 @@
 // First run in three steps: pick the lead, pick its home folder, connect agents.
 // Records finished/skipped in frame.welcomed; app.welcome opens it again.
 
-import { View, div, svg, image } from "gpui-kit";
+import { View, div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar } from "gpui-base";
 import {
   knownAgents,
@@ -16,7 +16,7 @@ import {
   readTextFile,
   writeTextFile,
   settings,
-  window,
+  window as appWindow,
   pickFolder,
   openLink,
   terminals,
@@ -34,6 +34,20 @@ function errorText(error) {
 
 function mono() {
   return settings()?.font_family ?? "Google Sans Code";
+}
+
+// The list's bottom edge fades into the window instead of cutting a row off.
+function fadeBottom(t) {
+  const color = String(t.popover ?? t.background ?? "");
+  const clear = /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}00` : color;
+  const rect = PathBuilder.fill().move_to("0%", "0%").line_to("100%", "0%").line_to("100%", "100%").line_to("0%", "100%").close().build();
+  return window
+    .paint_path(rect, Background.linear_gradient(180, Background.stop(clear, 0), Background.stop(color, 1)))
+    .absolute()
+    .left_0()
+    .right_0()
+    .bottom_0()
+    .h(24);
 }
 
 export default class Welcome extends View {
@@ -134,7 +148,7 @@ export default class Welcome extends View {
   }
 
   installArgv(agent) {
-    const argv = agent.install?.[window()?.platform];
+    const argv = agent.install?.[appWindow()?.platform];
     return Array.isArray(argv) && argv.length ? argv : null;
   }
 
@@ -296,20 +310,17 @@ export default class Welcome extends View {
       .when(Boolean(icon), (el) => el.child(svg(W(icon)).size(14)));
   }
 
-  // A small button on an agent's row: it picks that row too.
+  // A quiet text button on an agent's row: it picks that row too.
   rowButton(t, id, label, onClick) {
     return div()
       .id(id)
-      .px(10)
-      .py(4)
-      .rounded(7)
-      .border_1()
-      .border_color(t.border)
-      .bg(t.raised)
+      .px(8)
+      .py(3)
+      .rounded(6)
       .cursor_pointer()
       .text_size(12.5)
-      .text_color(t.foreground)
-      .hover((s) => s.bg(t.hover))
+      .text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(onClick)
       .child(label);
@@ -383,7 +394,6 @@ export default class Welcome extends View {
     const chosen = this.chosen === agent.key;
     const running = Boolean(this.runs[agent.key]);
     const argv = this.installArgv(agent);
-    const noCheck = agent.installed && !agent.signed_in?.length;
     return v_flex()
       .w_full()
       .gap(6)
@@ -422,15 +432,6 @@ export default class Welcome extends View {
           .child(div().flex_1().min_w(0).truncate().text_size(14).text_color(t.foreground).child(agent.name))
           .child(this.stateOf(t, agent, cx)),
       )
-      .when(noCheck, (el) =>
-        el.child(
-          div()
-            .pl(38)
-            .text_size(12)
-            .text_color(t.dim)
-            .child(`Kompitum can't check whether ${agent.name} is signed in.`),
-        ),
-      )
       .when(chosen && !agent.installed && !running && Boolean(argv), (el) =>
         el.child(
           div()
@@ -458,7 +459,7 @@ export default class Welcome extends View {
 
   stepOne(t, cx) {
     const rows = [...this.agents].sort((a, b) => (a.key === "claude" ? -1 : b.key === "claude" ? 1 : 0));
-    const platform = window()?.platform;
+    const platform = appWindow()?.platform;
     return v_flex()
       .gap(16)
       .child(this.stepLine(t))
@@ -642,7 +643,6 @@ export default class Welcome extends View {
           .child(div().text_size(14).font_semibold().text_color(t.foreground).child("Welcome to Kompitum"))
           .child(div().px(6).py(0.5).rounded(5).border_1().border_color(t.input).text_color(t.muted).text_size(10.5).font_semibold().child("BETA"))
           .child(div().flex_1())
-          .child(div().text_size(11.5).text_color(t.dim).child("Drag to move"))
           .child(
             div()
               .id("w-close")
@@ -676,6 +676,7 @@ export default class Welcome extends View {
               // content and a step that fits still shows a bar.
               .child(div().px(22).pt(22).pb(20).child(page.call(this, t, cx))),
           )
+          .child(fadeBottom(t))
           .child(Scrollbar.vertical("w-body").mode("always").absolute().inset_0()),
       )
       .child(

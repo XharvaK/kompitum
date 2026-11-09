@@ -1,38 +1,14 @@
-// Settings › Appearance: the theme, colours, layout, zoom and fonts.
+// Settings › Appearance: light or dark, the window's reset, zoom and fonts.
 
-import { div, image } from "gpui-kit";
+import { div } from "gpui-kit";
 import { v_flex, h_flex, Input } from "gpui-base";
-import { run, fonts, themes, layouts, settings, shared } from "kompitum";
+import { run, fonts, settings, shared } from "kompitum";
 
 const APPEARANCES = [
   [null, "System"],
   ["light", "Light"],
   ["dark", "Dark"],
 ];
-
-// Shipped layout previews (window.rs's LAYOUT_PREVIEWS, and Control's picture
-// inside its mod). Layouts without one get a quiet placeholder tile.
-const LAYOUT_PREVIEWS = {
-  control: "mods/control-panel/preview.svg",
-  desk: "layouts/desk.svg",
-  focus: "layouts/focus.svg",
-  office: "layouts/office.svg",
-  pasture: "layouts/pasture.svg",
-  watch: "layouts/watch.svg",
-  win98: "layouts/win98.svg",
-};
-
-const LAYOUT_TITLES = {
-  main: "Kompitum",
-  terminals: "Terminals",
-  win98: "Kompitum 98",
-  desk: "Desk",
-  watch: "Watch",
-  focus: "Focus",
-  office: "Office",
-  control: "Control",
-  pasture: "Pasture",
-};
 
 // What the app uses when settings.json names no font (settings.rs).
 const DEFAULT_FONT = "Google Sans Code";
@@ -97,131 +73,15 @@ function stepper(t, id, value, onMinus, onPlus) {
     .child(b("plus", "+", onPlus));
 }
 
-// The shown theme's name; a click opens the shipped and personal themes.
-function themePicker(view, t, cx) {
-  const current = settings().theme;
-  const open = view.themeOpen;
-  const head = div()
-    .id("st-colours")
-    .px(12)
-    .py(6)
-    .rounded(7)
-    .border_1()
-    .border_color(open ? t.accent : t.border)
-    .bg(t.raised)
-    .cursor_pointer()
-    .text_size(13)
-    .text_color(t.foreground)
-    .hover((s) => s.bg(t.hover))
-    .on_click((_e, cx) => {
-      view.themeOpen = !open;
-      cx.notify();
-    })
-    .child(current);
-  const list = v_flex()
-    .w(240)
-    .p(4)
-    .gap(2)
-    .rounded(8)
-    .border_1()
-    .border_color(t.border)
-    .bg(t.background)
-    .on_scroll_wheel((_e, cx) => cx.stop_propagation())
-    .children(
-      themes().map((item) => {
-        const on = item.name === current;
-        return h_flex()
-          .id(`st-colours-${item.name}`)
-          .w_full()
-          .px(9)
-          .py(6)
-          .gap(8)
-          .items_center()
-          .rounded(6)
-          .cursor_pointer()
-          .when(on, (el) => el.bg(t.selected))
-          .hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => {
-            view.themeOpen = false;
-            run("app.theme", { name: item.name });
-            cx.notify();
-          })
-          .child(
-            div()
-              .w(12)
-              .h(12)
-              .flex_none()
-              .rounded(3)
-              .bg(item.colors?.background ?? t.background)
-              .border_1()
-              .border_color(t.border),
-          )
-          .child(div().text_size(13).text_color(t.foreground).child(item.name));
-      }),
-    );
-  return v_flex()
-    .items_end()
-    .gap(6)
-    .child(head)
-    .when(open, (el) => el.child(list));
-}
-
-// Small preview tiles for the layouts on disk; the shown one is outlined.
-function layoutPicker(view, t, cx) {
+// One look (REDESIGN): no layout or colour pickers, only the way back to the Desk as it ships.
+function layoutReset(view, t) {
   const current = shared("layout") ?? "desk";
-  return h_flex()
-    .flex_wrap()
-    .gap(8)
-    .max_w(440)
-    .children(
-      layouts().map((name) => {
-        const on = name === current;
-        const preview = LAYOUT_PREVIEWS[name];
-        return v_flex()
-          .id(`st-layout-${name}`)
-          .w(104)
-          .gap(5)
-          .p(5)
-          .rounded(8)
-          .cursor_pointer()
-          .border_1()
-          .border_color(on ? t.accent : t.border)
-          .when(on, (el) => el.bg(t.selected))
-          .hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => {
-            run("layout.switch", { name });
-            cx.notify();
-          })
-          .child(
-            div()
-              .w_full()
-              .h(52)
-              .rounded(5)
-              .overflow_hidden()
-              .bg(t.background)
-              .border_1()
-              .border_color(t.border)
-              .when(Boolean(preview), (el) => el.child(image(preview).w_full().h_full()))
-              .when(!preview, (el) =>
-                el.child(
-                  h_flex()
-                    .size_full()
-                    .p(6)
-                    .gap(3)
-                    .items_center()
-                    .child(div().w(14).h_full().rounded(2).bg(t.hover))
-                    .child(v_flex().flex_1().gap(3)
-                      .child(div().h(6).rounded(2).bg(t.hover))
-                      .child(div().flex_1().rounded(2).bg(t.hover))),
-                ),
-              ),
-          )
-          .child(div().text_size(11.5).text_color(on ? t.foreground : t.muted).child(LAYOUT_TITLES[name] ?? name));
-      }),
-    );
+  return view.button(t, "st-layout-reset", current === "desk" ? "Reset" : "Back to Desk", () => {
+    run("layout.reset", { name: "desk" });
+    if (current !== "desk") run("layout.switch", { name: "desk" });
+  });
 }
 
-// The font in use, written in itself; a click opens the list.
 function fontButton(view, t, which, family) {
   const open = view.picking === which;
   return div()
@@ -323,8 +183,7 @@ export function appearancePage(view, t, cx) {
   return v_flex()
     .w_full()
     .child(view.row(t, "Theme", null, appearancePicker(view, t, cx), "theme"))
-    .child(view.row(t, "Colours", null, themePicker(view, t, cx), "colours"))
-    .child(view.row(t, "Layout", null, layoutPicker(view, t, cx), "layout"))
+    .child(view.row(t, "Window", "Puts the window back as Kompitum ships it: its panes, sizes and drawers.", layoutReset(view, t), "layout"))
     .child(div().h(18))
     .child(view.heading(t, "Size and fonts"))
     .child(

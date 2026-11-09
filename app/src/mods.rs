@@ -452,6 +452,26 @@ pub struct Hint {
     /// `pane.go` can give it the keyboard.
     #[serde(default)]
     pub focusable: bool,
+    /// The title its panes show, instead of the folder name.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// `false` draws no pane header over this mod's panes.
+    #[serde(default)]
+    pub pane_header: Option<bool>,
+}
+
+impl Hint {
+    pub fn pane_title(&self, folder: &str) -> String {
+        self.title
+            .as_deref()
+            .filter(|title| !title.is_empty())
+            .unwrap_or(folder)
+            .to_owned()
+    }
+
+    pub fn draws_pane_header(&self) -> bool {
+        self.pane_header != Some(false)
+    }
 }
 
 #[derive(Clone)]
@@ -1397,11 +1417,35 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             let terminal = props.get("terminal").and_then(Value::as_str).map(str::to_owned);
             let reads = reads.clone();
             move |_| {
-                let Some(terminal) = terminal.as_deref() else {
+                // A copy without a terminal prop reads the live lead: the terminal
+                // the app labelled `lead`.
+                let terminal = match &terminal {
+                    Some(terminal) => Some(terminal.clone()),
+                    None => {
+                        REVISIONS.with_borrow(|r| reads.borrow_mut().record("terminals", r));
+                        SNAPSHOT.with(|s| {
+                            let s = s.borrow();
+                            s.terminals
+                                .as_array()?
+                                .iter()
+                                .find(|t| {
+                                    t["state"].as_str() == Some("live")
+                                        && t["labels"]
+                                            .get("lead")
+                                            .and_then(Value::as_str)
+                                            .is_some_and(|lead| !lead.is_empty())
+                                })?
+                                .get("address")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        })
+                    }
+                };
+                let Some(terminal) = terminal else {
                     return Ok(HostValue::Null);
                 };
                 Ok(read(&reads, "lead", |s| {
-                    s.lead.get(terminal).unwrap_or(&Value::Null)
+                    s.lead.get(&terminal).unwrap_or(&Value::Null)
                 }))
             }
         })
@@ -1727,6 +1771,60 @@ mod tests {
             let last = module(inst, 102);
             COMMANDS.with_borrow(|commands| assert_eq!(commands.len(), 1));
             drop(last);
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn mod_metadata_names_panes_and_can_hide_their_headers() {
+        let plain: Hint = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(plain.pane_title("composer"), "composer");
+        assert!(plain.draws_pane_header());
+
+        let named: Hint =
+            serde_json::from_value(json!({"title": "Composer", "pane_header": false})).unwrap();
+        assert_eq!(named.pane_title("composer"), "Composer");
+        assert!(!named.draws_pane_header());
+        assert!(serde_json::from_value::<Hint>(json!({"pane_header": true}))
+            .unwrap()
+            .draws_pane_header());
+    }
+
+    #[test]
+    fn a_copy_without_a_terminal_reads_the_live_lead() {
+        std::thread::spawn(|| {
+            publish_terminals(json!([
+                {"address": "t1", "state": "live", "labels": {}},
+                {"address": "t9", "state": "live", "labels": {"lead": "claude"}}
+            ]));
+            publish_lead(json!({"t9": {"state": "asking", "ask": {"id": "a1"}}}));
+            let arguments = gpui_shell::HostArguments::new([]);
+            let host = module(
+                Instance {
+                    name: "board".into(),
+                    props: Value::Null,
+                },
+                1,
+            );
+            let value = host.call("lead", &arguments).unwrap();
+            assert_eq!(value.get("state").and_then(HostValue::as_str), Some("asking"));
+            assert_eq!(
+                value.get("ask").and_then(|ask| ask.get("id")).and_then(HostValue::as_str),
+                Some("a1")
+            );
+
+            let own = module(
+                Instance {
+                    name: "composer".into(),
+                    props: json!({"terminal": "t1"}),
+                },
+                2,
+            );
+            assert!(
+                own.call("lead", &arguments).unwrap().is_null(),
+                "a copy with its own terminal hears only that terminal"
+            );
         })
         .join()
         .unwrap();

@@ -309,7 +309,8 @@ export interface LeadAsk {
 
 /** The lead terminal's state and open ask, from Claude Code's hooks; null when
  *  no hook has reported one (a lead that isn't Claude, or the very first
- *  moment). Live: the copy re-renders when either changes. */
+ *  moment). A copy without props().terminal reads the live terminal labelled
+ *  `lead`. Live: the copy re-renders when either changes. */
 export function lead(): { state: "working" | "asking" | "waiting" | null; ask: LeadAsk | null } | null;
 
 /** Actual terminal/pane focus. `space` and `tab` are the current window context.

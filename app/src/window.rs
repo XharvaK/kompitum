@@ -1744,6 +1744,7 @@ impl AppWindow {
             for n in c.shown().visible_blocks() {
                 if let Some((name, props)) = &header
                     && n.is_pane()
+                    && !self.hides_pane_header(n)
                 {
                     mods.push(pane_header_mod(n, name, props));
                 }
@@ -1813,6 +1814,7 @@ impl AppWindow {
                 }
                 if let Some((name, props)) = &header
                     && n.is_pane()
+                    && !self.hides_pane_header(n)
                 {
                     let (slot, i) = pane_header_mod(n, name, props);
                     out.insert(slot, i);
@@ -2472,7 +2474,15 @@ impl AppWindow {
                     let zoomed = ctx.zoomed.as_deref() == Some(p.id.as_str());
                     // A mod pane: what it shows, no terminal.
                     if let Some(Content::Mod { name, .. }) = p.content() {
-                        panes.push(json!({ "pane": p.id, "terminal": null, "mod": name, "tab": ctx.id, "title": name, "focused": focused, "zoomed": zoomed, "movable": self.pane_movable(&p.id) }));
+                        let title = self
+                            .folders
+                            .get(name)
+                            .map(|found| found.hint.pane_title(name))
+                            .unwrap_or_else(|| name.clone());
+                        panes.push(json!({
+                            "pane": p.id, "terminal": null, "mod": name, "tab": ctx.id, "title": title,
+                            "focused": focused, "zoomed": zoomed, "movable": self.pane_movable(&p.id),
+                        }));
                         continue;
                     }
                     let Some(addr) = p.terminal() else { continue };
@@ -3675,14 +3685,43 @@ impl AppWindow {
                 .map(|node| node.id.clone())
         });
         if let Some(pane) = existing {
+            self.fit_composers();
             return Ok(json!({ "pane": pane }));
         }
-        self.split_mod(
+        let made = self.split_mod(
             Some(pane),
             Axis::Column,
             "composer".into(),
             json!({ "terminal": terminal }),
-        )
+        )?;
+        self.fit_composers();
+        Ok(made)
+    }
+
+    /// A composer is one slim line under its lead's terminal, and grows to hold a card while its lead asks.
+    fn fit_composers(&mut self) {
+        for tab in self.model.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()) {
+            let composers: Vec<(String, Option<crate::lead::AskKind>)> = tab
+                .root
+                .panes()
+                .into_iter()
+                .filter_map(|node| match node.content() {
+                    Some(Content::Mod { name, props }) if name == "composer" => {
+                        let terminal = props.get("terminal").and_then(Value::as_str)?;
+                        let asking = self.lead_sessions.get(terminal).and_then(|s| s.ask.as_ref()).map(|ask| ask.kind);
+                        Some((node.id.clone(), asking))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (id, asking) in composers {
+                if let Some(node) = tab.root.find_mut(&id) {
+                    node.size = Some(Span::Px {
+                        px: composer_height(asking),
+                    });
+                }
+            }
+        }
     }
 
     /// The tab `lead.open` starts, through the same creators `tab.new` uses.
@@ -4122,6 +4161,8 @@ impl AppWindow {
         for (terminal, session) in &self.lead_sessions {
             all.insert(terminal.clone(), serde_json::to_value(session).unwrap_or(Value::Null));
         }
+        self.fit_composers();
+        cx.notify();
         if mods::publish_lead(Value::Object(all)) {
             self.refresh_snapshot_mods(cx);
         }
@@ -6675,6 +6716,15 @@ impl AppWindow {
         out
     }
 
+    /// A mod pane says nothing over itself when its mod.json asks for none.
+    fn hides_pane_header(&self, n: &Node) -> bool {
+        matches!(n.content(), Some(Content::Mod { name, .. })
+            if self
+                .folders
+                .get(name)
+                .is_some_and(|found| !found.hint.draws_pane_header()))
+    }
+
     /// The shown tab block's pane frame, if its panes are framed now: when
     /// the tab is split, or always with `lone`.
     fn pane_frame(&self) -> Option<&PaneFrame> {
@@ -6726,7 +6776,7 @@ impl AppWindow {
         }
         el = shadow(el, f.shadow.as_deref());
         let body = div().flex_1().min_h_0().flex().child(inner);
-        let Some(h) = &f.header else {
+        let Some(h) = f.header.as_ref().filter(|_| !self.hides_pane_header(n)) else {
             return el.child(body).into_any_element();
         };
         let head = div()
@@ -6850,7 +6900,7 @@ impl AppWindow {
         };
         let row = frame
             .and_then(|f| f.header.as_ref())
-            .filter(|h| !h.bottom() && !h.hover())
+            .filter(|h| !h.bottom() && !h.hover() && !self.hides_pane_header(n))
             .map(pane_size::header_height);
         el.children(self.render_floats(n, cx))
             .children(self.pane_grip(&n.id, row, cx))
@@ -8279,6 +8329,16 @@ fn lead_display_for(lead: &crate::settings::Lead) -> (String, String) {
     (name, model)
 }
 
+/// The composer's height: its input line, or room for the card its lead's ask needs (a plan's text and a
+/// question's options take more than a permission).
+fn composer_height(asking: Option<crate::lead::AskKind>) -> f32 {
+    match asking {
+        None => 56.0,
+        Some(crate::lead::AskKind::Permission) => 272.0,
+        Some(_) => 420.0,
+    }
+}
+
 /// The palette's key as it is actually bound, worded for people; none when
 /// nothing opens it.
 fn palette_keys() -> Option<String> {
@@ -8596,6 +8656,18 @@ mod tests {
     use gpui::prelude::*;
     use gpui::{Context, IntoElement, Render, TestAppContext, Window, div, point, px, size};
     use serde_json::json;
+
+    #[test]
+    fn the_composer_is_one_line_until_its_lead_asks() {
+        use crate::lead::AskKind;
+        let line = super::composer_height(None);
+        let permission = super::composer_height(Some(AskKind::Permission));
+        assert!(line < 64.0, "one input line: {line}");
+        assert!(line < permission, "a card needs more room than the line");
+        for kind in [AskKind::Plan, AskKind::Question] {
+            assert!(super::composer_height(Some(kind)) > permission, "{kind:?} holds text or options");
+        }
+    }
 
     #[test]
     fn a_lost_core_shows_after_two_seconds_and_a_refusal_says_why() {

@@ -96,6 +96,35 @@ function leadName(entry, key) {
   return key === "claude" ? "Claude" : entry?.name ?? key;
 }
 
+const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
+
+// The catalog's own label for the chosen effort; a bare level says it is effort.
+function effortWords(entry, effort) {
+  if (!effort) return null;
+  const found = (entry?.efforts ?? []).find((level) => {
+    const id = typeof level === "string" ? level : level?.id;
+    return id === effort || level?.label === effort;
+  });
+  const label = String(typeof found === "object" ? found?.label ?? effort : found ?? effort);
+  return EFFORT_LEVELS.includes(label) ? `${label} effort` : label;
+}
+
+function leadStatus(state) {
+  if (state === "working") return "Working";
+  if (state === "asking") return "Waiting for you";
+  if (state === "waiting") return "Your turn";
+  return null;
+}
+
+function statusColor(t, state) {
+  return state === "asking" ? t.working : state === "waiting" ? t.done : t.accent;
+}
+
+function repeatsLabel(label, description) {
+  const words = String(description ?? "").trim().toLowerCase().replace(/^(choose|pick|select)\s+/, "");
+  return words === String(label ?? "").trim().toLowerCase();
+}
+
 function two(n) {
   return String(n).padStart(2, "0");
 }
@@ -167,7 +196,12 @@ const DESTINATIONS = {
 function permissionDestination(ask) {
   const suggestions = ask?.input?.permission_suggestions;
   const destination = Array.isArray(suggestions) ? suggestions[0]?.destination : null;
-  return DESTINATIONS[destination] ?? "where Claude keeps its rules";
+  return DESTINATIONS[destination] ?? null;
+}
+
+function allowAlwaysLabel(ask) {
+  const words = permissionDestination(ask);
+  return words ? `Allow always ${words}` : "Allow always";
 }
 
 function askQuestions(ask) {
@@ -368,7 +402,8 @@ export default class Composer extends View {
     const entry = this.leadProgram();
     const parts = [leadName(entry, entry.key)];
     if (lead.model) parts.push(modelLabel(entry, lead.model));
-    if (lead.effort) parts.push(lead.effort);
+    const effort = effortWords(entry, lead.effort);
+    if (effort) parts.push(effort);
     return parts.join(" · ");
   }
 
@@ -677,15 +712,14 @@ export default class Composer extends View {
       .child(label);
   }
 
-  dot(t) {
-    if (!this.state) return null;
+  statusWord(t) {
+    const word = leadStatus(this.state);
+    if (!word) return null;
     // Working pulses; asking is the amber that wants the Owner; waiting is still.
-    const color = this.state === "asking" ? t.working : this.state === "waiting" ? t.done : t.accent;
     return div()
-      .w(7)
-      .h(7)
-      .rounded(4)
-      .bg(color)
+      .text_size(11.5)
+      .text_color(statusColor(t, this.state))
+      .child(word)
       .when(this.state === "working", (el) => el.loop("opacity", { from: 0.35, to: 1, period: 900 }));
   }
 
@@ -793,11 +827,46 @@ export default class Composer extends View {
       .border_b(1)
       .border_color(t.border)
       .child(div().text_size(12).font_medium().text_color(t.foreground).child(this.leadLine()))
-      .when(Boolean(this.state), (el) => el.child(this.dot(t)))
+      .when(Boolean(this.state), (el) => el.child(this.statusWord(t)))
       .child(div().flex_1())
-      .child(this.iconButton("composer-mail", svg("frame/settings/mail.svg").size(14).text_color(t.muted), t, () => run("app.mailbox")))
-      .child(this.planRing(t))
-      .children(this.apps.map((app) =>
+      .children(this.tools(t));
+  }
+
+  chip(t, cx, chip, index) {
+    return h_flex()
+      .id(`composer-chip-${index}`)
+      .h(22)
+      .px(7)
+      .gap(5)
+      .flex_none()
+      .items_center()
+      .rounded(6)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.raised)
+      .child(div().text_size(11.5).text_color(t.muted).child(baseName(chip.path)))
+      .child(
+        h_flex()
+          .id(`composer-chip-remove-${index}`)
+          .w(14)
+          .h(14)
+          .items_center()
+          .justify_center()
+          .rounded(4)
+          .text_size(11)
+          .text_color(t.dim)
+          .cursor_pointer()
+          .hover((style) => style.bg(t.hover).text_color(t.foreground))
+          .on_click(() => this.removeChip(index, cx))
+          .child("×"),
+      );
+  }
+
+  tools(t) {
+    return [
+      this.iconButton("composer-mail", svg("frame/settings/mail.svg").size(14).text_color(t.muted), t, () => run("app.mailbox")),
+      this.planRing(t),
+      ...this.apps.map((app) =>
         this.iconButton(
           `composer-app-${app.id}`,
           app.app.icon
@@ -805,55 +874,115 @@ export default class Composer extends View {
             : svg("frame/settings/link.svg").size(14).text_color(t.muted),
           t,
           () => openLink(`${app.scheme}://`),
-        )));
+        )),
+    ];
   }
 
-  chipsRow(t, cx) {
+  // Idle, the composer is one slim line under the lead's terminal: the field with its files, the lead's
+  // status and Send, then the lead's tools.
+  bar(t, cx) {
+    const send = h_flex()
+      .id("composer-send")
+      .w(28)
+      .h(28)
+      .flex_none()
+      .items_center()
+      .justify_center()
+      .rounded(8)
+      .bg(t.accent_fill)
+      .cursor_pointer()
+      .tooltip(this.sending ? "Sending…" : "Send (Enter)")
+      .when(this.sending, (el) => el.opacity(0.5))
+      .hover((style) => style.opacity(0.88))
+      .on_click(() => this.send(cx))
+      .child(svg("mods/composer/arrow-up.svg").size(15).text_color(t.accent_foreground));
+    const note = this.error
+      ? div().id("composer-error").flex_none().max_w(260).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(this.error)
+      : this.state ? this.statusWord(t)?.flex_none() : null;
     return h_flex()
       .w_full()
+      .h_full()
       .px(10)
-      .pt(7)
       .gap(6)
-      .flex_wrap()
-      .children(this.chips.map((chip, index) =>
+      .items_center()
+      .border_t(1)
+      .border_color(t.border)
+      .bg(t.chrome)
+      .child(
         h_flex()
-          .id(`composer-chip-${index}`)
-          .h(22)
-          .px(7)
-          .gap(5)
+          .id("composer-field")
+          .tooltip(`To ${this.leadLine()}`)
+          .flex_1()
+          .min_w(0)
+          .min_h(36)
+          .pl(10)
+          .pr(4)
+          .py(4)
+          .gap(8)
           .items_center()
-          .rounded(6)
+          .rounded(10)
           .border_1()
-          .border_color(t.border)
-          .bg(t.raised)
-          .child(div().text_size(11.5).text_color(t.muted).child(baseName(chip.path)))
-          .child(
-            h_flex()
-              .id(`composer-chip-remove-${index}`)
-              .w(14)
-              .h(14)
-              .items_center()
-              .justify_center()
-              .rounded(4)
-              .text_size(11)
-              .text_color(t.dim)
-              .cursor_pointer()
-              .hover((style) => style.bg(t.hover).text_color(t.foreground))
-              .on_click(() => this.removeChip(index, cx))
-              .child("×"),
-          )));
+          .border_color(this.error ? t.blocked : t.input)
+          .bg(t.surface)
+          .children(this.chips.map((chip, index) => this.chip(t, cx, chip, index)))
+          .child(div().flex_1().min_w(0).child(Textarea.new(this.text).w_full()))
+          .when(Boolean(note), (el) => el.child(note))
+          .child(send),
+      )
+      .children(this.tools(t));
   }
 
+  startLabel() {
+    const lead = this.person?.lead ?? {};
+    const entry = this.leadProgram();
+    const model = lead.model ? ` (${modelLabel(entry, lead.model)})` : "";
+    return `Start ${leadName(entry, entry.key)}${model}`;
+  }
+
+  // No live lead: one quiet line and the way to start it, in the middle of whatever room it has.
   empty(t) {
-    return v_flex()
+    return h_flex()
       .id("composer-empty")
       .size_full()
       .px(12)
-      .py(10)
-      .gap(8)
-      .bg(t.background)
+      .gap(12)
+      .justify_center()
+      .items_center()
+      .border_t(1)
+      .border_color(t.border)
+      .bg(t.chrome)
       .child(div().text_size(12.5).text_color(t.muted).child("The lead isn't running"))
-      .child(h_flex().child(this.filledButton("composer-open", "Open", () => run("lead.open"), t)));
+      .child(this.filledButton("composer-open", this.startLabel(), () => run("lead.open"), t));
+  }
+
+  cardTag(t, label) {
+    return div()
+      .px(5)
+      .h(16)
+      .flex_none()
+      .flex()
+      .items_center()
+      .rounded(4)
+      .bg(t.muted + "1f")
+      .text_size(10)
+      .font_medium()
+      .text_color(t.muted)
+      .child(label);
+  }
+
+  textButton(id, label, action, t) {
+    return h_flex()
+      .id(id)
+      .h(28)
+      .px(8)
+      .items_center()
+      .rounded(6)
+      .text_size(12.5)
+      .text_color(t.muted)
+      .cursor_pointer()
+      .hover((style) => style.bg(t.hover).text_color(t.foreground))
+      .on_click(action)
+      .child(label);
   }
 
   cardButton(id, label, action, t, { filled = false, tooltip = null } = {}) {
@@ -906,7 +1035,13 @@ export default class Composer extends View {
     const head = v_flex()
       .w_full()
       .gap(4)
-      .child(div().text_size(13).font_medium().text_color(t.foreground).child(summary.title));
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(this.cardTag(t, "Permission"))
+          .child(div().text_size(13).font_medium().text_color(t.foreground).child(summary.title)),
+      );
     if (summary.detail) {
       head.child(
         div()
@@ -916,22 +1051,25 @@ export default class Composer extends View {
           .child(summary.detail),
       );
     }
+    if (ask.input?.cwd) head.child(div().text_size(11.5).text_color(t.dim).child(`Runs in ${ask.input.cwd}`));
     const buttons = h_flex().w_full().gap(6).items_center()
       .child(this.cardButton("composer-allow", "Allow", () => this.answer(ask, { action: "allow" }, cx), t, { filled: true }))
       .when(suggestions.length > 0, (el) => el.child(
         this.cardButton(
           "composer-allow-always",
-          "Allow always",
+          allowAlwaysLabel(ask),
           () => this.answer(ask, { action: "allow_always" }, cx),
           t,
-          { tooltip: permissionDestination(ask) },
+          { tooltip: permissionDestination(ask) ?? "where Claude keeps its rules" },
         ),
       ))
-      .child(this.cardButton("composer-deny", "Deny", () => this.openNote("deny", cx), t));
-    return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
+      .child(div().flex_1())
+      .child(this.textButton("composer-deny", "Deny", () => this.openNote("deny", cx), t));
+    return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.blocked).bg(t.surface)
       .child(head)
       .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
       .when(!this.noteOpen, (el) => el.child(buttons))
+      .when(!this.noteOpen, (el) => el.child(div().text_size(11).text_color(t.dim).child("Enter to allow · Esc to deny")))
       .child(this.terminalAnswerLink(ask, t, cx));
   }
 
@@ -939,9 +1077,15 @@ export default class Composer extends View {
     const plan = planText(ask);
     const buttons = h_flex().w_full().gap(6).items_center()
       .child(this.cardButton("composer-approve", "Approve", () => this.answer(ask, { action: "approve" }, cx), t, { filled: true }))
-      .child(this.cardButton("composer-keep-planning", "Keep planning", () => this.openNote("keep_planning", cx), t));
+      .child(this.cardButton("composer-keep-planning", "Change the plan…", () => this.openNote("keep_planning", cx), t));
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
-      .child(div().text_size(13).font_medium().text_color(t.foreground).child("Claude's plan is ready"))
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .child(this.cardTag(t, "Plan"))
+          .child(div().text_size(13).font_medium().text_color(t.foreground).child("Claude's plan is ready")),
+      )
       .when(Boolean(plan), (el) => el.child(
         div()
           .w_full()
@@ -957,6 +1101,7 @@ export default class Composer extends View {
   questionCard(t, cx, ask) {
     const questions = askQuestions(ask);
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
+      .child(h_flex().child(this.cardTag(t, "Question")))
       .children(questions.map((question, questionIndex) => {
         const answer = this.answers[question.question];
         const chosen = Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : [];
@@ -983,18 +1128,38 @@ export default class Composer extends View {
               .hover((style) => style.bg(t.hover))
               .on_click(() => this.toggleOption(question, label, cx))
               .child(div().text_size(12.5).font_medium().text_color(t.foreground).child(`${optionIndex + 1}. ${label}`))
-              .when(Boolean(option.description), (el) => el.child(div().text_size(11.5).text_color(t.dim).child(option.description)));
+              .when(
+                Boolean(option.description) && !repeatsLabel(label, option.description),
+                (el) => el.child(div().text_size(11.5).text_color(t.dim).child(option.description)),
+              );
           }));
       }))
       .child(
         h_flex().w_full().gap(6).items_center()
-          .child(
-            this.cardButton("composer-send-answers", "Send answers", () => this.sendAnswers(ask, cx), t, { filled: true })
-              .when(!this.allAnswered(ask), (el) => el.opacity(0.45)),
-          )
+          .child(this.sendAnswersButton(ask, t, cx))
           .child(div().flex_1())
           .child(this.terminalAnswerLink(ask, t, cx)),
       );
+  }
+
+  sendAnswersButton(ask, t, cx) {
+    const enabled = this.allAnswered(ask);
+    const button = h_flex()
+      .id("composer-send-answers")
+      .h(28)
+      .px(12)
+      .items_center()
+      .rounded(7)
+      .text_size(12.5)
+      .font_medium()
+      .child("Send answers");
+    if (!enabled) return button.bg(t.hover).text_color(t.dim);
+    return button
+      .bg(t.accent_fill)
+      .text_color(t.accent_foreground)
+      .cursor_pointer()
+      .hover((style) => style.opacity(0.88))
+      .on_click(() => this.sendAnswers(ask, cx));
   }
 
   terminalAnswerLink(ask, t, cx) {
@@ -1006,7 +1171,7 @@ export default class Composer extends View {
       .text_color(t.dim)
       .hover((style) => style.text_color(t.foreground))
       .on_click(() => this.answerInTerminal(ask, cx))
-      .child("Answer in the terminal");
+      .child("or answer in the terminal");
   }
 
   card(t, cx) {
@@ -1043,42 +1208,10 @@ export default class Composer extends View {
         for (const path of event.paths ?? []) this.addChip(path);
         cx.notify();
       })
-      .child(this.header(t, cx))
-      .when(this.chips.length > 0, (el) => el.child(this.chipsRow(t, cx)))
       .when(Boolean(this.ask), (el) =>
-        el.child(v_flex().w_full().px(10).py(8).child(this.card(t, cx))))
-      .when(!this.ask, (el) =>
-        el.child(
-          v_flex()
-            .flex_1()
-            .min_h(0)
-            .px(10)
-            .py(8)
-            .child(
-              div()
-                .w_full()
-                .rounded(7)
-                .border_1()
-                .border_color(t.input)
-                .bg(t.surface)
-                .px(9)
-                .py(6)
-                .child(Textarea.new(this.text).w_full()),
-            ),
-        ))
-      .when(Boolean(this.error), (el) =>
-        el.child(div().id("composer-error").px(12).pb(6).text_size(11.5).text_color(t.blocked).child(this.error)))
-      .when(!this.ask, (el) =>
-        el.child(
-          h_flex()
-            .w_full()
-            .px(10)
-            .pb(8)
-            .items_center()
-            .gap(8)
-            .child(div().flex_1())
-            .child(this.filledButton("composer-send", this.sending ? "Sending…" : "Send", () => this.send(cx), t)),
-        ));
+        el.child(this.header(t, cx))
+          .child(v_flex().id("composer-asks").flex_1().min_h(0).overflow_y_scrollbar().px(10).py(8).child(this.card(t, cx))))
+      .when(!this.ask, (el) => el.child(this.bar(t, cx)));
   }
 
   planRow(t, cx, entry) {
