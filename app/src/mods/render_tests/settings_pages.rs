@@ -330,3 +330,241 @@ fn a_model_list_that_fails_says_so(cx: &mut TestAppContext) {
     .unwrap();
     assert!(tree.contains("models: not signed in"), "{tree}");
 }
+
+fn add_worker_values(catalog: Value, workers: Value) -> BTreeMap<String, Value> {
+    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
+    let mut values = agents_values(catalog, workers, status);
+    values.insert("person".into(), json!({"lead": {"program": "claude"}}));
+    values
+}
+
+fn builtins_waiting_to_be_added() -> Value {
+    agent_workers(
+        json!(["cc"]),
+        json!([
+            agent_worker(
+                "cc",
+                "Command Code",
+                "command_code",
+                "commandcode/claude-sonnet-4-6#max",
+                "ready",
+                "",
+                0
+            ),
+            agent_worker(
+                "go",
+                "opencode Go",
+                "opencode",
+                "opencode-go/deepseek-v4.1-flash#max",
+                "ready",
+                "",
+                0
+            ),
+            agent_worker("free", "OpenCode Free", "opencode", "opencode/free", "ready", "", 0),
+            agent_worker("codex", "Codex", "codex", "codex", "ready", "", 0),
+        ]),
+    )
+}
+
+fn catalog_without_worker_efforts() -> Value {
+    json!([
+        {
+            "key": "claude", "name": "Claude Code", "icon": "icons/claude.svg", "tint": false,
+            "tile": "#1c1d21", "color": "#ffffff", "shell": false, "agent": true,
+            "run": ["claude"], "installed": true,
+            "flags": {"model": ["--model", "{model}"], "effort": ["--effort", "{effort}"]},
+            "efforts": ["low", "medium", "high", "xhigh", "max"],
+            "models": [
+                {"id": "fable", "label": "Fable", "hint": "The most capable. Has its own weekly limit."}
+            ]
+        },
+        {
+            "key": "plain", "name": "Plain", "icon": "icons/opencode.svg", "tint": true,
+            "tile": "#1c1d21", "color": "#ffffff", "shell": false, "agent": true,
+            "run": ["plain"], "installed": true,
+            "flags": {"model": ["-m", "{model}"]},
+            "models": [{"id": "m1", "label": "Model One"}],
+            "worker": "plain", "route": "{model}"
+        }
+    ])
+}
+
+fn catalog_without_a_worker_cli() -> Value {
+    json!([{
+        "key": "claude", "name": "Claude Code", "icon": "icons/claude.svg", "tint": false,
+        "tile": "#1c1d21", "color": "#ffffff", "shell": false, "agent": true,
+        "run": ["claude"], "installed": true,
+        "flags": {"model": ["--model", "{model}"], "effort": ["--effort", "{effort}"]},
+        "efforts": ["low", "medium", "high", "xhigh", "max"],
+        "models": [
+            {"id": "fable", "label": "Fable", "hint": "The most capable. Has its own weekly limit."}
+        ]
+    }])
+}
+
+/// Add a worker opens a card: built-ins not in the order, then Claude's subagents.
+#[gpui::test]
+fn adding_a_worker_lists_builtins_not_in_the_order_then_claude_subagents(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        add_worker_values(agent_catalog(), builtins_waiting_to_be_added()),
+        Some("this.agentPage.addOpen = true;"),
+    )
+    .unwrap();
+    assert!(
+        tree.contains(r#":id[Str("st-add")]"#),
+        "the card has id st-add: {tree}"
+    );
+    assert!(tree.contains("Ready to add"), "{tree}");
+    for key in ["go", "free", "codex", "sonnet", "haiku"] {
+        assert!(
+            tree.contains(&format!("st-add-ready-{key}")),
+            "missing ready row {key}: {tree}"
+        );
+    }
+    assert!(
+        !tree.contains("st-add-ready-cc"),
+        "cc is already in the order: {tree}"
+    );
+    let go = tree.find("st-add-ready-go").expect("go row");
+    let sonnet = tree.find("st-add-ready-sonnet").expect("sonnet row");
+    assert!(
+        go < sonnet,
+        "built-ins come before Claude subagents: {tree}"
+    );
+    assert!(tree.contains("Free models through OpenCode."), "{tree}");
+    assert!(tree.contains("Codex with its own default model."), "{tree}");
+    assert!(
+        tree.contains("A subagent inside the lead's Claude Code, on Sonnet."),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("A subagent inside the lead's Claude Code, on Haiku."),
+        "{tree}"
+    );
+    assert!(tree.contains("st-add-close"), "{tree}");
+    assert!(
+        !tree.contains(r#"text "Done""#),
+        "Done is gone: {tree}"
+    );
+    assert!(!tree.contains("st-add-builtin-"), "old builtin chips: {tree}");
+    assert!(!tree.contains("st-add-subagent-"), "old subagent chips: {tree}");
+}
+
+/// Choose your own starts on the first installed worker CLI, its first model, and max.
+#[gpui::test]
+fn adding_a_worker_shows_cli_model_and_effort_with_the_first_picks(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        add_worker_values(agent_catalog(), builtins_waiting_to_be_added()),
+        Some("this.agentPage.addOpen = true;"),
+    )
+    .unwrap();
+    assert!(tree.contains("Choose your own"), "{tree}");
+    assert!(tree.contains("st-add-cli"), "{tree}");
+    assert!(tree.contains("st-add-model"), "{tree}");
+    assert!(tree.contains("st-add-effort"), "{tree}");
+    assert!(tree.contains("st-add-go"), "{tree}");
+    assert!(
+        tree.contains("Command Code"),
+        "the first worker CLI is picked: {tree}"
+    );
+    assert!(
+        tree.contains("Claude Sonnet 4.6"),
+        "that CLI's first model is picked: {tree}"
+    );
+    assert!(tree.contains("Max"), "max is picked when the CLI has it: {tree}");
+    assert!(
+        !tree.contains("st-add-model-command-code-"),
+        "old model chips: {tree}"
+    );
+    assert!(
+        !tree.contains("st-add-effort-command-code-"),
+        "old effort chips: {tree}"
+    );
+    assert!(
+        !tree.contains("st-add-worker-command-code") && !tree.contains("st-add-worker-opencode"),
+        "old per-CLI Add worker buttons: {tree}"
+    );
+}
+
+/// Changing the CLI through its dropdown row resets the model to that CLI's first.
+#[gpui::test]
+fn adding_a_worker_resets_the_model_when_the_cli_changes(cx: &mut TestAppContext) {
+    let sent = agents_kom_after_clicks(
+        cx,
+        agent_catalog(),
+        builtins_waiting_to_be_added(),
+        "this.agentPage.addOpen = true; this.agentPage.addCli = { open: true };",
+        &["st-add-cli-opencode", "st-add-go"],
+    );
+    let add = sent
+        .iter()
+        .find(|args| args.get(1) == Some(&json!("--add")))
+        .unwrap_or_else(|| panic!("expected workers --add, got {sent:?}"));
+    assert_eq!(add.get(4), Some(&json!("opencode")), "cli: {add:?}");
+    assert_eq!(
+        add.get(6),
+        Some(&json!("opencode-go/deepseek-v4.1-flash#max")),
+        "route uses the new CLI's first model: {add:?}"
+    );
+    assert_eq!(
+        add.get(8),
+        Some(&json!("OpenCode · DeepSeek V4.1 Flash")),
+        "label uses the new CLI's first model: {add:?}"
+    );
+}
+
+/// A CLI with no efforts hides the reasoning dropdown.
+#[gpui::test]
+fn adding_a_worker_hides_effort_when_the_cli_has_none(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        add_worker_values(catalog_without_worker_efforts(), agent_workers(json!([]), json!([]))),
+        Some("this.agentPage.addOpen = true;"),
+    )
+    .unwrap();
+    assert!(tree.contains("st-add-cli"), "{tree}");
+    assert!(tree.contains("st-add-model"), "{tree}");
+    assert!(tree.contains("Plain"), "{tree}");
+    assert!(tree.contains("Model One"), "{tree}");
+    assert!(
+        !tree.contains("st-add-effort"),
+        "no reasoning dropdown: {tree}"
+    );
+}
+
+/// No installed worker CLI is a dim line, not empty dropdowns.
+#[gpui::test]
+fn adding_a_worker_says_when_no_worker_cli_is_installed(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        add_worker_values(catalog_without_a_worker_cli(), agent_workers(json!([]), json!([]))),
+        Some("this.agentPage.addOpen = true;"),
+    )
+    .unwrap();
+    assert!(
+        tree.contains("No other worker CLI is installed. Install Codex or OpenCode to add one."),
+        "{tree}"
+    );
+    assert!(!tree.contains("st-add-cli"), "no CLI dropdown: {tree}");
+    assert!(!tree.contains("st-add-model"), "no model dropdown: {tree}");
+    assert!(!tree.contains("st-add-go"), "no Add: {tree}");
+}
+
