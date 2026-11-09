@@ -365,11 +365,11 @@ pub async fn prepare(
     prepared.env.insert("GIT_CONFIG_KEY_0".into(), "core.hooksPath".into());
     prepared.env.insert("GIT_CONFIG_VALUE_0".into(), forward_slashes(&hooks));
     prepared.env.insert("KOMPITUM_PROTECTED".into(), protected);
-    prepared.env.insert("OPENCODE_CONFIG_CONTENT".into(), opencode_config(task.asked.web));
     // OpenCode would read the repository's and the home folder's AGENTS.md by itself; the prompt
     // carries the committed one instead. Command Code's settings stay as they are: what it
     // carries is unmeasured until its credits return.
-    if worker.cli != Cli::CommandCode {
+    if worker.cli == Cli::Opencode {
+        prepared.env.insert("OPENCODE_CONFIG_CONTENT".into(), opencode_config(task.asked.web));
         prepared.env.insert("OPENCODE_DISABLE_PROJECT_CONFIG".into(), "1".into());
     }
     if crate::platform::PYTHON_SHIMS {

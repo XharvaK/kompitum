@@ -274,6 +274,7 @@ pub fn turn_end(
     let turn = task.turns.last();
     let cli = turn.map_or(Cli::Opencode, |turn| turn.cli_or_lookup(workers));
     match cli {
+        Cli::Codex => codex_end(task, code, outcome, now_ms, offset_min),
         Cli::CommandCode => {
             let key = turn.map(|turn| turn.worker.as_str()).unwrap_or_default();
             let route = workers.iter().find(|worker| worker.key == key).map_or("", |worker| worker.route.as_str());
@@ -351,6 +352,35 @@ pub fn route_unchecked(route: Option<&RouteCheck>) -> Option<String> {
     }
     let words = check.message.as_deref().filter(|message| !message.is_empty()).unwrap_or(check.status.as_str());
     Some(format!("which model ran could not be checked: {words}"))
+}
+
+fn codex_end(task: &Task, code: Option<i32>, outcome: &TurnOutcome, now_ms: u64, offset_min: i32) -> TurnEnd {
+    // Only a turn that went wrong can be a refusal: a limit named in a warning
+    // must not block a worker that finished its work.
+    let went_wrong = !outcome.errors.is_empty() || code != Some(0) || outcome.text.is_empty();
+    if went_wrong && let Some(refusal) = quota::codex_refusal(&outcome.errors, now_ms, offset_min) {
+        return TurnEnd { state: TaskState::Failed, error: Some(refusal.message.clone()), refusal: Some(refusal) };
+    }
+    if !outcome.errors.is_empty() {
+        return TurnEnd::failed(format!("worker reported an error event: {}", outcome.errors[0]));
+    }
+    if code != Some(0) {
+        let words = match code {
+            Some(code) => format!("worker exited with code {code}"),
+            None => "worker exited without an exit code".into(),
+        };
+        return TurnEnd::failed(words);
+    }
+    if outcome.parse_errors > 0 {
+        return TurnEnd::failed(format!("worker stream contained {} unparseable lines", outcome.parse_errors));
+    }
+    if let Some(end) = session_end(task, outcome) {
+        return end;
+    }
+    if outcome.text.is_empty() {
+        return TurnEnd::failed("worker produced no final text");
+    }
+    TurnEnd { state: TaskState::Done, error: None, refusal: None }
 }
 
 fn command_code_end(
@@ -813,6 +843,61 @@ mod tests {
             models: vec!["deepseek/deepseek-v4.1-flash".into()],
             ..Default::default()
         }
+    }
+
+    fn codex_task(resumes: Option<&str>) -> Task {
+        let mut t = task("a", TaskState::Running, 1, &[]);
+        t.turns =
+            vec![Turn { worker: "codex".into(), cli: Some(Cli::Codex), resumes: resumes.map(String::from), ..turn(0) }];
+        t
+    }
+
+    fn codex_outcome() -> TurnOutcome {
+        TurnOutcome {
+            session: Some("thread-1".into()),
+            sessions: vec!["thread-1".into()],
+            text: "DONE".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_codex_turn_ends_well_or_names_what_went_wrong() {
+        let exited = TerminalNow { live: false, exit_code: Some(0), reason: Some("exited".into()) };
+        let good = codex_outcome();
+        assert_eq!(result(judge(&codex_task(None), Some(&exited), Some(0), &good)), ended(TaskState::Done, None));
+
+        let mut failed = good.clone();
+        failed.errors = vec!["the tool exploded".into()];
+        failed.text.clear();
+        assert_eq!(
+            result(judge(&codex_task(None), Some(&exited), Some(1), &failed)),
+            ended(TaskState::Failed, Some("worker reported an error event: the tool exploded"))
+        );
+
+        let mut refused = good;
+        refused.errors = vec!["You’ve hit your usage limit. Try again later.".into()];
+        refused.text.clear();
+        let end = judge(&codex_task(None), Some(&exited), Some(0), &refused);
+        assert_eq!(end.state, TaskState::Failed);
+        assert_eq!(end.refusal.as_ref().unwrap().window, "5-hour");
+    }
+
+    #[test]
+    fn a_resumed_codex_turn_must_report_the_same_thread() {
+        let exited = TerminalNow { live: false, exit_code: Some(0), reason: Some("exited".into()) };
+        let same = codex_outcome();
+        assert_eq!(
+            result(judge(&codex_task(Some("thread-1")), Some(&exited), Some(0), &same)),
+            ended(TaskState::Done, None)
+        );
+        let mut other = codex_outcome();
+        other.session = Some("thread-2".into());
+        other.sessions = vec!["thread-2".into()];
+        assert_eq!(
+            result(judge(&codex_task(Some("thread-1")), Some(&exited), Some(0), &other)),
+            ended(TaskState::Failed, Some("session mismatch: worker returned an unexpected session id"))
+        );
     }
 
     #[test]

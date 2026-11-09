@@ -1,6 +1,6 @@
 //! The only place that knows a worker CLI by name: how to find it, how to ask
 //! its version, how to tell it to run a turn, and where its reader lives.
-//! The streams themselves are in `opencode.rs` and `commandcode.rs`.
+//! The streams themselves are in `opencode.rs`, `commandcode.rs` and `codex.rs`.
 
 use crate::config::Config;
 use crate::rpc::RpcError;
@@ -18,6 +18,7 @@ use std::time::Duration;
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Cli {
+    Codex,
     CommandCode,
     Opencode,
 }
@@ -25,6 +26,7 @@ pub enum Cli {
 impl Cli {
     pub fn key(self) -> &'static str {
         match self {
+            Cli::Codex => "codex",
             Cli::CommandCode => "command_code",
             Cli::Opencode => "opencode",
         }
@@ -32,6 +34,7 @@ impl Cli {
 
     pub fn from_key(key: &str) -> Option<Cli> {
         match key {
+            "codex" => Some(Cli::Codex),
             "command_code" => Some(Cli::CommandCode),
             "opencode" => Some(Cli::Opencode),
             _ => None,
@@ -48,7 +51,7 @@ pub struct Worker {
     pub route: String,
 }
 
-/// The three workers every core has, unchanged.
+/// The workers every core has, unchanged.
 pub fn builtin() -> Vec<Worker> {
     vec![
         Worker {
@@ -69,6 +72,7 @@ pub fn builtin() -> Vec<Worker> {
             cli: Cli::Opencode,
             route: "opencode/deepseek/deepseek-v4.1-flash-free#max".into(),
         },
+        Worker { key: "codex".into(), label: "Codex".into(), cli: Cli::Codex, route: "gpt-6-luna#high".into() },
     ]
 }
 
@@ -220,9 +224,21 @@ fn commandcode_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
     Err(worker_missing("Command Code", "commandcode", "Command Code was not found on PATH"))
 }
 
+/// `codex_prefix`: an explicit argv, else the executable on PATH.
+pub(crate) fn codex_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
+    if let Some(argv) = config.codex() {
+        return command_program("Codex", "codex", argv);
+    }
+    match on_path(&[program("codex")]) {
+        Some(found) => Ok(vec![found.display().to_string()]),
+        None => Err(worker_missing("Codex", "codex", "Codex was not found on PATH")),
+    }
+}
+
 /// The argv prefix that starts a worker CLI.
 pub fn prefix(worker: &Worker, config: &Config) -> Result<Vec<String>, RpcError> {
     match worker.cli {
+        Cli::Codex => codex_prefix(config),
         Cli::CommandCode => commandcode_prefix(config),
         Cli::Opencode => opencode_prefix(config),
     }
@@ -358,6 +374,25 @@ pub fn turn_command(
     session: Option<&str>,
 ) -> TurnCommand {
     match worker.cli {
+        Cli::Codex => {
+            let (model, effort) = worker.route().split_once('#').unwrap_or((worker.route(), ""));
+            let mut argv = prefix.to_vec();
+            argv.extend(
+                ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]
+                    .map(String::from),
+            );
+            if !model.is_empty() {
+                argv.extend(["-m".to_string(), model.to_string()]);
+            }
+            if !effort.is_empty() {
+                argv.extend(["-c".to_string(), format!("model_reasoning_effort={effort}")]);
+            }
+            if let Some(session) = session {
+                argv.extend(["resume".to_string(), session.to_string()]);
+            }
+            argv.push("-".to_string());
+            TurnCommand { argv, stdin: Some(prompt_path.to_string()), env: BTreeMap::new(), prefix_len: None }
+        }
         Cli::CommandCode => {
             let (model, effort) = crate::task::commandcode::route(worker.route());
             let mut argv = prefix.to_vec();
@@ -428,6 +463,7 @@ impl Progress {
     /// One output line in, one line for the screen out (or nothing to show).
     pub fn feed(&mut self, line: &str) -> Option<String> {
         match self.cli {
+            Cli::Codex => crate::task::codex::progress(self, line),
             Cli::CommandCode => crate::task::commandcode::progress(self, line),
             Cli::Opencode => crate::task::opencode::progress(self, line),
         }
@@ -548,6 +584,7 @@ pub struct Reported {
 impl TurnOutcome {
     pub fn from_lines(cli: Cli, lines: impl IntoIterator<Item = String>) -> TurnOutcome {
         match cli {
+            Cli::Codex => crate::task::codex::read(lines),
             Cli::CommandCode => crate::task::commandcode::read(lines),
             Cli::Opencode => crate::task::opencode::read(lines),
         }
@@ -568,9 +605,18 @@ mod tests {
                 cap: None,
                 opencode: oc.map(|p| vec![p.to_string()]),
                 commandcode: cc.map(|p| vec![p.to_string()]),
+                codex: None,
             }),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn every_cli_key_round_trips() {
+        for key in ["codex", "command_code", "opencode"] {
+            assert_eq!(Cli::from_key(key).map(Cli::key), Some(key));
+        }
+        assert_eq!(Cli::from_key("nope"), None);
     }
 
     #[test]
@@ -622,6 +668,44 @@ mod tests {
         let opencode = turn_command(&worker("go"), &["opencode".into()], "fix-1", "p", None);
         assert_eq!(opencode.stdin, None);
         assert_eq!(opencode.prefix_len, Some(1));
+    }
+
+    #[test]
+    fn a_codex_turn_puts_its_flags_before_resume_and_its_brief_on_stdin() {
+        let prefix = vec!["codex".to_string()];
+        let codex = worker("codex");
+        let fresh = turn_command(&codex, &prefix, "fix-1", "C:/t/prompt.md", None);
+        assert_eq!(
+            fresh.argv,
+            [
+                "codex",
+                "exec",
+                "--json",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--skip-git-repo-check",
+                "-m",
+                "gpt-6-luna",
+                "-c",
+                "model_reasoning_effort=high",
+                "-",
+            ]
+        );
+        assert_eq!(fresh.stdin.as_deref(), Some("C:/t/prompt.md"));
+        assert_eq!(fresh.prefix_len, None);
+        let continued = turn_command(&codex, &prefix, "fix-1", "p", Some("thread-1"));
+        assert_eq!(&continued.argv[..9], &fresh.argv[..9], "every flag stays before resume");
+        assert_eq!(&continued.argv[9..], ["resume", "thread-1", "-"]);
+        assert_eq!(continued.stdin.as_deref(), Some("p"));
+        assert_eq!(continued.prefix_len, None);
+
+        for route in ["gpt-6-luna", "gpt-6-luna#"] {
+            let bare = Worker { route: route.into(), ..codex.clone() };
+            let bare_command = turn_command(&bare, &prefix, "fix-1", "p", None);
+            assert!(!bare_command.argv.iter().any(|arg| arg == "-c"), "{route}: {:?}", bare_command.argv);
+        }
+        let no_model = Worker { route: "#high".into(), ..codex };
+        let no_model_command = turn_command(&no_model, &prefix, "fix-1", "p", None);
+        assert!(!no_model_command.argv.iter().any(|arg| arg == "-m"), "{:?}", no_model_command.argv);
     }
 
     #[test]

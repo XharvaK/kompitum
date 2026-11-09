@@ -168,6 +168,11 @@ mod nofile_tests {
 /// Unix programs have no console to open: nothing to do.
 pub fn no_console(_cmd: &mut Command) {}
 
+/// Codex's update needs no special PATH on Unix.
+pub fn codex_update_path(path: &str) -> String {
+    path.to_string()
+}
+
 /// What a contained terminal adds to its program's environment: on Windows, a COMSPEC that
 /// keeps shells hidden. An error means the terminal must not start.
 pub fn contain_env(_state: &Path, _env: &mut std::collections::BTreeMap<String, String>) -> io::Result<()> {

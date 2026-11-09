@@ -1185,6 +1185,19 @@ mod tests {
     }
 
     #[test]
+    fn workers_add_takes_codex_as_a_cli() {
+        let Cmd::Workers(p) = parsed(&["workers", "--add", "mine", "--cli", "codex", "--route", "gpt-6-luna#high"])
+        else {
+            panic!()
+        };
+        assert_eq!(p.cli.as_deref(), Some("codex"));
+        let cli: crate::task::worker::Cli = serde_json::from_value(json!("codex")).unwrap();
+        assert_eq!(cli, crate::task::worker::Cli::Codex);
+        assert_eq!(serde_json::to_value(cli).unwrap(), json!("codex"));
+        assert!(Cli::try_parse_from(["kom", "workers", "--add", "mine", "--cli", "other", "--route", "x"]).is_err());
+    }
+
+    #[test]
     fn a_wait_prints_what_happened() {
         let one = |reason: &str| json!({"terminal": "t1", "ended": reason != "timeout", "reason": reason, "status": "working", "turn": 2, "exit_code": 42, "children": []});
         assert!(describe_wait(&one("timeout")).starts_with("t1 still running: working"));

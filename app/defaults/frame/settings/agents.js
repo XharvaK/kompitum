@@ -6,7 +6,7 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { kom, exec, knownAgents, window } from "kompitum";
 
-const BUILTIN = new Set(["cc", "go", "free"]);
+const BUILTIN = new Set(["cc", "codex", "go", "free"]);
 const PLANS_EVERY_MS = 60000;
 const DETAIL_LIMIT = 32;
 

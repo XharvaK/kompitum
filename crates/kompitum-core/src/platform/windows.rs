@@ -536,6 +536,16 @@ pub fn no_console(cmd: &mut Command) {
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 
+/// Codex's update runs Codex's PowerShell installer, which calls tar. Git's
+/// `usr\bin` first on PATH makes GNU tar read `C:` as a remote host, so the
+/// Windows tools come first, and `powershell` is found beside them.
+pub fn codex_update_path(path: &str) -> String {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+    let system32 = format!(r"{root}\System32");
+    let powershell = format!(r"{root}\System32\WindowsPowerShell\v1.0");
+    if path.is_empty() { format!("{system32};{powershell}") } else { format!("{system32};{powershell};{path}") }
+}
+
 /// Starts `cmd` with no console (no new process group: that would turn off
 /// Ctrl+C for every program the holder starts), out of the job of
 /// the terminal it was started from (ending that terminal won't end it),
@@ -1294,5 +1304,21 @@ pub mod console {
             }
             Some(buf[..got as usize].to_vec())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_codex_update_finds_windows_tools_before_gits_tar() {
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        let path = codex_update_path(r"C:\Program Files\Git\usr\bin;C:\Other");
+        let parts: Vec<&str> = path.split(';').collect();
+        assert_eq!(parts[0], format!(r"{root}\System32"));
+        assert_eq!(parts[1], format!(r"{root}\System32\WindowsPowerShell\v1.0"));
+        assert_eq!(parts[2], r"C:\Program Files\Git\usr\bin", "the rest keeps its order");
+        assert_eq!(codex_update_path(""), format!(r"{root}\System32;{root}\System32\WindowsPowerShell\v1.0"));
     }
 }

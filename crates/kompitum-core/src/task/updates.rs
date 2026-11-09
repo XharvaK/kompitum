@@ -1,5 +1,5 @@
-//! The CLIs the core keeps up to date: OpenCode and Grok Build. Claude Code and
-//! Command Code update themselves. Once a day, when no task or process is using
+//! The CLIs the core keeps up to date: OpenCode, Codex and Grok Build. Claude Code
+//! and Command Code update themselves. Once a day, when no task or process is using
 //! one, the core runs its own update and records what happened in
 //! `<state>/updates.json`.
 
@@ -53,6 +53,15 @@ pub const SPECS: &[Spec] = &[
         update: "upgrade",
         processes: &["opencode"],
         cli: Some(Cli::Opencode),
+    },
+    Spec {
+        key: "codex",
+        label: "Codex",
+        program: "codex",
+        version: "--version",
+        update: "update",
+        processes: &["codex"],
+        cli: Some(Cli::Codex),
     },
     Spec {
         key: "grok",
@@ -135,6 +144,8 @@ pub fn installed(config: &Config) -> Vec<Installed> {
     for spec in SPECS {
         let argv = if spec.key == "opencode" {
             worker::opencode_prefix(config).ok()
+        } else if spec.key == "codex" {
+            worker::codex_prefix(config).ok()
         } else {
             worker::on_path(&[worker::program(spec.program)]).map(|path| vec![path.display().to_string()])
         };
@@ -374,7 +385,7 @@ fn run_update(spec: &Spec, argv: &[String], state: &Path) {
     let mut entry = Entry { tried_ms: started, ..Default::default() };
     let mut error = None;
 
-    match run(argv, &[spec.version], VERSION_LIMIT) {
+    match run(argv, &[spec.version], VERSION_LIMIT, None) {
         Err(words) => {
             error = Some(words);
             entry.before = previous.after.clone().or_else(|| previous.before.clone());
@@ -386,10 +397,16 @@ fn run_update(spec: &Spec, argv: &[String], state: &Path) {
             }
             Ok(before) => {
                 entry.before = Some(before.clone());
-                if let Err(words) = run(argv, &[spec.update], UPDATE_LIMIT) {
+                let updated = if spec.key == "codex" {
+                    let path = crate::platform::codex_update_path(&std::env::var("PATH").unwrap_or_default());
+                    run(argv, &[spec.update], UPDATE_LIMIT, Some(&path))
+                } else {
+                    run(argv, &[spec.update], UPDATE_LIMIT, None)
+                };
+                if let Err(words) = updated {
                     error = Some(words);
                 }
-                match run(argv, &[spec.version], VERSION_LIMIT).and_then(|output| version_of(&output)) {
+                match run(argv, &[spec.version], VERSION_LIMIT, None).and_then(|output| version_of(&output)) {
                     Ok(after) => {
                         entry.after = Some(after.clone());
                         if after != before {
@@ -450,10 +467,13 @@ fn first_line(text: &str) -> Option<String> {
 
 /// Run one command headless, read both pipes, and kill it when its limit passes.
 /// The first line of a failed command's output is what the record says.
-fn run(argv: &[String], extra: &[&str], limit: Duration) -> Result<String, String> {
+fn run(argv: &[String], extra: &[&str], limit: Duration, path: Option<&str>) -> Result<String, String> {
     let Some(program) = argv.first() else { return Err("the CLI has no program".into()) };
     let mut command = Command::new(program);
     command.args(&argv[1..]).args(extra).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
     crate::platform::no_console(&mut command);
     let mut child = command.spawn().map_err(|e| format!("cannot run {program}: {e}"))?;
     let stdout = child.stdout.take().expect("piped stdout");

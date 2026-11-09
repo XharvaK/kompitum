@@ -282,6 +282,7 @@
       "Cli": {
         "description": "A worker CLI the loop can run headless and read. Its launch, stream and quota words live in code.",
         "enum": [
+          "codex",
           "command_code",
           "opencode"
         ],
@@ -3289,7 +3290,7 @@
         "properties": {
           "cli": {
             "$ref": "#/components/schemas/Cli",
-            "description": "command_code or opencode."
+            "description": "codex, command_code or opencode."
           },
           "key": {
             "type": "string"
@@ -3361,7 +3362,7 @@
         "properties": {
           "cli": {
             "$ref": "#/components/schemas/Cli",
-            "description": "Its CLI: command_code or opencode."
+            "description": "Its CLI: codex, command_code or opencode."
           },
           "key": {
             "description": "The new worker's key, using the terminal name rules (1-32 of a-z 0-9 - _ ., starting with a letter or digit).",

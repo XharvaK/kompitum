@@ -40,6 +40,8 @@ pub struct WorkersConfig {
     pub opencode: Option<Vec<String>>,
     /// Command Code's argv prefix, for a build not on PATH.
     pub commandcode: Option<Vec<String>>,
+    /// Codex's argv prefix, for a build not on PATH.
+    pub codex: Option<Vec<String>>,
 }
 
 impl Config {
@@ -78,6 +80,10 @@ impl Config {
 
     pub fn commandcode(&self) -> Option<Vec<String>> {
         self.workers.as_ref().and_then(|w| w.commandcode.clone()).filter(|argv| !argv.is_empty())
+    }
+
+    pub fn codex(&self) -> Option<Vec<String>> {
+        self.workers.as_ref().and_then(|w| w.codex.clone()).filter(|argv| !argv.is_empty())
     }
 }
 

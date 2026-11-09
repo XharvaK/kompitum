@@ -55,7 +55,7 @@ struct Entry {
     /// The argv that prints the CLI's own model list, one per line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     list_models: Vec<String>,
-    /// The core reader that runs it as a worker: command_code or opencode.
+    /// The core reader that runs it as a worker: codex, command_code or opencode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     worker: Option<String>,
     /// The core's route template for this worker.

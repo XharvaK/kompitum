@@ -429,7 +429,7 @@ mod tests {
         let file = WorkersFile::default();
         assert_eq!(
             find(&file, "x").unwrap_err().message,
-            r#"unknown worker "x": use cc, go, free"#,
+            r#"unknown worker "x": use cc, go, free, codex"#,
             "the known keys are listed"
         );
     }

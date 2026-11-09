@@ -7,6 +7,7 @@ pub mod brief;
 pub mod checking;
 pub mod checks;
 pub mod clock;
+pub mod codex;
 pub mod commandcode;
 pub mod decide;
 pub mod git;
@@ -465,13 +466,27 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     let path = folder.join(format!("turn-{n}.jsonl"));
     let err_path = folder.join(format!("turn-{n}.err"));
     let route_path = folder.join(format!("turn-{n}.route.json"));
-    let earlier: Vec<(Option<String>, f64)> =
-        task.turns[..index].iter().map(|turn| (turn.session.clone(), turn.usage.cost_usd)).collect();
+    let earlier: Vec<(Option<String>, f64, crate::task::types::Usage)> = task.turns[..index]
+        .iter()
+        .map(|turn| (turn.session.clone(), turn.usage.cost_usd, turn.usage.clone()))
+        .collect();
+    let resumes = task.turns[index].resumes.clone();
     let (outcome, warning, route, stderr_tail) = tokio::task::spawn_blocking(move || {
         let mut outcome = match std::fs::read(&path) {
             Ok(bytes) => TurnOutcome::from_bytes(cli, &bytes),
             Err(_) => TurnOutcome::default(),
         };
+        if cli == Cli::Codex && resumes.is_some() && outcome.session == resumes {
+            // Codex reports the thread's whole total, so only what this turn
+            // added since the earlier turns on that thread counts.
+            let mut prior = crate::task::types::Usage::default();
+            for (session, _, usage) in &earlier {
+                if session.as_deref() == outcome.session.as_deref() {
+                    prior.add(usage);
+                }
+            }
+            outcome.usage = crate::task::codex::since_earlier(&outcome.usage, &prior);
+        }
         let mut warning = None;
         if cli == Cli::CommandCode {
             match outcome.session.as_deref().and_then(crate::task::commandcode::session_cost) {
@@ -480,8 +495,8 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
                     // what this turn added since the earlier ones counts.
                     let same: f64 = earlier
                         .iter()
-                        .filter(|(session, _)| session.as_deref() == outcome.session.as_deref())
-                        .map(|(_, cost)| *cost)
+                        .filter(|(session, _, _)| session.as_deref() == outcome.session.as_deref())
+                        .map(|(_, cost, _)| *cost)
                         .sum();
                     outcome.usage.cost_usd = crate::task::checking::turn_cost(cost, same);
                 }
@@ -746,7 +761,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     let config = crate::config::load(&core.paths.config)?;
     let prefix = worker::prefix(&worker, &config)?;
     // The version check is OpenCode's alone.
-    if worker.cli != Cli::CommandCode {
+    if worker.cli == Cli::Opencode {
         worker::check_version(&prefix).await?;
     }
     let folder = task_folder(&core.paths.state, &task.name);
@@ -811,7 +826,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
         argv.push("--stdin".into());
         argv.push(stdin.clone());
     }
-    if worker.cli != Cli::CommandCode {
+    if worker.cli == Cli::Opencode {
         argv.push("--route".into());
         argv.push(worker.route().into());
         if let Some(prefix_len) = command.prefix_len {

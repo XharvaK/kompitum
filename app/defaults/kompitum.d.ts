@@ -62,7 +62,7 @@ export function knownAgents(options?: { on?: string | null }): Promise<(Program 
   efforts?: string[];
   models?: AgentModel[];
   list_models?: string[];
-  worker?: "command_code" | "opencode";
+  worker?: "codex" | "command_code" | "opencode";
   route?: string;
   plans?: AgentPlan[];
   reports?: "status_line";

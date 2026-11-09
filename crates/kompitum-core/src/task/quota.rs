@@ -47,6 +47,10 @@ static NOT_AUTH: OnceLock<Regex> = OnceLock::new();
 static RATE_LIMIT: OnceLock<Regex> = OnceLock::new();
 static CLOCK_RESET: OnceLock<Regex> = OnceLock::new();
 static NEXT_CLOCK: OnceLock<Regex> = OnceLock::new();
+static CODEX_USAGE: OnceLock<Regex> = OnceLock::new();
+static CODEX_TRY_AGAIN: OnceLock<Regex> = OnceLock::new();
+static CODEX_DATE: OnceLock<Regex> = OnceLock::new();
+static CODEX_CLOCK: OnceLock<Regex> = OnceLock::new();
 
 /// The longest wait a worker's words can set: a garbled number must neither
 /// overflow nor take a worker away for good.
@@ -355,6 +359,88 @@ pub fn command_code_refusal(text: &str, failed: bool, now_ms: u64, offset_min: i
     Some(Refusal { window: window.into(), until_ms, source, message: cut(text.trim(), 300) })
 }
 
+fn codex_usage_limit(message: &str) -> bool {
+    re(&CODEX_USAGE, r"(?i)you['’]ve hit your usage limit").is_match(message)
+}
+
+fn month_number(name: &str) -> Option<u32> {
+    const MONTHS: [&str; 12] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    let low = name.to_ascii_lowercase();
+    MONTHS.iter().position(|month| low.starts_with(month)).map(|index| index as u32 + 1)
+}
+
+fn hour_24(hour: u32, marker: Option<&str>) -> Option<u32> {
+    let hour = match marker.map(str::to_ascii_lowercase).as_deref() {
+        Some("pm") if hour < 12 => hour + 12,
+        Some("am") if hour == 12 => 0,
+        _ => hour,
+    };
+    (hour <= 23).then_some(hour)
+}
+
+/// The moment `Try again at …` names: a clock today or tomorrow, a dated time
+/// as it is. Local time, as the message is.
+fn codex_try_again(text: &str, now_ms: u64, offset_min: i32) -> Option<u64> {
+    let captures = re(
+        &CODEX_TRY_AGAIN,
+        r"(?i)try again at\s+([A-Za-z]{3,9}\.?\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\s+\d{1,2}:\d{2}(?:\s*[ap]m)?|\d{1,2}:\d{2}(?:\s*[ap]m)?)",
+    )
+    .captures(text)?;
+    let when = captures[1].trim();
+    if let Some(captures) = re(
+        &CODEX_DATE,
+        r"(?i)^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})\s+(\d{1,2}):(\d{2})(?:\s*([ap]m))?$",
+    )
+    .captures(when)
+    {
+        let month = month_number(&captures[1])?;
+        let day: u32 = captures[2].parse().ok()?;
+        let year: i32 = captures[3].parse().ok()?;
+        let hour = hour_24(captures[4].parse().ok()?, captures.get(6).map(|marker| marker.as_str()))?;
+        let minute: u32 = captures[5].parse().ok()?;
+        if !(1..=31).contains(&day) || minute > 59 {
+            return None;
+        }
+        return Some(clock::to_ms(&Civil { year, month, day, hour, minute, second: 0, weekday: 0 }, offset_min));
+    }
+    let captures = re(&CODEX_CLOCK, r"(?i)^(\d{1,2}):(\d{2})(?:\s*([ap]m))?$").captures(when)?;
+    let hour = hour_24(captures[1].parse().ok()?, captures.get(3).map(|marker| marker.as_str()))?;
+    let minute: u32 = captures[2].parse().ok()?;
+    if minute > 59 {
+        return None;
+    }
+    let local = clock::civil(now_ms, offset_min);
+    let at = clock::to_ms(
+        &Civil { year: local.year, month: local.month, day: local.day, hour, minute, second: 0, weekday: 0 },
+        offset_min,
+    );
+    Some(if at <= now_ms { at + 86_400_000 } else { at })
+}
+
+/// Codex's usage limit, its reset, and its credits, from the errors a turn
+/// reported. `Try again later` and a message with no time get the 5-hour estimate.
+pub fn codex_refusal(errors: &[String], now_ms: u64, offset_min: i32) -> Option<Refusal> {
+    let message = errors
+        .iter()
+        .find(|message| codex_usage_limit(message))
+        .or_else(|| errors.iter().find(|message| message.to_lowercase().contains("out of credits")))?;
+    if !codex_usage_limit(message) {
+        return Some(Refusal {
+            window: "credits".into(),
+            until_ms: wait_until(now_ms, 3_600_000),
+            source: Source::Estimate,
+            message: cut(message.trim(), 300),
+        });
+    }
+    let (until_ms, source) = match codex_try_again(message, now_ms, offset_min) {
+        Some(until) => (until, Source::Named),
+        None => (wait_until(now_ms, 5 * 3_600_000), Source::Estimate),
+    };
+    let window =
+        if source == Source::Named && until_ms.saturating_sub(now_ms) > 5 * 3_600_000 { "weekly" } else { "5-hour" };
+    Some(Refusal { window: window.into(), until_ms, source, message: cut(message.trim(), 300) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,5 +613,50 @@ mod tests {
         let text = format!("insufficient credits {}", "x".repeat(1000));
         let refusal = command_code_refusal(&text, true, now(), 0).unwrap();
         assert_eq!(refusal.message.chars().count(), 300);
+    }
+
+    #[test]
+    fn a_codex_usage_limit_reads_its_apostrophe_clock_and_date() {
+        let local = |day, hour, minute| {
+            clock::to_ms(&Civil { year: 2026, month: 10, day, hour, minute, second: 0, weekday: 0 }, 180)
+        };
+        let nine = local(26, 9, 0);
+        for message in [
+            "You’ve hit your usage limit for the 5-hour limit. Try again at 1:36 PM.",
+            "You've hit your usage limit. Try again at 1:36 PM.",
+        ] {
+            let refusal = codex_refusal(&[message.to_string()], nine, 180).unwrap();
+            assert_eq!((refusal.window.as_str(), refusal.source), ("5-hour", Source::Named), "{message}");
+            assert_eq!(refusal.until_ms, local(26, 13, 36), "{message}");
+        }
+
+        let sixteen = local(26, 16, 0);
+        let passed =
+            codex_refusal(&["You’ve hit your usage limit. Try again at 1:36 PM.".to_string()], sixteen, 180).unwrap();
+        assert_eq!(passed.until_ms, local(27, 13, 36), "a clock that passed is tomorrow");
+        assert_eq!(passed.window, "weekly", "tomorrow's reset is further than five hours");
+
+        let dated =
+            codex_refusal(&["You’ve hit your usage limit. Try again at Nov 2nd, 2026 2:14 AM.".to_string()], nine, 180)
+                .unwrap();
+        assert_eq!((dated.window.as_str(), dated.source), ("weekly", Source::Named));
+        let november =
+            clock::to_ms(&Civil { year: 2026, month: 11, day: 2, hour: 2, minute: 14, second: 0, weekday: 0 }, 180);
+        assert_eq!(dated.until_ms, november, "a date is that local moment");
+    }
+
+    #[test]
+    fn a_codex_limit_without_a_time_estimates_and_credits_are_their_own_window() {
+        let nine =
+            clock::to_ms(&Civil { year: 2026, month: 10, day: 26, hour: 9, minute: 0, second: 0, weekday: 0 }, 180);
+        for message in ["You’ve hit your usage limit. Try again later.", "You've hit your usage limit."] {
+            let refusal = codex_refusal(&[message.to_string()], nine, 180).unwrap();
+            assert_eq!((refusal.window.as_str(), refusal.source), ("5-hour", Source::Estimate), "{message}");
+            assert_eq!(refusal.until_ms, nine + 5 * 3_600_000, "{message}");
+        }
+        let credits = codex_refusal(&["Your workspace is out of credits.".to_string()], nine, 180).unwrap();
+        assert_eq!((credits.window.as_str(), credits.source), ("credits", Source::Estimate));
+        assert_eq!(credits.until_ms, nine + 3_600_000, "as Command Code's credits refusal");
+        assert!(codex_refusal(&["the tool exploded".to_string()], nine, 180).is_none());
     }
 }
