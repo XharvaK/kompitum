@@ -129,6 +129,12 @@ impl Fixture {
         std::fs::create_dir_all(full.parent().unwrap()).unwrap();
         std::fs::write(full, text).unwrap();
     }
+
+    /// Forget the last pull, as if 15 seconds had passed, so the next read
+    /// sees a change another clone pushed.
+    fn expire(&self, who: &str) {
+        let _ = std::fs::remove_file(self.vault(who).join(".git").join("kompitum-pulled"));
+    }
 }
 
 impl Drop for Fixture {
@@ -323,9 +329,11 @@ fn open_is_closed_by_a_reply_or_the_senders_mark() {
         &note("manager", "opus", "request", "2026-11-03T09:00+03:00", "Three", "Third."),
     );
     f.commit("manager", "manager: a third");
+    f.expire("opus");
     assert_eq!(f.json("opus", &["vault", "open"])["notes"][0]["path"], "manager/to/opus/c.md");
     let marked = f.json("manager", &["vault", "mark", "manager/to/opus/c.md", "answered"]);
     assert_eq!(marked["pushed"], true);
+    f.expire("opus");
     assert_eq!(f.json("opus", &["vault", "open"])["notes"], serde_json::json!([]));
 }
 
@@ -410,6 +418,7 @@ fn changes_lists_what_came_after_the_last_commit_it_saw() {
     let posted =
         f.json("manager", &["vault", "post", "--to", "opus", "--kind", "report", "--title", "New", "--body", "Fresh."]);
     let path = posted["path"].as_str().unwrap();
+    f.expire("opus");
 
     let changes = f.json("opus", &["vault", "changes"]);
     assert_eq!(changes["notes"][0]["path"], path);

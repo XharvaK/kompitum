@@ -1,14 +1,149 @@
 //! The vault's Git: pull before reading, one commit per change, push, and on a
 //! rejected push pull and push again. Never a force push. Every failure comes
-//! back as text to show, never swallowed.
+//! back as text to show, never swallowed. One kom at a time works in a clone:
+//! a lock file in `.git` guards the pulls and the writes, and a recent pull is
+//! remembered so a read does not repeat it.
 
-use std::io::Read;
-use std::path::Path;
+use super::clock::Moment;
+use std::fs::OpenOptions;
+use std::io::{ErrorKind, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 pub const READ_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// How long a taker waits for the vault's lock, how often it looks, and how
+/// old a lock may be before its holder is presumed gone.
+pub const LOCK_WAIT: Duration = Duration::from_secs(20);
+pub const LOCK_RETRY: Duration = Duration::from_millis(100);
+/// Longer than the longest a holder works (a write's three pull-and-push rounds,
+/// each git call up to 30 s), so a live holder is never taken over.
+pub const LOCK_STALE: Duration = Duration::from_secs(300);
+
+/// A read reuses a pull that finished this recently.
+pub const PULLED_FRESH: Duration = Duration::from_secs(15);
+
+const LIMITS: LockLimits = LockLimits { wait: LOCK_WAIT, retry: LOCK_RETRY, stale: LOCK_STALE };
+
+#[derive(Clone, Copy)]
+struct LockLimits {
+    wait: Duration,
+    retry: Duration,
+    stale: Duration,
+}
+
+/// The lock while this process holds it; dropping it lets the next kom in.
+struct VaultLock {
+    path: PathBuf,
+    /// What this process wrote into it, so it only ever removes its own lock.
+    token: String,
+}
+
+impl Drop for VaultLock {
+    fn drop(&mut self) {
+        if std::fs::read_to_string(&self.path).ok().as_deref() == Some(self.token.as_str()) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn lock_path(dir: &Path) -> PathBuf {
+    dir.join(".git").join("kompitum-vault.lock")
+}
+
+fn pulled_path(dir: &Path) -> PathBuf {
+    dir.join(".git").join("kompitum-pulled")
+}
+
+/// Whether a lock taken at `held_since` is older than `stale`.
+fn lock_is_stale(held_since: i64, now: i64, stale: Duration) -> bool {
+    now.saturating_sub(held_since) > stale.as_secs() as i64
+}
+
+/// Whether the taker may keep looking after waiting this long.
+fn still_waiting(waited: Duration, wait: Duration) -> bool {
+    waited < wait
+}
+
+/// Whether a pull that finished at `pulled_at` is still fresh enough to reuse.
+fn fresh_enough(pulled_at: i64, now: i64, within: Duration) -> bool {
+    now.saturating_sub(pulled_at) < within.as_secs() as i64
+}
+
+/// The epoch a lock file records, if it wrote one.
+fn lock_time(text: &str) -> Option<i64> {
+    text.split_whitespace().nth(1)?.parse().ok()
+}
+
+/// The time a lock file wrote, as the waiting kom shows it.
+fn lock_since(text: &str) -> Option<String> {
+    text.split_whitespace().nth(2).map(str::to_string)
+}
+
+/// A lock file's own age, for one whose contents cannot be read.
+fn lock_mtime(path: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    Some(modified.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64)
+}
+
+/// Take the vault's lock, waiting for another kom or removing a stale one.
+fn take(dir: &Path, limits: LockLimits) -> Result<VaultLock, String> {
+    let path = lock_path(dir);
+    let started = Instant::now();
+    loop {
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                let now = Moment::now();
+                let token = format!(
+                    "{} {} {}
+",
+                    std::process::id(),
+                    now.epoch,
+                    now.mark_stamp()
+                );
+                let _ = file.write_all(token.as_bytes());
+                return Ok(VaultLock { path, token });
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                let held = std::fs::read_to_string(&path).ok();
+                let now = Moment::now();
+                let held_since = held.as_deref().and_then(lock_time).or_else(|| lock_mtime(&path)).unwrap_or(now.epoch);
+                // Take over only the stale lock just read, and only if it really went:
+                // another waiter may have taken it over first.
+                if lock_is_stale(held_since, now.epoch, limits.stale)
+                    && std::fs::read_to_string(&path).ok() == held
+                    && std::fs::remove_file(&path).is_ok()
+                {
+                    continue;
+                }
+                if !still_waiting(started.elapsed(), limits.wait) {
+                    let since = held.as_deref().and_then(lock_since).unwrap_or_else(|| "an unknown time".to_string());
+                    return Err(format!(
+                        "Another kom is still working in the vault (since {since}). Nothing was pulled."
+                    ));
+                }
+                std::thread::sleep(limits.retry);
+            }
+            Err(error) => {
+                return Err(format!("The vault's lock {} could not be made: {error}", path.display()));
+            }
+        }
+    }
+}
+
+/// Remember that a pull just succeeded, for `pull_for_reading`.
+fn mark_pulled(dir: &Path) {
+    let _ = std::fs::write(pulled_path(dir), format!("{}\n", Moment::now().epoch));
+}
+
+/// Whether a pull finished less than `within` ago.
+fn pulled_within(dir: &Path, within: Duration) -> bool {
+    let Ok(text) = std::fs::read_to_string(pulled_path(dir)) else { return false };
+    let Ok(pulled_at) = text.trim().parse::<i64>() else { return false };
+    fresh_enough(pulled_at, Moment::now().epoch, within)
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct GitResult {
@@ -84,6 +219,22 @@ pub fn run(dir: &Path, args: &[&str], timeout: Duration) -> GitResult {
 
 /// Bring the vault up to date. A vault with no remote is left as it is.
 pub fn pull(dir: &Path, timeout: Duration) -> GitResult {
+    match take(dir, LIMITS) {
+        Ok(_lock) => pull_under_lock(dir, timeout),
+        Err(error) => GitResult { ok: false, output: String::new(), error },
+    }
+}
+
+/// The pull itself, with the lock already held. Success is remembered.
+fn pull_under_lock(dir: &Path, timeout: Duration) -> GitResult {
+    let result = pull_once(dir, timeout);
+    if result.ok {
+        mark_pulled(dir);
+    }
+    result
+}
+
+fn pull_once(dir: &Path, timeout: Duration) -> GitResult {
     let remotes = run(dir, &["remote"], timeout);
     if !remotes.ok {
         return remotes;
@@ -94,20 +245,32 @@ pub fn pull(dir: &Path, timeout: Duration) -> GitResult {
     run(dir, &["pull", "--rebase", "--quiet"], timeout)
 }
 
-/// Pull before a read. The line to say first when that failed, so an old copy
-/// never passes for the vault; else empty.
+/// Pull before a read unless a pull finished less than 15 seconds ago. The
+/// line to say first when that failed, so an old copy never passes for the
+/// vault; else empty.
 pub fn pull_for_reading(dir: &Path) -> String {
+    if pulled_within(dir, PULLED_FRESH) {
+        return String::new();
+    }
     let pulled = pull(dir, READ_TIMEOUT);
     if pulled.ok {
         String::new()
     } else {
-        format!("The vault could not be pulled, so this may be behind: {}", pulled.error)
+        let first = pulled.error.lines().next().unwrap_or("").trim();
+        format!("The vault couldn't be updated, so this may be behind (git: {first}).")
     }
 }
 
 /// Commit the given vault paths with the message and push. Retries a rejected
 /// push after a pull, up to three times.
 pub fn commit_and_push(dir: &Path, paths: &[String], message: &str) -> GitResult {
+    match take(dir, LIMITS) {
+        Ok(_lock) => commit_and_push_under_lock(dir, paths, message),
+        Err(error) => GitResult { ok: false, output: String::new(), error },
+    }
+}
+
+fn commit_and_push_under_lock(dir: &Path, paths: &[String], message: &str) -> GitResult {
     let mut add: Vec<&str> = vec!["add", "--"];
     add.extend(paths.iter().map(String::as_str));
     let added = run(dir, &add, TIMEOUT);
@@ -140,7 +303,7 @@ pub fn commit_and_push(dir: &Path, paths: &[String], message: &str) -> GitResult
         if last.ok {
             return GitResult { ok: true, output: "Committed and pushed.".into(), error: String::new() };
         }
-        let again = pull(dir, TIMEOUT);
+        let again = pull_under_lock(dir, TIMEOUT);
         if !again.ok {
             return GitResult {
                 ok: false,
@@ -301,6 +464,140 @@ mod tests {
         let failed = pull(&root, TIMEOUT);
         assert!(!failed.ok);
         assert!(!failed.error.is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn short_limits(wait: Duration) -> LockLimits {
+        LockLimits { wait, retry: Duration::from_millis(10), stale: Duration::from_secs(60) }
+    }
+
+    #[test]
+    fn staleness_and_freshness_are_decided_plainly() {
+        assert!(lock_is_stale(1_000, 1_061, Duration::from_secs(60)));
+        assert!(!lock_is_stale(1_000, 1_060, Duration::from_secs(60)));
+        assert!(!lock_is_stale(1_000, 999, Duration::from_secs(60)));
+        assert!(still_waiting(Duration::from_millis(99), Duration::from_millis(100)));
+        assert!(!still_waiting(Duration::from_millis(100), Duration::from_millis(100)));
+        assert!(fresh_enough(1_000, 1_014, PULLED_FRESH));
+        assert!(!fresh_enough(1_000, 1_015, PULLED_FRESH));
+    }
+
+    #[test]
+    fn a_second_taker_waits_for_the_first_and_a_stale_lock_is_taken() {
+        let root = scratch("lock");
+        command(&root, &["init", "-q", "-b", "main"]);
+        let limits = short_limits(Duration::from_secs(2));
+        let first = take(&root, limits).unwrap();
+        assert!(lock_path(&root).exists());
+        let waiter = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            drop(first);
+        });
+        let second = take(&root, limits).expect("the second taker gets it after the first lets go");
+        waiter.join().unwrap();
+        assert!(lock_path(&root).exists(), "the second taker holds it");
+        drop(second);
+        assert!(!lock_path(&root).exists(), "and lets go when it ends");
+
+        let old = Moment::now().epoch - 61;
+        std::fs::write(lock_path(&root), format!("999 {old} 2020-01-01T00:00:00+00:00\n")).unwrap();
+        let taken = take(&root, limits).expect("a stale lock is removed and taken");
+        assert!(lock_path(&root).exists());
+        drop(taken);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_holder_never_removes_a_lock_another_kom_took_over() {
+        let root = scratch("lock-owner");
+        command(&root, &["init", "-q", "-b", "main"]);
+        let mine = take(&root, short_limits(Duration::from_secs(1))).unwrap();
+        std::fs::write(
+            lock_path(&root),
+            "4242 1 2020-01-01T00:00:00+00:00
+",
+        )
+        .unwrap();
+        drop(mine);
+        assert!(lock_path(&root).exists(), "the other kom's lock stays");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_lock_that_never_goes_names_its_holder_and_says_nothing_was_pulled() {
+        let root = scratch("lock-held");
+        command(&root, &["init", "-q", "-b", "main"]);
+        let since = Moment::now().mark_stamp();
+        std::fs::write(lock_path(&root), format!("999 {} {since}\n", Moment::now().epoch)).unwrap();
+        let error = take(&root, short_limits(Duration::from_millis(50))).err().expect("a held lock is never taken");
+        assert_eq!(error, format!("Another kom is still working in the vault (since {since}). Nothing was pulled."));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn two_threads_pull_the_same_vault_at_once_and_both_succeed() {
+        let root = scratch("threads");
+        let remote = root.join("remote.git");
+        let clone = root.join("clone");
+        command(&root, &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+        command(&root, &["init", "-q", "-b", "main", clone.to_str().unwrap()]);
+        configure(&clone);
+        std::fs::write(clone.join("README.md"), "# Vault\n").unwrap();
+        command(&clone, &["add", "."]);
+        command(&clone, &["commit", "-q", "-m", "seed"]);
+        command(&clone, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        command(&clone, &["push", "-q", "-u", "origin", "main"]);
+
+        let one = clone.clone();
+        let two = clone.clone();
+        let first = std::thread::spawn(move || pull(&one, TIMEOUT));
+        let second = std::thread::spawn(move || pull(&two, TIMEOUT));
+        let (a, b) = (first.join().unwrap(), second.join().unwrap());
+        assert!(a.ok, "{}", a.error);
+        assert!(b.ok, "{}", b.error);
+        assert!(pulled_within(&clone, PULLED_FRESH), "a successful pull is remembered");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_read_reuses_a_recent_pull_but_a_write_always_pulls() {
+        let root = scratch("fresh");
+        let remote = root.join("remote.git");
+        command(&root, &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+        command(&root, &["init", "-q", "-b", "main", root.to_str().unwrap()]);
+        configure(&root);
+        std::fs::write(root.join("README.md"), "# Vault\n").unwrap();
+        command(&root, &["add", "."]);
+        command(&root, &["commit", "-q", "-m", "seed"]);
+        command(&root, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        command(&root, &["push", "-q", "-u", "origin", "main"]);
+
+        let pulled = pull(&root, TIMEOUT);
+        assert!(pulled.ok, "{}", pulled.error);
+        assert!(pulled_within(&root, PULLED_FRESH));
+        command(&root, &["remote", "set-url", "origin", root.join("missing.git").to_str().unwrap()]);
+        assert_eq!(pull_for_reading(&root), "", "a read within 15 seconds does not run git");
+        assert!(!pull(&root, TIMEOUT).ok, "a write always pulls");
+
+        let old = Moment::now().epoch - 16;
+        std::fs::write(pulled_path(&root), format!("{old}\n")).unwrap();
+        assert!(!pulled_within(&root, PULLED_FRESH));
+        let line = pull_for_reading(&root);
+        assert!(line.starts_with("The vault couldn't be updated"), "{line}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_read_pull_says_what_it_means_and_keeps_gits_first_line() {
+        let root = scratch("wording");
+        command(&root, &["init", "-q", "-b", "main"]);
+        configure(&root);
+        command(&root, &["remote", "add", "origin", root.join("missing.git").to_str().unwrap()]);
+        let failed = pull(&root, TIMEOUT);
+        assert!(!failed.ok);
+        let first = failed.error.lines().next().unwrap().trim();
+        let line = pull_for_reading(&root);
+        assert_eq!(line, format!("The vault couldn't be updated, so this may be behind (git: {first})."));
         std::fs::remove_dir_all(root).unwrap();
     }
 }
