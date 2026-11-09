@@ -768,6 +768,39 @@ mod tests {
     }
 
     #[test]
+    fn claude_ships_fable_opus_sonnet_haiku_with_hints() {
+        let raw: Value = serde_json::from_str(BUILT_IN).unwrap();
+        let models = raw["programs"]["claude"]["models"].as_array().unwrap();
+        let ids: Vec<&str> = models
+            .iter()
+            .map(|model| model["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["fable", "opus", "sonnet", "haiku"]);
+        let hints: Vec<(&str, &str)> = models
+            .iter()
+            .map(|model| (model["id"].as_str().unwrap(), model["hint"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            hints,
+            [
+                ("fable", "The most capable. Has its own weekly limit."),
+                ("opus", "Deep work and planning."),
+                ("sonnet", "Fast and capable."),
+                ("haiku", "Quick and light."),
+            ]
+        );
+        for key in ["codex", "opencode"] {
+            for model in raw["programs"][key]["models"].as_array().unwrap() {
+                assert!(
+                    model.get("hint").is_none(),
+                    "{key} model {} should have no hint",
+                    model["id"]
+                );
+            }
+        }
+    }
+
+    #[test]
     fn shipped_agents_carry_their_flags_models_and_workers() {
         let table = t();
         for key in ["claude", "command-code", "opencode", "grok"] {

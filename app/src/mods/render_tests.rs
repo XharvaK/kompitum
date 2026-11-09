@@ -2496,7 +2496,8 @@ fn agent_lead_dropdowns_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
         "the list stays closed: {tree}"
     );
     assert!(tree.contains("st-lead-model"), "{tree}");
-    assert!(tree.contains("Its own default"), "{tree}");
+    assert!(tree.contains("Choose…"), "no saved model shows the empty text: {tree}");
+    assert!(tree.contains("Its own default"), "reasoning keeps its own default: {tree}");
     assert!(tree.contains("st-lead-effort"), "{tree}");
     assert!(
         !tree.contains("st-lead-effort-low"),
@@ -2510,8 +2511,18 @@ fn agent_lead_dropdowns_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
         Some("this.agentPage.leadModel.open = true; this.agentPage.leadEffort.open = true;"),
     )
     .unwrap();
-    assert!(tree.contains("st-lead-model-default"), "{tree}");
-    assert!(tree.contains("st-lead-model-sonnet"), "{tree}");
+    assert!(
+        !tree.contains(r#":id("st-lead-model-")"#),
+        "the model list has no 'Its own default' row: {tree}"
+    );
+    for id in ["fable", "opus", "sonnet", "haiku"] {
+        assert!(
+            tree.contains(&format!("st-lead-model-{id}")),
+            "missing {id}: {tree}"
+        );
+    }
+    assert!(!tree.contains("st-lead-model-default"), "{tree}");
+    assert!(tree.contains(r#":id("st-lead-effort-")"#), "reasoning keeps its own default: {tree}");
     assert!(tree.contains("st-lead-effort-low"), "{tree}");
     assert!(tree.contains("st-lead-effort-max"), "{tree}");
 }
