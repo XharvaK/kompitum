@@ -108,3 +108,58 @@ fn the_effort_reset_shows_only_when_a_level_is_saved(cx: &mut TestAppContext) {
     assert!(found[0].1, "the effort view should show: {found:?}");
     assert!(found[1].1, "reset should show when a level is saved: {found:?}");
 }
+
+#[gpui::test]
+fn the_first_pick_card_shows_when_no_model_is_saved(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(false, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.insert("person".into(), composer_person(None, None));
+    let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
+    assert!(tree.contains("composer-first"), "{tree}");
+    assert!(tree.contains("Which model should the lead use?"), "{tree}");
+    assert!(
+        tree.contains("You can change it any time from the model menu below."),
+        "{tree}"
+    );
+    for id in ["fable", "opus", "sonnet", "haiku"] {
+        assert!(
+            tree.contains(&format!("composer-first-{id}")),
+            "missing {id}: {tree}"
+        );
+    }
+    assert!(tree.contains("composer-first-start"), "{tree}");
+    assert!(tree.contains("Start the lead"), "{tree}");
+    for gone in ["composer-send", "composer-empty", "composer-open"] {
+        assert!(!tree.contains(gone), "{gone}: {tree}");
+    }
+    assert!(
+        !tree.contains(":id[Str(\"composer-model\")]"),
+        "the picker stays hidden: {tree}"
+    );
+}
+
+#[gpui::test]
+fn start_stays_inert_until_a_model_row_is_clicked(cx: &mut TestAppContext) {
+    let before = composer_run_effects_after_clicks(
+        cx,
+        composer_person(None, None),
+        "",
+        &["composer-first-start"],
+    );
+    assert!(
+        !before.iter().any(|args| args.first() == Some(&json!("lead.open"))),
+        "Start must do nothing until a model is picked: {before:?}"
+    );
+    let after = composer_run_effects_after_clicks(
+        cx,
+        composer_person(None, None),
+        "",
+        &["composer-first-opus", "composer-first-start"],
+    );
+    assert!(
+        after.iter().any(|args| args.first() == Some(&json!("lead.open"))),
+        "Start after picking a model should run lead.open: {after:?}"
+    );
+}

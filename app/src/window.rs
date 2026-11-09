@@ -10393,6 +10393,52 @@ export default class Probe extends View {
         });
     }
 
+    #[test]
+    fn lead_open_asks_for_a_model_when_none_is_saved() {
+        in_own_process("lead_open_asks_for_a_model");
+    }
+
+    #[gpui::test]
+    fn lead_open_asks_for_a_model(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_open_asks_for_a_model") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.model = crate::model::Model::default();
+            this.model.add_space(
+                "sp1",
+                "test",
+                "/tmp",
+                crate::model::Tab::new("tb1", "", "p1", "t1"),
+            );
+            this.documents.get_mut("").unwrap().available = true;
+            let before = this.live.len();
+            let result = this.lead_open(window, cx);
+            assert!(result.is_ok(), "lead.open: {result:?}");
+            assert_eq!(
+                result.unwrap(),
+                json!({ "ok": true, "needs": "model" })
+            );
+            assert_eq!(this.live.len(), before, "lead.open starts nothing");
+            let has_composer = this.model.tabs().any(|tab| {
+                tab.root.panes().iter().any(|node| {
+                    matches!(
+                        node.content(),
+                        Some(crate::layout::Content::Mod { name, .. }) if name == "composer"
+                    )
+                })
+            });
+            assert!(has_composer, "lead.open shows the composer's tab");
+        });
+    }
+
     include!("window/pane_size_tests.rs");
 
     #[test]
