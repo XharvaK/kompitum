@@ -8,6 +8,9 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
+#[path = "lead/conversation.rs"]
+pub mod conversation;
+
 /// The compaction window each Claude terminal the app starts gets
 /// (the Owner, 2026-11-08). Part 5b's settings file uses it too.
 pub const AUTO_COMPACT_WINDOW: u64 = 444_000;
