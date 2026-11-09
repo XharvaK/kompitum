@@ -575,7 +575,8 @@ pub fn apply_hook_event(session: &mut Session, event: &str, input: &Value) -> bo
 }
 
 /// Reads the SessionStart transcript into the same items `fold` builds.
-/// Returns how many unknown line types were skipped; a missing path does nothing.
+/// Returns how many unknown line types were skipped. A missing path, or a session whose transcript
+/// isn't written yet, is no history at all; a file that is there but can't be read is a notice.
 pub fn apply_transcript_path(session: &mut Session, path: Option<&str>) -> u32 {
     let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
         return 0;
@@ -585,6 +586,7 @@ pub fn apply_transcript_path(session: &mut Session, path: Option<&str>) -> u32 {
             let loaded = items_from_transcript(&text);
             (Event::History { items: loaded.items }, loaded.skipped)
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return 0,
         Err(_) => (Event::HistoryUnread, 0),
     };
     session.conversation = fold(std::mem::take(&mut session.conversation), &event);
@@ -1494,7 +1496,7 @@ mod tests {
     }
 
     #[test]
-    fn a_transcript_file_loads_and_a_missing_one_is_a_notice() {
+    fn a_transcript_file_loads_and_only_an_unreadable_one_is_a_notice() {
         let dir = std::env::temp_dir().join(format!(
             "kompitum-transcript-{}-{}",
             std::process::id(),
@@ -1517,12 +1519,17 @@ mod tests {
             Item::Owner { text, .. } => assert_eq!(text, "Hello"),
             other => panic!("{other:?}"),
         }
+        // A transcript the session has not written yet is no history at all: no notice.
         let mut missing = Session::default();
         assert_eq!(
             apply_transcript_path(&mut missing, Some(dir.join("nope.jsonl").to_str().unwrap())),
             0
         );
-        match &missing.conversation.items[0] {
+        assert!(missing.conversation.items.is_empty(), "{:?}", missing.conversation.items);
+        // A path that is there but can't be read as a file is the one notice.
+        let mut unreadable = Session::default();
+        assert_eq!(apply_transcript_path(&mut unreadable, Some(dir.to_str().unwrap())), 0);
+        match &unreadable.conversation.items[0] {
             Item::Notice { text, .. } => assert_eq!(text, "Couldn't read the conversation history."),
             other => panic!("{other:?}"),
         }
