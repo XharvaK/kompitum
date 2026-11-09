@@ -354,3 +354,42 @@ fn a_bare_model_send_reveals(cx: &mut TestAppContext) {
         "a bare /model still goes through kom send: {sent:?}"
     );
 }
+
+/// A conversation taller than the pane keeps its newest item in view: the list
+/// scrolls to its end (scroll_to_end) rather than leaving the newest item below the fold.
+#[gpui::test]
+fn a_long_conversation_stays_on_its_newest_item(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let items: Vec<Value> = (0..80)
+        .map(|n| json!({"kind": "notice", "id": format!("n{n}"), "text": format!("Line {n}")}))
+        .collect();
+    let values = conversation_values(Value::Array(items), "hidden", Value::Null, None);
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-long-conversation.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", "");
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let list = visual
+        .debug_bounds("composer-conversation")
+        .expect("the conversation list is laid out");
+    let newest = visual
+        .debug_bounds("composer-item-n79")
+        .expect("the newest item is laid out");
+    let slack = gpui::px(1.0);
+    assert!(
+        newest.bottom() <= list.bottom() + slack && newest.bottom() > list.top(),
+        "the newest item must be in view: item {newest:?}, list {list:?}"
+    );
+}

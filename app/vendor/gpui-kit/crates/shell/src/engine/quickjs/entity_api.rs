@@ -1235,6 +1235,20 @@ pub fn install(ctx: &Ctx<'_>, module: &Object<'_>, runtime: Weak<ShellRuntime>) 
         }),
     )?;
 
+    // For a flex scroll area (`track_scroll` on a plain element), not a virtual list: the
+    // base handle goes to the bottom of the content at the next layout. Done here rather
+    // than as a method on the handle, since the handle's type is base's.
+    let scroll_to_end = runtime.clone();
+    globals.set(
+        "__virtual_scroll_to_end",
+        Func::from(move |ctx: Ctx<'_>, handle: EntityHandle| -> JsResult<()> {
+            live_virtual_scroll(&ctx, &scroll_to_end, handle)?
+                .base_handle()
+                .scroll_to_bottom();
+            Ok(())
+        }),
+    )?;
+
     let discard_virtual_scroll = runtime.clone();
     globals.set(
         "__virtual_scroll_release",

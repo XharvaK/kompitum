@@ -2224,17 +2224,26 @@ fn flex_element(
     // tree looks in when the script gives it the same name. The
     // `overflow_*_scrollbar` path above is deliberately left out of this: its
     // `Scrollable` owns a position of its own, on the inner area it builds.
+    // A `VirtualListScrollHandle` given to `track_scroll` drives this area too: its base
+    // handle is the plain position a flex area scrolls on, so `scroll_to_end` reaches it.
+    let driven = behavior.virtual_scroll.and_then(|handle| {
+        let scroll = runtime.entities().virtual_scroll(handle);
+        if scroll.is_none() {
+            tracing::error!("scroll handle {handle} is no longer live");
+        }
+        scroll.map(|scroll| scroll.base_handle().clone())
+    });
     let stateful = match (scroll_x, scroll_y) {
         (true, true) => {
-            components::scrollbar::track_scroll_position(stateful, &identity, window, cx)
+            components::scrollbar::track_scroll_position(stateful, &identity, driven, window, cx)
                 .overflow_scroll()
         }
         (true, false) => {
-            components::scrollbar::track_scroll_position(stateful, &identity, window, cx)
+            components::scrollbar::track_scroll_position(stateful, &identity, driven, window, cx)
                 .overflow_x_scroll()
         }
         (false, true) => {
-            components::scrollbar::track_scroll_position(stateful, &identity, window, cx)
+            components::scrollbar::track_scroll_position(stateful, &identity, driven, window, cx)
                 .overflow_y_scroll()
         }
         (false, false) => stateful,

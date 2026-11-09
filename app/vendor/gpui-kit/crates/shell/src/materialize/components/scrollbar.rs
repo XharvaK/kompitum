@@ -107,9 +107,14 @@ pub(in crate::materialize) fn scrollbar(
 ///
 /// Called from `flex_element` for every `overflow_*_scroll` element, which is
 /// what turns `id("watchlist")` into a name a bar elsewhere can address.
+///
+/// `driven` is the position a script made with `VirtualListScrollHandle.new()`
+/// and passed to `track_scroll`. The area then scrolls on that handle, so the
+/// script can move it with `scroll_to_end`, and a bar of the same name finds it.
 pub(in crate::materialize) fn track_scroll_position<E: StatefulInteractiveElement>(
     element: E,
     identity: &ElementId,
+    driven: Option<ScrollHandle>,
     window: &mut Window,
     cx: &mut App,
 ) -> E {
@@ -117,7 +122,15 @@ pub(in crate::materialize) fn track_scroll_position<E: StatefulInteractiveElemen
     if crate::materialize::checking() {
         return element;
     }
-    element.track_scroll(&scroll_position(identity, window, cx))
+    let handle = match driven {
+        Some(handle) => {
+            shared_scroll_position(identity, window, cx)
+                .update(cx, |shared, _| *shared = SharedScroll::Handle(handle.clone()));
+            handle
+        }
+        None => scroll_position(identity, window, cx),
+    };
+    element.track_scroll(&handle)
 }
 
 /// The scroll position shared by a scroll area and the bars driving it.

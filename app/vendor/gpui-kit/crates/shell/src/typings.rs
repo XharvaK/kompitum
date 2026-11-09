@@ -1702,6 +1702,11 @@ const ELEMENT_METHODS: &str = r#"    /**
      * `VirtualListScrollHandle`, so the script can drive it with
      * `scroll_to_item` and `scroll_to_bottom`.
      *
+     * On a plain element with `overflow_y_scroll()` (or `overflow_scroll()`,
+     * `overflow_x_scroll()`) it is the position that area scrolls on, so the
+     * script can drive it with `scroll_to_end`. Give such an area the handle
+     * before its first frame, not one made in `render()`.
+     *
      * Optional. Without one the list keeps a position of its own, filed under
      * the id it was built with — which is the same place a `Scrollbar` named
      * after that id looks, so the bar works either way.
@@ -3018,6 +3023,12 @@ const BASE: &str = r#"  /** A row. */
      */
     scroll_to_item(index: number, strategy?: "top" | "center"): void;
     scroll_to_bottom(): void;
+    /**
+     * Scrolls the plain area this handle drives (see `track_scroll` on an
+     * `overflow_y_scroll()` element) to its end before the next frame. For a
+     * virtual list, use `scroll_to_bottom`.
+     */
+    scroll_to_end(): void;
     /** Releases the handle. Using it afterwards throws. */
     release(): boolean;
   }

@@ -6,7 +6,7 @@
 // the box's place, and the Owner's click or key answers the hook.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, Textarea, TextareaState, InputState, Input, TextView, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb } from "gpui-base";
+import { v_flex, h_flex, Textarea, TextareaState, InputState, Input, TextView, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb, VirtualListScrollHandle, Scrollbar } from "gpui-base";
 import {
   kom,
   run,
@@ -208,6 +208,8 @@ export default class Composer extends View {
     this.items = [];
     this.seenVersion = null;
     this.stickToBottom = true;
+    // The conversation's scroll position, held here so it can be moved to the end. Made in init, never in render.
+    this.scroll = VirtualListScrollHandle.new();
     this.openTools = {};
     this.openToolGroups = {};
     this.handle = cx.focus_handle();
@@ -1325,6 +1327,8 @@ export default class Composer extends View {
     if (!Array.isArray(fresh)) fresh = [];
     this.items = this.items.slice(0, start).concat(fresh);
     this.seenVersion = meta.version;
+    // Stuck to the bottom, a new item (or a new text batch) keeps the newest one in view.
+    if (this.stickToBottom) this.scroll.scroll_to_end();
   }
 
   terminalShown() {
@@ -1394,6 +1398,7 @@ export default class Composer extends View {
           .px(12)
           .py(8)
           .rounded(14)
+          .max_w("80%")
           .bg(t.selected)
           .text_size(13.5)
           .text_color(t.foreground)
@@ -1531,8 +1536,8 @@ export default class Composer extends View {
       .pt(16)
       .pb(16)
       .gap(14)
-      .overflow_y_scrollbar()
-      .when(this.stickToBottom, (el) => el.justify_end())
+      .overflow_y_scroll()
+      .track_scroll(this.scroll)
       .on_scroll_wheel((event, cx) => {
         if (event.delta.y < 0 && this.stickToBottom) {
           this.stickToBottom = false;
@@ -1553,6 +1558,7 @@ export default class Composer extends View {
       .min_h(0)
       .relative()
       .child(list)
+      .child(Scrollbar.vertical("composer-conversation").absolute().inset_0())
       .child(div().absolute().top(12).right(16).child(this.terminalToggle(t)))
       .when(!this.stickToBottom, (el) =>
         el.child(
@@ -1572,6 +1578,7 @@ export default class Composer extends View {
             .cursor_pointer()
             .on_click(() => {
               this.stickToBottom = true;
+              this.scroll.scroll_to_end();
               cx.notify();
             })
             .child("Jump to latest"),
