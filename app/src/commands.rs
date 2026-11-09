@@ -238,6 +238,11 @@ pub const COMMANDS: &[Command] = &[
         "Add Kompitum's tools and skill to Claude Code, for the claude lead.",
     ),
     cmd(
+        "lead.answer",
+        &[req("id"), req("answer")],
+        "Answer the lead's open ask: its id and the Owner's answer ({ action: allow, allow_always, deny, approve, keep_planning, answers, or terminal, with note or answers }).",
+    ),
+    cmd(
         "layout.switch",
         &[opt("name")],
         "Show a layout (layouts/<name>.json), or the next one.",

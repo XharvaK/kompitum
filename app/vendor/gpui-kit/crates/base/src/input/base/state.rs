@@ -6,8 +6,8 @@ use gpui::TextAlign;
 use gpui::{
     Action, App, AppContext, Bounds, ClipboardItem, Context, Edges, Entity, EntityInputHandler,
     EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, KeyBinding,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point,
-    Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled as _, Subscription,
+    KeyContext, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
+    Pixels, Point, Render, ScrollHandle, ScrollWheelEvent, SharedString, Styled as _, Subscription,
     UTF16Selection, WeakFocusHandle, Window, actions, div, point, prelude::FluentBuilder as _, px,
 };
 use ropey::{Rope, RopeSlice};
@@ -474,6 +474,9 @@ pub struct InputBaseState<M: InputModeKind> {
     pub(super) masked: bool,
     pub(super) clean_on_escape: bool,
     pub(super) submit_on_enter: bool,
+    /// Another key context on the input's own element, so a caller's bindings
+    /// can outrank the editor's without taking keys from every other input.
+    pub(super) extra_context: Option<SharedString>,
     pub(super) show_whitespaces: bool,
     /// This flag tells the renderer to prefer the end of the current visual line.
     pub(crate) cursor_line_end_affinity: bool,
@@ -840,6 +843,7 @@ impl<M: InputModeKind> InputBaseState<M> {
             masked: false,
             clean_on_escape: false,
             submit_on_enter: false,
+            extra_context: None,
             show_whitespaces: false,
             loading: false,
             pattern: None,
@@ -1256,6 +1260,15 @@ impl<M: InputModeKind> InputBaseState<M> {
 
     pub fn set_submit_on_enter(&mut self, submit: bool, cx: &mut Context<Self>) {
         self.submit_on_enter = submit;
+        cx.notify();
+    }
+
+    /// Adds `context` to the input element's own key context (the deepest one,
+    /// where the editor's own bindings live), or removes it with `None`. A
+    /// caller's bindings in that context then outrank the editor's, without
+    /// taking the same keys from every other input.
+    pub fn set_key_context(&mut self, context: Option<SharedString>, cx: &mut Context<Self>) {
+        self.extra_context = context;
         cx.notify();
     }
 
@@ -4622,9 +4635,16 @@ impl<M: InputModeKind> Render for InputBaseState<M> {
             self._pending_update = false;
         }
 
+        let mut key_context = KeyContext::parse(CONTEXT).expect("the input key context parses");
+        if let Some(extra) = &self.extra_context
+            && let Ok(extra) = KeyContext::parse(extra)
+        {
+            key_context.extend(&extra);
+        }
+
         let element = div()
             .id("input-state")
-            .key_context(CONTEXT)
+            .key_context(key_context)
             .track_focus(&self.focus_handle)
             .when(self.is_editable(), |this| {
                 this.on_action(window.listener_for(&entity, InputBaseState::backspace))

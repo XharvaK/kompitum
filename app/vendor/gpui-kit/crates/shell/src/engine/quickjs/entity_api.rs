@@ -370,6 +370,22 @@ pub fn install(ctx: &Ctx<'_>, module: &Object<'_>, runtime: Weak<ShellRuntime>) 
         ),
     )?;
 
+    let context_runtime = runtime.clone();
+    globals.set(
+        "__textarea_set_key_context",
+        Func::from(
+            move |ctx: Ctx<'_>, handle: EntityHandle, context: Option<String>| -> JsResult<()> {
+                let state = live_textarea(&ctx, &context_runtime, handle)?;
+                scope::with_current_app(|cx| {
+                    state.update(cx, |state, cx| {
+                        state.set_key_context(context.map(Into::into), cx);
+                    });
+                })
+                .ok_or_else(|| needs_call(&ctx, "set_key_context()"))
+            },
+        ),
+    )?;
+
     let grow_runtime = runtime.clone();
     globals.set(
         "__textarea_set_auto_grow",

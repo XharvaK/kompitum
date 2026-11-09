@@ -297,6 +297,20 @@ export function setAgentOrder(addresses: string[]): null;
  *  `program` (see Program). Live. */
 export function terminals(): any[];
 
+/** One open ask from Claude Code, held until the Owner answers it. */
+export interface LeadAsk {
+  id: string;
+  terminal: string;
+  kind: "permission" | "plan" | "question";
+  /** The hook event's JSON: tool_name, tool_input, permission_suggestions, ... */
+  input: any;
+}
+
+/** The lead terminal's state and open ask, from Claude Code's hooks; null when
+ *  no hook has reported one (a lead that isn't Claude, or the very first
+ *  moment). Live: the copy re-renders when either changes. */
+export function lead(): { state: "working" | "asking" | "waiting" | null; ask: LeadAsk | null } | null;
+
 /** Actual terminal/pane focus. `space` and `tab` are the current window context.
  *  Clicking a visible layout terminal block, or pane.focus {terminal}, focuses that block:
  *  `terminal` and `cwd` describe it; `pane` and `shown` are null, not its source pane.

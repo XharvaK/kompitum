@@ -1,10 +1,11 @@
 //! Shipped JS descriptions and native rendering regressions.
 use super::*;
-use gpui::TestAppContext;
-use gpui_shell::{ShellRuntime, plugin::DescriptionSession, policy::Policy};
+use gpui::{Entity, IntoElement, Render, TestAppContext, VisualTestContext};
+use gpui_shell::{ShellRoot, ShellRuntime, plugin::DescriptionSession, policy::Policy};
 use std::{
     cell::Cell,
     collections::{BTreeMap, BTreeSet},
+    ops::Deref,
     rc::Rc,
     sync::atomic::{AtomicU64, Ordering},
     time::Instant,
@@ -81,6 +82,7 @@ fn fixture(populated: bool, props: Value, update: Value) -> BTreeMap<String, Val
         ("props".into(), props),
         ("machines".into(), json!([{ "name": null, "layout": "ready" }])),
         ("spaces".into(), json!([])), ("agents".into(), json!([])), ("terminals".into(), json!([])), ("panes".into(), json!([])), ("focused".into(), Value::Null),
+        ("lead".into(), Value::Null),
         ("layout".into(), serde_json::from_str(include_str!("../../defaults/layouts/main.json")).unwrap()),
         ("layouts".into(), json!(crate::window::shipped_layouts())),
         ("theme".into(), serde_json::to_value(&*crate::settings::theme()).unwrap()),
@@ -101,7 +103,7 @@ fn fixture(populated: bool, props: Value, update: Value) -> BTreeMap<String, Val
             {"id":"s2","index":2,"name":"Remote","folder":"/remote/project","machine":"remote","branch":null,"active":false,"status":"done","tabs":[{"id":"tab2","index":1,"name":"Done","active":true,"status":"done","panes":1,"zoomed":false,"settled":false,"settled_at":null,"changed_at":null,"working_since":null}]}
         ]));
         values.insert("panes".into(), json!([{"pane":"p1","terminal":"t1","tab":"tab1","title":"Build","cwd":"/fixture/project","branch":"main","status":"working","app":"pi","program":program,"focused":true,"zoomed":false}, {"pane":"p2","terminal":"t2","tab":"tab2","title":"Remote task","cwd":"/remote/project","branch":null,"status":"done","app":"pi","program":program,"focused":false,"zoomed":false}]));
-        values.insert("terminals".into(), json!([{"address":"t1","name":"Build","title":"Build","argv":["pi"],"parent":null,"labels":{},"state":"running","status":"working","report":{"app":"pi"},"program":program,"cwd":"/fixture/project"}, {"address":"t2","name":"Remote task","title":"Remote task","argv":["pi"],"parent":null,"labels":{},"state":"running","status":"done","report":{"app":"pi"},"program":program,"cwd":"/remote/project"}]));
+        values.insert("terminals".into(), json!([{"address":"t1","name":"Build","title":"Build","argv":["pi"],"parent":null,"labels":{},"state":"live","status":"working","report":{"app":"pi"},"program":program,"cwd":"/fixture/project"}, {"address":"t2","name":"Remote task","title":"Remote task","argv":["pi"],"parent":null,"labels":{},"state":"live","status":"done","report":{"app":"pi"},"program":program,"cwd":"/remote/project"}]));
         values.insert("agents".into(), json!([{"address":"t1","pane":"p1","space":"s1","space_name":"Local","tab":"tab1","tab_index":1,"tab_name":"Build","status":"working","app":"pi","program":program,"title":"Build","seq":1,"focused":true}, {"address":"t2","pane":"p2","space":"s2","space_name":"Remote","tab":"tab2","tab_index":1,"tab_name":"Done","status":"done","app":"pi","program":program,"title":"Remote task","seq":2,"focused":false}]));
         values.insert(
             "focused".into(),
@@ -285,6 +287,11 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     "tasks": {"review": [{"name": "fix-docs", "repo": "kompitum-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []},
                     "claude": null
                 })).to_string(),"stderr":""})),
+                // The composer's send: one recorded effect, so key tests can read it.
+                "kom" if first.as_array().and_then(|a| a.first()).and_then(Value::as_str) == Some("send") => {
+                    calls.borrow_mut().effects.push(("kom".into(), vec![first.clone()]));
+                    Some(json!({"code":0,"stdout":"","stderr":""}))
+                }
                 // The Line: one note from Manager.
                 "kom" if first == json!(["vault", "thread", "manager", "--json"]) => Some(json!({"code":0,"stdout":json!({
                     "agent": "opus",
@@ -738,6 +745,309 @@ fn the_composer_renders_with_and_without_a_lead(cx: &mut TestAppContext) {
     let tree = describe_settled(cx, &staged, "mods/composer", without, None).unwrap();
     assert!(tree.contains("The lead isn't running"), "{tree}");
     assert!(tree.contains("composer-open"), "{tree}");
+}
+
+/// A listed terminal that has ended is not the lead: the composer shows Open.
+#[gpui::test]
+fn the_composer_needs_a_live_lead(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.get_mut("terminals").unwrap()[0]["state"] = json!("exited");
+    let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
+    assert!(tree.contains("The lead isn't running"), "{tree}");
+    assert!(tree.contains("composer-open"), "{tree}");
+}
+
+fn composer_with_ask(kind: &str, input: Value) -> BTreeMap<String, Value> {
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.insert(
+        "lead".into(),
+        json!({
+            "state": "asking",
+            "ask": {"id": "a1", "terminal": "t1", "kind": kind, "input": input},
+        }),
+    );
+    values
+}
+
+/// Each tool's permission card says what Claude wants, not its raw JSON.
+#[gpui::test]
+fn the_permission_card_says_what_claude_wants(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for (tool, input, expected) in [
+        ("Bash", json!({"command": "cargo test --all"}), vec!["Run a command", "cargo test --all"]),
+        ("Edit", json!({"file_path": "/src/main.rs"}), vec!["Edit /src/main.rs"]),
+        ("Write", json!({"file_path": "/tmp/out.txt"}), vec!["Edit /tmp/out.txt"]),
+        ("Read", json!({"file_path": "/tmp/log.txt"}), vec!["Read /tmp/log.txt"]),
+        ("WebFetch", json!({"url": "https://example.invalid/page"}), vec!["Fetch https://example.invalid/page"]),
+        ("WebSearch", json!({"query": "rust lifetimes"}), vec!["Search the web for rust lifetimes"]),
+        ("mcp__github__create_issue", json!({"title": "A bug"}), vec!["create_issue on github"]),
+        ("Grep", json!({"pattern": "needle"}), vec!["Grep", "needle"]),
+    ] {
+        let tree = describe_settled(
+            cx,
+            &staged,
+            "mods/composer",
+            composer_with_ask("permission", json!({"tool_name": tool, "tool_input": input})),
+            None,
+        )
+        .unwrap_or_else(|e| panic!("{tool}: {e:#}"));
+        for expected in expected {
+            assert!(tree.contains(expected), "{tool} misses {expected:?}: {tree}");
+        }
+        assert!(tree.contains("composer-allow"), "{tool}: {tree}");
+        assert!(tree.contains("composer-deny"), "{tool}: {tree}");
+        assert!(tree.contains("composer-terminal-answer"), "{tool}: {tree}");
+        assert!(!tree.contains("composer-allow-always"), "{tool}: allow always without suggestions: {tree}");
+    }
+}
+
+/// Allow always appears only with a suggestion, and says where the rule lives.
+#[gpui::test]
+fn allow_always_says_where_the_rule_is_kept(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for (destination, words) in [
+        ("session", "for this session"),
+        ("localSettings", "in this project"),
+        ("projectSettings", "in this project"),
+        ("userSettings", "for all your projects"),
+    ] {
+        let values = composer_with_ask(
+            "permission",
+            json!({
+                "tool_name": "Bash",
+                "tool_input": {"command": "ls"},
+                "permission_suggestions": [{"destination": destination}],
+            }),
+        );
+        let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
+        assert!(tree.contains("composer-allow-always"), "{destination}: {tree}");
+        assert!(tree.contains(words), "{destination}: {tree}");
+    }
+}
+
+/// The plan card names the plan and offers both answers.
+#[gpui::test]
+fn the_plan_card_offers_approve_and_keep_planning(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        composer_with_ask("plan", json!({"tool_name": "ExitPlanMode", "tool_input": {"plan": "Do it."}})),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Claude's plan is ready"), "{tree}");
+    assert!(tree.contains("composer-approve"), "{tree}");
+    assert!(tree.contains("composer-keep-planning"), "{tree}");
+    assert!(tree.contains("composer-terminal-answer"), "{tree}");
+    assert!(!tree.contains("composer-allow"), "{tree}");
+}
+
+/// A question card shows its header, text, options and descriptions.
+#[gpui::test]
+fn the_question_card_shows_every_question_and_option(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        composer_with_ask(
+            "question",
+            json!({
+                "tool_name": "AskUserQuestion",
+                "tool_input": {"questions": [
+                    {
+                        "question": "Which database?",
+                        "header": "Database",
+                        "multiSelect": false,
+                        "options": [
+                            {"label": "Postgres", "description": "The server's own"},
+                            {"label": "SQLite", "description": "A single file"},
+                        ],
+                    },
+                    {
+                        "question": "Which checks?",
+                        "header": "Checks",
+                        "multiSelect": true,
+                        "options": [
+                            {"label": "Tests", "description": "Run the suite"},
+                            {"label": "Lint", "description": "Keep it tidy"},
+                        ],
+                    },
+                ]},
+            }),
+        ),
+        None,
+    )
+    .unwrap();
+    for expected in [
+        "Database",
+        "Which database?",
+        "Postgres",
+        "The server's own",
+        "SQLite",
+        "Checks",
+        "Which checks?",
+        "Tests",
+        "Lint",
+        "composer-send-answers",
+        "composer-terminal-answer",
+    ] {
+        assert!(tree.contains(expected), "missing {expected:?}: {tree}");
+    }
+}
+
+struct Mounted(Entity<ShellRoot>);
+impl Render for Mounted {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        self.0.clone()
+    }
+}
+
+/// Dispatches `keys` to a mounted composer and returns what it sent with
+/// `kom send`. The real focus path matters: GPUI's Input context keeps Up and
+/// Down for the caret, so the composer's root must still hear them.
+fn composer_sends_after_keys(cx: &mut TestAppContext, setup: &str, keys: &str) -> Vec<Vec<Value>> {
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.insert("lead".into(), json!({"state": "working", "ask": null}));
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-keys.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let root = staged.wrapper("mods/composer", setup);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    visual.simulate_keystrokes(keys);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    calls
+        .effects
+        .iter()
+        .filter(|(name, _)| name == "kom")
+        .filter_map(|(_, args)| args.first()?.as_array().cloned())
+        .collect()
+}
+
+#[gpui::test]
+fn up_and_down_recall_history_from_the_textarea(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let sends = composer_sends_after_keys(
+        cx,
+        "this.history = ['newest', 'oldest']; this.historyAt = -1; this.setHistory(true, cx); this.text.set_submit_on_enter(true); this.text.focus();",
+        "up up enter",
+    );
+    let sent = sends.iter().find_map(|args| args.get(2).and_then(Value::as_str)).unwrap_or_default();
+    assert!(
+        sent.contains("oldest") && !sent.contains("newest"),
+        "Up twice must recall the second history entry, then Enter sends it: {sends:?}"
+    );
+}
+
+#[gpui::test]
+fn up_moves_the_caret_in_a_non_empty_draft(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let sends = composer_sends_after_keys(
+        cx,
+        "this.history = ['newest', 'oldest']; this.historyAt = -1; this.text.set_value('typed'); this.text.set_submit_on_enter(true); this.setHistory(false, cx); this.text.focus();",
+        "up enter",
+    );
+    let sent = sends.iter().find_map(|args| args.get(2).and_then(Value::as_str)).unwrap_or_default();
+    assert!(
+        sent.contains("typed") && !sent.contains("newest"),
+        "Up in a draft must move the caret, not recall history: {sends:?}"
+    );
+}
+
+/// With the card showing, Enter answers it: the Owner's key becomes the hook's
+/// reply through `lead.answer`, not a message typed into the terminal.
+#[gpui::test]
+fn enter_answers_a_permission_card(cx: &mut TestAppContext) {
+    let answered = composer_run_effects_after_keys(
+        cx,
+        composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
+        "enter",
+    );
+    assert!(
+        answered.iter().any(|args| {
+            args.first() == Some(&json!("lead.answer"))
+                && args.get(1) == Some(&json!({"id": "a1", "answer": {"action": "allow"}}))
+        }),
+        "Enter must answer the card through lead.answer: {answered:?}"
+    );
+}
+
+/// Escape answers a permission card with a denial, never by typing Esc into
+/// the terminal: the composer's own Escape action must see the card first.
+#[gpui::test]
+fn escape_denies_a_permission_card(cx: &mut TestAppContext) {
+    let answered = composer_run_effects_after_keys(
+        cx,
+        composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
+        "escape",
+    );
+    assert!(
+        answered.iter().any(|args| {
+            args.first() == Some(&json!("lead.answer"))
+                && args.get(1) == Some(&json!({"id": "a1", "answer": {"action": "deny"}}))
+        }),
+        "Escape must deny the card through lead.answer: {answered:?}"
+    );
+}
+
+fn composer_run_effects_after_keys(
+    cx: &mut TestAppContext,
+    values: BTreeMap<String, Value>,
+    keys: &str,
+) -> Vec<Vec<Value>> {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-card.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let window =
+        cx.add_window(|window, cx| Mounted(runtime.try_load(staged.0.join("mods/composer"), window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    visual.simulate_keystrokes(keys);
+    visual.run_until_parked();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    calls.effects.iter().filter(|(name, _)| name == "run").map(|(_, args)| args.clone()).collect()
 }
 
 /// A mod's localStorage write lands on the executor; one that lands after the

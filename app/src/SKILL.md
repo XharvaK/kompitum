@@ -149,6 +149,14 @@ floats included, even when the window is covered or minimized. No screen
 capture or permissions. It needs a running window that has drawn a frame;
 `KOMPITUM_APP_HOME` selects the window, as for `status`.
 
+## The composer
+
+The composer sits below the lead's terminal and sends only what the person typed, when they press Enter (or click Send). Files and folders dropped on it, and images pasted into it, wait as chips above the text.
+
+When the lead is Claude Code, its permission prompts, plan approvals and questions come into the composer as cards; the person's click or key answers Claude through the app's hook. A card is answered only by that click or key. While the lead asks, the text box is replaced by the card and Enter does not send a message. "Answer in the terminal" sends no hook answer, so Claude shows its own prompt above.
+
+Three Claude Code prompts reach no hook, so they show only in the terminal above and the composer cannot answer them: the sandbox's network prompt, an MCP server's input form, and the folder-trust and sign-in screens.
+
 ## Problems and safety
 
 If Kompitum misbehaves, `kompitum-app feedback "<what happened>"` drafts a report.

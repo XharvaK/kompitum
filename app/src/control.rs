@@ -47,20 +47,72 @@ fn serve(stream: UnixStream, tx: async_channel::Sender<Request>) {
         return;
     }
     let reply = match serde_json::from_str::<Value>(&line) {
-        Ok(cmd) => {
-            let timeout = Duration::from_secs(if cmd.get("shot").is_some() { 30 } else { 5 });
+        Ok(mut cmd) => {
+            let shot = cmd.get("shot").is_some();
+            let hook = cmd.get("do").and_then(Value::as_str) == Some("lead.hook");
+            let blocking = hook && blocking_event(&cmd);
+            let hook_id = blocking.then(hook_id);
+            if let Some(id) = &hook_id
+                && let Some(args) = cmd.get_mut("args").and_then(Value::as_object_mut)
+            {
+                args.insert("hook_id".into(), json!(id));
+            }
+            // A blocking hook's owner may go away first: its socket tells us.
+            if let Some(id) = hook_id
+                && let Ok(mut watch) = stream.try_clone()
+            {
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let mut byte = [0u8; 1];
+                    loop {
+                        match watch.read(&mut byte) {
+                            Ok(0) | Err(_) => break,
+                            Ok(_) => {}
+                        }
+                    }
+                    let _ = tx.send_blocking(Request::HookClosed { id });
+                });
+            }
             let (reply_tx, reply_rx) = std::sync::mpsc::channel();
-            let _ = tx.send_blocking(Request::Control {
-                cmd,
-                reply: reply_tx,
-            });
-            reply_rx
-                .recv_timeout(timeout)
-                .unwrap_or_else(|_| json!({ "error": "the window did not answer" }))
+            if tx
+                .send_blocking(Request::Control {
+                    cmd,
+                    reply: reply_tx,
+                })
+                .is_err()
+            {
+                json!({ "error": "the window did not answer" })
+            } else if blocking {
+                // Claude's own hook timeout ends a waiting ask, not this thread.
+                reply_rx
+                    .recv()
+                    .unwrap_or_else(|_| json!({ "error": "the window did not answer" }))
+            } else {
+                let timeout = Duration::from_secs(if shot { 30 } else { 5 });
+                reply_rx
+                    .recv_timeout(timeout)
+                    .unwrap_or_else(|_| json!({ "error": "the window did not answer" }))
+            }
         }
         Err(e) => json!({ "error": format!("bad request: {e}") }),
     };
     let _ = (&stream).write_all(format!("{reply}\n").as_bytes());
+}
+
+fn blocking_event(cmd: &Value) -> bool {
+    matches!(
+        cmd.pointer("/args/event").and_then(Value::as_str),
+        Some("PermissionRequest" | "PreToolUse")
+    )
+}
+
+fn hook_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!(
+        "hook-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
 }
 
 /// One Kompitum per home: a second launch brings the running window to the

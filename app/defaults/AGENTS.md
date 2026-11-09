@@ -613,7 +613,8 @@ The main ones:
   programs such as yazi; partial images and scrolling follow the placeholder cells.
 - Agents: `agent.next`, `agent.prev`, `agent.focus {terminal}`, `lead.open`
   (focus the lead and put the composer under it, starting it when needed),
-  `lead.setup` (add Kompitum's MCP tools and kom skill to the `claude` lead).
+  `lead.setup` (add Kompitum's MCP tools and kom skill to the `claude` lead),
+  `lead.answer {id, answer}` (answer the lead's card: the hook's reply).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`
   (personal tree edits; on shipped layouts only click/look fields change),

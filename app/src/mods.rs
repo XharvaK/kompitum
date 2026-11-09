@@ -527,6 +527,8 @@ pub enum Request {
         cmd: Value,
         reply: std::sync::mpsc::Sender<Value>,
     },
+    /// A blocking hook's connection closed before it was answered.
+    HookClosed { id: String },
 }
 
 static REQUESTS: OnceLock<async_channel::Sender<Request>> = OnceLock::new();
@@ -727,6 +729,8 @@ pub struct Snapshot {
     /// Every pane: { pane, terminal, tab, title, cwd, branch, status, app, focused, zoomed }.
     pub panes: Value,
     pub terminals: Value,
+    /// The lead's state and ask by terminal address.
+    pub lead: Value,
     pub focused: Value,
     /// Floating blocks by id: { edge, align, vertical }.
     pub floats: Value,
@@ -744,6 +748,7 @@ impl Default for Snapshot {
             agents: json!([]),
             panes: json!([]),
             terminals: json!([]),
+            lead: json!({}),
             focused: Value::Null,
             floats: json!({}),
             window: Value::Null,
@@ -791,6 +796,9 @@ pub fn publish_terminals(v: Value) -> bool {
     publish("terminals", |s| {
         (std::mem::replace(&mut s.terminals, v.clone()), v)
     })
+}
+pub fn publish_lead(v: Value) -> bool {
+    publish("lead", |s| (std::mem::replace(&mut s.lead, v.clone()), v))
 }
 pub fn terminal_address(word: &str, source: &str) -> Option<String> {
     SNAPSHOT.with(|s| {
@@ -1376,6 +1384,18 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             Ok(HostValue::Null)
         })
         .function("terminals", reader(reads.clone(), "terminals", |s| &s.terminals))
+        .function("lead", {
+            let terminal = props.get("terminal").and_then(Value::as_str).map(str::to_owned);
+            let reads = reads.clone();
+            move |_| {
+                let Some(terminal) = terminal.as_deref() else {
+                    return Ok(HostValue::Null);
+                };
+                Ok(read(&reads, "lead", |s| {
+                    s.lead.get(terminal).unwrap_or(&Value::Null)
+                }))
+            }
+        })
         .function("focused", reader(reads.clone(), "focused", |s| &s.focused))
         .function("layout", reader(reads.clone(), "layout", |s| &s.layout))
         .function("layouts", |_| Ok(to_host(&json!(crate::window::layout_names()))))

@@ -3128,6 +3128,10 @@ const BASE: &str = r#"  /** A row. */
     set_auto_grow(min_rows: number, max_rows: number): void;
     /** Plain Enter submits (`submit` with `shift: false`) and Shift+Enter adds a new line. */
     set_submit_on_enter(submit: boolean): void;
+    /** Another key context on this textarea's own element, so bindings in it
+     *  outrank the editor's without taking those keys from every other input.
+     *  `null` removes it. */
+    set_key_context(context: string | null): void;
     /** Wraps long lines instead of scrolling sideways. Default is on. */
     set_soft_wrap(wrap: boolean): void;
     /** Moves the keyboard onto the textarea. */

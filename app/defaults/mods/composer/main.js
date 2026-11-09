@@ -2,10 +2,11 @@
 // Owner typed, when they press Enter or click Send. Files and folders dropped
 // on it, and images pasted into it, wait as chips above the text.
 //
-// Part 5b turns `state` and `card` into Claude's prompts; both are empty here.
+// While Claude Code asks (a permission, a plan or a question) its card takes
+// the box's place, and the Owner's click or key answers the hook.
 
 import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, Textarea, TextareaState } from "gpui-base";
+import { v_flex, h_flex, Textarea, TextareaState, InputState, Input } from "gpui-base";
 import {
   kom,
   exec,
@@ -23,6 +24,8 @@ import {
   readTextFile,
   window,
   pasteImage,
+  lead as leadOf,
+  settings,
 } from "kompitum";
 
 const HISTORY_KEY = "composer.history";
@@ -118,6 +121,55 @@ function routeModel(route) {
   return model;
 }
 
+function compactJson(value) {
+  try {
+    return JSON.stringify(value ?? {});
+  } catch {
+    return String(value ?? "");
+  }
+}
+
+function cut(text, limit = 300) {
+  const value = String(text ?? "");
+  return value.length > limit ? `${value.slice(0, limit)}…` : value;
+}
+
+// What Claude wants, from the tool and its input. `mono` marks the detail that
+// reads best as the command itself.
+function permissionSummary(toolName, toolInput) {
+  const name = String(toolName ?? "");
+  const input = toolInput && typeof toolInput === "object" ? toolInput : {};
+  if (name === "Bash") return { title: "Run a command", detail: String(input.command ?? ""), mono: true };
+  if (name === "Edit" || name === "Write") return { title: `Edit ${String(input.file_path ?? "")}` };
+  if (name === "Read") return { title: `Read ${String(input.file_path ?? "")}` };
+  if (name === "WebFetch") return { title: `Fetch ${String(input.url ?? "")}` };
+  if (name === "WebSearch") return { title: `Search the web for ${String(input.query ?? "")}` };
+  if (name.startsWith("mcp__")) {
+    const rest = name.slice("mcp__".length);
+    const at = rest.indexOf("__");
+    if (at > 0) return { title: `${rest.slice(at + 2)} on ${rest.slice(0, at)}` };
+  }
+  return { title: name || "A tool", detail: cut(compactJson(input)) };
+}
+
+const DESTINATIONS = {
+  session: "for this session",
+  localSettings: "in this project",
+  projectSettings: "in this project",
+  userSettings: "for all your projects",
+};
+
+function permissionDestination(ask) {
+  const suggestions = ask?.input?.permission_suggestions;
+  const destination = Array.isArray(suggestions) ? suggestions[0]?.destination : null;
+  return DESTINATIONS[destination] ?? "where Claude keeps its rules";
+}
+
+function askQuestions(ask) {
+  const questions = ask?.input?.tool_input?.questions;
+  return Array.isArray(questions) ? questions : [];
+}
+
 function planLimit(plan, model, label) {
   if (plan?.models) return plan.models?.[model]?.[label];
   return plan?.windows?.[label];
@@ -190,9 +242,14 @@ export default class Composer extends View {
     this.draft = "";
     this.askAt = null;
     this.hoverPlan = false;
-    // Part 5b fills these: working, asking, waiting, or unknown, and its card.
+    // The lead's state and its open ask, from Claude Code's hooks.
     this.state = null;
-    this.card = null;
+    this.ask = null;
+    this.askId = null;
+    this.noteOpen = false;
+    this.noteInput = null;
+    this.noteAction = null;
+    this.answers = {};
     this.handle = cx.focus_handle();
     if (this.mode === "compose") {
       this.text = TextareaState.new({ placeholder: "Message the lead…" });
@@ -200,8 +257,7 @@ export default class Composer extends View {
       this.text.set_submit_on_enter(true);
       this.text.on("change", (_event, cx) => {
         if (this.text.value().length === 0) this.historyAt = -1;
-        this.historyMode = this.text.value().length === 0 || this.historyAt >= 0;
-        cx.notify();
+        this.setHistory(this.text.value().length === 0 || this.historyAt >= 0, cx);
       });
       this.text.on("submit", (event, cx) => this.submit(event, cx));
       this.text.on("paste_other", (_event, cx) => this.pastedImage(cx));
@@ -212,6 +268,7 @@ export default class Composer extends View {
         { keystroke: "down", action: "composer-history-down", context: "ComposerHistory" },
       ]);
       this.historyMode = true;
+      this.text.set_key_context("ComposerHistory");
       this.takeAsk(cx);
     } else {
       this.handle.focus();
@@ -264,6 +321,7 @@ export default class Composer extends View {
       this.apps = apps;
     } finally {
       this.loading = false;
+      cx.notify();
     }
   }
 
@@ -294,7 +352,10 @@ export default class Composer extends View {
   }
 
   leadLive() {
-    return Boolean(this.terminal && terminals().some((terminal) => terminal.address === this.terminal));
+    return Boolean(
+      this.terminal
+        && terminals().some((terminal) => terminal.address === this.terminal && terminal.state === "live"),
+    );
   }
 
   leadLine() {
@@ -308,12 +369,21 @@ export default class Composer extends View {
 
   takeAsk(cx) {
     if (this.mode !== "compose" || !this.leadLive()) return;
+    const open = leadOf()?.ask ?? null;
+    if (open?.id && open.id !== this.focusedAsk) {
+      this.focusedAsk = open.id;
+      this.handle.focus();
+    } else if (!open && this.focusedAsk) {
+      this.focusedAsk = null;
+      this.text.focus();
+    }
     const ask = shared("composer.ask");
     if (!ask || typeof ask.text !== "string" || !ask.text.trim()) return;
     if (this.askAt === ask.at) return;
     this.askAt = ask.at;
     setShared("composer.ask", null);
     this.text.set_value(ask.text);
+    this.setHistory(true, cx);
     this.text.focus();
     cx.notify();
   }
@@ -344,10 +414,148 @@ export default class Composer extends View {
   }
 
   escape(cx) {
+    if (this.state === "asking") {
+      if (this.ask) this.cardEscape(this.ask, cx);
+      return;
+    }
     if (this.text.value().length === 0 && this.leadLive()) this.stopTurn(cx);
   }
 
+  cardEscape(ask, cx) {
+    if (this.noteOpen) {
+      this.closeNote(cx);
+      return;
+    }
+    this.answer(ask, ask.kind === "plan" ? { action: "keep_planning" } : { action: "deny" }, cx);
+  }
+
+  // The keys reach the card while one shows. History's Up and Down are bound
+  // on the textarea's own ComposerHistory context instead, so they outrank the
+  // editor's caret keys only while the box is empty or browsing history.
+  keyDown(event, cx) {
+    if (this.state === "asking" && this.ask) this.cardKey(event, cx);
+  }
+
+  cardKey(event, cx) {
+    const ask = this.ask;
+    if (this.noteOpen) {
+      if (event.keystroke === "escape") {
+        this.cardEscape(ask, cx);
+        cx.stop_propagation();
+      }
+      return;
+    }
+    if (ask.kind === "question") {
+      if (/^[1-4]$/.test(event.keystroke)) {
+        this.pickOption(ask, Number(event.keystroke) - 1, cx);
+        cx.stop_propagation();
+      } else if (event.keystroke === "enter" && this.allAnswered(ask)) {
+        this.sendAnswers(ask, cx);
+        cx.stop_propagation();
+      }
+      return;
+    }
+    if (event.keystroke === "enter") {
+      this.answer(ask, ask.kind === "plan" ? { action: "approve" } : { action: "allow" }, cx);
+      cx.stop_propagation();
+    } else if (event.keystroke === "escape") {
+      this.cardEscape(ask, cx);
+      cx.stop_propagation();
+    }
+  }
+
+  answer(ask, answer, cx) {
+    if (!ask) return;
+    this.noteOpen = false;
+    this.noteInput = null;
+    run("lead.answer", { id: ask.id, answer });
+    cx.notify();
+  }
+
+  openNote(action, cx) {
+    this.noteAction = action;
+    this.noteInput = InputState.new({
+      placeholder: action === "deny" ? "Why not? (optional)" : "What should change? (optional)",
+    });
+    this.noteInput.on("submit", (_event, cx) => this.sendNote(cx));
+    this.noteOpen = true;
+    this.noteInput.focus();
+    cx.notify();
+  }
+
+  closeNote(cx) {
+    this.noteOpen = false;
+    this.noteInput = null;
+    this.noteAction = null;
+    this.handle.focus();
+    cx.notify();
+  }
+
+  sendNote(cx) {
+    if (!this.ask || !this.noteInput) return;
+    this.answer(this.ask, { action: this.noteAction, note: this.noteInput.value() }, cx);
+  }
+
+  questionAnswered(question) {
+    const value = this.answers[question.question];
+    if (Array.isArray(value)) return value.length > 0;
+    return typeof value === "string" && value.length > 0;
+  }
+
+  allAnswered(ask) {
+    const questions = askQuestions(ask);
+    return questions.length > 0 && questions.every((question) => this.questionAnswered(question));
+  }
+
+  pickOption(ask, index, cx) {
+    const question = askQuestions(ask).find((item) => !this.questionAnswered(item));
+    if (!question) return;
+    const option = question.options?.[index];
+    if (!option) return;
+    const label = String(option.label ?? "");
+    if (!label) return;
+    if (question.multiSelect) {
+      const chosen = Array.isArray(this.answers[question.question]) ? this.answers[question.question] : [];
+      this.answers[question.question] = chosen.includes(label)
+        ? chosen.filter((item) => item !== label)
+        : [...chosen, label];
+    } else {
+      this.answers[question.question] = label;
+    }
+    cx.notify();
+  }
+
+  toggleOption(question, label, cx) {
+    if (question.multiSelect) {
+      const chosen = Array.isArray(this.answers[question.question]) ? this.answers[question.question] : [];
+      this.answers[question.question] = chosen.includes(label)
+        ? chosen.filter((item) => item !== label)
+        : [...chosen, label];
+    } else {
+      this.answers[question.question] = label;
+    }
+    cx.notify();
+  }
+
+  sendAnswers(ask, cx) {
+    if (!this.allAnswered(ask)) return;
+    this.answer(ask, { action: "answers", answers: this.answers }, cx);
+  }
+
+  answerInTerminal(ask, cx) {
+    this.answer(ask, { action: "terminal" }, cx);
+  }
+
+  setHistory(value, cx) {
+    if (this.historyMode === value) return;
+    this.historyMode = value;
+    if (this.text) this.text.set_key_context(value ? "ComposerHistory" : null);
+    cx.notify();
+  }
+
   historyKey(direction, cx) {
+    // A card owns the keys while it shows; the draft under it stays put.
+    if (this.ask) return;
     if (direction > 0) {
       if (this.historyAt < 0 && this.text.value().length > 0) return;
       if (this.historyAt >= this.history.length - 1) return;
@@ -367,7 +575,7 @@ export default class Composer extends View {
       this.historyAt = next;
       this.text.set_value(this.history[next]);
     }
-    this.historyMode = this.text.value().length === 0 || this.historyAt >= 0;
+    this.setHistory(this.text.value().length === 0 || this.historyAt >= 0, cx);
     this.text.focus();
     cx.notify();
   }
@@ -398,6 +606,7 @@ export default class Composer extends View {
 
   send(cx) {
     if (this.sending) return;
+    if (this.state === "asking") return;
     const text = this.text.value();
     const paths = this.chips.map((chip) => chip.path);
     if (!text.trim() && paths.length === 0) return;
@@ -418,7 +627,7 @@ export default class Composer extends View {
         this.error = null;
         this.historyAt = -1;
         this.draft = "";
-        this.historyMode = true;
+        this.setHistory(true, cx);
         if (text.trim()) {
           this.history = [text, ...this.history.filter((message) => message !== text)].slice(0, HISTORY_LIMIT);
           saveHistory(this.history);
@@ -464,9 +673,15 @@ export default class Composer extends View {
   }
 
   dot(t) {
-    const colors = { working: t.working, asking: t.blocked, waiting: t.done };
-    const color = this.state ? colors[this.state] : null;
-    return div().w(7).h(7).rounded(4).when(Boolean(color), (el) => el.bg(color));
+    if (!this.state) return null;
+    // Working pulses; asking is the amber that wants the Owner; waiting is still.
+    const color = this.state === "asking" ? t.working : this.state === "waiting" ? t.done : t.accent;
+    return div()
+      .w(7)
+      .h(7)
+      .rounded(4)
+      .bg(color)
+      .when(this.state === "working", (el) => el.loop("opacity", { from: 0.35, to: 1, period: 900 }));
   }
 
   ring(t, percent, color, size = 18) {
@@ -573,7 +788,7 @@ export default class Composer extends View {
       .border_b(1)
       .border_color(t.border)
       .child(div().text_size(12).font_medium().text_color(t.foreground).child(this.leadLine()))
-      .child(this.dot(t))
+      .when(Boolean(this.state), (el) => el.child(this.dot(t)))
       .child(div().flex_1())
       .child(this.iconButton("composer-mail", svg("frame/settings/mail.svg").size(14).text_color(t.muted), t, () => run("app.mailbox")))
       .child(this.planRing(t))
@@ -636,7 +851,170 @@ export default class Composer extends View {
       .child(h_flex().child(this.filledButton("composer-open", "Open", () => run("lead.open"), t)));
   }
 
+  cardButton(id, label, action, t, { filled = false, tooltip = null } = {}) {
+    const button = filled ? this.filledButton(id, label, action, t) : h_flex()
+      .id(id)
+      .h(28)
+      .px(12)
+      .items_center()
+      .rounded(7)
+      .border_1()
+      .border_color(t.input)
+      .bg(t.raised)
+      .text_color(t.foreground)
+      .text_size(12.5)
+      .font_medium()
+      .cursor_pointer()
+      .hover((style) => style.bg(t.hover))
+      .on_click(action)
+      .child(label);
+    return tooltip ? button.tooltip(tooltip) : button;
+  }
+
+  noteField(t, cx) {
+    if (!this.noteOpen || !this.noteInput) return null;
+    return h_flex()
+      .w_full()
+      .gap(6)
+      .items_center()
+      .child(
+        div()
+          .flex_1()
+          .min_w(0)
+          .h(28)
+          .px(8)
+          .flex()
+          .items_center()
+          .rounded(7)
+          .border_1()
+          .border_color(t.input)
+          .bg(t.surface)
+          .child(Input.new(this.noteInput).w_full().text_size(12.5).text_color(t.foreground)),
+      )
+      .child(this.cardButton("composer-note-cancel", "Cancel", () => this.closeNote(cx), t))
+      .child(this.cardButton("composer-note-send", "Send", () => this.sendNote(cx), t, { filled: true }));
+  }
+
+  permissionCard(t, cx, ask) {
+    const summary = permissionSummary(ask.input?.tool_name, ask.input?.tool_input);
+    const suggestions = Array.isArray(ask.input?.permission_suggestions) ? ask.input.permission_suggestions : [];
+    const head = v_flex()
+      .w_full()
+      .gap(4)
+      .child(div().text_size(13).font_medium().text_color(t.foreground).child(summary.title));
+    if (summary.detail) {
+      head.child(
+        div()
+          .text_size(12)
+          .text_color(t.muted)
+          .when(Boolean(summary.mono), (el) => el.font_family(settings()?.font_family ?? "Google Sans Code"))
+          .child(summary.detail),
+      );
+    }
+    const buttons = h_flex().w_full().gap(6).items_center()
+      .child(this.cardButton("composer-allow", "Allow", () => this.answer(ask, { action: "allow" }, cx), t, { filled: true }))
+      .when(suggestions.length > 0, (el) => el.child(
+        this.cardButton(
+          "composer-allow-always",
+          "Allow always",
+          () => this.answer(ask, { action: "allow_always" }, cx),
+          t,
+          { tooltip: permissionDestination(ask) },
+        ),
+      ))
+      .child(this.cardButton("composer-deny", "Deny", () => this.openNote("deny", cx), t));
+    return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
+      .child(head)
+      .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
+      .when(!this.noteOpen, (el) => el.child(buttons))
+      .child(this.terminalAnswerLink(ask, t, cx));
+  }
+
+  planCard(t, cx, ask) {
+    const buttons = h_flex().w_full().gap(6).items_center()
+      .child(this.cardButton("composer-approve", "Approve", () => this.answer(ask, { action: "approve" }, cx), t, { filled: true }))
+      .child(this.cardButton("composer-keep-planning", "Keep planning", () => this.openNote("keep_planning", cx), t));
+    return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
+      .child(div().text_size(13).font_medium().text_color(t.foreground).child("Claude's plan is ready"))
+      .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
+      .when(!this.noteOpen, (el) => el.child(buttons))
+      .child(this.terminalAnswerLink(ask, t, cx));
+  }
+
+  questionCard(t, cx, ask) {
+    const questions = askQuestions(ask);
+    return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
+      .children(questions.map((question, questionIndex) => {
+        const answer = this.answers[question.question];
+        const chosen = Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : [];
+        return v_flex()
+          .w_full()
+          .gap(4)
+          .child(div().text_size(12.5).font_medium().text_color(t.foreground).child(question.header || question.question))
+          .when(Boolean(question.header), (el) => el.child(div().text_size(12).text_color(t.muted).child(question.question)))
+          .children((question.options ?? []).map((option, optionIndex) => {
+            const label = String(option.label ?? "");
+            const picked = chosen.includes(label);
+            return h_flex()
+              .id(`composer-option-${questionIndex}-${optionIndex}`)
+              .w_full()
+              .gap(6)
+              .items_center()
+              .px(8)
+              .py(5)
+              .rounded(7)
+              .border_1()
+              .border_color(picked ? t.accent : t.input)
+              .bg(picked ? t.selected : t.raised)
+              .cursor_pointer()
+              .hover((style) => style.bg(t.hover))
+              .on_click(() => this.toggleOption(question, label, cx))
+              .child(div().text_size(12.5).font_medium().text_color(t.foreground).child(`${optionIndex + 1}. ${label}`))
+              .when(Boolean(option.description), (el) => el.child(div().text_size(11.5).text_color(t.dim).child(option.description)));
+          }));
+      }))
+      .child(
+        h_flex().w_full().gap(6).items_center()
+          .child(
+            this.cardButton("composer-send-answers", "Send answers", () => this.sendAnswers(ask, cx), t, { filled: true })
+              .when(!this.allAnswered(ask), (el) => el.opacity(0.45)),
+          )
+          .child(div().flex_1())
+          .child(this.terminalAnswerLink(ask, t, cx)),
+      );
+  }
+
+  terminalAnswerLink(ask, t, cx) {
+    return h_flex()
+      .id("composer-terminal-answer")
+      .items_center()
+      .cursor_pointer()
+      .text_size(11.5)
+      .text_color(t.dim)
+      .hover((style) => style.text_color(t.foreground))
+      .on_click(() => this.answerInTerminal(ask, cx))
+      .child("Answer in the terminal");
+  }
+
+  card(t, cx) {
+    if (this.ask.kind === "plan") return this.planCard(t, cx, this.ask);
+    if (this.ask.kind === "question") return this.questionCard(t, cx, this.ask);
+    return this.permissionCard(t, cx, this.ask);
+  }
+
   compose(t, cx) {
+    const lead = leadOf();
+    this.state = lead?.state ?? null;
+    this.ask = lead?.ask ?? null;
+    const askId = this.ask?.id ?? null;
+    if (askId !== this.askId) {
+      this.askId = askId;
+      this.noteOpen = false;
+      this.noteInput = null;
+      this.noteAction = null;
+      this.answers = {};
+      if (askId) cx.timer.after(0, () => this.handle.focus());
+    }
     return v_flex()
       .id("composer")
       .size_full()
@@ -647,44 +1025,47 @@ export default class Composer extends View {
       .on_action("composer-escape", (_event, cx) => this.escape(cx))
       .on_action("composer-history-up", (_event, cx) => this.historyKey(1, cx))
       .on_action("composer-history-down", (_event, cx) => this.historyKey(-1, cx))
+      .on_key_down((event, cx) => this.keyDown(event, cx))
       .on_drop((event, cx) => {
         for (const path of event.paths ?? []) this.addChip(path);
         cx.notify();
       })
       .child(this.header(t, cx))
       .when(this.chips.length > 0, (el) => el.child(this.chipsRow(t, cx)))
-      .when(Boolean(this.state), (el) => el.child(div().px(10).pt(4).text_size(11).text_color(t.dim).child(String(this.state))))
-      .when(Boolean(this.card), (el) => el.child(div().px(10).pt(4).text_size(12).text_color(t.muted).child(String(this.card))))
-      .child(
-        v_flex()
-          .flex_1()
-          .min_h(0)
-          .px(10)
-          .py(8)
-          .child(
-            div()
-              .w_full()
-              .rounded(7)
-              .border_1()
-              .border_color(t.input)
-              .bg(t.surface)
-              .px(9)
-              .py(6)
-              .child(Textarea.new(this.text).w_full()),
-          ),
-      )
+      .when(Boolean(this.ask), (el) =>
+        el.child(v_flex().w_full().px(10).py(8).child(this.card(t, cx))))
+      .when(!this.ask, (el) =>
+        el.child(
+          v_flex()
+            .flex_1()
+            .min_h(0)
+            .px(10)
+            .py(8)
+            .child(
+              div()
+                .w_full()
+                .rounded(7)
+                .border_1()
+                .border_color(t.input)
+                .bg(t.surface)
+                .px(9)
+                .py(6)
+                .child(Textarea.new(this.text).w_full()),
+            ),
+        ))
       .when(Boolean(this.error), (el) =>
         el.child(div().id("composer-error").px(12).pb(6).text_size(11.5).text_color(t.blocked).child(this.error)))
-      .child(
-        h_flex()
-          .w_full()
-          .px(10)
-          .pb(8)
-          .items_center()
-          .gap(8)
-          .child(div().flex_1())
-          .child(this.filledButton("composer-send", this.sending ? "Sending…" : "Send", () => this.send(cx), t)),
-      );
+      .when(!this.ask, (el) =>
+        el.child(
+          h_flex()
+            .w_full()
+            .px(10)
+            .pb(8)
+            .items_center()
+            .gap(8)
+            .child(div().flex_1())
+            .child(this.filledButton("composer-send", this.sending ? "Sending…" : "Send", () => this.send(cx), t)),
+        ));
   }
 
   planRow(t, cx, entry) {

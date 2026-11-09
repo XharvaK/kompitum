@@ -171,15 +171,13 @@ pub fn argv(
     out
 }
 
-/// A terminal is the lead when it carries the label and still runs the lead's
-/// program: a kept terminal that a reboot replaced with a shell keeps the label
-/// but must be resumed, not focused.
+/// A terminal is the lead when it is live, carries the lead label with the
+/// lead's program key, and isn't back at a shell: a terminal whose agent ended
+/// is not the lead, so `lead.open` starts a new one.
 pub fn is_lead_record(record: &Value, program: &str) -> bool {
-    record
-        .pointer("/labels/lead")
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.is_empty())
-        && record.pointer("/program/key").and_then(Value::as_str) == Some(program)
+    record.get("state").and_then(Value::as_str) == Some("live")
+        && record.pointer("/labels/lead").and_then(Value::as_str) == Some(program)
+        && record.pointer("/program/shell").and_then(Value::as_bool) != Some(true)
 }
 
 /// Nanoseconds since the Unix epoch, the clock a fresh id mixes in.
@@ -237,56 +235,110 @@ pub fn retry_needed(record: &Value, already_retried: bool) -> bool {
     elapsed <= 10_000
 }
 
+/// Claude Code's `modelSettings`: the four models the app starts, each with the
+/// same compaction window (the Owner, 2026-11-08).
+pub fn model_settings() -> Value {
+    let mut models = Map::new();
+    for model in ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"] {
+        models.insert(model.into(), json!({ "autoCompactWindow": AUTO_COMPACT_WINDOW }));
+    }
+    models.into()
+}
+
 /// The settings file a Claude lead starts with: one memory (the vault's), the
-/// compaction window for each model, and the two SessionStart handlers.
+/// compaction window for each model, and the hooks that bring Claude's prompts
+/// into the composer.
 pub fn claude_settings(app: &Path, core: &Path) -> Value {
     let app = app.to_string_lossy();
     let core = core.to_string_lossy();
-    let mut models = Map::new();
-    for model in [
-        "claude-fable-5-1",
-        "claude-opus-5-5",
-        "claude-sonnet-5-5",
-        "claude-haiku-5-5",
-    ] {
-        models.insert(
-            model.into(),
-            json!({ "autoCompactWindow": AUTO_COMPACT_WINDOW }),
-        );
-    }
+    let mut hooks = Map::new();
+    hooks.insert(
+        "SessionStart".into(),
+        json!([{
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": app,
+                    "args": ["hook", "SessionStart"],
+                    "timeout": 10,
+                },
+                {
+                    "type": "command",
+                    "command": core,
+                    "args": ["vault", "memory", "--hook"],
+                    "timeout": 30,
+                },
+            ],
+        }]),
+    );
+    hooks.insert(
+        "PermissionRequest".into(),
+        json!([{
+            "hooks": [{
+                "type": "command",
+                "command": app,
+                "args": ["hook", "PermissionRequest"],
+                "timeout": 3600,
+            }],
+        }]),
+    );
+    hooks.insert(
+        "PreToolUse".into(),
+        json!([{
+            "matcher": "AskUserQuestion",
+            "hooks": [{
+                "type": "command",
+                "command": app,
+                "args": ["hook", "PreToolUse"],
+                "timeout": 3600,
+            }],
+        }]),
+    );
+    hooks.insert(
+        "UserPromptSubmit".into(),
+        json!([{
+            "hooks": [{
+                "type": "command",
+                "command": app,
+                "args": ["hook", "UserPromptSubmit"],
+                "async": true,
+            }],
+        }]),
+    );
+    hooks.insert(
+        "Stop".into(),
+        json!([{
+            "hooks": [{
+                "type": "command",
+                "command": app,
+                "args": ["hook", "Stop"],
+                "async": true,
+            }],
+        }]),
+    );
+    hooks.insert(
+        "Notification".into(),
+        json!([{
+            "matcher": "idle_prompt",
+            "hooks": [{
+                "type": "command",
+                "command": app,
+                "args": ["hook", "Notification"],
+                "async": true,
+            }],
+        }]),
+    );
     json!({
         "autoMemoryEnabled": false,
-        "modelSettings": models,
-        "hooks": {
-            "SessionStart": [{
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": app,
-                        "args": ["hook", "SessionStart"],
-                        "timeout": 10,
-                    },
-                    {
-                        "type": "command",
-                        "command": core,
-                        "args": ["vault", "memory", "--hook"],
-                        "timeout": 30,
-                    },
-                ],
-            }],
-        },
+        "modelSettings": model_settings(),
+        "hooks": hooks,
     })
 }
 
 /// Writes the lead's Claude settings file, made fresh every start.
 pub fn write_claude_settings(app_dir: &Path, app: &Path, core: &Path) -> Result<PathBuf, String> {
     let path = app_dir.join("lead").join("claude-settings.json");
-    let fail = |error: std::io::Error| {
-        format!(
-            "Couldn't write the lead's settings file {}: {error}",
-            path.display()
-        )
-    };
+    let fail = |error: std::io::Error| format!("Couldn't write the lead's settings file {}: {error}", path.display());
     let text = serde_json::to_string_pretty(&claude_settings(app, core)).unwrap_or_default() + "\n";
     std::fs::create_dir_all(path.parent().unwrap_or(app_dir))
         .and_then(|()| crate::persist::write_atomic(&path, text))
@@ -389,14 +441,233 @@ pub fn setup(kom: &Path, home: &Path) -> Result<Value, String> {
     Ok(json!({ "mcp": mcp, "skill": skill }))
 }
 
-/// A SessionStart from the lead's own terminal records the id the app should
-/// resume. Anything else changes nothing.
+/// Where every Claude Code the app starts on this machine reads its compaction
+/// window: `<app folder>/claude-settings.json`.
+pub fn app_claude_settings_path(app_dir: &Path) -> PathBuf {
+    app_dir.join("claude-settings.json")
+}
+
+/// Writes the settings file every Claude Code the app starts gets: only
+/// `modelSettings`, the 444K compaction window.
+pub fn write_app_claude_settings(app_dir: &Path) -> Result<PathBuf, String> {
+    let path = app_claude_settings_path(app_dir);
+    let fail =
+        |error: std::io::Error| format!("Couldn't write Claude Code's settings file {}: {error}", path.display());
+    let text = serde_json::to_string_pretty(&json!({ "modelSettings": model_settings() })).unwrap_or_default() + "\n";
+    std::fs::create_dir_all(app_dir).and_then(|()| crate::persist::write_atomic(&path, text)).map_err(fail)?;
+    Ok(path)
+}
+
+/// Whether a new terminal's argv is a local Claude Code start without its own
+/// `--settings`.
+pub fn needs_claude_settings(argv: &[String], on: Option<&str>) -> bool {
+    on.is_none()
+        && argv.first().is_some_and(|program| is_claude(program))
+        && !argv.iter().any(|word| word == "--settings")
+}
+
+fn is_claude(program: &str) -> bool {
+    let path = Path::new(program);
+    if path.file_stem().and_then(|stem| stem.to_str()).is_none_or(|stem| !stem.eq_ignore_ascii_case("claude")) {
+        return false;
+    }
+    match path.extension().and_then(|ext| ext.to_str()) {
+        None => true,
+        Some(ext) => ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("cmd"),
+    }
+}
+
+/// Inserts `--settings <file>` right after the program when this is a local
+/// Claude Code start without one; everything else stays as it is.
+pub fn with_claude_settings(argv: Vec<String>, on: Option<&str>, file: &Path) -> Vec<String> {
+    if !needs_claude_settings(&argv, on) {
+        return argv;
+    }
+    let mut out = Vec::with_capacity(argv.len() + 2);
+    out.push(argv[0].clone());
+    out.push("--settings".into());
+    out.push(file.to_string_lossy().into_owned());
+    out.extend(argv.into_iter().skip(1));
+    out
+}
+
+/// What the composer shows for one lead terminal.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum State {
+    Working,
+    Asking,
+    Waiting,
+}
+
+/// What a blocking hook is asking.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AskKind {
+    Permission,
+    Plan,
+    Question,
+}
+
+/// Claude's open ask, as the app holds it and the composer reads it.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Ask {
+    pub id: String,
+    pub terminal: String,
+    pub kind: AskKind,
+    pub input: Value,
+}
+
+/// One terminal's lead state and ask.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct Session {
+    #[serde(default)]
+    pub state: Option<State>,
+    #[serde(default)]
+    pub ask: Option<Ask>,
+}
+
+/// The kind of ask a blocking hook makes, or None for an event that is not one.
+pub fn ask_kind(event: &str, input: &Value) -> Option<AskKind> {
+    let tool = input.get("tool_name").and_then(Value::as_str).unwrap_or_default();
+    match event {
+        "PermissionRequest" => Some(if tool == "ExitPlanMode" { AskKind::Plan } else { AskKind::Permission }),
+        "PreToolUse" => Some(if tool == "AskUserQuestion" { AskKind::Question } else { AskKind::Permission }),
+        _ => None,
+    }
+}
+
+/// The Owner's answer to a card.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Answer {
+    Allow,
+    AllowAlways,
+    Deny { note: Option<String> },
+    Approve,
+    KeepPlanning { note: Option<String> },
+    Answers(Map<String, Value>),
+    Terminal,
+}
+
+impl Answer {
+    /// The answer the composer sends as `lead.answer`'s `answer`.
+    pub fn from_json(value: &Value) -> Option<Self> {
+        let action = value.get("action").and_then(Value::as_str)?;
+        let note = || {
+            value.get("note").and_then(Value::as_str).map(str::trim).filter(|note| !note.is_empty()).map(str::to_owned)
+        };
+        match action {
+            "allow" => Some(Self::Allow),
+            "allow_always" => Some(Self::AllowAlways),
+            "deny" => Some(Self::Deny { note: note() }),
+            "approve" => Some(Self::Approve),
+            "keep_planning" => Some(Self::KeepPlanning { note: note() }),
+            "answers" => Some(Self::Answers(value.get("answers")?.as_object()?.clone())),
+            "terminal" => Some(Self::Terminal),
+            _ => None,
+        }
+    }
+}
+
+/// The JSON a blocking hook prints for this ask and answer; None means no
+/// output, so Claude shows its own prompt.
+pub fn hook_output(ask: &Ask, answer: &Answer) -> Option<Value> {
+    if *answer == Answer::Terminal {
+        return None;
+    }
+    match (&ask.kind, answer) {
+        (AskKind::Permission, Answer::Allow) => Some(permission_output("allow", None, None, None)),
+        (AskKind::Permission, Answer::AllowAlways) => Some(permission_output(
+            "allow",
+            None,
+            None,
+            Some(ask.input.get("permission_suggestions").cloned().unwrap_or_else(|| json!([]))),
+        )),
+        (AskKind::Permission, Answer::Deny { note }) => Some(permission_output(
+            "deny",
+            Some(note.clone().filter(|note| !note.trim().is_empty()).unwrap_or_else(|| "The Owner declined.".into())),
+            None,
+            None,
+        )),
+        (AskKind::Plan, Answer::Approve) => Some(permission_output(
+            "allow",
+            None,
+            Some(ask.input.get("tool_input").cloned().unwrap_or_else(|| json!({}))),
+            None,
+        )),
+        (AskKind::Plan, Answer::KeepPlanning { note }) => Some(permission_output(
+            "deny",
+            Some(note.clone().filter(|note| !note.trim().is_empty()).unwrap_or_default()),
+            None,
+            None,
+        )),
+        (AskKind::Question, Answer::Answers(answers)) => Some(question_output(ask, answers)),
+        _ => None,
+    }
+}
+
+fn permission_output(
+    behavior: &str,
+    message: Option<String>,
+    updated_input: Option<Value>,
+    updated_permissions: Option<Value>,
+) -> Value {
+    let mut decision = json!({ "behavior": behavior });
+    if let Some(message) = message {
+        decision["message"] = json!(message);
+    }
+    if let Some(input) = updated_input {
+        decision["updatedInput"] = input;
+    }
+    if let Some(permissions) = updated_permissions {
+        decision["updatedPermissions"] = permissions;
+    }
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": decision,
+        },
+    })
+}
+
+fn question_output(ask: &Ask, answers: &Map<String, Value>) -> Value {
+    let questions = ask.input.pointer("/tool_input/questions").cloned().unwrap_or_else(|| json!([]));
+    let mut chosen = Map::new();
+    for question in questions.as_array().into_iter().flatten() {
+        let Some(text) = question.get("question").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(value) = answers.get(text) else {
+            continue;
+        };
+        let joined = match value {
+            Value::Array(labels) => labels.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "),
+            Value::String(label) => label.clone(),
+            _ => continue,
+        };
+        chosen.insert(text.to_owned(), Value::String(joined));
+    }
+    json!({
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+                "questions": questions,
+                "answers": chosen,
+            },
+        },
+    })
+}
+
+/// A SessionStart from the lead's own terminal records the id and folder the
+/// app should resume. Anything else changes nothing.
 pub fn record_session_start(
     streams: &mut Value,
     from_lead: bool,
     program_is_claude: bool,
     event: &str,
     session_id: Option<&str>,
+    folder: &str,
 ) -> bool {
     let Some(id) = session_id.map(str::trim).filter(|id| !id.is_empty()) else {
         return false;
@@ -413,9 +684,12 @@ pub fn record_session_start(
         *entry = json!({});
     }
     let stream = entry.as_object_mut().expect("made an object");
-    if stream.get("session").and_then(Value::as_str) == Some(id) {
+    if stream.get("session").and_then(Value::as_str) == Some(id)
+        && stream.get("folder").and_then(Value::as_str) == Some(folder)
+    {
         return false;
     }
+    stream.insert("folder".into(), json!(folder));
     stream.insert("session".into(), json!(id));
     true
 }
@@ -603,18 +877,37 @@ mod tests {
     #[test]
     fn a_labelled_shell_is_not_the_lead() {
         let lead = json!({
-            "labels": {"lead": "1"},
-            "program": {"key": "claude"},
+            "state": "live",
+            "labels": {"lead": "claude"},
         });
         assert!(is_lead_record(&lead, "claude"));
         assert!(!is_lead_record(&lead, "codex"));
+        let ended = json!({
+            "state": "exited",
+            "labels": {"lead": "claude"},
+        });
+        assert!(
+            !is_lead_record(&ended, "claude"),
+            "an ended terminal is not the lead"
+        );
         let lost = json!({
-            "labels": {"lead": "1"},
-            "program": {"key": "shell"},
+            "state": "live",
+            "labels": {"lead": "shell"},
         });
         assert!(!is_lead_record(&lost, "claude"));
-        let unlabelled = json!({"program": {"key": "claude"}});
+        let unlabelled = json!({"state": "live", "labels": {}});
         assert!(!is_lead_record(&unlabelled, "claude"));
+        let old_label = json!({"state": "live", "labels": {"lead": "1"}});
+        assert!(!is_lead_record(&old_label, "claude"));
+        let back_at_its_shell = json!({
+            "state": "live",
+            "labels": {"lead": "claude"},
+            "program": {"key": "shell", "shell": true},
+        });
+        assert!(
+            !is_lead_record(&back_at_its_shell, "claude"),
+            "a lead whose agent ended into its shell is not the lead"
+        );
     }
 
     #[test]
@@ -637,7 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_settings_carry_the_two_hooks_and_its_memory_off() {
+    fn claude_settings_carry_its_hooks_and_memory_off() {
         let value = claude_settings(
             Path::new("/apps/Kompitum/kompitum-app.exe"),
             Path::new("/apps/kom/kom.exe"),
@@ -668,6 +961,46 @@ mod tests {
                 "timeout": 30,
             })
         );
+        let command = |event: &str| {
+            json!({
+                "type": "command",
+                "command": "/apps/Kompitum/kompitum-app.exe",
+                "args": ["hook", event],
+            })
+        };
+        let entry = |event: &str| {
+            let list = value["hooks"][event]
+                .as_array()
+                .unwrap_or_else(|| panic!("{event} is an array"));
+            assert_eq!(list.len(), 1, "{event}");
+            list[0].clone()
+        };
+        let permission = entry("PermissionRequest");
+        assert!(permission.get("matcher").is_none());
+        let mut hook = command("PermissionRequest");
+        hook["timeout"] = json!(3600);
+        assert_eq!(permission["hooks"], json!([hook]));
+
+        let question = entry("PreToolUse");
+        assert_eq!(question["matcher"], json!("AskUserQuestion"));
+        let mut hook = command("PreToolUse");
+        hook["timeout"] = json!(3600);
+        assert_eq!(question["hooks"], json!([hook]));
+
+        for event in ["UserPromptSubmit", "Stop"] {
+            let entry = entry(event);
+            assert!(entry.get("matcher").is_none(), "{event}");
+            let mut hook = command(event);
+            hook["async"] = json!(true);
+            assert_eq!(entry["hooks"], json!([hook]), "{event}");
+        }
+        let idle = entry("Notification");
+        assert_eq!(idle["matcher"], json!("idle_prompt"));
+        let mut hook = command("Notification");
+        hook["async"] = json!(true);
+        assert_eq!(idle["hooks"], json!([hook]));
+
+        assert_eq!(value["modelSettings"], model_settings());
         for model in [
             "claude-fable-5-1",
             "claude-opus-5-5",
@@ -724,15 +1057,104 @@ mod tests {
         std::fs::remove_dir_all(&home).unwrap();
     }
 
+    fn the_app_claude_settings_hold_only_the_compaction_window() {
+        let dir = std::env::temp_dir().join(format!(
+            "kompitum-app-settings-{}-{}",
+            std::process::id(),
+            now_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = write_app_claude_settings(&dir).unwrap();
+        assert_eq!(path, dir.join("claude-settings.json"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value, json!({ "modelSettings": model_settings() }));
+        assert_eq!(value.as_object().map(|m| m.len()), Some(1));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let not_a_folder = std::env::temp_dir().join(format!(
+            "kompitum-app-settings-file-{}-{}",
+            std::process::id(),
+            now_nanos()
+        ));
+        std::fs::write(&not_a_folder, "not a folder").unwrap();
+        let error = write_app_claude_settings(&not_a_folder).unwrap_err();
+        assert!(
+            error.starts_with("Couldn't write Claude Code's settings file "),
+            "{error}"
+        );
+        assert!(
+            error.contains(&not_a_folder.join("claude-settings.json").display().to_string()),
+            "{error}"
+        );
+        let _ = std::fs::remove_file(&not_a_folder);
+    }
+
     #[test]
-    fn a_session_start_from_the_lead_records_its_id() {
+    fn a_local_claude_start_gets_the_app_settings_file() {
+        let file = Path::new("/apps/Kompitum/claude-settings.json");
+        let gets = |argv: &[&str], on: Option<&str>| {
+            with_claude_settings(
+                argv.iter().map(|s| s.to_string()).collect(),
+                on,
+                file,
+            )
+        };
+        assert_eq!(
+            gets(&["claude"], None),
+            ["claude", "--settings", "/apps/Kompitum/claude-settings.json"]
+        );
+        assert_eq!(
+            gets(&["claude", "--resume", "abc"], None),
+            [
+                "claude",
+                "--settings",
+                "/apps/Kompitum/claude-settings.json",
+                "--resume",
+                "abc"
+            ]
+        );
+        assert_eq!(
+            gets(&["claude", "--settings", "/mine.json"], None),
+            ["claude", "--settings", "/mine.json"],
+            "its own --settings stays"
+        );
+        assert_eq!(
+            gets(&["claude"], Some("vps")),
+            ["claude"],
+            "another machine keeps its own settings"
+        );
+        assert_eq!(
+            gets(&["codex"], None),
+            ["codex"],
+            "another program stays as it is"
+        );
+        assert_eq!(
+            gets(&[r"C:\Users\me\AppData\Roaming\npm\claude.exe"], None),
+            [
+                r"C:\Users\me\AppData\Roaming\npm\claude.exe",
+                "--settings",
+                "/apps/Kompitum/claude-settings.json"
+            ]
+        );
+        assert_eq!(
+            gets(&["CLAUDE.CMD"], None),
+            ["CLAUDE.CMD", "--settings", "/apps/Kompitum/claude-settings.json"]
+        );
+        assert_eq!(gets(&[], None), Vec::<String>::new());
+        assert_eq!(gets(&["notclaude"], None), ["notclaude"]);
+    }
+
+    #[test]
+    fn a_session_start_from_the_lead_records_its_id_and_folder() {
         let mut streams = json!({"claude": {"folder": "/home/me", "session": "old"}});
         assert!(record_session_start(
             &mut streams,
             true,
             true,
             "SessionStart",
-            Some("new-session")
+            Some("new-session"),
+            "/home/me"
         ));
         assert_eq!(
             streams,
@@ -743,7 +1165,8 @@ mod tests {
             true,
             true,
             "SessionStart",
-            Some("new-session")
+            Some("new-session"),
+            "/home/me"
         ));
         let mut fresh = json!({});
         assert!(record_session_start(
@@ -751,30 +1174,253 @@ mod tests {
             true,
             true,
             "SessionStart",
-            Some("one")
+            Some("one"),
+            "/home/me"
         ));
-        assert_eq!(fresh, json!({"claude": {"session": "one"}}));
+        assert_eq!(
+            fresh,
+            json!({"claude": {"folder": "/home/me", "session": "one"}}),
+            "a missing record is written with its folder"
+        );
+        assert!(record_session_start(
+            &mut fresh,
+            true,
+            true,
+            "SessionStart",
+            Some("two"),
+            "/home/work"
+        ));
+        assert_eq!(
+            fresh,
+            json!({"claude": {"folder": "/home/work", "session": "two"}})
+        );
         assert!(!record_session_start(
             &mut fresh,
             false,
             true,
             "SessionStart",
-            Some("two")
+            Some("three"),
+            "/home/me"
         ));
         assert!(!record_session_start(
             &mut fresh,
             true,
             false,
             "SessionStart",
-            Some("two")
+            Some("three"),
+            "/home/me"
         ));
         assert!(!record_session_start(
             &mut fresh,
             true,
             true,
             "Stop",
-            Some("two")
+            Some("three"),
+            "/home/me"
         ));
-        assert_eq!(fresh, json!({"claude": {"session": "one"}}));
+        assert_eq!(
+            fresh,
+            json!({"claude": {"folder": "/home/work", "session": "two"}})
+        );
+    }
+
+    fn ask(kind: AskKind, input: Value) -> Ask {
+        Ask { id: "a1".into(), terminal: "t1".into(), kind, input }
+    }
+
+    fn permission_input() -> Value {
+        json!({
+            "tool_name": "Bash",
+            "tool_input": {"command": "cargo test"},
+            "permission_suggestions": [
+                {"type": "addRules", "destination": "session", "rules": [{"toolName": "Bash"}]}
+            ],
+        })
+    }
+
+    #[test]
+    fn a_blocking_event_becomes_the_right_kind_of_ask() {
+        assert_eq!(
+            ask_kind("PermissionRequest", &json!({"tool_name": "ExitPlanMode", "tool_input": {}})),
+            Some(AskKind::Plan)
+        );
+        assert_eq!(
+            ask_kind("PermissionRequest", &json!({"tool_name": "Bash", "tool_input": {}})),
+            Some(AskKind::Permission)
+        );
+        assert_eq!(
+            ask_kind("PreToolUse", &json!({"tool_name": "AskUserQuestion", "tool_input": {}})),
+            Some(AskKind::Question)
+        );
+        assert_eq!(ask_kind("PreToolUse", &json!({"tool_name": "Bash"})), Some(AskKind::Permission));
+        assert_eq!(ask_kind("Stop", &json!({})), None);
+        assert_eq!(ask_kind("UserPromptSubmit", &json!({})), None);
+    }
+
+    #[test]
+    fn a_permission_allow_answers_the_hook() {
+        let ask = ask(AskKind::Permission, permission_input());
+        assert_eq!(
+            hook_output(&ask, &Answer::Allow),
+            Some(json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {"behavior": "allow"},
+                },
+            }))
+        );
+    }
+
+    #[test]
+    fn allow_always_carries_the_permission_suggestions_unchanged() {
+        let input = permission_input();
+        let ask = ask(AskKind::Permission, input.clone());
+        assert_eq!(
+            hook_output(&ask, &Answer::AllowAlways),
+            Some(json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {
+                        "behavior": "allow",
+                        "updatedPermissions": input["permission_suggestions"],
+                    },
+                },
+            }))
+        );
+    }
+
+    #[test]
+    fn a_permission_deny_carries_its_note_or_the_default() {
+        let ask = ask(AskKind::Permission, permission_input());
+        let deny = |note: Option<&str>| {
+            Some(json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {
+                        "behavior": "deny",
+                        "message": note.unwrap_or("The Owner declined."),
+                    },
+                },
+            }))
+        };
+        assert_eq!(
+            hook_output(&ask, &Answer::Deny { note: Some("Not that file.".into()) }),
+            deny(Some("Not that file."))
+        );
+        assert_eq!(hook_output(&ask, &Answer::Deny { note: None }), deny(None));
+        assert_eq!(
+            hook_output(&ask, &Answer::Deny { note: Some("   ".into()) }),
+            deny(None),
+            "a blank note is no note"
+        );
+    }
+
+    #[test]
+    fn a_plan_approval_returns_its_tool_input_unchanged() {
+        let input = json!({
+            "tool_name": "ExitPlanMode",
+            "tool_input": {"plan": "Do the thing.", "steps": ["one", "two"]},
+        });
+        let ask = ask(AskKind::Plan, input.clone());
+        assert_eq!(
+            hook_output(&ask, &Answer::Approve),
+            Some(json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {
+                        "behavior": "allow",
+                        "updatedInput": input["tool_input"],
+                    },
+                },
+            }))
+        );
+    }
+
+    #[test]
+    fn keep_planning_carries_its_note_as_the_message() {
+        let input = json!({"tool_name": "ExitPlanMode", "tool_input": {"plan": "x"}});
+        let ask = ask(AskKind::Plan, input);
+        let keep = |note: &str| {
+            Some(json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": {"behavior": "deny", "message": note},
+                },
+            }))
+        };
+        assert_eq!(
+            hook_output(&ask, &Answer::KeepPlanning { note: Some("Check the tests first.".into()) }),
+            keep("Check the tests first.")
+        );
+        assert_eq!(hook_output(&ask, &Answer::KeepPlanning { note: None }), keep(""));
+    }
+
+    #[test]
+    fn answers_to_a_question_are_joined_and_returned_with_it() {
+        let questions = json!([
+            {
+                "question": "Which database?",
+                "header": "Database",
+                "multiSelect": false,
+                "options": [{"label": "Postgres", "description": "The server's"}, {"label": "SQLite", "description": "A file"}],
+            },
+            {
+                "question": "Which checks?",
+                "header": "Checks",
+                "multiSelect": true,
+                "options": [{"label": "Tests", "description": "Run them"}, {"label": "Lint", "description": "Keep it tidy"}],
+            },
+        ]);
+        let input = json!({"tool_name": "AskUserQuestion", "tool_input": {"questions": questions}});
+        let ask = ask(AskKind::Question, input.clone());
+        let answers = Map::from_iter([
+            ("Which database?".into(), json!("Postgres")),
+            ("Which checks?".into(), json!(["Tests", "Lint"])),
+        ]);
+        assert_eq!(
+            hook_output(&ask, &Answer::Answers(answers)),
+            Some(json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "updatedInput": {
+                        "questions": input["tool_input"]["questions"],
+                        "answers": {
+                            "Which database?": "Postgres",
+                            "Which checks?": "Tests, Lint",
+                        },
+                    },
+                },
+            }))
+        );
+    }
+
+    #[test]
+    fn answering_in_the_terminal_prints_nothing() {
+        for kind in [AskKind::Permission, AskKind::Plan, AskKind::Question] {
+            assert_eq!(hook_output(&ask(kind, permission_input()), &Answer::Terminal), None);
+        }
+    }
+
+    #[test]
+    fn an_answer_is_read_from_what_the_composer_sends() {
+        assert_eq!(Answer::from_json(&json!({"action": "allow"})), Some(Answer::Allow));
+        assert_eq!(Answer::from_json(&json!({"action": "allow_always"})), Some(Answer::AllowAlways));
+        assert_eq!(
+            Answer::from_json(&json!({"action": "deny", "note": "no"})),
+            Some(Answer::Deny { note: Some("no".into()) })
+        );
+        assert_eq!(Answer::from_json(&json!({"action": "approve"})), Some(Answer::Approve));
+        assert_eq!(
+            Answer::from_json(&json!({"action": "keep_planning", "note": "wait"})),
+            Some(Answer::KeepPlanning { note: Some("wait".into()) })
+        );
+        assert_eq!(
+            Answer::from_json(&json!({"action": "answers", "answers": {"Q?": "A"}})),
+            Some(Answer::Answers(Map::from_iter([("Q?".into(), json!("A"))])))
+        );
+        assert_eq!(Answer::from_json(&json!({"action": "terminal"})), Some(Answer::Terminal));
+        assert_eq!(Answer::from_json(&json!({"action": "what"})), None);
+        assert_eq!(Answer::from_json(&json!({})), None);
     }
 }
