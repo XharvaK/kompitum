@@ -247,10 +247,12 @@ pub fn model_settings() -> Value {
 
 /// The settings file a Claude lead starts with: one memory (the vault's), the
 /// compaction window for each model, and the hooks that bring Claude's prompts
-/// into the composer.
-pub fn claude_settings(app: &Path, core: &Path) -> Value {
+/// into the composer. Each hook names the app's home: the lead's terminal is the
+/// core's, and its environment needn't carry `KOMPITUM_APP_HOME`.
+pub fn claude_settings(app: &Path, core: &Path, home: &Path) -> Value {
     let app = app.to_string_lossy();
     let core = core.to_string_lossy();
+    let home = home.to_string_lossy();
     let mut hooks = Map::new();
     hooks.insert(
         "SessionStart".into(),
@@ -259,7 +261,7 @@ pub fn claude_settings(app: &Path, core: &Path) -> Value {
                 {
                     "type": "command",
                     "command": app,
-                    "args": ["hook", "SessionStart"],
+                    "args": ["hook", "SessionStart", home],
                     "timeout": 10,
                 },
                 {
@@ -277,7 +279,7 @@ pub fn claude_settings(app: &Path, core: &Path) -> Value {
             "hooks": [{
                 "type": "command",
                 "command": app,
-                "args": ["hook", "PermissionRequest"],
+                "args": ["hook", "PermissionRequest", home],
                 "timeout": 3600,
             }],
         }]),
@@ -289,7 +291,7 @@ pub fn claude_settings(app: &Path, core: &Path) -> Value {
             "hooks": [{
                 "type": "command",
                 "command": app,
-                "args": ["hook", "PreToolUse"],
+                "args": ["hook", "PreToolUse", home],
                 "timeout": 3600,
             }],
         }]),
@@ -300,7 +302,7 @@ pub fn claude_settings(app: &Path, core: &Path) -> Value {
             "hooks": [{
                 "type": "command",
                 "command": app,
-                "args": ["hook", "UserPromptSubmit"],
+                "args": ["hook", "UserPromptSubmit", home],
                 "async": true,
             }],
         }]),
@@ -311,7 +313,7 @@ pub fn claude_settings(app: &Path, core: &Path) -> Value {
             "hooks": [{
                 "type": "command",
                 "command": app,
-                "args": ["hook", "Stop"],
+                "args": ["hook", "Stop", home],
                 "async": true,
             }],
         }]),
@@ -323,7 +325,7 @@ pub fn claude_settings(app: &Path, core: &Path) -> Value {
             "hooks": [{
                 "type": "command",
                 "command": app,
-                "args": ["hook", "Notification"],
+                "args": ["hook", "Notification", home],
                 "async": true,
             }],
         }]),
@@ -339,7 +341,7 @@ pub fn claude_settings(app: &Path, core: &Path) -> Value {
 pub fn write_claude_settings(app_dir: &Path, app: &Path, core: &Path) -> Result<PathBuf, String> {
     let path = app_dir.join("lead").join("claude-settings.json");
     let fail = |error: std::io::Error| format!("Couldn't write the lead's settings file {}: {error}", path.display());
-    let text = serde_json::to_string_pretty(&claude_settings(app, core)).unwrap_or_default() + "\n";
+    let text = serde_json::to_string_pretty(&claude_settings(app, core, app_dir)).unwrap_or_default() + "\n";
     std::fs::create_dir_all(path.parent().unwrap_or(app_dir))
         .and_then(|()| crate::persist::write_atomic(&path, text))
         .map_err(fail)?;
@@ -934,6 +936,7 @@ mod tests {
         let value = claude_settings(
             Path::new("/apps/Kompitum/kompitum-app.exe"),
             Path::new("/apps/kom/kom.exe"),
+            Path::new("/home/kompitum"),
         );
         assert_eq!(value["autoMemoryEnabled"], json!(false));
         let entries = value["hooks"]["SessionStart"]
@@ -948,7 +951,7 @@ mod tests {
             json!({
                 "type": "command",
                 "command": "/apps/Kompitum/kompitum-app.exe",
-                "args": ["hook", "SessionStart"],
+                "args": ["hook", "SessionStart", "/home/kompitum"],
                 "timeout": 10,
             })
         );
@@ -965,7 +968,7 @@ mod tests {
             json!({
                 "type": "command",
                 "command": "/apps/Kompitum/kompitum-app.exe",
-                "args": ["hook", event],
+                "args": ["hook", event, "/home/kompitum"],
             })
         };
         let entry = |event: &str| {

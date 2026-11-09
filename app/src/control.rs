@@ -152,10 +152,11 @@ pub fn client(args: &[String]) -> i32 {
         );
         return 0;
     }
-    if let [verb, event] = args
+    if let [verb, event, home @ ..] = args
         && verb == "hook"
+        && home.len() <= 1
     {
-        return hook(event);
+        return hook(event, home.first().map(PathBuf::from));
     }
     let cmd = match args {
         [verb, rest @ ..] if verb == "shot" && rest.len() <= 1 => {
@@ -241,7 +242,8 @@ pub fn client(args: &[String]) -> i32 {
 
 /// `kompitum-app hook <event>`: a Claude Code hook's way to tell the app what
 /// happened. Every failure is silent and exits 0: a hook must never block Claude.
-fn hook(event: &str) -> i32 {
+/// `home`: the app home the lead's settings name; without one, this process's.
+fn hook(event: &str, home: Option<PathBuf>) -> i32 {
     let mut text = String::new();
     if std::io::stdin().read_to_string(&mut text).is_err() {
         return 0;
@@ -253,8 +255,15 @@ fn hook(event: &str) -> i32 {
     if terminal.trim().is_empty() {
         return 0;
     }
-    let Ok(mut stream) = UnixStream::connect(socket()) else {
-        return 0;
+    let path = home.map_or_else(socket, |home| home.join("kompitum-app.sock"));
+    let mut stream = match UnixStream::connect(&path) {
+        Ok(stream) => stream,
+        Err(error) => {
+            // No window to show it in: Claude goes on with its own dialog. Said on stderr, which Claude keeps in
+            // its debug log, never on stdout, which Claude would read as the hook's answer.
+            eprintln!("kompitum-app hook: no Kompitum window at {}: {error}", path.display());
+            return 0;
+        }
     };
     let cmd = json!({
         "do": "lead.hook",
@@ -401,6 +410,24 @@ mod hook_tests {
             "hook printed: {}",
             String::from_utf8_lossy(&out.stdout)
         );
+
+        // The home its settings name wins over the environment's, and the miss is said on stderr.
+        let named = home.join("named");
+        let mut child = Command::new(app_binary().unwrap())
+            .args(["hook", "SessionStart"])
+            .arg(&named)
+            .env("KOMPITUM_TERMINAL_ID", "t_test")
+            .env("KOMPITUM_APP_HOME", &home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start kompitum-app hook");
+        child.stdin.as_mut().unwrap().write_all(b"{}").unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success() && out.stdout.is_empty(), "{out:?}");
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(said.contains(&named.join("kompitum-app.sock").display().to_string()), "{said}");
     }
 }
 
