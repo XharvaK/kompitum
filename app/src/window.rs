@@ -3907,7 +3907,8 @@ impl AppWindow {
             lead.model.as_deref(),
             lead.effort.as_deref(),
         );
-        let auth_code = if program == "claude" {
+        let checks_auth = program == "claude";
+        if checks_auth {
             let app = std::env::current_exe()
                 .map_err(|error| format!("Couldn't find this kompitum-app's path: {error}"))?;
             let settings_file = crate::lead::write_claude_settings(
@@ -3917,11 +3918,7 @@ impl AppWindow {
             )?;
             argv.insert(1, "--settings".into());
             argv.insert(2, settings_file.to_string_lossy().into_owned());
-            // Exit code only; never keep stdout or stderr. A spawn error starts hidden.
-            Some(crate::lead::claude_auth_status_code(&crate::core_bin::path()))
-        } else {
-            None
-        };
+        }
         let started = self.start_lead_tab(&folder, &program, &argv, window)?;
         let terminal = started["terminal"]
             .as_str()
@@ -3932,18 +3929,9 @@ impl AppWindow {
             self.swapped.remove(&pane);
             self.model.focus_pane(&pane);
         }
-        if let Some(result) = auth_code {
-            match result {
-                Ok(code) => {
-                    let session = self.lead_sessions.entry(terminal.clone()).or_default();
-                    crate::lead::apply_auth_status(&mut session.conversation, code);
-                }
-                Err(error) => {
-                    tracing::warn!("couldn't run claude auth status before lead.open: {error}");
-                }
-            }
-            self.apply_lead_terminal_layout(&terminal);
-            self.publish_lead(cx);
+        if checks_auth {
+            // The lead is on screen at once, hidden; the check runs beside it.
+            self.check_lead_auth(terminal.clone(), window, cx);
         }
         if choice.is_resume_or_continue() {
             self.watch_lead_resume(
@@ -3958,6 +3946,31 @@ impl AppWindow {
             );
         }
         Ok(started)
+    }
+
+    /// Runs `claude auth status` off the window's thread. A non-zero exit shows the
+    /// login reveal; zero changes nothing; an error is logged. Only the exit code is kept.
+    fn check_lead_auth(&mut self, terminal: String, window: &Window, cx: &mut Context<Self>) {
+        let kom = crate::core_bin::path();
+        cx.spawn_in(window, async move |this, cx| {
+            let check = cx
+                .background_executor()
+                .spawn(async move { crate::lead::claude_auth_status_code(&kom) })
+                .await;
+            let _ = this.update_in(cx, |this, _window, cx| match check {
+                Ok(0) => {}
+                Ok(code) => {
+                    let session = this.lead_sessions.entry(terminal.clone()).or_default();
+                    crate::lead::apply_auth_status(&mut session.conversation, code);
+                    this.apply_lead_terminal_layout(&terminal);
+                    this.publish_lead(cx);
+                }
+                Err(error) => {
+                    tracing::warn!("couldn't run claude auth status for the lead: {error}");
+                }
+            });
+        })
+        .detach();
     }
 
     /// A resume or continue that ends within ten seconds with a non-zero exit
