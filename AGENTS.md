@@ -10,8 +10,8 @@ get notified by other agents. It draws nothing.
 This repository began as a fork of
 [herdr-core](https://github.com/herdrdev/herdr-core) and is on its way to
 holding all of Kompitum: the worker loop, the vault and its bell, then the app.
-[audit/SETTLE.md](audit/SETTLE.md) holds what was decided and the order of
-work. [FORK.md](FORK.md) holds how the fork stays in step with upstream.
+What was decided and the order of work are in the Owner's notes, which stay
+outside the repository. [FORK.md](FORK.md) holds how the fork stays in step with upstream.
 
 Read the code. This file only holds what reading won't tell you: the rules,
 the traps, and the handful of decisions that look arbitrary until you know
@@ -43,6 +43,8 @@ layout or a workspace to return to, it does not belong in the core.
   call.
 - Fail loudly: a failed pull, a refused write or a damaged note is said in
   words, never skipped in silence.
+- The repository is public. Briefs, audits and working notes go in `audit/`
+  and `.kompitum/briefs/`, which git ignores, never in a commit.
 - Never commit keys, tokens, ids, hostnames or IP addresses. Test values that
   look like secrets are built from parts at runtime.
 - Upstream's names change only through `scripts/kompitumize.py`, never by hand.
