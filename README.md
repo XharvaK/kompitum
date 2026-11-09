@@ -6,7 +6,7 @@ Agents can start other agents, send them work, and hear back; you can attach to 
 Core draws nothing. Use it from your shell, an agent, or your own app.
 
 This is a fork of [herdr-core](https://github.com/herdrdev/herdr-core). So far it is herdr-core with new names.
-Kompitum's own parts still live in its Python repository and come over as [the plan](audit/SETTLE.md) says: the worker loop, the vault, the MCP front, and then the app.
+Kompitum's own parts still live in its Python repository and come over in this order: the worker loop, the vault, the MCP front, and then the app.
 
 ## Where it stands
 
