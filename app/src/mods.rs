@@ -1324,9 +1324,15 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             // The table is loaded on the window thread; workers have only defaults.
             let list = crate::programs::startable();
             let (tx, rx) = async_channel::bounded(1);
-            std::thread::spawn(move || {
+            let find = move || {
                 let _ = tx.send_blocking(known_agents(on, list, fresh));
-            });
+            };
+            // Tests find them in place: their scheduler refuses a wakeup from another thread.
+            if cfg!(test) {
+                find();
+            } else {
+                std::thread::spawn(find);
+            }
             Ok(async move { Ok(to_host(&rx.recv().await.unwrap_or(Value::Array(Vec::new())))) })
         })
         .async_function("leadSetup", |_| {

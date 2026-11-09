@@ -18,14 +18,7 @@
       "resizable": false,
       "children": [
         { "id": "brand", "type": "block", "size": { "px": 46 }, "window_drag": true, "content": { "mod": "workspace-chrome" } },
-        {
-          "id": "sidebar-lists",
-          "type": "column",
-          "children": [
-            { "id": "spaces", "type": "block", "size": { "weight": 1 }, "min": 90, "content": { "mod": "spaces", "props": { "fit": true, "id": "spaces" } } },
-            { "id": "agents", "type": "block", "size": { "weight": 1 }, "min": 90, "content": { "mod": "agents" } }
-          ]
-        },
+        { "id": "agents", "type": "block", "size": { "weight": 1 }, "min": 90, "content": { "mod": "agents" } },
         { "id": "sidebar-footer", "type": "block", "size": { "px": 28 }, "content": { "mod": "workspace-chrome", "props": { "footer": true } } }
       ]
     },
@@ -34,7 +27,7 @@
       "type": "column",
       "resizable": false,
       "children": [
-        { "id": "tabs", "type": "block", "size": { "px": 42 }, "window_drag": true, "content": { "mod": "tabs" } },
+        { "id": "topbar", "type": "block", "size": { "px": 42 }, "window_drag": true, "content": { "mod": "topbar" } },
         {
           "id": "work-body",
           "type": "row",
@@ -75,19 +68,6 @@
                   ]
                 }
               ]
-            },
-            {
-              "id": "desk",
-              "type": "column",
-              "size": { "px": 392 },
-              "min": 300,
-              "max": 720,
-              "background": "chrome",
-              "divider": { "width": 1, "color": "border" },
-              "children": [
-                { "id": "board", "type": "block", "size": { "weight": 3 }, "min": 160, "content": { "mod": "board" } },
-                { "id": "line", "type": "block", "size": { "weight": 2 }, "min": 120, "content": { "mod": "line" } }
-              ]
             }
           ]
         },
@@ -98,7 +78,7 @@
           "resizable": false,
           "children": [
             { "id": "status", "type": "block", "content": { "mod": "workspace-status" } },
-            { "id": "lead", "type": "block", "size": { "px": 232 }, "content": { "mod": "lead" } }
+            { "id": "lead", "type": "block", "size": { "px": 300 }, "content": { "mod": "lead" } }
           ]
         }
       ]

@@ -10741,16 +10741,15 @@ export default class Probe extends View {
         ));
         // The window controls sit in the tab bar, so a right column must not
         // reach the window's top edge beside it.
-        for name in ["desk", "watch"] {
-            let layout = super::default_layout(name);
-            let work = layout
-                .find("work")
-                .unwrap_or_else(|| panic!("{name}: no work"));
-            let right = if name == "watch" { "line" } else { "desk" };
-            assert!(
-                work.find(right).is_some(),
-                "{name}: {right} must sit inside work, under the tabs"
-            );
+        let watch = super::default_layout("watch");
+        let work = watch.find("work").expect("watch: no work");
+        assert!(work.find("line").is_some(), "watch: line must sit inside work, under the tabs");
+        // Desk is the lead or one terminal under its top bar; the Board and the Line open from the bars.
+        let desk = super::default_layout("desk");
+        let work = desk.find("work").expect("desk: no work");
+        assert!(work.find("topbar").is_some(), "desk: the top bar holds the window controls");
+        for gone in ["board", "line", "spaces", "tabs"] {
+            assert!(desk.find(gone).is_none(), "desk: {gone} is no longer a block");
         }
         assert!(
             super::default_layout("focus").find("board").is_none(),

@@ -397,6 +397,12 @@ export default class Lead extends View {
           .on_click(() => run("lead.open"))
           .child(lead.line),
       )
+      .child(
+        item("lead-line")
+          .tooltip("The Line")
+          .on_click(() => openOverlay({ mod: "line", kind: "popup", width: 420, height: 460 }))
+          .child(svg("mods/lead/chevron-up.svg").size(12)),
+      )
       .child(div().w(1).h(12).bg(t.border))
       .child(
         item("lead-door")
