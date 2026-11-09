@@ -1491,7 +1491,28 @@ fn agents_kom_after_clicks(
     visual.run_until_parked();
     visual.update(|window, cx| window.draw(cx).clear(cx));
     visual.run_until_parked();
+    use gpui::{point, px, ScrollDelta, ScrollWheelEvent, TouchPhase};
     for id in clicks {
+        // The Agents page scrolls inside the 620px settings dialog; a target
+        // below the fold is laid out but a click at its content y misses.
+        for _ in 0..24 {
+            let Some(bounds) = visual.debug_bounds(id) else { break };
+            let y = bounds.center().y;
+            if y >= px(80.) && y <= px(580.) {
+                break;
+            }
+            let Some(body) = visual.debug_bounds("st-body") else { break };
+            let delta_y = if y > px(580.) { px(-200.) } else { px(200.) };
+            visual.simulate_event(ScrollWheelEvent {
+                position: body.center(),
+                delta: ScrollDelta::Pixels(point(px(0.), delta_y)),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+            });
+            visual.run_until_parked();
+            visual.update(|window, cx| window.draw(cx).clear(cx));
+            visual.run_until_parked();
+        }
         let at = visual
             .debug_bounds(id)
             .unwrap_or_else(|| panic!("{id} is laid out"))
