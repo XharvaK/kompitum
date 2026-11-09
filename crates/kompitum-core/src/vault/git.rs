@@ -710,4 +710,28 @@ mod tests {
         assert_eq!(command(&clone, &["rev-list", "--count", "HEAD"]).trim(), "3", "both edits are commits on the seed");
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn unpushed_waits_for_the_vault_lock_before_it_pushes() {
+        let (root, clone) = clone_with_remote("unpushed-lock");
+        std::fs::write(clone.join("extra.md"), "x\n").unwrap();
+        command(&clone, &["add", "extra.md"]);
+        command(&clone, &["commit", "-q", "-m", "local only"]);
+        assert_eq!(command(&clone, &["rev-list", "--count", "@{upstream}..HEAD"]).trim(), "1");
+
+        let held = take(&clone).expect("the vault's lock");
+        let worker = clone.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let result = unpushed(&worker);
+            tx.send(()).unwrap();
+            result
+        });
+        let finished_while_held = rx.recv_timeout(Duration::from_millis(400)).is_ok();
+        drop(held);
+        let result = thread.join().unwrap();
+        assert!(!finished_while_held, "unpushed pushed without the vault lock");
+        assert_eq!(result, (0, None), "{result:?}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
