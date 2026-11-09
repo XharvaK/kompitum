@@ -1,0 +1,15 @@
+{
+  "version": "0.1.17",
+  "generation": 1,
+  "notes": "kompitum-core 0.1.17",
+  "targets": {
+    "linux-aarch64": {
+      "url": "https://xharvak.github.io/kompitum/core/0.1.17/kompitum-core-linux-aarch64.tar.gz",
+      "sha256": "5ddbc1d8aa4975838c06f4766774d2b82de4c16e9c2d1469d623cd2c12d68fec"
+    },
+    "linux-x86_64": {
+      "url": "https://xharvak.github.io/kompitum/core/0.1.17/kompitum-core-linux-x86_64.tar.gz",
+      "sha256": "2fa4e7fc913b028296021ddd5c2145a401e29a292e8bd405cd741450fb0d3331"
+    }
+  }
+}
