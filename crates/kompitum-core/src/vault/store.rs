@@ -75,40 +75,53 @@ impl Vault {
     }
 
     pub fn read(&self, path: &str) -> Result<Report, RpcError> {
-        let behind = git::pull_for_reading(&self.root);
-        let mut problems = Vec::new();
-        if !behind.is_empty() {
-            problems.push(behind.clone());
-        }
         let path = clean_path(path);
-        let note = match read_one(&self.root, &path) {
-            Ok(note) => note,
-            Err(e) => return Err(behind_error(behind, e)),
-        };
+        let mut problems = Vec::new();
         let mut index = marks::read_all(&self.root);
-        problems.extend(index.problems.iter().cloned());
-        if let Some((sender, recipient)) = message_path(&path)
-            && sender != self.agent
-            && (recipient == self.agent || recipient == "all")
-            && !index.marked_by(&path, &self.agent)
-        {
-            let at = Moment::now().mark_stamp();
-            let mark = marks::read_mark(&path, at);
-            let mark_path = marks::append(&self.root, &self.agent, &mark).map_err(unavailable)?;
-            if only_pending(&self.root, &mark_path) {
-                let committed =
-                    git::commit_and_push(&self.root, &[mark_path], &format!("{}: read {}", self.agent, stem(&path)));
-                if !committed.ok {
-                    problems.push(committed.error);
+        let marking = message_path(&path)
+            .is_some_and(|(sender, recipient)| sender != self.agent && (recipient == self.agent || recipient == "all"))
+            && !index.marked_by(&path, &self.agent);
+        let note = if marking {
+            let note = with_lock(&self.root, "the note was not marked as read", || {
+                let pulled = git::pull_under_lock(&self.root, git::TIMEOUT);
+                let behind = if pulled.ok { String::new() } else { git::behind_line(&pulled.error) };
+                if !behind.is_empty() {
+                    problems.push(behind.clone());
                 }
+                let note = read_one(&self.root, &path).map_err(|e| behind_error(behind, e))?;
+                index = marks::read_all(&self.root);
+                if !index.marked_by(&path, &self.agent) {
+                    let mark = marks::read_mark(&path, Moment::now().mark_stamp());
+                    let mark_path = marks::append(&self.root, &self.agent, &mark).map_err(unavailable)?;
+                    if only_pending(&self.root, &mark_path) {
+                        let committed = git::commit_and_push_under_lock(
+                            &self.root,
+                            &[mark_path],
+                            &format!("{}: read {}", self.agent, stem(&path)),
+                        );
+                        if !committed.ok {
+                            problems.push(committed.error);
+                        }
+                    }
+                }
+                index = marks::read_all(&self.root);
+                Ok(note)
+            })?;
+            problems.extend(index.problems.iter().cloned());
+            note
+        } else {
+            let behind = git::pull_for_reading(&self.root);
+            if !behind.is_empty() {
+                problems.push(behind.clone());
             }
+            let note = match read_one(&self.root, &path) {
+                Ok(note) => note,
+                Err(e) => return Err(behind_error(behind, e)),
+            };
             index = marks::read_all(&self.root);
-            for problem in &index.problems {
-                if !problems.contains(problem) {
-                    problems.push(problem.clone());
-                }
-            }
-        }
+            problems.extend(index.problems.iter().cloned());
+            note
+        };
         let (unpushed, push_problem) = git::unpushed(&self.root);
         if let Some(problem) = push_problem {
             problems.push(problem);
@@ -503,4 +516,149 @@ fn short_time(at: &str) -> &str {
 /// Whether a note's stamp is more than a week old, for folding the open list.
 pub fn older_than_a_week(note: &Message) -> bool {
     clock::older_than(note.stamp().as_deref(), WEEK)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kom-vault-read-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn command(dir: &Path, args: &[&str]) -> String {
+        let mut cmd = Command::new("git");
+        cmd.arg("-C").arg(dir).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        crate::platform::no_console(&mut cmd);
+        let out = cmd.output().unwrap();
+        assert!(out.status.success(), "git {args:?} in {}: {}", dir.display(), String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    fn configure(dir: &Path) {
+        for (key, value) in [
+            ("user.name", "Test"),
+            ("user.email", "test@example.org"),
+            ("commit.gpgsign", "false"),
+            ("core.autocrlf", "false"),
+        ] {
+            command(dir, &["config", key, value]);
+        }
+    }
+
+    fn vault_with_a_note(name: &str) -> (PathBuf, PathBuf, String) {
+        let root = scratch(name);
+        let remote = root.join("remote.git");
+        let clone = root.join("clone");
+        command(&root, &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+        command(&root, &["init", "-q", "-b", "main", clone.to_str().unwrap()]);
+        configure(&clone);
+        let note = clone.join("manager").join("to").join("opus").join("a.md");
+        std::fs::create_dir_all(note.parent().unwrap()).unwrap();
+        std::fs::write(
+            &note,
+            "---\nfrom: manager\nto: [opus]\nkind: request\ndate: 2026-11-09T09:00+03:00\ntitle: A\n---\n\n# A\n\nBody.\n",
+        )
+        .unwrap();
+        command(&clone, &["add", "."]);
+        command(&clone, &["commit", "-q", "-m", "seed"]);
+        command(&clone, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        command(&clone, &["push", "-q", "-u", "origin", "main"]);
+        (root, clone, "manager/to/opus/a.md".to_string())
+    }
+
+    #[test]
+    fn a_read_marks_under_the_lock_so_a_post_pull_never_meets_an_unstaged_mark() {
+        let (root, clone, path) = vault_with_a_note("read-lock");
+        let vault = Vault { root: clone.clone(), agent: "opus".into() };
+
+        // A pull just finished, so the read's own pull takes no lock and does
+        // not wait on the lock held here.
+        let pulled = git::pull(&clone, git::TIMEOUT);
+        assert!(pulled.ok, "{}", pulled.error);
+
+        let held = git::take(&clone).expect("the vault's lock");
+        let read_path = path.clone();
+        let reader = std::thread::spawn(move || vault.read(&read_path));
+
+        // The old read appended its mark before taking the lock, so it appeared
+        // while the lock was held; the fixed read writes it only under the lock.
+        let mark = clone.join("opus").join("reads.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !mark.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!mark.exists(), "the read wrote its mark without holding the vault's lock");
+
+        // This is what a post does first, under the same lock. An unstaged mark
+        // makes git refuse the pull with "cannot pull with rebase: You have
+        // unstaged changes."
+        let writers_pull = git::pull_under_lock(&clone, git::TIMEOUT);
+        assert!(writers_pull.ok, "a post's pull met the read's unstaged mark: {}", writers_pull.error);
+
+        drop(held);
+        let report = reader.join().unwrap().expect("the read still returns the note");
+        assert!(
+            report.problems.iter().all(|problem| !problem.to_lowercase().contains("unstaged")),
+            "{:?}",
+            report.problems
+        );
+        let note = report.note.expect("the note");
+        assert_eq!(note.path, path);
+        assert_eq!(note.read_by[0].agent, "opus");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_reads_and_a_post_wait_and_all_succeed_with_one_mark() {
+        use std::sync::{Arc, Barrier};
+
+        let (root, clone, path) = vault_with_a_note("read-post");
+        let start = Arc::new(Barrier::new(3));
+        let one = Vault { root: clone.clone(), agent: "opus".into() };
+        let two = one.clone();
+        let poster = one.clone();
+        let (one_start, two_start, post_start) = (Arc::clone(&start), Arc::clone(&start), Arc::clone(&start));
+        let (one_path, two_path) = (path.clone(), path.clone());
+        let first = std::thread::spawn(move || {
+            one_start.wait();
+            one.read(&one_path)
+        });
+        let second = std::thread::spawn(move || {
+            two_start.wait();
+            two.read(&two_path)
+        });
+        let posted = std::thread::spawn(move || {
+            post_start.wait();
+            poster.post(Post {
+                to: "manager".into(),
+                kind: "report".into(),
+                title: "Back".into(),
+                body: "Done.".into(),
+                ..Post::default()
+            })
+        });
+
+        for report in [first.join().unwrap(), second.join().unwrap()] {
+            let report = report.expect("a concurrent read succeeds");
+            assert!(
+                report.problems.iter().all(|problem| !problem.to_lowercase().contains("unstaged")),
+                "{:?}",
+                report.problems
+            );
+            assert_eq!(report.note.expect("the note").path, path);
+        }
+        let written = posted.join().unwrap().expect("the post succeeds");
+        assert!(written.pushed, "{}", written.said);
+        assert!(!written.said.to_lowercase().contains("unstaged"), "{}", written.said);
+        let marks = std::fs::read_to_string(clone.join("opus").join("reads.jsonl")).unwrap();
+        assert_eq!(marks.lines().filter(|line| line.contains("manager/to/opus/a.md")).count(), 1);
+        assert!(git::status_paths(&clone).is_empty(), "the vault is left clean: {:?}", git::status_paths(&clone));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

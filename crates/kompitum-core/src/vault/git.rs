@@ -258,6 +258,13 @@ fn pull_once(dir: &Path, timeout: Duration) -> GitResult {
     run(dir, &["pull", "--rebase", "--quiet"], timeout)
 }
 
+/// The line a read says when its pull failed, so an old copy never passes for
+/// the vault.
+pub fn behind_line(error: &str) -> String {
+    let first = error.lines().next().unwrap_or("").trim();
+    format!("The vault couldn't be updated, so this may be behind (git: {first}).")
+}
+
 /// Pull before a read unless a pull finished less than 15 seconds ago. The
 /// line to say first when that failed, so an old copy never passes for the
 /// vault; else empty.
@@ -266,16 +273,13 @@ pub fn pull_for_reading(dir: &Path) -> String {
         return String::new();
     }
     let pulled = pull(dir, READ_TIMEOUT);
-    if pulled.ok {
-        String::new()
-    } else {
-        let first = pulled.error.lines().next().unwrap_or("").trim();
-        format!("The vault couldn't be updated, so this may be behind (git: {first}).")
-    }
+    if pulled.ok { String::new() } else { behind_line(&pulled.error) }
 }
 
 /// Commit the given vault paths with the message and push. Retries a rejected
-/// push after a pull, up to three times.
+/// push after a pull, up to three times. The writers hold one lock across the
+/// whole piece, so only the split-take regression uses this on its own.
+#[cfg(test)]
 pub fn commit_and_push(dir: &Path, paths: &[String], message: &str) -> GitResult {
     match take(dir) {
         Ok(_lock) => commit_and_push_under_lock(dir, paths, message),
