@@ -16,6 +16,7 @@ mod composer;
 mod machines;
 mod mailbox;
 mod settings_pages;
+mod window_bar;
 
 struct Staged(PathBuf);
 impl Staged {
