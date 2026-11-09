@@ -1944,7 +1944,7 @@ impl AppWindow {
 
     /// What's on screen now, for done-vs-seen.
     fn visible_addresses(&self) -> Vec<String> {
-        let (terms, _) = self.visible();
+        let (terms, mods) = self.visible();
         // A swapped-in terminal is drawn instead of its pane's own.
         let covered: HashSet<&str> = terms
             .iter()
@@ -1958,6 +1958,7 @@ impl AppWindow {
         if self.shows_agent() {
             out.extend(self.shown_agent());
         }
+        out.extend(composed_terminals(&mods));
         out
     }
 
@@ -8544,6 +8545,16 @@ fn lead_display_for(lead: &crate::settings::Lead) -> (String, String) {
     (name, model)
 }
 
+/// The lead's terminals a shown composer stands in for: the Owner reads the composer, not the hidden terminal,
+/// so those count as looked at.
+fn composed_terminals(mods: &[(String, Instance)]) -> Vec<String> {
+    mods.iter()
+        .filter(|(_, inst)| inst.name == "composer")
+        .filter_map(|(_, inst)| inst.props.get("terminal").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect()
+}
+
 /// The composer's height: what its text needs (`lead.fit`, one line until it says), or room for the card its
 /// lead's ask needs (a plan's text and a question's options take more than a permission).
 fn composer_height(asking: Option<crate::lead::AskKind>, wanted: Option<f32>) -> f32 {
@@ -8911,6 +8922,27 @@ mod tests {
             "a hidden terminal is not drawn"
         );
         assert!(root.visible_blocks().iter().any(|n| n.id == "composer"));
+    }
+
+    #[test]
+    fn a_lead_under_a_shown_composer_counts_as_looked_at() {
+        let mods = vec![
+            (
+                "c1".to_owned(),
+                crate::mods::Instance {
+                    name: "composer".into(),
+                    props: json!({"terminal": "t1"}),
+                },
+            ),
+            (
+                "l1".to_owned(),
+                crate::mods::Instance {
+                    name: "lead".into(),
+                    props: json!({"terminal": "t2"}),
+                },
+            ),
+        ];
+        assert_eq!(super::composed_terminals(&mods), vec!["t1".to_owned()]);
     }
 
     #[test]
