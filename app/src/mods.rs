@@ -1355,8 +1355,15 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 files: false, directories: true, multiple: false, prompt: Some(prompt.into()),
             })).ok_or_else(|| HostError::new("no window to pick from"))?;
             Ok(async move {
-                let path = picked.await.ok().and_then(Result::ok).flatten().and_then(|p| p.into_iter().next());
-                Ok(path.map(|p| HostValue::Str(p.to_string_lossy().into_owned())).unwrap_or(HostValue::Null))
+                match picker_result(picked.await.map_err(|error| error.to_string())) {
+                    Ok(None) => Ok(HostValue::Null),
+                    Ok(Some(paths)) => Ok(paths
+                        .into_iter()
+                        .next()
+                        .map(|path| HostValue::Str(path.to_string_lossy().into_owned()))
+                        .unwrap_or(HostValue::Null)),
+                    Err(error) => Err(HostError::new(error)),
+                }
             })
         })
         .async_function("pickFiles", |_| {
@@ -1364,8 +1371,16 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 files: true, directories: false, multiple: true, prompt: Some("Attach".into()),
             })).ok_or_else(|| HostError::new("no window to pick from"))?;
             Ok(async move {
-                let paths = picked.await.ok().and_then(Result::ok).flatten().unwrap_or_default();
-                Ok(HostValue::Array(paths.into_iter().map(|p| HostValue::Str(p.to_string_lossy().into_owned())).collect()))
+                match picker_result(picked.await.map_err(|error| error.to_string())) {
+                    Ok(None) => Ok(HostValue::Array(Vec::new())),
+                    Ok(Some(paths)) => Ok(HostValue::Array(
+                        paths
+                            .into_iter()
+                            .map(|path| HostValue::Str(path.to_string_lossy().into_owned()))
+                            .collect(),
+                    )),
+                    Err(error) => Err(HostError::new(error)),
+                }
             })
         })
         .function("themes", |_| {
@@ -1649,8 +1664,11 @@ pub fn prepare_load(inst: &Instance) -> u64 {
 fn picker_result<E: std::fmt::Display>(
     picked: Result<Result<Option<Vec<std::path::PathBuf>>, E>, String>,
 ) -> Result<Option<Vec<std::path::PathBuf>>, String> {
-    // The current host still swallows failures; Job 4 tests require them to be named.
-    Ok(picked.ok().and_then(Result::ok).flatten())
+    match picked {
+        Ok(Ok(paths)) => Ok(paths),
+        Ok(Err(error)) => Err(format!("the file picker didn't open: {error}")),
+        Err(error) => Err(format!("the file picker didn't open: {error}")),
+    }
 }
 
 #[cfg(test)]

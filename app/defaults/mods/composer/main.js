@@ -956,22 +956,6 @@ export default class Composer extends View {
       .tooltip("Attach files")
       .on_click(() => this.attach(cx))
       .child(svg("mods/composer/plus.svg").size(16));
-    const typing = Boolean(leadOf()?.typing);
-    const keys = h_flex()
-      .id("composer-type")
-      .w(28)
-      .h(28)
-      .flex_none()
-      .items_center()
-      .justify_center()
-      .rounded(14)
-      .cursor_pointer()
-      .text_color(typing ? t.accent : t.muted)
-      .when(typing, (el) => el.bg(t.selected))
-      .hover((s) => s.bg(t.hover).text_color(typing ? t.accent : t.foreground))
-      .tooltip(typing ? "Typing in the terminal: click to type here again" : "Type in terminal (for logins and the CLI's own menus)")
-      .on_click(() => run("lead.type", { terminal: this.terminal, on: !typing }))
-      .child(svg("mods/composer/keyboard.svg").size(16));
     const note = this.error
       ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(this.error)
       : this.state ? this.statusWord(t) : null;
@@ -1003,7 +987,6 @@ export default class Composer extends View {
               .gap(6)
               .items_center()
               .child(plus)
-              .when(Boolean(this.terminal) && !first, (el) => el.child(keys))
               .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
               .child(div().flex_1())
               .when(!first, (el) => el.child(this.modelChip(t)))
