@@ -253,20 +253,32 @@ pub fn claude_settings(app: &Path, core: &Path, home: &Path) -> Value {
     let app = app.to_string_lossy();
     let core = core.to_string_lossy();
     let home = home.to_string_lossy();
+    let command = |event: &str| {
+        json!({
+            "type": "command",
+            "command": &*app,
+            "args": ["hook", event, &*home],
+        })
+    };
+    let blocking = |event: &str, timeout: u64| {
+        let mut hook = command(event);
+        hook["timeout"] = json!(timeout);
+        hook
+    };
+    let async_hook = |event: &str| {
+        let mut hook = command(event);
+        hook["async"] = json!(true);
+        hook
+    };
     let mut hooks = Map::new();
     hooks.insert(
         "SessionStart".into(),
         json!([{
             "hooks": [
+                blocking("SessionStart", 10),
                 {
                     "type": "command",
-                    "command": app,
-                    "args": ["hook", "SessionStart", home],
-                    "timeout": 10,
-                },
-                {
-                    "type": "command",
-                    "command": core,
+                    "command": &*core,
                     "args": ["vault", "memory", "--hook"],
                     "timeout": 30,
                 },
@@ -275,61 +287,45 @@ pub fn claude_settings(app: &Path, core: &Path, home: &Path) -> Value {
     );
     hooks.insert(
         "PermissionRequest".into(),
-        json!([{
-            "hooks": [{
-                "type": "command",
-                "command": app,
-                "args": ["hook", "PermissionRequest", home],
-                "timeout": 3600,
-            }],
-        }]),
+        json!([{ "hooks": [blocking("PermissionRequest", 3600)] }]),
     );
     hooks.insert(
         "PreToolUse".into(),
-        json!([{
-            "matcher": "AskUserQuestion",
-            "hooks": [{
-                "type": "command",
-                "command": app,
-                "args": ["hook", "PreToolUse", home],
-                "timeout": 3600,
-            }],
-        }]),
+        json!([
+            {
+                "matcher": "AskUserQuestion",
+                "hooks": [blocking("PreToolUse", 3600)],
+            },
+            { "hooks": [async_hook("PreToolUse")] },
+        ]),
     );
     hooks.insert(
-        "UserPromptSubmit".into(),
-        json!([{
-            "hooks": [{
-                "type": "command",
-                "command": app,
-                "args": ["hook", "UserPromptSubmit", home],
-                "async": true,
-            }],
-        }]),
+        "PostToolUse".into(),
+        json!([{ "hooks": [async_hook("PostToolUse")] }]),
     );
-    hooks.insert(
-        "Stop".into(),
-        json!([{
-            "hooks": [{
-                "type": "command",
-                "command": app,
-                "args": ["hook", "Stop", home],
-                "async": true,
-            }],
-        }]),
-    );
-    hooks.insert(
-        "Notification".into(),
-        json!([{
-            "matcher": "idle_prompt",
-            "hooks": [{
-                "type": "command",
-                "command": app,
-                "args": ["hook", "Notification", home],
-                "async": true,
-            }],
-        }]),
-    );
+    let mut display = async_hook("MessageDisplay");
+    display["timeout"] = json!(10);
+    hooks.insert("MessageDisplay".into(), json!([{ "hooks": [display] }]));
+    for event in ["UserPromptSubmit", "Stop", "StopFailure", "Elicitation"] {
+        hooks.insert(event.into(), json!([{ "hooks": [async_hook(event)] }]));
+    }
+    let notifications: Vec<Value> = [
+        "idle_prompt",
+        "elicitation_dialog",
+        "elicitation_url_dialog",
+        "agent_needs_input",
+        "quota_auto_resume_stale",
+        "auth_success",
+    ]
+    .into_iter()
+    .map(|matcher| {
+        json!({
+            "matcher": matcher,
+            "hooks": [async_hook("Notification")],
+        })
+    })
+    .collect();
+    hooks.insert("Notification".into(), Value::Array(notifications));
     json!({
         "autoMemoryEnabled": false,
         "modelSettings": model_settings(),
@@ -975,34 +971,37 @@ mod tests {
                 "args": ["hook", event, "/home/kompitum"],
             })
         };
-        let entry = |event: &str| {
+        let first = |event: &str| {
             let list = value["hooks"][event]
                 .as_array()
                 .unwrap_or_else(|| panic!("{event} is an array"));
-            assert_eq!(list.len(), 1, "{event}");
             list[0].clone()
         };
-        let permission = entry("PermissionRequest");
+        let permission = first("PermissionRequest");
         assert!(permission.get("matcher").is_none());
         let mut hook = command("PermissionRequest");
         hook["timeout"] = json!(3600);
         assert_eq!(permission["hooks"], json!([hook]));
 
-        let question = entry("PreToolUse");
+        let question = first("PreToolUse");
         assert_eq!(question["matcher"], json!("AskUserQuestion"));
         let mut hook = command("PreToolUse");
         hook["timeout"] = json!(3600);
         assert_eq!(question["hooks"], json!([hook]));
 
         for event in ["UserPromptSubmit", "Stop"] {
-            let entry = entry(event);
+            let entry = first(event);
             assert!(entry.get("matcher").is_none(), "{event}");
             let mut hook = command(event);
             hook["async"] = json!(true);
             assert_eq!(entry["hooks"], json!([hook]), "{event}");
         }
-        let idle = entry("Notification");
-        assert_eq!(idle["matcher"], json!("idle_prompt"));
+        let idle = value["hooks"]["Notification"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry.get("matcher") == Some(&json!("idle_prompt")))
+            .expect("idle_prompt");
         let mut hook = command("Notification");
         hook["async"] = json!(true);
         assert_eq!(idle["hooks"], json!([hook]));
