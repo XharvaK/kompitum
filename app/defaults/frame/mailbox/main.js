@@ -11,7 +11,7 @@ const OUTSIDE = "The vault is outside your home folder, so the mailbox can't rea
 
 const text = (v) => (typeof v === "string" ? v : "");
 const base = (p) => String(p ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
-const firstLine = (v) => String(v ?? "").trim().split(/\r?\n/).find(Boolean) ?? "";
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 
 function problemText(problem) {
   if (typeof problem === "string") return problem;
@@ -26,11 +26,12 @@ function errorText(result) {
   for (const out of [result?.stderr, result?.stdout]) {
     try {
       const message = JSON.parse(String(out ?? "")).error?.message;
-      if (message) return firstLine(message);
+      if (message) return String(message);
     } catch {}
   }
-  return firstLine(result?.stderr) || firstLine(result?.stdout) || `kom exited ${result?.code ?? "?"}`;
+  return String(result?.stderr || result?.stdout || "").trim() || `kom exited ${result?.code ?? "?"}`;
 }
+
 
 function parse(result) {
   if (result?.code !== 0) throw new Error(errorText(result));
@@ -197,7 +198,7 @@ export default class Mailbox extends View {
         else this.selected = null;
       }
     } catch (e) {
-      this.error = firstLine(e?.message ?? e) || "The mailbox couldn't read the vault.";
+      this.error = String(e?.message ?? e ?? "").trim() || "The mailbox couldn't read the vault.";
     } finally {
       this.loading = false;
       this.takeWanted(cx);
@@ -225,7 +226,7 @@ export default class Mailbox extends View {
         const problems = problemsOf(data);
         if (problems.length) this.actionError = problems.join(" ");
       } catch (e) {
-        this.actionError = firstLine(e?.message ?? e) || "The note couldn't be read.";
+        this.actionError = String(e?.message ?? e ?? "").trim() || "The note couldn't be read.";
         cx.notify();
       }
     });
@@ -261,7 +262,7 @@ export default class Mailbox extends View {
         if (problems.length) this.actionError = problems.join(" ");
         await this.load(cx);
       } catch (e) {
-        this.actionError = firstLine(e?.message ?? e) || "The read mark wasn't written.";
+        this.actionError = String(e?.message ?? e ?? "").trim() || "The read mark wasn't written.";
       }
       cx.notify();
     });
@@ -286,7 +287,7 @@ export default class Mailbox extends View {
         this.bodyError = null;
       } catch (e) {
         if (text(this.selected?.path) !== path) return;
-        this.bodyError = firstLine(e?.message ?? e) || "The note couldn't be read.";
+        this.bodyError = String(e?.message ?? e ?? "").trim() || "The note couldn't be read.";
       }
       cx.notify();
     });
@@ -335,7 +336,7 @@ export default class Mailbox extends View {
         this.handle.focus();
         await this.load(cx);
       } catch (e) {
-        this.actionError = firstLine(e?.message ?? e) || "The answer wasn't sent.";
+        this.actionError = String(e?.message ?? e ?? "").trim() || "The answer wasn't sent.";
       } finally {
         this.busy = false;
         cx.notify();
@@ -356,7 +357,7 @@ export default class Mailbox extends View {
         if (result.code !== 0) throw new Error(errorText(result));
         await this.load(cx);
       } catch (e) {
-        this.actionError = firstLine(e?.message ?? e) || "The note wasn't closed.";
+        this.actionError = String(e?.message ?? e ?? "").trim() || "The note wasn't closed.";
       } finally {
         this.busy = false;
         cx.notify();
@@ -481,7 +482,8 @@ export default class Mailbox extends View {
             .text_size(13)
             .line_height("20px")
             .text_color(this.bodyError === OUTSIDE ? t.muted : t.blocked)
-            .child(this.bodyError),
+            .tooltip(this.bodyError)
+            .child(firstLine(this.bodyError) || this.bodyError),
         ),
       )
       .when(!this.bodyError && this.body === null, (el) =>
@@ -556,7 +558,7 @@ export default class Mailbox extends View {
                 .gap(8)
                 .items_center()
                 .when(Boolean(this.actionError), (bar) =>
-                  bar.child(div().id("mail-error").flex_1().min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.actionError).child(this.actionError)),
+                  bar.child(div().id("mail-error").flex_1().min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.actionError).child(firstLine(this.actionError) || this.actionError)),
                 )
                 .child(div().flex_1())
                 .when(!this.answering && owner, (bar) =>
@@ -619,10 +621,10 @@ export default class Mailbox extends View {
                 .gap(2)
                 .border_b(1)
                 .border_color(t.border)
-                .children(this.problems.map((problem, i) => div().id(`mail-problem-${i}`).text_size(10.5).line_height("15px").text_color(t.blocked).child(problem))),
+                .children(this.problems.map((problem, i) => div().id(`mail-problem-${i}`).text_size(10.5).line_height("15px").text_color(t.blocked).tooltip(problem).child(firstLine(problem) || problem))),
             ),
           )
-          .when(Boolean(this.error), (el) => el.child(div().flex_none().px(10).py(6).text_size(11).text_color(t.blocked).child(this.error)))
+          .when(Boolean(this.error), (el) => el.child(div().id("mail-load-error").flex_none().px(10).py(6).text_size(11).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)))
           .child(
             v_flex()
               .id("mail-rows")

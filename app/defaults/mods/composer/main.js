@@ -32,6 +32,7 @@ const HISTORY_LIMIT = 100;
 const BOX_PX = 76;
 const LINE_PX = 20;
 const CHIPS_PX = 28;
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 function errorText(error) {
   if (error == null) return "The command failed.";
   if (typeof error === "string") return error;
@@ -957,7 +958,7 @@ export default class Composer extends View {
       .on_click(() => this.attach(cx))
       .child(svg("mods/composer/plus.svg").size(16));
     const note = this.error
-      ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(this.error)
+      ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)
       : this.state ? this.statusWord(t) : null;
     return div()
       .size_full()
