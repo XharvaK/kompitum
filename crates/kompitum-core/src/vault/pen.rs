@@ -297,4 +297,43 @@ mod tests {
         assert!(refused.message.contains("status is one of"), "{}", refused.message);
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn post_and_read_refuse_a_link_out_of_the_vault_and_write_nothing_outside() {
+        let root = scratch("link-post");
+        let outside = scratch("link-post-out");
+        std::os::unix::fs::symlink(&outside, root.join("opus")).unwrap();
+        let v = vault(&root);
+        let moment = clock::Moment::now();
+        let refused = write_message(
+            &v,
+            &Post {
+                to: "manager".into(),
+                kind: "report".into(),
+                title: "T".into(),
+                body: "B".into(),
+                ..Post::default()
+            },
+            &moment,
+        )
+        .unwrap_err();
+        assert!(refused.message.contains("refused:"), "{}", refused.message);
+        assert!(refused.message.contains("is a link out of the vault"), "{}", refused.message);
+        assert!(std::fs::read_dir(&outside).unwrap().next().is_none(), "wrote outside: {outside:?}");
+
+        let note_out = outside.join("secret.md");
+        std::fs::write(&note_out, "outer secret\n").unwrap();
+        let linked = scratch("link-read");
+        std::fs::create_dir_all(linked.join("eve/to/manager")).unwrap();
+        std::os::unix::fs::symlink(&note_out, linked.join("eve/to/manager/x.md")).unwrap();
+        let err = inside(&linked, "eve/to/manager/x.md").unwrap_err();
+        assert!(err.message.contains("refused:"), "{}", err.message);
+        assert!(err.message.contains("eve/to/manager/x.md"), "{}", err.message);
+        assert!(err.message.contains("is a link out of the vault"), "{}", err.message);
+        assert_eq!(std::fs::read_to_string(&note_out).unwrap(), "outer secret\n");
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+        std::fs::remove_dir_all(linked).unwrap();
+    }
 }

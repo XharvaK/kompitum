@@ -357,3 +357,18 @@ fn a_damaged_memory_is_named_in_the_problems_line() {
     }
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn remember_refuses_a_symlinked_agent_folder_and_writes_nothing_outside() {
+    let root = scratch("link-remember");
+    let outside = scratch("link-remember-out");
+    std::os::unix::fs::symlink(&outside, root.join("opus")).unwrap();
+    let v = vault(&root);
+    let refused = write_memory(&v, &draft("A fact about the vault", "Body."), &clock::Moment::now()).unwrap_err();
+    assert!(refused.message.contains("refused:"), "{}", refused.message);
+    assert!(refused.message.contains("is a link out of the vault"), "{}", refused.message);
+    assert!(std::fs::read_dir(&outside).unwrap().next().is_none(), "wrote outside: {outside:?}");
+    std::fs::remove_dir_all(root).unwrap();
+    std::fs::remove_dir_all(outside).unwrap();
+}

@@ -219,4 +219,19 @@ mod tests {
         assert!(index.done_by("a.md", "opus"));
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_refuses_a_symlinked_agent_folder_and_writes_nothing_outside() {
+        let root = scratch("link-append");
+        let outside = scratch("link-append-out");
+        std::os::unix::fs::symlink(&outside, root.join("opus")).unwrap();
+        let error = append(&root, "opus", &read_mark("a.md", "2026-11-05T09:10:00+03:00".into())).unwrap_err();
+        assert!(error.contains("refused:"), "{error}");
+        assert!(error.contains("opus/reads.jsonl"), "{error}");
+        assert!(error.contains("is a link out of the vault"), "{error}");
+        assert!(std::fs::read_dir(&outside).unwrap().next().is_none(), "wrote outside: {outside:?}");
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+    }
 }
