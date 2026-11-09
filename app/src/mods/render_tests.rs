@@ -152,6 +152,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let known_agents = values.remove("knownAgents");
     let workers_json = values.remove("workersJson");
     let status_json = values.remove("statusJson");
+    let status_fail = values.remove("statusFail");
     let usage_json = values.remove("usageJson");
     let vault_missing = values.remove("vaultMissing");
     let thread_json = values.remove("threadJson");
@@ -229,6 +230,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let person = person.clone();
         let workers_json = workers_json.clone();
         let status_json = status_json.clone();
+        let status_fail = status_fail.clone();
         let usage_json = usage_json.clone();
         let vault_missing = vault_missing.clone();
         let thread_json = thread_json.clone();
@@ -329,10 +331,17 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     calls.borrow_mut().effects.push(("kom".into(), vec![first.clone()]));
                     Some(json!({"code": 0, "stdout": "", "stderr": ""}))
                 }
-                "kom" if first == json!(["status", "--json"]) => Some(json!({"code":0,"stdout":status_json.clone().unwrap_or_else(|| json!({
-                    "tasks": {"review": [{"name": "fix-docs", "repo": "kompitum-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []},
-                    "claude": null
-                })).to_string(),"stderr":""})),
+                "kom" if first == json!(["status", "--json"]) => {
+                    if let Some(error) = status_fail.clone() {
+                        let text = error.as_str().unwrap_or("status failed").to_string();
+                        Some(json!({"code": 1, "stdout": "", "stderr": text}))
+                    } else {
+                        Some(json!({"code":0,"stdout":status_json.clone().unwrap_or_else(|| json!({
+                            "tasks": {"review": [{"name": "fix-docs", "repo": "kompitum-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []},
+                            "claude": null
+                        })).to_string(),"stderr":""}))
+                    }
+                }
                 // The composer's send: one recorded effect, so key tests can read it.
                 "kom" if first.as_array().and_then(|a| a.first()).and_then(Value::as_str) == Some("send") => {
                     calls.borrow_mut().effects.push(("kom".into(), vec![first.clone()]));
