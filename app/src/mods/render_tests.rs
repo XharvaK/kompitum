@@ -11,6 +11,11 @@ use std::{
     time::Instant,
 };
 
+// One file per area of the rework, so workers on different areas never share a file.
+mod machines;
+mod mailbox;
+mod settings_pages;
+
 struct Staged(PathBuf);
 impl Staged {
     fn new() -> Self {
