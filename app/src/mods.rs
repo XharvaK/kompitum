@@ -1645,9 +1645,38 @@ pub fn prepare_load(inst: &Instance) -> u64 {
     copy
 }
 
+/// Cancel (`Ok(None)`) stays empty; a platform error or a dropped channel is named.
+fn picker_result<E: std::fmt::Display>(
+    picked: Result<Result<Option<Vec<std::path::PathBuf>>, E>, String>,
+) -> Result<Option<Vec<std::path::PathBuf>>, String> {
+    // The current host still swallows failures; Job 4 tests require them to be named.
+    Ok(picked.ok().and_then(Result::ok).flatten())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cancelled_file_picker_is_empty() {
+        assert_eq!(picker_result::<&str>(Ok(Ok(None))), Ok(None));
+        assert_eq!(
+            picker_result::<&str>(Ok(Ok(Some(vec![std::path::PathBuf::from("/tmp/a")])))),
+            Ok(Some(vec![std::path::PathBuf::from("/tmp/a")]))
+        );
+    }
+
+    #[test]
+    fn a_failed_file_picker_names_the_error() {
+        assert_eq!(
+            picker_result::<&str>(Ok(Err("no display"))),
+            Err("the file picker didn't open: no display".into())
+        );
+        assert_eq!(
+            picker_result::<&str>(Err("channel closed".into())),
+            Err("the file picker didn't open: channel closed".into())
+        );
+    }
 
     #[test]
     fn exec_timeout_defaults_caps_and_rejects_invalid_values() {
