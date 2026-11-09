@@ -527,6 +527,10 @@ pub struct Session {
     pub state: Option<State>,
     #[serde(default)]
     pub ask: Option<Ask>,
+    /// The Owner types in the lead's terminal itself ("Type in terminal"); otherwise typing there goes to
+    /// the composer.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub typing: bool,
 }
 
 /// The kind of ask a blocking hook makes, or None for an event that is not one.

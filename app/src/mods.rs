@@ -1353,6 +1353,15 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 Ok(path.map(|p| HostValue::Str(p.to_string_lossy().into_owned())).unwrap_or(HostValue::Null))
             })
         })
+        .async_function("pickFiles", |_| {
+            let picked = gpui_shell::with_current_app(|cx| cx.prompt_for_paths(gpui::PathPromptOptions {
+                files: true, directories: false, multiple: true, prompt: Some("Attach".into()),
+            })).ok_or_else(|| HostError::new("no window to pick from"))?;
+            Ok(async move {
+                let paths = picked.await.ok().and_then(Result::ok).flatten().unwrap_or_default();
+                Ok(HostValue::Array(paths.into_iter().map(|p| HostValue::Str(p.to_string_lossy().into_owned())).collect()))
+            })
+        })
         .function("themes", |_| {
             let list: Vec<Value> = crate::settings::themes().into_iter().map(|(name, colors)| json!({ "light": crate::settings::theme_is_light(&name), "name": name, "colors": colors })).collect();
             Ok(to_host(&Value::Array(list)))

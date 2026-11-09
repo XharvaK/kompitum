@@ -702,6 +702,8 @@ pub struct AppWindow {
     live: HashMap<String, Value>,
     /// The lead's state per terminal: working, asking or waiting, and its ask.
     lead_sessions: HashMap<String, crate::lead::Session>,
+    /// The height each lead's composer asked for (`lead.fit`), by the lead's terminal.
+    composer_px: HashMap<String, f32>,
     /// Blocking hooks waiting for the Owner's answer, by ask id.
     lead_asks: HashMap<String, PendingAsk>,
     /// Hook connections that closed before their request reached the app.
@@ -830,6 +832,7 @@ impl AppWindow {
             watched: Watched::default(),
             live: HashMap::new(),
             lead_sessions: HashMap::new(),
+            composer_px: HashMap::new(),
             lead_asks: HashMap::new(),
             closed_hooks: HashSet::new(),
             listed_once: false,
@@ -3670,21 +3673,7 @@ impl AppWindow {
             .model
             .pane_of(terminal)
             .ok_or_else(|| format!("the lead's terminal {terminal:?} has no pane"))?;
-        let existing = self.model.tab_of(&pane).and_then(|tab| {
-            tab.root
-                .panes()
-                .into_iter()
-                .find(|node| {
-                    matches!(
-                        node.content(),
-                        Some(Content::Mod { name, props })
-                            if name == "composer"
-                                && props.get("terminal").and_then(Value::as_str) == Some(terminal)
-                    )
-                })
-                .map(|node| node.id.clone())
-        });
-        if let Some(pane) = existing {
+        if let Some(pane) = self.composer_pane(terminal) {
             self.fit_composers();
             return Ok(json!({ "pane": pane }));
         }
@@ -3698,10 +3687,47 @@ impl AppWindow {
         Ok(made)
     }
 
-    /// A composer is one slim line under its lead's terminal, and grows to hold a card while its lead asks.
+    /// The composer pane under the lead's terminal, in that terminal's tab.
+    fn composer_pane(&self, terminal: &str) -> Option<String> {
+        let pane = self.model.pane_of(terminal)?;
+        self.model.tab_of(&pane)?.root.panes().into_iter().find_map(|node| match node.content() {
+            Some(Content::Mod { name, props })
+                if name == "composer" && props.get("terminal").and_then(Value::as_str) == Some(terminal) =>
+            {
+                Some(node.id.clone())
+            }
+            _ => None,
+        })
+    }
+
+    /// Typing on the lead's terminal goes to its composer, unless the Owner turned on "Type in terminal".
+    /// Keys with Ctrl, Alt or Cmd (shortcuts, the program's own keys), Enter, arrows and Esc stay with the
+    /// terminal.
+    fn type_into_composer(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(text) = typed_text(&ev.keystroke) else { return false };
+        let Some(terminal) = self
+            .terms
+            .values()
+            .find(|t| t.view.read(cx).owns_keyboard_focus(window, cx))
+            .map(|t| t.address.clone())
+        else {
+            return false;
+        };
+        if self.lead_sessions.get(&terminal).is_some_and(|s| s.typing) {
+            return false;
+        }
+        let Some(composer) = self.composer_pane(&terminal) else { return false };
+        self.focus_block(&composer, window, cx);
+        if let Some(copy) = self.copies.get(&composer) {
+            mods::send_command_to(copy.id, &format!("type:{text}"));
+        }
+        true
+    }
+
+    /// A composer sits under its lead's terminal, as tall as its text, and grows to hold a card while its lead asks.
     fn fit_composers(&mut self) {
         for tab in self.model.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()) {
-            let composers: Vec<(String, Option<crate::lead::AskKind>)> = tab
+            let composers: Vec<(String, f32)> = tab
                 .root
                 .panes()
                 .into_iter()
@@ -3709,16 +3735,14 @@ impl AppWindow {
                     Some(Content::Mod { name, props }) if name == "composer" => {
                         let terminal = props.get("terminal").and_then(Value::as_str)?;
                         let asking = self.lead_sessions.get(terminal).and_then(|s| s.ask.as_ref()).map(|ask| ask.kind);
-                        Some((node.id.clone(), asking))
+                        Some((node.id.clone(), composer_height(asking, self.composer_px.get(terminal).copied())))
                     }
                     _ => None,
                 })
                 .collect();
-            for (id, asking) in composers {
+            for (id, px) in composers {
                 if let Some(node) = tab.root.find_mut(&id) {
-                    node.size = Some(Span::Px {
-                        px: composer_height(asking),
-                    });
+                    node.size = Some(Span::Px { px });
                 }
             }
         }
@@ -3746,7 +3770,18 @@ impl AppWindow {
                     .find(|space| space.machine.is_none())
                     .map(|space| space.id.clone())
             });
-        match local {
+        // A lead that ended leaves its composer in a tab of its own: the new lead's tab takes its place.
+        let ended: Vec<String> = self
+            .model
+            .tabs()
+            .filter(|tab| {
+                tab.root.panes().iter().all(|node| {
+                    matches!(node.content(), Some(Content::Mod { name, .. }) if name == "composer")
+                })
+            })
+            .map(|tab| tab.id.clone())
+            .collect();
+        let made = match local {
             Some(space) => self.new_tab(
                 Some(space),
                 "Lead",
@@ -3768,7 +3803,11 @@ impl AppWindow {
                 true,
                 window,
             ),
+        }?;
+        for tab in ended {
+            self.model.remove_tab(&tab);
         }
+        Ok(made)
     }
 
     /// `lead.open`: find the kept lead by its label, or start it in its home
@@ -5272,6 +5311,9 @@ impl AppWindow {
                         ));
                     }
                 };
+                if Self::owned(a, "pane").or_else(|| self.model.focused_pane()).is_some_and(|p| self.pane_pinned(&p)) {
+                    return self.fail(PINNED);
+                }
                 let r = match Self::owned(a, "mod") {
                     Some(name) => self.split_mod(
                         Self::owned(a, "pane"),
@@ -5365,6 +5407,10 @@ impl AppWindow {
                 };
                 let explicit = Self::arg(a, "pane").is_some();
                 let pane = Self::owned(a, "pane").or_else(|| self.model.focused_pane());
+                let pinned = |p: &str| self.pane_pinned(p);
+                if pane.as_deref().is_some_and(pinned) || matches!(by, SwapBy::Target(target) if pinned(target)) {
+                    return self.fail(PINNED);
+                }
                 let r = match (by, pane) {
                     (SwapBy::Direction(dir), Some(pane)) => self.swap_pane(&pane, explicit, dir),
                     (SwapBy::Direction(_), None) => Ok(()),
@@ -5599,6 +5645,29 @@ impl AppWindow {
                 })
                 .detach();
                 self.reply = Some(json!({ "started": true }));
+            }
+            "lead.type" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let on = a.get("on").and_then(Value::as_bool).unwrap_or(true);
+                let Some(pane) = self.model.pane_of(&terminal) else {
+                    return self.fail(format!("no pane shows the lead's terminal {terminal:?}"));
+                };
+                self.lead_sessions.entry(terminal.clone()).or_default().typing = on;
+                match self.composer_pane(&terminal) {
+                    Some(composer) if !on => self.focus_block(&composer, window, cx),
+                    _ => self.run("pane.focus", json!({ "pane": pane }), window, cx),
+                }
+                self.publish_lead(cx);
+            }
+            "lead.fit" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let Some(px) = a.get("px").and_then(Value::as_f64).filter(|px| px.is_finite()) else {
+                    return self.fail("lead.fit needs px, a number");
+                };
+                if self.composer_px.insert(terminal, px as f32) != Some(px as f32) {
+                    self.fit_composers();
+                    cx.notify();
+                }
             }
             "lead.answer" => {
                 let id = Self::arg(a, "id").unwrap_or_default();
@@ -6026,6 +6095,9 @@ impl AppWindow {
 
     fn swap_pane(&mut self, from: &str, explicit: bool, dir: &str) -> Result<(), String> {
         let neighbor = self.neighbor(from, dir, false);
+        if neighbor.as_deref().is_some_and(|n| self.pane_pinned(n)) {
+            return Err(PINNED.into());
+        }
         swap_with_neighbor(&mut self.model, from, explicit, neighbor)
     }
 
@@ -8329,15 +8401,30 @@ fn lead_display_for(lead: &crate::settings::Lead) -> (String, String) {
     (name, model)
 }
 
-/// The composer's height: its input line, or room for the card its lead's ask needs (a plan's text and a
-/// question's options take more than a permission).
-fn composer_height(asking: Option<crate::lead::AskKind>) -> f32 {
+/// The composer's height: what its text needs (`lead.fit`, one line until it says), or room for the card its
+/// lead's ask needs (a plan's text and a question's options take more than a permission).
+fn composer_height(asking: Option<crate::lead::AskKind>, wanted: Option<f32>) -> f32 {
     match asking {
-        None => 56.0,
-        Some(crate::lead::AskKind::Permission) => 272.0,
-        Some(_) => 420.0,
+        None => wanted.unwrap_or(COMPOSER_LINE).clamp(80.0, 320.0),
+        Some(crate::lead::AskKind::Permission) => 300.0,
+        Some(_) => 440.0,
     }
 }
+
+/// The text a key types, when it only types: no Ctrl, Alt or Cmd (Windows' AltGr, Ctrl+Alt, types too).
+fn typed_text(k: &gpui::Keystroke) -> Option<String> {
+    let m = &k.modifiers;
+    if m.platform || m.function || (m.control != m.alt) {
+        return None;
+    }
+    k.key_char.clone().filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+}
+
+/// Why a split or swap that would move the lead's terminal or its composer is refused.
+const PINNED: &str = "The lead's terminal and its composer stay in place.";
+
+/// The composer's box with one line of text: its margin, padding, the line and the row of buttons under it.
+const COMPOSER_LINE: f32 = 96.0;
 
 /// The palette's key as it is actually bound, worded for people; none when
 /// nothing opens it.
@@ -8543,9 +8630,11 @@ impl Render for AppWindow {
                     }
                 }
             }))
-            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 if ev.keystroke.key == "escape" && this.pane_drag.is_some() {
                     this.cancel_pane_drag(cx);
+                    cx.stop_propagation();
+                } else if this.type_into_composer(ev, window, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -8658,14 +8747,34 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn the_composer_is_one_line_until_its_lead_asks() {
+    fn only_typing_moves_to_the_composer() {
+        let key = |spec: &str, typed: Option<&str>| {
+            let mut k = gpui::Keystroke::parse(spec).unwrap();
+            k.key_char = typed.map(str::to_owned);
+            super::typed_text(&k)
+        };
+        assert_eq!(key("a", Some("a")).as_deref(), Some("a"));
+        assert_eq!(key("shift-a", Some("A")).as_deref(), Some("A"));
+        assert_eq!(key("ctrl-alt-q", Some("@")).as_deref(), Some("@"), "AltGr types");
+        assert_eq!(key("ctrl-c", None), None, "a shortcut stays with the terminal");
+        assert_eq!(key("alt-b", Some("b")), None);
+        assert_eq!(key("enter", Some("\r")), None, "Enter answers the program's own menus");
+        assert_eq!(key("escape", None), None);
+        assert_eq!(key("up", None), None);
+    }
+
+    #[test]
+    fn the_composer_is_as_tall_as_its_text_until_its_lead_asks() {
         use crate::lead::AskKind;
-        let line = super::composer_height(None);
-        let permission = super::composer_height(Some(AskKind::Permission));
-        assert!(line < 64.0, "one input line: {line}");
+        let line = super::composer_height(None, None);
+        let permission = super::composer_height(Some(AskKind::Permission), None);
+        assert_eq!(line, super::COMPOSER_LINE, "one line until the composer says");
+        assert_eq!(super::composer_height(None, Some(180.0)), 180.0, "what its text needs");
+        assert_eq!(super::composer_height(None, Some(2000.0)), 320.0, "never taller than six lines");
+        assert_eq!(super::composer_height(Some(AskKind::Permission), Some(180.0)), permission, "an ask decides");
         assert!(line < permission, "a card needs more room than the line");
         for kind in [AskKind::Plan, AskKind::Question] {
-            assert!(super::composer_height(Some(kind)) > permission, "{kind:?} holds text or options");
+            assert!(super::composer_height(Some(kind), None) > permission, "{kind:?} holds text or options");
         }
     }
 

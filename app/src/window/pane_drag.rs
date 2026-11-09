@@ -40,10 +40,32 @@ impl AppWindow {
         if tab.zoomed.is_some() || tab.root.panes().len() < 2 || !tab.root.find(pane).is_some_and(Node::is_pane) {
             return false;
         }
+        if self.pane_pinned(pane) {
+            return false;
+        }
         let owner = self.chrome.visible_blocks().into_iter().find(|n| matches!(n.content(), Some(Content::Context { .. })));
         inherited_movable(&tab.root, pane)
             .or_else(|| owner.and_then(|n| inherited_movable(&self.chrome, &n.id)))
             .unwrap_or(true)
+    }
+
+    /// The lead's terminal and its composer stay where `lead.open` put them: no drag, no swap, no drop on them.
+    pub(super) fn pane_pinned(&self, pane: &str) -> bool {
+        let Some(tab) = self.model.tab_of(pane) else { return false };
+        let leads: Vec<&str> = tab
+            .root
+            .panes()
+            .into_iter()
+            .filter_map(|n| match n.content() {
+                Some(Content::Mod { name, props }) if name == "composer" => props.get("terminal").and_then(Value::as_str),
+                _ => None,
+            })
+            .collect();
+        match tab.root.find(pane).and_then(Node::content) {
+            Some(Content::Mod { name, .. }) => name == "composer",
+            Some(Content::Terminal { terminal }) => leads.contains(&terminal.as_str()),
+            _ => false,
+        }
     }
 
     pub(super) fn pane_grip(&self, pane: &str, header: Option<f32>, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -101,7 +123,7 @@ impl AppWindow {
         let d = self.pane_drag.as_ref()?;
         let tab = self.model.active_tab().filter(|t| t.id == d.tab && t.zoomed.is_none())?;
         let bounds = self.bounds.borrow();
-        tab.shown().visible_blocks().into_iter().filter(|n| n.is_pane() && n.id != d.pane)
+        tab.shown().visible_blocks().into_iter().filter(|n| n.is_pane() && n.id != d.pane && !self.pane_pinned(&n.id))
             .find_map(|n| Some((n.id.clone(), drop_zone(*bounds.get(&n.id)?, at)?)))
     }
 

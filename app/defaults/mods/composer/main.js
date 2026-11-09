@@ -5,11 +5,10 @@
 // While Claude Code asks (a permission, a plan or a question) its card takes
 // the box's place, and the Owner's click or key answers the hook.
 
-import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, Textarea, TextareaState, InputState, Input, TextView } from "gpui-base";
+import { View, div, svg } from "gpui-kit";
+import { v_flex, h_flex, Textarea, TextareaState, InputState, Input, TextView, Popover } from "gpui-base";
 import {
   kom,
-  exec,
   run,
   theme,
   props,
@@ -17,27 +16,22 @@ import {
   setShared,
   terminals,
   knownAgents,
-  appLink,
-  openLink,
-  openOverlay,
   appHome,
   readTextFile,
-  window,
+  writeTextFile,
+  pickFiles,
   pasteImage,
   lead as leadOf,
+  nextCommand,
   settings,
 } from "kompitum";
 
 const HISTORY_KEY = "composer.history";
 const HISTORY_LIMIT = 100;
-const PLANS_EVERY_MS = 60000;
-const SYSTEMS = [{ id: "grokbot", name: "Grok Bot", scheme: "grokbot" }];
-const WINDOWS = [
-  { label: "5H", spend: "five_hours", report: "rolling", block: "5-hour", clock: true },
-  { label: "Week", spend: "week", report: "weekly", block: "weekly", clock: false },
-  { label: "Month", spend: "month", report: "monthly", block: "monthly", clock: false },
-];
-
+// The box's height without its text, one line of text, and the chips' row (window.rs sizes the pane).
+const BOX_PX = 76;
+const LINE_PX = 20;
+const CHIPS_PX = 28;
 function errorText(error) {
   if (error == null) return "The command failed.";
   if (typeof error === "string") return error;
@@ -53,10 +47,6 @@ function errorText(error) {
   }
   if (typeof error.code === "number") return `The command failed with exit code ${error.code}.`;
   return String(error);
-}
-
-function firstLine(text) {
-  return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 }
 
 function planText(ask) {
@@ -125,36 +115,6 @@ function repeatsLabel(label, description) {
   return words === String(label ?? "").trim().toLowerCase();
 }
 
-function two(n) {
-  return String(n).padStart(2, "0");
-}
-
-function resetWords(ms, clock) {
-  if (ms == null || ms === 0) return null;
-  let when;
-  if (typeof ms === "string" && Number.isNaN(Number(ms))) {
-    when = new Date(ms);
-  } else {
-    const value = Number(ms);
-    if (!Number.isFinite(value)) return null;
-    when = new Date(value > 1e12 ? value : value * 1000);
-  }
-  if (Number.isNaN(when.getTime())) return null;
-  const now = new Date();
-  const sameDay = when.getFullYear() === now.getFullYear() && when.getMonth() === now.getMonth() && when.getDate() === now.getDate();
-  if (clock || sameDay) return `${two(when.getHours())}:${two(when.getMinutes())}`;
-  const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((midnight(when) - midnight(now)) / 86400000);
-  if (Math.abs(days) < 7) return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][when.getDay()];
-  return `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][when.getMonth()]} ${when.getDate()}`;
-}
-
-function routeModel(route) {
-  let model = String(route ?? "").split("#")[0];
-  if (model.startsWith("commandcode/")) model = model.slice("commandcode/".length);
-  return model;
-}
-
 function compactJson(value) {
   try {
     return JSON.stringify(value ?? {});
@@ -209,69 +169,12 @@ function askQuestions(ask) {
   return Array.isArray(questions) ? questions : [];
 }
 
-function planLimit(plan, model, label) {
-  if (plan?.models) return plan.models?.[model]?.[label];
-  return plan?.windows?.[label];
-}
-
-function parseUsage(text) {
-  let data = null;
-  const raw = String(text ?? "").trim();
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    const from = raw.indexOf("{");
-    const to = raw.lastIndexOf("}");
-    if (from >= 0 && to > from) {
-      try { data = JSON.parse(raw.slice(from, to + 1)); } catch {}
-    }
-  }
-  if (!data || typeof data !== "object") return null;
-  const candidates = [data, data.go, data.usage, data.go?.usage, data.usage?.go];
-  const meters = candidates.find((c) => c && typeof c === "object" && (c.rolling || c.weekly || c.monthly));
-  if (!meters) return null;
-  const one = (m) => (m && typeof m === "object" ? { percent: Number(m.percent), resetsAt: m.resetsAt } : null);
-  return { rolling: one(meters.rolling), weekly: one(meters.weekly), monthly: one(meters.monthly) };
-}
-
-// npm installs CLIs as `.cmd` shims on Windows; CreateProcess won't launch those.
-function execCli(entry, args) {
-  const run = entry.run ?? [];
-  const command = run[0] ?? entry.key;
-  const argv = [...run.slice(1), ...args];
-  return window()?.platform === "windows"
-    ? exec("cmd.exe", ["/d", "/c", command, ...argv])
-    : exec(command, argv);
-}
-
-function meter(t, label, percent, reset, { approx = false, exhausted = false } = {}) {
-  const used = Number(percent);
-  const has = Number.isFinite(used);
-  const spent = has && used >= 100;
-  const text = has
-    ? `${label} ${spent ? "exhausted" : `${approx ? "≈" : ""}${Math.min(99, Math.round(used))}%`}${reset ? ` · resets ${reset}` : ""}`
-    : `${label}${reset ? ` · resets ${reset}` : ""}`;
-  const row = v_flex().gap(4).child(div().text_size(12.5).text_color(spent || exhausted ? t.working : t.muted).child(text));
-  if (has) {
-    const width = 170 * Math.max(2, Math.min(100, used)) / 100;
-    row.child(div().w(170).h(3).rounded(2).bg(t.hover).child(div().w(width).h(3).rounded(2).bg(spent || exhausted ? t.working : t.accent)));
-  }
-  return row;
-}
-
 export default class Composer extends View {
   init(_props, cx) {
     const p = props() ?? {};
-    this.mode = p.mode === "plans" ? "plans" : "compose";
     this.terminal = typeof p.terminal === "string" ? p.terminal : null;
     this.person = {};
     this.agents = [];
-    this.status = null;
-    this.workers = null;
-    this.usage = {};
-    this.usageAt = {};
-    this.usageError = {};
-    this.apps = [];
     this.loading = false;
     this.sending = false;
     this.error = null;
@@ -280,7 +183,6 @@ export default class Composer extends View {
     this.historyAt = -1;
     this.draft = "";
     this.askAt = null;
-    this.hoverPlan = false;
     // The lead's state and its open ask, from Claude Code's hooks.
     this.state = null;
     this.ask = null;
@@ -290,37 +192,46 @@ export default class Composer extends View {
     this.noteAction = null;
     this.answers = {};
     this.handle = cx.focus_handle();
-    if (this.mode === "compose") {
-      this.text = TextareaState.new({ placeholder: "Message the lead…" });
-      this.text.set_auto_grow(1, 10);
-      this.text.set_submit_on_enter(true);
-      this.text.on("change", (_event, cx) => {
-        if (this.text.value().length === 0) this.historyAt = -1;
-        this.setHistory(this.text.value().length === 0 || this.historyAt >= 0, cx);
-      });
-      this.text.on("submit", (event, cx) => this.submit(event, cx));
-      this.text.on("paste_other", (_event, cx) => this.pastedImage(cx));
-      cx.bind_keys([
-        { keystroke: "escape", action: "composer-escape", context: "Composer" },
-        { keystroke: "escape", action: "composer-escape", context: "ComposerHistory" },
-        { keystroke: "up", action: "composer-history-up", context: "ComposerHistory" },
-        { keystroke: "down", action: "composer-history-down", context: "ComposerHistory" },
-      ]);
-      this.historyMode = true;
-      this.text.set_key_context("ComposerHistory");
-      this.takeAsk(cx);
-    } else {
-      this.handle.focus();
-    }
+    this.text = TextareaState.new({});
+    this.text.set_auto_grow(1, 6);
+    this.text.set_submit_on_enter(true);
+    this.text.on("change", (_event, cx) => {
+      if (this.text.value().length === 0) this.historyAt = -1;
+      cx.notify();
+      this.setHistory(this.text.value().length === 0 || this.historyAt >= 0, cx);
+    });
+    this.text.on("submit", (event, cx) => this.submit(event, cx));
+    this.text.on("paste_other", (_event, cx) => this.pastedImage(cx));
+    cx.bind_keys([
+      { keystroke: "escape", action: "composer-escape", context: "Composer" },
+      { keystroke: "escape", action: "composer-escape", context: "ComposerHistory" },
+      { keystroke: "up", action: "composer-history-up", context: "ComposerHistory" },
+      { keystroke: "down", action: "composer-history-down", context: "ComposerHistory" },
+    ]);
+    this.historyMode = true;
+    this.text.set_key_context("ComposerHistory");
+    this.takeAsk(cx);
     cx.spawn(async (cx) => {
       await this.load(cx);
       cx.notify();
     });
     cx.timer.every(5000, (cx) => {
-      if (this.mode === "compose") this.load(cx);
+      this.load(cx);
     });
     cx.timer.every(500, (cx) => {
-      if (this.mode === "compose") this.takeAsk(cx);
+      this.takeAsk(cx);
+    });
+    // The window hands over the keyboard ("focus") and what was typed on the lead's terminal ("type:<text>").
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const command = String((await nextCommand()) ?? "");
+        if (this.ask) this.handle.focus();
+        else this.text.focus();
+        if (command.startsWith("type:") && !this.ask) {
+          this.text.replace(command.slice("type:".length));
+        }
+        cx.notify();
+      }
     });
   }
 
@@ -340,48 +251,9 @@ export default class Composer extends View {
       } catch {
         this.agents = [];
       }
-      try {
-        const r = await kom(["status", "--json"]);
-        if (r?.code === 0) this.status = JSON.parse(r.stdout || "null");
-      } catch {}
-      try {
-        const r = await kom(["workers", "--json"]);
-        if (r?.code === 0) this.workers = JSON.parse(r.stdout || "null");
-      } catch {}
-      await this.loadUsage();
-      const apps = [];
-      for (const system of SYSTEMS) {
-        if (!this.person?.connect?.[system.id]?.agent) continue;
-        try {
-          const app = appLink(system.scheme);
-          if (app) apps.push({ ...system, app });
-        } catch {}
-      }
-      this.apps = apps;
     } finally {
       this.loading = false;
       cx.notify();
-    }
-  }
-
-  // The CLI's own report wins over Kompitum's estimate, at most once a minute.
-  async loadUsage() {
-    const now = Date.now();
-    for (const entry of this.agents ?? []) {
-      if (!entry.usage?.length) continue;
-      if (now - (this.usageAt[entry.key] ?? 0) < PLANS_EVERY_MS) continue;
-      this.usageAt[entry.key] = now;
-      try {
-        const r = await execCli(entry, entry.usage);
-        if (r.code !== 0) throw new Error(firstLine(r.stderr || r.stdout) || `exit ${r.code}`);
-        const meters = parseUsage(r.stdout);
-        if (!meters) throw new Error(firstLine(r.stdout) || "its report has no usage meters");
-        this.usage[entry.key] = meters;
-        delete this.usageError[entry.key];
-      } catch (error) {
-        delete this.usage[entry.key];
-        this.usageError[entry.key] = firstLine(errorText(error));
-      }
     }
   }
 
@@ -408,7 +280,7 @@ export default class Composer extends View {
   }
 
   takeAsk(cx) {
-    if (this.mode !== "compose" || !this.leadLive()) return;
+    if (!this.leadLive()) return;
     const open = leadOf()?.ask ?? null;
     if (open?.id && open.id !== this.focusedAsk) {
       this.focusedAsk = open.id;
@@ -682,19 +554,6 @@ export default class Composer extends View {
     });
   }
 
-  iconButton(id, icon, t, action) {
-    return h_flex()
-      .id(id)
-      .h(24)
-      .px(6)
-      .items_center()
-      .rounded(6)
-      .cursor_pointer()
-      .hover((style) => style.bg(t.hover))
-      .on_click(action)
-      .child(icon);
-  }
-
   filledButton(id, label, action, t) {
     return h_flex()
       .id(id)
@@ -721,115 +580,6 @@ export default class Composer extends View {
       .text_color(statusColor(t, this.state))
       .child(word)
       .when(this.state === "working", (el) => el.loop("opacity", { from: 0.35, to: 1, period: 900 }));
-  }
-
-  ring(t, percent, color, size = 18) {
-    const segments = 12;
-    const filled = Math.round(Math.max(0, Math.min(100, Number(percent) || 0)) / 100 * segments);
-    const dot = 2.1;
-    const radius = size / 2 - dot;
-    let element = div().w(size).h(size).relative().flex_none();
-    for (let i = 0; i < segments; i++) {
-      const angle = (i / segments) * Math.PI * 2 - Math.PI / 2;
-      element = element.child(
-        div()
-          .absolute()
-          .left(size / 2 + Math.cos(angle) * radius - dot)
-          .top(size / 2 + Math.sin(angle) * radius - dot)
-          .w(dot * 2)
-          .h(dot * 2)
-          .rounded(dot)
-          .bg(i < filled ? color : t.border),
-      );
-    }
-    return element;
-  }
-
-  summary() {
-    const entry = this.leadProgram();
-    const percents = [];
-    const claude = entry.key === "claude" ? this.status?.claude : null;
-    if (claude) {
-      for (const [label, value, at, clock] of [
-        ["5H", claude.five_hour_used_percentage, claude.five_hour_resets_at, true],
-        ["Week", claude.seven_day_used_percentage, claude.seven_day_resets_at, false],
-      ]) {
-        if (Number.isFinite(Number(value))) {
-          percents.push({ percent: Number(value), label, reset: resetWords(at, clock) });
-        }
-      }
-    }
-    const plan = (entry.plans ?? []).find((item) => item.id === this.person?.plans?.[entry.key]);
-    if (plan) {
-      const workers = (this.workers?.workers ?? []).filter((worker) => worker.cli === entry.worker);
-      const first = (this.workers?.order ?? [])
-        .map((key) => workers.find((worker) => worker.key === key))
-        .find(Boolean) ?? workers[0];
-      const model = first ? routeModel(first.route) : null;
-      for (const window of WINDOWS) {
-        const blocked = workers.find((worker) => worker.state === "out" && worker.window === window.block);
-        if (blocked) {
-          percents.push({ percent: 100, label: window.label, reset: resetWords(blocked.until_ms, window.clock), exhausted: true });
-          continue;
-        }
-        const report = this.usage[entry.key]?.[window.report];
-        if (Number.isFinite(Number(report?.percent))) {
-          percents.push({ percent: Number(report.percent), label: window.label, reset: resetWords(report.resetsAt, window.clock) });
-          continue;
-        }
-        const limit = planLimit(plan, model, window.label);
-        if (Number.isFinite(Number(limit)) && Number(limit) > 0) {
-          const spent = workers.reduce((sum, worker) => sum + Number(worker.spend?.[window.spend]?.cost_usd ?? 0), 0);
-          percents.push({ percent: (spent / Number(limit)) * 100, label: window.label, approx: true });
-        }
-      }
-    }
-    if (!percents.length) return null;
-    const fullest = percents.reduce((best, item) => (item.percent > best.percent ? item : best));
-    const percent = Math.max(0, Math.min(100, fullest.percent));
-    const name = leadName(entry, entry.key);
-    const out = fullest.exhausted || percent >= 100;
-    return {
-      percent,
-      exhausted: out,
-      color: out ? t.blocked : percent >= 80 ? t.working : t.accent,
-      text: `${name} ${out ? "out" : `${Math.round(percent)}%`}${fullest.reset ? ` · resets ${fullest.reset}` : ""}`,
-    };
-  }
-
-  planRing(t) {
-    const summary = this.summary();
-    return h_flex()
-      .id("composer-plan")
-      .h(24)
-      .px(6)
-      .gap(6)
-      .items_center()
-      .rounded(6)
-      .cursor_pointer()
-      .hover((style) => style.bg(t.hover))
-      .on_hover((hovered, cx) => {
-        this.hoverPlan = hovered;
-        cx.notify();
-      })
-      .on_click(() => openOverlay({ mod: "composer", kind: "popup", width: 560, height: 0.8, props: { mode: "plans" } }))
-      .when(Boolean(this.hoverPlan && summary), (el) => el.child(div().text_size(11).text_color(t.muted).child(summary.text)))
-      .child(this.ring(t, summary?.percent ?? 0, summary?.color ?? t.accent));
-  }
-
-  header(t, cx) {
-    return h_flex()
-      .w_full()
-      .h(30)
-      .px(10)
-      .items_center()
-      .gap(8)
-      .border_b(1)
-      .border_color(t.border)
-      .child(div().text_size(12).font_medium().text_color(t.foreground).child(this.leadLine()))
-      .when(Boolean(this.state), (el) => el.child(this.statusWord(t)))
-      .child(div().flex_1())
-      .children(this.tools(t));
   }
 
   chip(t, cx, chip, index) {
@@ -862,74 +612,185 @@ export default class Composer extends View {
       );
   }
 
-  tools(t) {
-    return [
-      this.iconButton("composer-mail", svg("frame/settings/mail.svg").size(14).text_color(t.muted), t, () => run("app.mailbox")),
-      this.planRing(t),
-      ...this.apps.map((app) =>
-        this.iconButton(
-          `composer-app-${app.id}`,
-          app.app.icon
-            ? image(app.app.icon).w(16).h(16).flex_none()
-            : svg("frame/settings/link.svg").size(14).text_color(t.muted),
-          t,
-          () => openLink(`${app.scheme}://`),
-        )),
-    ];
+  // "+": the system's file picker; each file waits as a chip above the text.
+  attach(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        for (const path of (await pickFiles()) ?? []) this.addChip(path);
+      } catch (error) {
+        this.error = `Couldn't open the file picker: ${String(error?.message ?? error)}`;
+      }
+      cx.notify();
+    });
   }
 
-  // Idle, the composer is one slim line under the lead's terminal: the field with its files, the lead's
-  // status and Send, then the lead's tools.
+  // The model chip writes the lead's model or reasoning for its next start, as Settings › Agents does.
+  saveLead(patch, cx) {
+    cx.spawn(async (cx) => {
+      const path = `${appHome()}/settings.json`;
+      try {
+        const raw = await readTextFile(path);
+        const person = raw ? JSON.parse(raw) : {};
+        person.lead = { ...(person.lead ?? {}), ...patch };
+        await writeTextFile(path, `${JSON.stringify(person, null, 2)}\n`, raw);
+        this.person = person;
+      } catch (error) {
+        this.error = `Couldn't save the lead's model: ${String(error?.message ?? error)}`;
+      }
+      cx.notify();
+    });
+  }
+
+  // The lead's model and reasoning, as one quiet chip that opens a list upward.
+  modelChip(t) {
+    const entry = this.leadProgram();
+    const lead = this.person?.lead ?? {};
+    const models = (entry?.models ?? []).map((model) => [model.id, model.label]);
+    const efforts = (entry?.efforts ?? []).map((level) => [level, level.replace(/^./, (c) => c.toUpperCase())]);
+    const label =
+      [lead.model ? modelLabel(entry, lead.model) : null, effortWords(entry, lead.effort)].filter(Boolean).join(" · ") ||
+      leadName(entry, entry.key);
+    const group = (key, title, list, chosen) =>
+      v_flex()
+        .gap(1)
+        .child(div().px(8).pt(6).pb(2).text_size(11).text_color(t.dim).child(title))
+        .children(list.map(([value, text]) =>
+          h_flex()
+            .id(`composer-${key}-${value}`)
+            .h(28)
+            .px(8)
+            .gap(8)
+            .items_center()
+            .rounded(6)
+            .cursor_pointer()
+            .hover((s) => s.bg(t.hover))
+            .on_click((_e, cx) => {
+              this.modelOpen = false;
+              this.saveLead({ [key]: value }, cx);
+            })
+            .child(div().flex_1().text_size(13).text_color(t.foreground).child(text))
+            .when(value === chosen, (el) => el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)))));
+    const content = v_flex()
+      .w(230)
+      .p(4)
+      .rounded(10)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.popover)
+      .when(models.length > 0, (el) => el.child(group("model", "Model", models, lead.model)))
+      .when(efforts.length > 0, (el) => el.child(group("effort", "Reasoning", efforts, lead.effort)))
+      .child(div().px(8).pt(6).pb(4).text_size(11.5).line_height("16px").text_color(t.dim)
+        .child("For the lead's next start. Type /model to switch now."));
+    const trigger = h_flex()
+      .id("composer-model")
+      .h(28)
+      .px(8)
+      .gap(5)
+      .items_center()
+      .rounded(7)
+      .cursor_pointer()
+      .text_size(12.5)
+      .text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(`The lead: ${this.leadLine()}`)
+      .child(label)
+      .child(svg("mods/workspace-chrome/chevron-down.svg").size(11));
+    return Popover.new("composer-model-menu")
+      .anchor("bottom_right")
+      .open(Boolean(this.modelOpen))
+      .on_open_change((open, cx) => {
+        this.modelOpen = open;
+        cx.notify();
+      })
+      .trigger(trigger)
+      .content(content);
+  }
+
+  // One floating box: files, the text (no placeholder), then "+", the lead's status, its model and Send.
+  // While the lead asks, its card sits above the text in the same box.
   bar(t, cx) {
+    const ready = !this.sending && Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0;
     const send = h_flex()
       .id("composer-send")
+      .w(30)
+      .h(30)
+      .flex_none()
+      .items_center()
+      .justify_center()
+      .rounded(15)
+      .cursor_pointer()
+      .tooltip(this.sending ? "Sending…" : "Send (Enter)")
+      .when(ready, (el) => el.bg(t.foreground).hover((s) => s.opacity(0.85)))
+      .when(!ready, (el) => el.border_1().border_color(t.input))
+      .on_click(() => this.send(cx))
+      .child(svg("mods/composer/arrow-up.svg").size(16).text_color(ready ? t.background : t.dim));
+    const plus = h_flex()
+      .id("composer-attach")
       .w(28)
       .h(28)
       .flex_none()
       .items_center()
       .justify_center()
-      .rounded(8)
-      .bg(t.accent_fill)
+      .rounded(14)
       .cursor_pointer()
-      .tooltip(this.sending ? "Sending…" : "Send (Enter)")
-      .when(this.sending, (el) => el.opacity(0.5))
-      .hover((style) => style.opacity(0.88))
-      .on_click(() => this.send(cx))
-      .child(svg("mods/composer/arrow-up.svg").size(15).text_color(t.accent_foreground));
-    const note = this.error
-      ? div().id("composer-error").flex_none().max_w(260).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(this.error)
-      : this.state ? this.statusWord(t)?.flex_none() : null;
-    return h_flex()
-      .w_full()
-      .h_full()
-      .px(10)
-      .gap(6)
+      .text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip("Attach files")
+      .on_click(() => this.attach(cx))
+      .child(svg("mods/composer/plus.svg").size(16));
+    const typing = Boolean(leadOf()?.typing);
+    const keys = h_flex()
+      .id("composer-type")
+      .w(28)
+      .h(28)
+      .flex_none()
       .items_center()
-      .border_t(1)
-      .border_color(t.border)
-      .bg(t.chrome)
+      .justify_center()
+      .rounded(14)
+      .cursor_pointer()
+      .text_color(typing ? t.accent : t.muted)
+      .when(typing, (el) => el.bg(t.selected))
+      .hover((s) => s.bg(t.hover).text_color(typing ? t.accent : t.foreground))
+      .tooltip(typing ? "Typing in the terminal: click to type here again" : "Type in terminal (for logins and the CLI's own menus)")
+      .on_click(() => run("lead.type", { terminal: this.terminal, on: !typing }))
+      .child(svg("mods/composer/keyboard.svg").size(16));
+    const note = this.error
+      ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(this.error)
+      : this.state ? this.statusWord(t) : null;
+    return div()
+      .size_full()
+      .p(10)
+      .bg(t.background)
       .child(
-        h_flex()
-          .id("composer-field")
-          .tooltip(`To ${this.leadLine()}`)
-          .flex_1()
-          .min_w(0)
-          .min_h(36)
-          .pl(10)
-          .pr(4)
-          .py(4)
-          .gap(8)
-          .items_center()
-          .rounded(10)
+        v_flex()
+          .id("composer-box")
+          .size_full()
+          .px(12)
+          .pt(10)
+          .pb(8)
+          .gap(6)
+          .rounded(16)
           .border_1()
-          .border_color(this.error ? t.blocked : t.input)
-          .bg(t.surface)
-          .children(this.chips.map((chip, index) => this.chip(t, cx, chip, index)))
-          .child(div().flex_1().min_w(0).child(Textarea.new(this.text).w_full()))
-          .when(Boolean(note), (el) => el.child(note))
-          .child(send),
-      )
-      .children(this.tools(t));
+          .border_color(this.ask ? (this.ask.kind === "permission" ? t.blocked : t.input) : t.border)
+          .bg(t.raised)
+          .when(this.chips.length > 0, (el) =>
+            el.child(h_flex().gap(6).flex_wrap().children(this.chips.map((chip, index) => this.chip(t, cx, chip, index)))))
+          .when(Boolean(this.ask), (el) =>
+            el.child(v_flex().id("composer-asks").flex_1().min_h(0).overflow_y_scrollbar().child(this.card(t, cx))))
+          .when(!this.ask, (el) => el.child(div().flex_1().min_h(0).child(Textarea.new(this.text).w_full())))
+          .child(
+            h_flex()
+              .w_full()
+              .gap(6)
+              .items_center()
+              .child(plus)
+              .when(Boolean(this.terminal), (el) => el.child(keys))
+              .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
+              .child(div().flex_1())
+              .child(this.modelChip(t))
+              .when(!this.ask, (el) => el.child(send)),
+          ),
+      );
   }
 
   startLabel() {
@@ -1193,6 +1054,7 @@ export default class Composer extends View {
       this.answers = {};
       if (askId) cx.timer.after(0, () => this.handle.focus());
     }
+    this.fit(cx);
     return v_flex()
       .id("composer")
       .size_full()
@@ -1208,141 +1070,29 @@ export default class Composer extends View {
         for (const path of event.paths ?? []) this.addChip(path);
         cx.notify();
       })
-      .when(Boolean(this.ask), (el) =>
-        el.child(this.header(t, cx))
-          .child(v_flex().id("composer-asks").flex_1().min_h(0).overflow_y_scrollbar().px(10).py(8).child(this.card(t, cx))))
-      .when(!this.ask, (el) => el.child(this.bar(t, cx)));
+      .on_size_change((size, cx) => {
+        this.width = size.width;
+        cx.notify();
+      })
+      .child(this.bar(t, cx));
   }
 
-  planRow(t, cx, entry) {
-    const plan = (entry.plans ?? []).find((item) => item.id === this.person?.plans?.[entry.key]);
-    const head = h_flex()
-      .gap(8)
-      .items_center()
-      .child(entry.icon ? (entry.tint ? svg(entry.icon).size(16).text_color(t.dim) : image(entry.icon).w(16).h(16)) : div().w(16).h(16))
-      .child(div().text_size(13.5).font_medium().text_color(t.foreground).child(entry.name ?? entry.key));
-    if (!plan) {
-      return v_flex().w_full().py(10).gap(4).border_b(1).border_color(t.border)
-        .child(head)
-        .child(div().text_size(12.5).text_color(t.dim).child((entry.plans ?? []).length ? `Pick this CLI's plan in Settings › Agents (${(entry.plans ?? []).map((item) => item.label).join(", ")}).` : "No plans for this CLI."));
-    }
-    const workers = (this.workers?.workers ?? []).filter((worker) => worker.cli === entry.worker);
-    const first = (this.workers?.order ?? []).map((key) => workers.find((worker) => worker.key === key)).find(Boolean) ?? workers[0];
-    const model = first ? routeModel(first.route) : null;
-    const rows = [];
-    for (const window of WINDOWS) {
-      const blocked = workers.find((worker) => worker.state === "out" && worker.window === window.block);
-      if (blocked) {
-        rows.push(meter(t, window.label, 100, resetWords(blocked.until_ms, window.clock), { exhausted: true }));
-        continue;
-      }
-      const report = this.usage[entry.key]?.[window.report];
-      if (Number.isFinite(Number(report?.percent))) {
-        rows.push(meter(t, window.label, report.percent, resetWords(report.resetsAt, window.clock)));
-        continue;
-      }
-      const limit = planLimit(plan, model, window.label);
-      if (!Number.isFinite(Number(limit)) || Number(limit) <= 0) continue;
-      const spent = workers.reduce((sum, worker) => sum + Number(worker.spend?.[window.spend]?.cost_usd ?? 0), 0);
-      rows.push(meter(t, window.label, (spent / Number(limit)) * 100, null, { approx: true }));
-    }
-    return v_flex().w_full().py(10).gap(6).border_b(1).border_color(t.border)
-      .child(head)
-      .children(rows)
-      .when(Boolean(this.usageError[entry.key]), (el) =>
-        el.child(div().text_size(12).text_color(t.dim).child(`${entry.name ?? entry.key}: ${this.usageError[entry.key]}; these are Kompitum's own estimates.`)));
-  }
-
-  plans(t, cx) {
-    const claude = this.status?.claude;
-    const entries = [];
-    const seen = new Set();
-    for (const key of this.workers?.order ?? []) {
-      const worker = (this.workers?.workers ?? []).find((item) => item.key === key);
-      const entry = worker ? (this.agents ?? []).find((item) => item.worker === worker.cli) : null;
-      if (entry?.plans?.length && !seen.has(entry.key)) {
-        seen.add(entry.key);
-        entries.push(entry);
-      }
-    }
-    const claudeRows = [];
-    if (claude) {
-      const five = cableValue(claude.five_hour_used_percentage, claude.five_hour_resets_at, true);
-      const week = cableValue(claude.seven_day_used_percentage, claude.seven_day_resets_at, false);
-      if (five) claudeRows.push(five);
-      if (week) claudeRows.push(week);
-    }
-    return v_flex()
-      .id("composer-plans")
-      .size_full()
-      .bg(t.popover)
-      .text_color(t.foreground)
-      .child(
-        h_flex()
-          .h(38)
-          .px(14)
-          .items_center()
-          .justify_between()
-          .bg(t.chrome)
-          .border_b(1)
-          .border_color(t.border)
-          .child(div().text_size(13).font_semibold().child("Plans"))
-          .child(
-            h_flex()
-              .id("composer-plans-close")
-              .w(22)
-              .h(22)
-              .items_center()
-              .justify_center()
-              .rounded(6)
-              .text_color(t.dim)
-              .cursor_pointer()
-              .hover((style) => style.bg(t.hover))
-              .on_click(() => run("overlay.close"))
-              .child("×"),
-          ),
-      )
-      .child(
-        v_flex()
-          .flex_1()
-          .min_h(0)
-          .px(14)
-          .py(10)
-          .gap(8)
-          .overflow_y_scrollbar()
-          .child(div().text_size(12).text_color(t.dim).child("What's left on each subscription; no money, just the share used."))
-          .child(
-            v_flex()
-              .w_full()
-              .py(10)
-              .gap(6)
-              .border_b(1)
-              .border_color(t.border)
-              .child(
-                h_flex()
-                  .gap(8)
-                  .items_center()
-                  .child(svg("icons/claude.svg").size(16).text_color(t.dim))
-                  .child(div().text_size(13.5).font_medium().child("Claude Code")),
-              )
-              .when(claudeRows.length > 0, (el) => el.children(claudeRows))
-              .when(claudeRows.length === 0, (el) => el.child(div().text_size(12.5).text_color(t.dim).child("Claude Code hasn't reported its plan yet."))),
-          )
-          .children(entries.map((entry) => this.planRow(t, cx, entry)))
-          .when(entries.length === 0, (el) => el.child(div().text_size(12.5).text_color(t.dim).child("No worker plans yet."))),
-      );
+  // The pane grows with the text, up to six lines; the window holds the height (lead.fit).
+  fit(cx) {
+    if (!this.terminal || this.ask) return;
+    const perLine = Math.max(12, Math.floor(((this.width ?? 640) - 46) / 7.3));
+    const lines = String(this.text?.value?.() ?? "")
+      .split(/\r?\n/)
+      .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / perLine)), 0);
+    const px = BOX_PX + Math.min(6, Math.max(1, lines)) * LINE_PX + (this.chips.length ? CHIPS_PX : 0);
+    if (px === this.fitPx) return;
+    this.fitPx = px;
+    cx.timer.after(0, () => run("lead.fit", { terminal: this.terminal, px }));
   }
 
   render(cx) {
     const t = theme();
-    if (this.mode === "plans") return this.plans(t, cx);
     if (!this.leadLive()) return this.empty(t);
     return this.compose(t, cx);
   }
-}
-
-// A Claude status window as a meter, or null when it has said nothing.
-function cableValue(percent, resetAt, clock) {
-  if (percent == null && resetAt == null) return null;
-  return meter(theme(), clock ? "5H" : "Week", percent, resetWords(resetAt, clock));
 }

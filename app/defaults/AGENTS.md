@@ -617,6 +617,9 @@ The main ones:
 - Agents: `agent.next`, `agent.prev`, `agent.focus {terminal}`, `lead.open`
   (focus the lead and put the composer under it, starting it when needed),
   `lead.setup` (add Kompitum's MCP tools and kom skill to the `claude` lead),
+  `lead.type {terminal, on?}` (typing on the lead's terminal goes to its composer; on: the Owner types in the
+  terminal itself, as the composer's "Type in terminal" switch does; on false: back to the composer),
+  `lead.fit {terminal, px}` (the composer's height for its text, 80 to 320 px, while the lead isn't asking),
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`

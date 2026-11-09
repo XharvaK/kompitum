@@ -245,6 +245,16 @@ pub const COMMANDS: &[Command] = &[
         "Add Kompitum's tools and skill to Claude Code, for the claude lead.",
     ),
     cmd(
+        "lead.fit",
+        &[req("terminal"), req("px")],
+        "Size the lead's composer to its text while its lead isn't asking: px from 80 to 320.",
+    ),
+    cmd(
+        "lead.type",
+        &[req("terminal"), opt("on")],
+        "Type in the lead's terminal itself (on, the default), or send typing there to its composer again (on: false).",
+    ),
+    cmd(
         "lead.answer",
         &[req("id"), req("answer")],
         "Answer the lead's open ask: its id and the Owner's answer ({ action: allow, allow_always, deny, approve, keep_planning, answers, or terminal, with note or answers }).",

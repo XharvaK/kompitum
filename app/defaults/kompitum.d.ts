@@ -101,6 +101,10 @@ export function knownAgents(options?: { on?: string | null; fresh?: boolean }): 
  *  when the person cancels. `prompt`: the confirm button's text (default "Open"). */
 export function pickFolder(options?: { prompt?: string }): Promise<string | null>;
 
+/** Opens the system's file picker (this machine) for one or more files. Resolves with their paths, or an
+ *  empty list when the person cancels. */
+export function pickFiles(): Promise<string[]>;
+
 /** Adds Kompitum's tools and skill to Claude Code, for the `claude` lead: `claude mcp get/add`
  *  through kompitum-core's exec, and the kom skill in the person's `~/.claude/skills/` when it
  *  isn't there yet. Rejects with the step and the first line of what failed. Never touches
@@ -311,7 +315,12 @@ export interface LeadAsk {
  *  no hook has reported one (a lead that isn't Claude, or the very first
  *  moment). A copy without props().terminal reads the live terminal labelled
  *  `lead`. Live: the copy re-renders when either changes. */
-export function lead(): { state: "working" | "asking" | "waiting" | null; ask: LeadAsk | null } | null;
+export function lead(): {
+  state: "working" | "asking" | "waiting" | null;
+  ask: LeadAsk | null;
+  /** The Owner types in the terminal itself (lead.type); otherwise typing there comes to the composer. */
+  typing?: boolean;
+} | null;
 
 /** Actual terminal/pane focus. `space` and `tab` are the current window context.
  *  Clicking a visible layout terminal block, or pane.focus {terminal}, focuses that block:

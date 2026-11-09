@@ -12,6 +12,7 @@ use std::{
 };
 
 // One file per area of the rework, so workers on different areas never share a file.
+mod composer;
 mod machines;
 mod mailbox;
 mod settings_pages;
@@ -212,6 +213,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     });
     module = module.function("pasteImage", |_| Ok(HostValue::Null));
     module = module.async_function("pickFolder", |_| Ok(async { Ok(HostValue::Null) }));
+    module = module.async_function("pickFiles", |_| Ok(async { Ok(HostValue::Array(Vec::new())) }));
     module = module.async_function("leadSetup", |_| {
         Ok(async { Ok(to_host(&json!({"mcp": "present", "skill": "present"}))) })
     });
