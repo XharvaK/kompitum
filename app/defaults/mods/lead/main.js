@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { kom, theme, notify, openOverlay, closeOverlay, shared, setShared, props, appLink, openLink, settings, knownAgents, run } from "kompitum";
+import { kom, theme, notify, openOverlay, closeOverlay, shared, setShared, props, appLink, openLink } from "kompitum";
 
 const LEAD_KEY = "lead";
 const DOOR = "grokbot://";
@@ -162,22 +162,6 @@ function backNoteLine(note) {
   return `${note.title ? String(note.title) : "(untitled)"} — ${note.path ? String(note.path) : "no path"}`;
 }
 
-function modelLabel(entry, id) {
-  const models = entry?.models ?? [];
-  if (id) return models.find((model) => model.id === id)?.label ?? String(id).split("/").pop().replace(/[-_]/g, " ").replace(/^./, (c) => c.toUpperCase());
-  return models.find((model) => model.id === "default")?.label ?? "Default";
-}
-
-function leadInfo(agents) {
-  const lead = settings()?.lead ?? {};
-  const key = lead.program || "claude";
-  const entry = agents.find((agent) => agent.key === key) ?? { key, name: key === "claude" ? "Claude" : key, models: [] };
-  const name = key === "claude" ? "Claude" : entry.name ?? key;
-  // No model picked: the CLI's own default, which needs no word.
-  const model = lead.model ? modelLabel(entry, lead.model) : "";
-  return { name, model, line: [name, model].filter(Boolean).join(" "), words: [name, model].filter(Boolean).join(", ") };
-}
-
 function noteLines(notes) {
   return notes.map((note) => `- ${openNoteLine(note)}`).join("\n");
 }
@@ -245,14 +229,7 @@ export default class Lead extends View {
     this.handoff = Boolean(p && p.mode === "handoff" && typeof p.markdown === "string");
     this.sending = false;
     this.busy = false;
-    this.agents = [];
     if (this.handoff) cx.timer.after(80, () => this.handle.focus());
-    else cx.spawn(async (cx) => {
-      try {
-        this.agents = await knownAgents();
-      } catch {}
-      cx.notify();
-    });
   }
 
   flip(cx) {
@@ -373,10 +350,9 @@ export default class Lead extends View {
       .child(text);
   }
 
-  // Two quiet items in the status bar's own type: the lead ("Claude Haiku"),
-  // and the way to Manager's chat. No pills: they read as part of the bar.
+  // Two labelled items in the status bar's own type: the Line, and the way to Manager's chat.
+  // No pills, and no item naming the lead: they read as part of the bar.
   renderPill(t) {
-    const lead = leadInfo(this.agents);
     const item = (id) => h_flex().id(id).h_full().px(6).gap(5).items_center().rounded(5).cursor_pointer()
       .text_color(t.muted).hover((s) => s.text_color(t.foreground))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation());
@@ -392,15 +368,10 @@ export default class Lead extends View {
       .border_color(t.border)
       .text_size(11.8)
       .child(
-        item("lead-pill")
-          .tooltip(`The lead: ${lead.words}. Click to open it.`)
-          .on_click(() => run("lead.open"))
-          .child(lead.line),
-      )
-      .child(
         item("lead-line")
           .tooltip("The Line")
           .on_click(() => openOverlay({ mod: "line", kind: "popup", width: 420, height: 460 }))
+          .child("Line")
           .child(svg("mods/lead/chevron-up.svg").size(12)),
       )
       .child(div().w(1).h(12).bg(t.border))

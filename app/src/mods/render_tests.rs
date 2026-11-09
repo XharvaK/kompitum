@@ -793,23 +793,18 @@ fn the_lead_overlay_draws_the_hand_off_with_a_way_out(cx: &mut TestAppContext) {
     assert!(!tree.contains("Lead · "), "the pill drew instead: {tree}");
 }
 
+/// The status bar names no lead (its model is in the composer's picker), and still offers Manager's chat.
 #[gpui::test]
-fn the_lead_chip_shows_its_model_and_opens_the_lead(cx: &mut TestAppContext) {
+fn the_status_bar_names_no_lead_and_offers_managers_chat(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("knownAgents".into(), agent_catalog());
     values.get_mut("settings").unwrap()["lead"] = json!({"program": "claude", "model": "opus"});
     let tree = describe_settled(cx, &staged, "mods/lead", values, None).unwrap();
-    assert!(
-        tree.contains("The lead: Claude, Opus. Click to open it."),
-        "{tree}"
-    );
+    assert!(!tree.contains("lead-pill"), "{tree}");
+    assert!(!tree.contains("The lead: Claude"), "{tree}");
     assert!(tree.contains("Open Manager's chat"), "{tree}");
-    assert!(
-        !tree.contains("Lead · "),
-        "the chip shows only the model: {tree}"
-    );
 }
 
 /// The composer draws its box under a live lead, and the first-pick card when

@@ -121,9 +121,9 @@ fn the_top_bar_bell_badge_counts_what_waits(cx: &mut TestAppContext) {
     assert!(!tree.contains("topbar-bell-count"), "nothing waits: {tree}");
 }
 
-/// The lead's status-bar pill carries the Line right beside it.
+/// The status bar has the Line and Manager as labelled items, and no item naming the lead.
 #[gpui::test]
-fn the_lead_pill_shows_the_line(cx: &mut TestAppContext) {
+fn the_status_bar_shows_the_line_and_manager_and_no_lead_name(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let tree = describe(
@@ -138,6 +138,9 @@ fn the_lead_pill_shows_the_line(cx: &mut TestAppContext) {
     .unwrap();
     assert!(tree.contains("lead-line"), "{tree}");
     assert!(tree.contains("The Line"), "{tree}");
+    assert!(tree.contains("lead-door"), "{tree}");
+    assert!(!tree.contains("lead-pill"), "{tree}");
+    assert!(!tree.contains("Claude"), "{tree}");
 }
 
 /// A failed `kom status --json` must not wipe the last review count, and the
