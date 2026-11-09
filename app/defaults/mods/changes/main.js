@@ -195,7 +195,7 @@ export default class Changes extends View {
       })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
         .child(Scrollbar.vertical("changes-list").absolute().inset_0()))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
-      .child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "JetBrains Mono").text_size(11)
+      .child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "Google Sans Code").text_size(11)
         .child(div().id("changes-diff-x").size_full().overflow_x_scrollbar()
           .child(div().w_full().min_w(this.diffWidth).h_full().child(v_virtual_list("changes-diff", this.rows.length, 20, (i) => String(i),
             (range) => this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t))).size_full())))

@@ -1744,10 +1744,11 @@ fn cell_font(bold: bool, italic: bool) -> Font {
     f
 }
 
-// JetBrains Mono joins punctuation, so ordinary ASCII output can keep using
-// the ligatures-off font even when the setting is enabled.
+// JetBrains Mono joins punctuation and Google Sans Code joins nothing, so
+// ordinary ASCII output can keep using the ligatures-off font even when the
+// setting is enabled. Any other font takes the careful path.
 fn needs_ligatures(text: &str, font: &Font) -> bool {
-    font.family.as_ref() != crate::settings::DEFAULT_FONT
+    !matches!(font.family.as_ref(), "JetBrains Mono" | "Google Sans Code")
         || !text.is_ascii()
         || text
             .as_bytes()
@@ -3688,7 +3689,7 @@ mod tests {
         use std::borrow::Cow;
 
         let system = Arc::new(TextSystem::new(Arc::new(
-            gpui_wgpu::CosmicTextSystem::new_without_system_fonts(crate::settings::DEFAULT_FONT),
+            gpui_wgpu::CosmicTextSystem::new_without_system_fonts("JetBrains Mono"),
         )));
         system
             .add_fonts(vec![Cow::Borrowed(include_bytes!(
@@ -3698,7 +3699,7 @@ mod tests {
         let text_system = WindowTextSystem::new(system);
         let original = crate::settings::get();
         let mut settings = (*original).clone();
-        settings.font_family = crate::settings::DEFAULT_FONT.into();
+        settings.font_family = "JetBrains Mono".into();
         for font_size in [px(10.0), px(14.0), px(24.0), px(36.0)] {
             for text in ["a=>b", "a!=b", "a===b", "a->b", "a<=b", "a>=b", "a|>b"] {
                 let mut variants = Vec::new();
@@ -3802,7 +3803,7 @@ mod tests {
         let system = TextSystem::new(platform.clone());
         system
             .add_fonts(vec![
-                Cow::Borrowed(include_bytes!("../assets/fonts/JetBrainsMono-Variable.ttf")),
+                Cow::Borrowed(include_bytes!("../assets/fonts/GoogleSansCode-Variable.ttf")),
                 Cow::Borrowed(include_bytes!(
                     "../vendor/ghostty/src/font/res/NotoEmoji-Regular.ttf"
                 )),
@@ -3901,6 +3902,7 @@ mod tests {
         let font = font(crate::settings::DEFAULT_FONT);
         assert!(!needs_ligatures("hello world 123 www", &font));
         assert!(!needs_ligatures("a=b - c", &font));
+        assert!(!needs_ligatures("hello world", &gpui::font("JetBrains Mono")));
         assert!(needs_ligatures("a=>b -> c", &font));
         assert!(needs_ligatures("界=>", &font));
         assert!(needs_ligatures("fi ->", &gpui::font("Fira Code")));

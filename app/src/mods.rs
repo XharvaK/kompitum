@@ -1432,7 +1432,7 @@ pub fn apply_theme(cx: &mut App) {
     let palette = json!({
         "background": g("background"), "foreground": g("foreground"),
         "surface": g("surface"), "surface_foreground": g("foreground"),
-        "primary": g("accent"), "primary_foreground": g("accent_foreground"),
+        "primary": g("accent_fill"), "primary_foreground": g("accent_foreground"),
         "secondary": g("raised"), "secondary_foreground": g("foreground"),
         "muted": g("raised"), "muted_foreground": g("muted"),
         "accent": g("hover"), "accent_foreground": g("foreground"),

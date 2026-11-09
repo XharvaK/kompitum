@@ -318,7 +318,9 @@ layout's look and a block can differ:
   settings.json's theme, else ink or paper. `colors` overrides any theme color by name (see
   `theme()` below), for terminals and panels alike: overrides apply in
   both appearances, so name theme colors (`chrome`, `canvas`) rather than
-  writing hex when a layout should work light and dark.
+  writing hex when a layout should work light and dark. ink fills buttons with
+  a deeper blue than its accent; a layout that changes ink's `accent` sets
+  `accent_fill` and `accent_foreground` too.
 - `themes/<name>.json`: `{ "background", "foreground", "selection",
   "cursor"?, "ansi": [16 colors], "colors"?: {...} }`, all `#rrggbb`; panel
   colors are derived from these, `colors` overrides them. Kompitum ships
@@ -328,11 +330,13 @@ layout's look and a block can differ:
   that layout's own.
 - `font` / `font_size`: the terminals' (px at zoom 1); `ui_font`: the mods'
   (their text sizes are their own, in px, and follow zoom). Optional: without
-  them a layout uses settings.json's, else Kompitum's (JetBrains Mono 14, Geist).
+  them a layout uses settings.json's, else Kompitum's (Google Sans Code 14, Google
+  Sans Flex).
   Kompitum (main) leaves these unset; Terminals sets text size 15, and Kompitum 98
   brings its own fonts.
-  JetBrains Mono, Geist Mono and Geist ship with Kompitum; any installed font
-  works (a terminal font the machine lacks falls back to JetBrains Mono).
+  Google Sans Code, Google Sans Flex, JetBrains Mono, Geist Mono and Geist ship with
+  Kompitum; any installed font works (a terminal font the machine lacks falls back
+  to Google Sans Code).
   A layout brings its own fonts: `.ttf`/`.otf` files in a mod's `fonts/`
   folder (or the home's `fonts/`) load at start and on the next look change,
   so a layout and its mod folder travel together (Kompitum 98's do: its pixel
@@ -973,8 +977,9 @@ All of it is in `kompitum.d.ts`. In short:
   (every core terminal), `focused()`, `layout()`, `theme()` (every color by
   name: background (the terminals', cards), canvas (behind cards), chrome
   (sidebars, bars), surface, popover, raised, hover, selected, border,
-  input (a stronger border), foreground, muted, dim, accent,
-  accent_foreground, solid and solid_foreground (a primary button),
+  input (a stronger border), foreground, muted, dim, accent, accent_fill
+  (a primary button's or an on switch's fill; accent_foreground is the text on
+  it), accent_foreground, solid and solid_foreground (a primary button),
   selection, working, blocked, done, idle, unknown, ansi0..15; light and
   dark themes name the same ones), `settings()` (with `dark`: the
   appearance now), `keys()`, `commands()` (every app

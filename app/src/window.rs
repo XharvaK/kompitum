@@ -6360,7 +6360,7 @@ impl AppWindow {
                         .items_center()
                         .rounded_full()
                         .cursor_pointer()
-                        .bg(c("accent"))
+                        .bg(c("accent_fill"))
                         .text_color(c("accent_foreground"))
                         .font_weight(FontWeight::SEMIBOLD)
                         .hover(|s| s.opacity(0.9))

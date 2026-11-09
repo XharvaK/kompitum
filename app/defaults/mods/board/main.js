@@ -487,7 +487,7 @@ export default class Board extends View {
         .min_h(0)
         .overflow_y_scrollbar()
         .p(12)
-        .font_family(settings()?.font_family ?? "JetBrains Mono")
+        .font_family(settings()?.font_family ?? "Google Sans Code")
         .text_size(11.5)
         .child(v_flex().w_full().children(lines(review.body))));
   }

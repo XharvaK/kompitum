@@ -230,7 +230,7 @@ fn button(id: &'static str, label: &'static str, primary: bool) -> Stateful<Div>
         .text_size(px(14.0))
         .font_weight(FontWeight::SEMIBOLD)
         .when(primary, |d| {
-            d.bg(c("accent"))
+            d.bg(c("accent_fill"))
                 .text_color(c("accent_foreground"))
                 .hover(|s| s.opacity(0.9))
         })

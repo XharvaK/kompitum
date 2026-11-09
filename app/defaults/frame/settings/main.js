@@ -58,8 +58,8 @@ const APPEARANCES = [
 ];
 
 // What the app uses when settings.json names no font (settings.rs).
-const DEFAULT_FONT = "JetBrains Mono";
-const DEFAULT_UI_FONT = "Geist";
+const DEFAULT_FONT = "Google Sans Code";
+const DEFAULT_UI_FONT = "Google Sans Flex";
 
 export default class Settings extends View {
   init(_props, cx) {
@@ -290,7 +290,7 @@ export default class Settings extends View {
       .rounded(10)
       .p(2)
       .cursor_pointer()
-      .bg(on ? t.accent : t.hover)
+      .bg(on ? t.accent_fill : t.hover)
       .flex()
       .when(on, (el) => el.justify_end())
       .on_click(onClick)
@@ -667,7 +667,7 @@ export default class Settings extends View {
                 cx.notify();
               });
     const primary = (id, label, f) =>
-      div().id(id).px(12).py(5).rounded(7).cursor_pointer().bg(t.accent).text_color(t.accent_foreground).text_size(13).font_semibold().hover((s) => s.opacity(0.9)).on_click(f).child(label);
+      div().id(id).px(12).py(5).rounded(7).cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).text_size(13).font_semibold().hover((s) => s.opacity(0.9)).on_click(f).child(label);
     const app = !u.app.updates
       ? ["A build from source: it updates with git, not here.", null]
       : u.app.ready
