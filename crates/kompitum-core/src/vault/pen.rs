@@ -101,6 +101,8 @@ pub(super) fn write_message(vault: &Vault, post: &Post, now: &Moment) -> Result<
     meta.set("status", notes::Value::Text(status.to_string()));
 
     let folder = vault.root.join(&vault.agent).join("to").join(&post.to);
+    let rel_dir = format!("{}/to/{}", vault.agent, post.to);
+    super::listing::refuse_link(&vault.root, &rel_dir)?;
     std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
     let base = format!("{}_{}", now.file_stamp(), notes::slug(&title));
     let mut name = format!("{base}.md");
@@ -109,10 +111,12 @@ pub(super) fn write_message(vault: &Vault, post: &Post, now: &Moment) -> Result<
         name = format!("{base}-{number}.md");
         number += 1;
     }
+    let rel = format!("{}/to/{}/{}", vault.agent, post.to, name);
+    super::listing::refuse_link(&vault.root, &rel)?;
     let text = notes::format_note(&meta, &post.body);
     std::fs::write(folder.join(&name), text.as_bytes())
         .map_err(|e| unavailable(format!("cannot write {}: {e}", folder.join(&name).display())))?;
-    Ok(format!("{}/to/{}/{}", vault.agent, post.to, name))
+    Ok(rel)
 }
 
 pub(super) fn mark_note(root: &Path, path: &str, status: &str) -> Result<(), RpcError> {

@@ -198,6 +198,7 @@ pub(super) fn write_memory(vault: &Vault, draft: &MemoryDraft, now: &Moment) -> 
     }
 
     let folder = vault.root.join(&vault.agent).join("memory");
+    super::listing::refuse_link(&vault.root, &format!("{}/memory", vault.agent))?;
     std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
     let base = notes::slug(&title);
     let mut name = format!("{base}.md");
@@ -206,11 +207,13 @@ pub(super) fn write_memory(vault: &Vault, draft: &MemoryDraft, now: &Moment) -> 
         name = format!("{base}-{number}.md");
         number += 1;
     }
+    let rel = format!("{}/memory/{name}", vault.agent);
+    super::listing::refuse_link(&vault.root, &rel)?;
     let date = now.note_stamp();
     let meta = memory_meta(vault, &title, &project, &date, now, draft.standing, &review_after);
     std::fs::write(folder.join(&name), notes::format_note(&meta, &draft.body).as_bytes())
         .map_err(|e| unavailable(format!("cannot write {}: {e}", folder.join(&name).display())))?;
-    Ok(format!("{}/memory/{name}", vault.agent))
+    Ok(rel)
 }
 
 /// Mark one of my memory notes superseded, with why, in place.

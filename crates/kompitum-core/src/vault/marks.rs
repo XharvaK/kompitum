@@ -144,8 +144,11 @@ pub fn append(root: &Path, agent: &str, mark: &Value) -> Result<String, String> 
     if agent.is_empty() || agent == "." || agent == ".." || agent.contains(['/', '\\', ':']) {
         return Err(format!("{agent:?} cannot name an agent's folder in the vault"));
     }
+    let rel = format!("{agent}/reads.jsonl");
+    super::listing::refuse_link(root, &rel).map_err(|error| error.message)?;
     let dir = root.join(agent);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+    super::listing::refuse_link(root, &rel).map_err(|error| error.message)?;
     let path = dir.join("reads.jsonl");
     let mut file = OpenOptions::new()
         .create(true)

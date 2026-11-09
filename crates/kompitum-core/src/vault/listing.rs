@@ -320,21 +320,48 @@ pub(super) fn read_one(root: &Path, path: &str) -> Result<Entry, RpcError> {
     Ok(Entry { path: path.to_string(), meta: note.meta, body: note.body, title })
 }
 
-pub(super) fn inside(root: &Path, path: &str) -> Result<PathBuf, RpcError> {
+/// Refuse a path that is a link, or whose real path leaves the vault. The leaf
+/// need not exist yet, so a writer can check a path it is about to create.
+pub(super) fn refuse_link(root: &Path, path: &str) -> Result<PathBuf, RpcError> {
     if path.is_empty() || path.contains("..") || path.starts_with('/') || drive_path(path) {
         return Err(RpcError::new("usage", format!("{path} is not a path inside the vault."), ""));
     }
     let real_root =
         std::fs::canonicalize(root).map_err(|e| unavailable(format!("cannot read {}: {e}", root.display())))?;
-    let full = root.join(path);
-    let real = std::fs::canonicalize(&full)
-        .map_err(|_| RpcError::new("not_found", format!("{path} is not in the vault."), ""))?;
-    if !real.starts_with(&real_root) {
-        return Err(RpcError::new("usage", format!("{path} is not a path inside the vault."), ""));
+    let mut current = root.to_path_buf();
+    for component in Path::new(path).components() {
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(unavailable(format!("cannot read {}: {error}", current.display()))),
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    return Err(RpcError::new(
+                        "refused",
+                        format!("refused: {path} is a link out of the vault"),
+                        "",
+                    ));
+                }
+                let real = std::fs::canonicalize(&current)
+                    .map_err(|error| unavailable(format!("cannot read {}: {error}", current.display())))?;
+                if !real.starts_with(&real_root) {
+                    return Err(RpcError::new(
+                        "refused",
+                        format!("refused: {path} is a link out of the vault"),
+                        "",
+                    ));
+                }
+            }
+        }
     }
+    Ok(root.join(path))
+}
+
+pub(super) fn inside(root: &Path, path: &str) -> Result<PathBuf, RpcError> {
+    let full = refuse_link(root, path)?;
     let metadata = std::fs::symlink_metadata(&full)
         .map_err(|_| RpcError::new("not_found", format!("{path} is not in the vault."), ""))?;
-    if metadata.file_type().is_symlink() || !metadata.is_file() {
+    if !metadata.is_file() {
         return Err(RpcError::new("not_found", format!("{path} is not in the vault."), ""));
     }
     Ok(full)
