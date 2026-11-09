@@ -188,34 +188,135 @@ impl Conversation {
 
 /// Applies one event. No IO.
 pub fn fold(mut conversation: Conversation, event: &Event) -> Conversation {
-    let _ = event;
+    match event {
+        Event::UserPromptSubmit { prompt } => on_submit(&mut conversation, prompt),
+        Event::MessageDisplay { text } => on_display(&mut conversation, text),
+        Event::PreToolUse { id, name, input } => on_pre_tool(&mut conversation, id, name, input),
+        Event::PostToolUse {
+            id,
+            name,
+            result,
+            failed,
+        } => on_post_tool(&mut conversation, id, name, result, *failed),
+        Event::Stop => on_stop(&mut conversation),
+        Event::StopFailure { matcher } => on_stop_failure(&mut conversation, matcher.as_deref()),
+        Event::Notification { kind } => on_notification(&mut conversation, kind),
+        Event::Elicitation => {
+            if conversation.reveal != Some(Reveal::Manual) {
+                conversation.show(Reveal::Auto, Some("Claude needs your input.".into()));
+            }
+        }
+        Event::History { items } => {
+            conversation.items = items.clone();
+            conversation.next_id = conversation.next_id.max(items.len() as u64);
+            conversation.touched();
+        }
+        Event::HistoryUnread => {
+            let id = conversation.next("notice");
+            conversation.items.push(Item::Notice {
+                id,
+                text: "Couldn't read the conversation history.".into(),
+            });
+            conversation.touched();
+        }
+        Event::Toggle { show } => on_toggle(&mut conversation, *show),
+    }
     conversation
 }
 
 /// The hook name and its JSON, or None when the event is not for the conversation
 /// (a permission, plan or question card, or an event we do not draw).
 pub fn event_from_hook(event: &str, input: &Value) -> Option<Event> {
-    let _ = (event, input);
-    None
+    match event {
+        "UserPromptSubmit" => Some(Event::UserPromptSubmit {
+            prompt: string_field(input, "prompt"),
+        }),
+        "MessageDisplay" => {
+            let text = first_string(input, &["delta", "text"]);
+            let text = if text.is_empty() {
+                input.get("message").and_then(Value::as_str).unwrap_or("").to_owned()
+            } else {
+                text
+            };
+            Some(Event::MessageDisplay { text })
+        }
+        "PreToolUse" => {
+            let name = string_field(input, "tool_name");
+            if name == "AskUserQuestion" {
+                return None;
+            }
+            Some(Event::PreToolUse {
+                id: tool_id(input),
+                name,
+                input: input.get("tool_input").cloned().unwrap_or(Value::Null),
+            })
+        }
+        "PostToolUse" => {
+            let name = string_field(input, "tool_name");
+            if name == "AskUserQuestion" {
+                return None;
+            }
+            Some(Event::PostToolUse {
+                id: tool_id(input),
+                name,
+                result: tool_result(input),
+                failed: tool_failed(input),
+            })
+        }
+        "Stop" => Some(Event::Stop),
+        "StopFailure" => Some(Event::StopFailure {
+            matcher: stop_failure_matcher(input),
+        }),
+        "Notification" => Some(Event::Notification {
+            kind: first_string(input, &["notification_type", "matcher", "type"]),
+        }),
+        "Elicitation" => Some(Event::Elicitation),
+        _ => None,
+    }
 }
 
 /// How a new lead starts after `claude auth status` exits. Only the code is used.
 pub fn reveal_after_auth_status(code: i32) -> (TerminalVis, Option<Reveal>) {
-    let _ = code;
-    (TerminalVis::Hidden, None)
+    if code == 0 {
+        (TerminalVis::Hidden, None)
+    } else {
+        (TerminalVis::Shown, Some(Reveal::Login))
+    }
 }
 
 /// A bare picker command: one of the listed `/` commands, with no argument.
 pub fn is_picker_command(text: &str) -> bool {
-    let _ = text;
-    false
+    let text = text.trim();
+    PICKER_COMMANDS.contains(&text)
 }
 
 /// Reads a Claude Code JSONL transcript into the same items `fold` builds.
 /// Unknown line types are skipped and counted.
 pub fn items_from_transcript(text: &str) -> TranscriptLoad {
-    let _ = text;
-    TranscriptLoad::default()
+    let mut items = Vec::new();
+    let mut skipped = 0;
+    let mut next_id = 0u64;
+    let mut next = |kind: &str| {
+        next_id += 1;
+        format!("{kind}-{next_id}")
+    };
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            skipped += 1;
+            continue;
+        };
+        match line_type(&value) {
+            Some("user") => apply_user(&mut items, &mut next, &value),
+            Some("assistant") => apply_assistant(&mut items, &mut next, &value),
+            Some(_) => skipped += 1,
+            None => skipped += 1,
+        }
+    }
+    TranscriptLoad { items, skipped }
 }
 
 fn on_submit(conversation: &mut Conversation, prompt: &str) {
@@ -441,8 +542,63 @@ fn tool_mut<'a>(conversation: &'a mut Conversation, id: &str) -> Option<&'a mut 
 
 /// A one-line summary from a tool's name and input.
 pub fn tool_summary(name: &str, input: &Value) -> String {
-    let _ = (name, input);
-    String::new()
+    let path = |keys: &[&str]| {
+        keys.iter()
+            .find_map(|key| input.get(*key).and_then(Value::as_str))
+            .unwrap_or("")
+    };
+    match name {
+        "Read" => {
+            let file = path(&["file_path", "path"]);
+            if file.is_empty() {
+                "Read a file".into()
+            } else {
+                format!("Read {file}")
+            }
+        }
+        "Write" | "Edit" | "NotebookEdit" | "MultiEdit" => edited_summary(input),
+        "Bash" => {
+            let command = path(&["command"]);
+            if command.is_empty() {
+                "Ran a command".into()
+            } else {
+                format!("Ran `{command}`")
+            }
+        }
+        "Grep" => {
+            let pattern = path(&["pattern"]);
+            if pattern.is_empty() {
+                "Grep".into()
+            } else {
+                format!("Grep {pattern}")
+            }
+        }
+        "Glob" => {
+            let pattern = path(&["pattern"]);
+            if pattern.is_empty() {
+                "Glob".into()
+            } else {
+                format!("Glob {pattern}")
+            }
+        }
+        "WebFetch" => {
+            let url = path(&["url"]);
+            if url.is_empty() {
+                "Fetch a url".into()
+            } else {
+                format!("Fetch {url}")
+            }
+        }
+        "WebSearch" => {
+            let query = path(&["query"]);
+            if query.is_empty() {
+                "Search the web".into()
+            } else {
+                format!("Search the web for {query}")
+            }
+        }
+        other => other.to_owned(),
+    }
 }
 
 fn edited_summary(input: &Value) -> String {
