@@ -15,6 +15,10 @@ function find(node, id) {
   return null;
 }
 
+function firstLine(text) {
+  return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+}
+
 export default class TopBar extends View {
   init(_props, cx) {
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
@@ -23,18 +27,23 @@ export default class TopBar extends View {
     cx.timer.every(10000, (cx) => this.readReview(cx));
   }
 
-  // The tasks waiting for review, from `kom status --json`: 0 when the read fails.
+  // The tasks waiting for review, from `kom status --json`. A failed read
+  // keeps the last count and names the error on the bell.
   readReview(cx) {
     cx.spawn(async (cx) => {
-      let count = 0;
       try {
         const r = await kom(["status", "--json"]);
-        if (r?.code === 0) {
-          const waiting = JSON.parse(r.stdout || "{}")?.waiting?.review;
-          if (typeof waiting === "number") count = waiting;
+        if (r?.code !== 0) {
+          this.reviewError = firstLine(r?.stderr || r?.stdout) || `exit ${r?.code ?? "?"}`;
+          cx.notify();
+          return;
         }
-      } catch {}
-      this.review = count;
+        const waiting = JSON.parse(r.stdout || "{}")?.waiting?.review;
+        this.review = typeof waiting === "number" ? waiting : 0;
+        this.reviewError = null;
+      } catch (error) {
+        this.reviewError = firstLine(error?.message ?? error) || "It didn't work.";
+      }
       cx.notify();
     });
   }
@@ -110,7 +119,10 @@ export default class TopBar extends View {
         }).child(svg(icon).size(14)).child(label);
     };
     const count = this.badgeCount();
-    const bell = iconButton("topbar-bell", "mods/topbar/bell.svg", "Board", () => openOverlay({ mod: "board", kind: "popup", width: 420, height: 560 }))
+    const bellTip = this.reviewError
+      ? `Board · couldn't read the tasks waiting for review: ${this.reviewError}`
+      : "Board";
+    const bell = iconButton("topbar-bell", "mods/topbar/bell.svg", bellTip, () => openOverlay({ mod: "board", kind: "popup", width: 420, height: 560 }))
       .relative()
       .when(count > 0, (el) => el.child(div().id("topbar-bell-count").absolute().top(-2).right(-2).h(15).min_w(15).px(4).rounded(8).flex().items_center().justify_center()
         .bg(t.accent_fill).text_color(t.accent_foreground).text_size(10.5).font_semibold().child(count > 99 ? "99+" : String(count))));
