@@ -211,23 +211,6 @@ function programIcon(entry, size, t) {
     : image(entry.icon).w(size).h(size).flex_none();
 }
 
-function chip(t, id, label, on, onClick) {
-  return div()
-    .id(id)
-    .px(10)
-    .py(5)
-    .rounded(7)
-    .border_1()
-    .border_color(on ? t.accent : t.border)
-    .bg(on ? t.selected : t.raised)
-    .cursor_pointer()
-    .text_size(13)
-    .text_color(on ? t.foreground : t.muted)
-    .hover((s) => s.bg(t.hover))
-    .on_click(onClick)
-    .child(label);
-}
-
 // Nothing is saved until the Owner picks a model; every CLI starts without one.
 function defaultModel(entry) {
   return null;
@@ -578,63 +561,272 @@ function addRoute(entry, model, effort) {
   return String(entry.route ?? "{model}#{effort}").replace("{model}", model).replace("{effort}", effort ?? "");
 }
 
+function effortWord(id) {
+  return ({ low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" })[id]
+    ?? (id ? id.charAt(0).toUpperCase() + id.slice(1) : "");
+}
+
+function workerClis(s) {
+  return (s.known ?? []).filter((entry) => entry.installed && entry.worker);
+}
+
+function firstAddPicks(entry) {
+  return {
+    cli: entry?.key ?? null,
+    model: entry?.models?.[0]?.id ?? null,
+    effort: entry?.efforts?.includes("max") ? "max" : entry?.efforts?.[0] ?? null,
+  };
+}
+
+function readyDetail(key) {
+  if (key === "free") return "Free models through OpenCode.";
+  if (key === "codex") return "Codex with its own default model.";
+  if (key === "sonnet") return "A subagent inside the lead's Claude Code, on Sonnet.";
+  if (key === "haiku") return "A subagent inside the lead's Claude Code, on Haiku.";
+  return null;
+}
+
+function failLine(t, text) {
+  const message = firstLine(text);
+  if (!message) return null;
+  return div()
+    .text_size(12)
+    .text_color(t.blocked)
+    .line_height("16px")
+    .max_h(32)
+    .overflow_hidden()
+    .tooltip(message)
+    .child(message);
+}
+
+function parseKomError(r, args) {
+  let message = firstLine(r.stderr || r.stdout);
+  try { message = JSON.parse(r.stdout || r.stderr).error?.message ?? message; } catch {}
+  return firstLine(message) || `kom ${args[0]} failed`;
+}
+
+function addReadyRow(t, s, { key, name, iconEntry, onAdd }) {
+  const detail = readyDetail(key);
+  const busy = s.addBusy === key;
+  return h_flex()
+    .id(`st-add-ready-${key}`)
+    .w_full()
+    .h(44)
+    .px(10)
+    .gap(10)
+    .items_center()
+    .rounded(8)
+    .hover((el) => el.bg(t.hover))
+    .child(programIcon(iconEntry, 16, t))
+    .child(
+      v_flex()
+        .flex_1()
+        .min_w(0)
+        .child(div().text_size(13.5).text_color(t.foreground).truncate().child(name))
+        .when(Boolean(detail), (el) => el.child(div().text_size(12).text_color(t.dim).truncate().child(detail))),
+    )
+    .child(
+      h_flex()
+        .h(26)
+        .px(8)
+        .flex_none()
+        .items_center()
+        .rounded(6)
+        .cursor_pointer()
+        .text_size(12.5)
+        .text_color(t.foreground)
+        .hover((el) => el.bg(t.hover))
+        .on_click((_e, cx) => {
+          if (s.addBusy) return;
+          onAdd(cx);
+        })
+        .child(busy ? "Adding…" : "Add"),
+    );
+}
+
 function addPanel(view, t, cx, s) {
   const order = s.workers?.order ?? [];
   const builtin = (s.workers?.workers ?? []).filter((w) => BUILTIN.has(w.key) && !order.includes(w.key));
-  const entries = (s.known ?? []).filter((entry) => entry.installed && entry.worker);
+  const entries = workerClis(s);
   const subs = new Set(subagents(view));
-  const parts = [];
-  if (builtin.length) {
-    parts.push(v_flex().gap(4)
-      .child(div().text_size(11).font_semibold().text_color(t.dim).child("Built-in workers"))
-      .children(builtin.map((worker) => h_flex().gap(8).items_center().py(4)
-        .child(div().flex_1().text_size(13).text_color(t.foreground).child(worker.label))
-        .child(view.button(t, `st-add-builtin-${worker.key}`, "Add", (_e, cx) => komCall(view, ["workers", "--order", [...order, worker.key].join(",")], cx))))));
+  const subChoices = leadProgram(view, s)?.key === "claude"
+    ? [["sonnet", "Claude Code with Sonnet"], ["haiku", "Claude Code with Haiku"]].filter(([name]) => !subs.has(name))
+    : [];
+  const ready = [
+    ...builtin.map((worker) => ({
+      key: worker.key,
+      name: worker.label ?? worker.key,
+      iconEntry: programFor(s, worker.cli),
+      onAdd: (cx) => {
+        s.addBusy = worker.key;
+        s.addReadyError = null;
+        cx.notify();
+        cx.spawn(async (cx) => {
+          const args = ["workers", "--order", [...(s.workers?.order ?? []), worker.key].join(",")];
+          try {
+            const r = await kom(args);
+            if (r.code !== 0) throw new Error(parseKomError(r, args));
+            s.busy = false;
+            loadAgents(view, cx);
+          } catch (error) {
+            s.addReadyError = firstLine(errorText(error));
+          }
+          s.addBusy = null;
+          cx.notify();
+        });
+      },
+    })),
+    ...subChoices.map(([name, label]) => ({
+      key: name,
+      name: label,
+      iconEntry: leadProgram(view, s),
+      onAdd: (cx) => {
+        view.change((person) => {
+          const lead = { ...(person.lead ?? {}) };
+          lead.subagents = [...(lead.subagents ?? []), name];
+          person.lead = lead;
+        }, cx);
+      },
+    })),
+  ];
+  if (!s.addForm || !entries.some((entry) => entry.key === s.addForm.cli)) {
+    s.addForm = firstAddPicks(entries[0]);
   }
-  for (const entry of entries) {
-    const state = s.add[entry.key] ??= {
-      model: defaultModel(entry),
-      effort: entry.efforts?.includes("max") ? "max" : entry.efforts?.[0] ?? null,
-    };
-    const model = state.model ?? defaultModel(entry) ?? "";
-    const effort = state.effort ?? entry.efforts?.[0] ?? null;
-    parts.push(v_flex().gap(5).py(6)
-      .child(h_flex().gap(8).items_center()
-        .child(programIcon(entry, 16, t))
-        .child(div().text_size(13).text_color(t.foreground).child(entry.name ?? entry.key)))
-      .child(h_flex().gap(6).flex_wrap()
-        .children((entry.models ?? []).map((m) =>
-          chip(t, `st-add-model-${entry.key}-${m.id}`, m.label, m.id === model, (_e, cx) => { state.model = m.id; cx.notify(); }))))
-      .when((entry.efforts ?? []).length > 0, (el) => el.child(h_flex().gap(6).flex_wrap()
-        .children((entry.efforts ?? []).map((level) =>
-          chip(t, `st-add-effort-${entry.key}-${level}`, level, level === effort, (_e, cx) => { state.effort = level; cx.notify(); })))))
-      .child(h_flex().gap(6).items_center()
-        .child(view.button(t, `st-add-worker-${entry.key}`, "Add worker", (_e, cx) => {
-          const label = `${entry.name ?? entry.key} · ${modelLabel(entry, model)}`;
-          const key = uniqueKey(s, slug(label));
-          komCall(view, ["workers", "--add", key, "--cli", entry.worker, "--route", addRoute(entry, model, effort), "--label", label], cx);
-        }))));
+  s.addCli ??= {};
+  s.addModel ??= {};
+  s.addEffort ??= {};
+  const form = s.addForm;
+  const entry = entries.find((item) => item.key === form?.cli) ?? entries[0] ?? null;
+
+  const close = h_flex()
+    .id("st-add-close")
+    .w(24)
+    .h(24)
+    .flex_none()
+    .items_center()
+    .justify_center()
+    .rounded(6)
+    .cursor_pointer()
+    .text_color(t.muted)
+    .hover((el) => el.bg(t.hover).text_color(t.foreground))
+    .tooltip("Close")
+    .on_click((_e, cx) => { s.addOpen = false; cx.notify(); })
+    .child(svg("frame/settings/close.svg").size(14));
+
+  const header = (title) => div().text_size(11.5).font_semibold().text_color(t.dim).child(title);
+
+  let card = v_flex()
+    .id("st-add")
+    .w_full()
+    .rounded(12)
+    .border_1()
+    .border_color(t.border)
+    .bg(t.surface)
+    .p(14)
+    .gap(12)
+    .child(
+      h_flex()
+        .w_full()
+        .items_center()
+        .gap(10)
+        .child(div().flex_1().min_w(0).child(header(ready.length ? "Ready to add" : "Choose your own")))
+        .child(close),
+    );
+  if (ready.length) {
+    card = card
+      .child(v_flex().w_full().gap(4).children(ready.map((item) => addReadyRow(t, s, item))))
+      .when(Boolean(s.addReadyError), (el) => el.child(failLine(t, s.addReadyError)))
+      .child(header("Choose your own"));
   }
-  if (leadProgram(view, s)?.key === "claude") {
-    const choices = [["sonnet", "Claude Code with Sonnet"], ["haiku", "Claude Code with Haiku"]].filter(([name]) => !subs.has(name));
-    if (choices.length) {
-      parts.push(v_flex().gap(4)
-        .child(div().text_size(11).font_semibold().text_color(t.dim).child("Claude subagents"))
-        .children(choices.map(([name, label]) => h_flex().gap(8).items_center().py(4)
-          .child(div().flex_1().text_size(13).text_color(t.foreground).child(label))
-          .child(view.button(t, `st-add-subagent-${name}`, "Add", (_e, cx) => {
-            view.change((person) => {
-              const lead = { ...(person.lead ?? {}) };
-              lead.subagents = [...(lead.subagents ?? []), name];
-              person.lead = lead;
-            }, cx);
-          })))));
-    }
+  if (!entries.length) {
+    return card.child(
+      div().text_size(12).text_color(t.dim).child("No other worker CLI is installed. Install Codex or OpenCode to add one."),
+    );
   }
-  return v_flex().w_full().pt(12).gap(4)
-    .child(div().text_size(12).font_semibold().text_color(t.muted).child("Add a worker"))
-    .children(parts.length ? parts : [div().text_size(12.5).text_color(t.dim).child("Every available CLI is already in the order.")])
-    .child(h_flex().pt(6).child(view.button(t, "st-add-close", "Done", (_e, cx) => { s.addOpen = false; cx.notify(); })));
+
+  const pickCli = (key, cx) => {
+    s.addForm = firstAddPicks(entries.find((item) => item.key === key) ?? entries[0]);
+    s.addNote = null;
+    cx.notify();
+  };
+  const addOwn = (_e, cx) => {
+    if (s.addBusy || !entry) return;
+    const model = form.model ?? "";
+    const effort = form.effort;
+    const label = `${entry.name ?? entry.key} · ${modelLabel(entry, model)}`;
+    const key = uniqueKey(s, slug(label));
+    const args = ["workers", "--add", key, "--cli", entry.worker, "--route", addRoute(entry, model, effort), "--label", label];
+    s.addBusy = "own";
+    s.addOwnError = null;
+    s.addNote = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const r = await kom(args);
+        if (r.code !== 0) throw new Error(parseKomError(r, args));
+        s.addNote = `Added ${label}.`;
+        s.busy = false;
+        loadAgents(view, cx);
+      } catch (error) {
+        s.addOwnError = firstLine(errorText(error));
+      }
+      s.addBusy = null;
+      cx.notify();
+    });
+  };
+
+  card = card.child(
+    h_flex()
+      .w_full()
+      .gap(8)
+      .items_center()
+      .flex_wrap()
+      .child(dropdown(t, "st-add-cli", {
+        items: entries.map((item) => ({ value: item.key, label: item.name ?? item.key, icon: item.icon, tint: item.tint })),
+        value: form.cli,
+        onPick: pickCli,
+        state: s.addCli,
+        width: 200,
+      }))
+      .child(dropdown(t, "st-add-model", {
+        items: (entry?.models ?? []).map((m) => ({
+          value: m.id,
+          label: m.label ?? m.id,
+          detail: m.label && m.label !== m.id ? m.id : undefined,
+        })),
+        value: form.model,
+        onPick: (id, cx) => { form.model = id; s.addNote = null; cx.notify(); },
+        state: s.addModel,
+        search: true,
+        width: 240,
+      }))
+      .when((entry?.efforts ?? []).length > 0, (el) => el.child(dropdown(t, "st-add-effort", {
+        items: (entry?.efforts ?? []).map((level) => ({ value: level, label: effortWord(level) })),
+        value: form.effort,
+        onPick: (id, cx) => { form.effort = id; cx.notify(); },
+        state: s.addEffort,
+        width: 160,
+      })))
+      .child(
+        h_flex()
+          .id("st-add-go")
+          .h(30)
+          .px(14)
+          .flex_none()
+          .items_center()
+          .justify_center()
+          .rounded(8)
+          .bg(t.solid)
+          .text_color(t.solid_foreground)
+          .cursor_pointer()
+          .hover((el) => el.opacity(0.88))
+          .on_click(addOwn)
+          .child(s.addBusy === "own" ? "Adding…" : "Add"),
+      ),
+  );
+  card = card.when(Boolean(s.addNote), (el) => el.child(div().text_size(12).text_color(t.dim).child(s.addNote)));
+  card = card.when(Boolean(s.addOwnError), (el) => el.child(failLine(t, s.addOwnError)));
+  return card;
 }
 
 // A day as `kom workers` words it: today, a weekday within a week, else "12 Oct" (and the year when not this one).

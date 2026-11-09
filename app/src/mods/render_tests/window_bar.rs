@@ -139,3 +139,72 @@ fn the_lead_pill_shows_the_line(cx: &mut TestAppContext) {
     assert!(tree.contains("lead-line"), "{tree}");
     assert!(tree.contains("The Line"), "{tree}");
 }
+
+/// A failed `kom status --json` must not wipe the last review count, and the
+/// bell's tooltip must name the failure's first line.
+#[gpui::test]
+fn a_failed_status_read_keeps_the_bells_other_counts(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.get_mut("agents").unwrap()[0]["status"] = json!("blocked");
+    values.insert(
+        "lead".into(),
+        json!({"state": "asking", "ask": {"id": "a1", "terminal": "t1", "kind": "permission", "input": {}}}),
+    );
+    values.insert(
+        "statusFail".into(),
+        json!("could not lock the vault\nand a stack dump"),
+    );
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/topbar",
+        values,
+        Some("this.review = 5;"),
+    )
+    .unwrap();
+    assert!(
+        tree.contains("topbar-bell-count"),
+        "the last review count is kept with the other waits: {tree}"
+    );
+    assert!(
+        tree.contains(r#"text "7""#),
+        "blocked + ask + last review (5) is 7: {tree}"
+    );
+    assert!(
+        tree.contains("Board · couldn't read the tasks waiting for review: could not lock the vault"),
+        "{tree}"
+    );
+    assert!(
+        !tree.contains("and a stack dump"),
+        "only the first line of the error: {tree}"
+    );
+}
+
+/// A status read that works again drops the error from the tooltip.
+#[gpui::test]
+fn a_working_status_read_clears_the_bells_error(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert(
+        "statusJson".into(),
+        json!({"tasks": {"review": [], "running": [], "queued": []}, "waiting": {"review": 3}}),
+    );
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/topbar",
+        values,
+        Some("this.reviewError = 'stale dump';"),
+    )
+    .unwrap();
+    assert!(tree.contains("topbar-bell-count"), "{tree}");
+    assert!(tree.contains(r#"text "3""#), "{tree}");
+    assert!(
+        !tree.contains("couldn't read the tasks waiting for review"),
+        "a good read clears the error: {tree}"
+    );
+}
+

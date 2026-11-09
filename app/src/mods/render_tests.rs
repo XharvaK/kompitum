@@ -152,6 +152,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let known_agents = values.remove("knownAgents");
     let workers_json = values.remove("workersJson");
     let status_json = values.remove("statusJson");
+    let status_fail = values.remove("statusFail");
     let usage_json = values.remove("usageJson");
     let vault_missing = values.remove("vaultMissing");
     let thread_json = values.remove("threadJson");
@@ -240,6 +241,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let person = person.clone();
         let workers_json = workers_json.clone();
         let status_json = status_json.clone();
+        let status_fail = status_fail.clone();
         let usage_json = usage_json.clone();
         let vault_missing = vault_missing.clone();
         let thread_json = thread_json.clone();
@@ -331,10 +333,26 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     }));
                     Some(json!({"code":0,"stdout":body.to_string(),"stderr":""}))
                 }
-                "kom" if first == json!(["status", "--json"]) => Some(json!({"code":0,"stdout":status_json.clone().unwrap_or_else(|| json!({
-                    "tasks": {"review": [{"name": "fix-docs", "repo": "kompitum-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []},
-                    "claude": null
-                })).to_string(),"stderr":""})),
+                "kom"
+                    if first.as_array().is_some_and(|a| {
+                        a.first().and_then(Value::as_str) == Some("workers")
+                            && a.get(1).and_then(Value::as_str) != Some("--json")
+                    }) =>
+                {
+                    calls.borrow_mut().effects.push(("kom".into(), vec![first.clone()]));
+                    Some(json!({"code": 0, "stdout": "", "stderr": ""}))
+                }
+                "kom" if first == json!(["status", "--json"]) => {
+                    if let Some(error) = status_fail.clone() {
+                        let text = error.as_str().unwrap_or("status failed").to_string();
+                        Some(json!({"code": 1, "stdout": "", "stderr": text}))
+                    } else {
+                        Some(json!({"code":0,"stdout":status_json.clone().unwrap_or_else(|| json!({
+                            "tasks": {"review": [{"name": "fix-docs", "repo": "kompitum-core", "worker": "opencode", "by": "manager", "seconds": 540, "cost_usd": 0.06}], "running": [], "queued": []},
+                            "claude": null
+                        })).to_string(),"stderr":""}))
+                    }
+                }
                 // The composer's send: one recorded effect, so key tests can read it.
                 "kom" if first.as_array().and_then(|a| a.first()).and_then(Value::as_str) == Some("send") => {
                     calls.borrow_mut().effects.push(("kom".into(), vec![first.clone()]));
@@ -1458,6 +1476,86 @@ fn composer_laid_out_after_clicks(
     let calls = calls.borrow();
     assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
     found
+}
+
+/// Mounts Settings › Agents with the add-worker card open, clicks each id,
+/// and returns each `kom` argv the host recorded (not `workers --json`).
+fn agents_kom_after_clicks(
+    cx: &mut TestAppContext,
+    catalog: Value,
+    workers: Value,
+    setup: &str,
+    clicks: &[&'static str],
+) -> Vec<Vec<Value>> {
+    use gpui::{Modifiers, MouseButton};
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
+    let mut values = agents_values(catalog, workers, status);
+    values.insert("person".into(), json!({"lead": {"program": "claude"}}));
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-add-worker.json"))
+        .with_capabilities(
+            Capabilities::new()
+                .storage(true)
+                .read_roots([staged.0.clone()]),
+        )
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("frame/settings", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    use gpui::{point, px, ScrollDelta, ScrollWheelEvent, TouchPhase};
+    for id in clicks {
+        // The Agents page scrolls inside the 620px settings dialog; a target
+        // below the fold is laid out but a click at its content y misses.
+        for _ in 0..24 {
+            let Some(bounds) = visual.debug_bounds(id) else { break };
+            let y = bounds.center().y;
+            if y >= px(80.) && y <= px(580.) {
+                break;
+            }
+            let Some(body) = visual.debug_bounds("st-body") else { break };
+            let delta_y = if y > px(580.) { px(-200.) } else { px(200.) };
+            visual.simulate_event(ScrollWheelEvent {
+                position: body.center(),
+                delta: ScrollDelta::Pixels(point(px(0.), delta_y)),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+            });
+            visual.run_until_parked();
+            visual.update(|window, cx| window.draw(cx).clear(cx));
+            visual.run_until_parked();
+        }
+        let at = visual
+            .debug_bounds(id)
+            .unwrap_or_else(|| panic!("{id} is laid out"))
+            .center();
+        visual.simulate_mouse_move(at, None, Modifiers::default());
+        visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        visual.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    calls
+        .effects
+        .iter()
+        .filter(|(name, _)| name == "kom")
+        .filter_map(|(_, args)| args.first()?.as_array().cloned())
+        .collect()
 }
 
 /// Mounts the composer without a live lead, clicks each id, and returns `run` effects.
