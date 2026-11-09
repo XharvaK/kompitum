@@ -1029,6 +1029,83 @@ mod tests {
     }
 
     #[test]
+    fn claude_settings_install_the_chat_view_hooks() {
+        let value = claude_settings(
+            Path::new("/apps/Kompitum/kompitum-app.exe"),
+            Path::new("/apps/kom/kom.exe"),
+            Path::new("/home/kompitum"),
+        );
+        let command = |event: &str| {
+            json!({
+                "type": "command",
+                "command": "/apps/Kompitum/kompitum-app.exe",
+                "args": ["hook", event, "/home/kompitum"],
+            })
+        };
+        let async_command = |event: &str| {
+            let mut hook = command(event);
+            hook["async"] = json!(true);
+            hook
+        };
+        let entries = |event: &str| {
+            value["hooks"][event]
+                .as_array()
+                .unwrap_or_else(|| panic!("{event} is an array"))
+                .clone()
+        };
+
+        let display = &entries("MessageDisplay");
+        assert_eq!(display.len(), 1, "{display:?}");
+        assert!(display[0].get("matcher").is_none());
+        let mut hook = async_command("MessageDisplay");
+        hook["timeout"] = json!(10);
+        assert_eq!(display[0]["hooks"], json!([hook]));
+
+        let pre = entries("PreToolUse");
+        assert_eq!(pre.len(), 2, "AskUserQuestion stays, and every tool is hooked: {pre:?}");
+        assert_eq!(pre[0]["matcher"], json!("AskUserQuestion"));
+        let mut ask = command("PreToolUse");
+        ask["timeout"] = json!(3600);
+        assert_eq!(pre[0]["hooks"], json!([ask]));
+        assert!(pre[1].get("matcher").is_none(), "every tool, no matcher");
+        assert_eq!(pre[1]["hooks"], json!([async_command("PreToolUse")]));
+
+        let post = entries("PostToolUse");
+        assert_eq!(post.len(), 1);
+        assert!(post[0].get("matcher").is_none());
+        assert_eq!(post[0]["hooks"], json!([async_command("PostToolUse")]));
+
+        for event in ["UserPromptSubmit", "Stop", "StopFailure", "Elicitation"] {
+            let list = entries(event);
+            assert_eq!(list.len(), 1, "{event}");
+            assert!(list[0].get("matcher").is_none(), "{event}");
+            assert_eq!(list[0]["hooks"], json!([async_command(event)]), "{event}");
+        }
+
+        let notes = entries("Notification");
+        let matchers: Vec<_> = notes
+            .iter()
+            .map(|entry| entry.get("matcher").and_then(Value::as_str).unwrap_or(""))
+            .collect();
+        for matcher in [
+            "idle_prompt",
+            "elicitation_dialog",
+            "elicitation_url_dialog",
+            "agent_needs_input",
+            "quota_auto_resume_stale",
+            "auth_success",
+        ] {
+            assert!(
+                matchers.contains(&matcher),
+                "missing Notification matcher {matcher}: {matchers:?}"
+            );
+        }
+        for entry in &notes {
+            assert_eq!(entry["hooks"], json!([async_command("Notification")]), "{entry}");
+        }
+    }
+
+    #[test]
     fn setup_builds_the_two_claude_mcp_argvs() {
         let (get, add) = mcp_argvs(Path::new("/apps/kom"));
         assert_eq!(get, ["mcp", "get", "kompitum"]);
