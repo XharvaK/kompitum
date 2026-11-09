@@ -20,6 +20,12 @@ prints the built-in command list even without an open window. Do not launch bare
 signal or restart the person's app or core. A window closing does not kill
 its terminals.
 
+Each terminal in `ls` has a `life`: `attaching`, `live`, `lost`,
+`ended: exited` (or `killed`, `finished`), or `failed: <error>`. `status` also
+reports the core connection as `core.link`: `connected`, `lost` with
+`lost_for_ms`, or `refused` with `why`. On the setup screen, `status` answers with `setup`
+(`need`, `detail`, `state`, `error`); other commands refuse with that need.
+
 `app.check_updates` checks for newer releases. Settings reports "Up to date"
 only after a successful check; on failure, check the connection and retry.
 

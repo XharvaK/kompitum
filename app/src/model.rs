@@ -585,7 +585,7 @@ impl Model {
         if a.word == word {
             return false;
         }
-        let was_busy = matches!(a.word.as_deref(), Some("working" | "blocked"));
+        let was_busy = matches!(a.word.as_deref(), Some("working" | "blocked" | "error"));
         match word.as_deref() {
             Some("working" | "blocked") => a.seen = true,
             // A finish you didn't watch is "done" until you look at it.
@@ -858,6 +858,19 @@ mod tests {
         assert_eq!(alert(Some("working"), Some("idle"), true), None);
         assert_eq!(alert(None, Some("idle"), false), None);
         assert_eq!(alert(Some("working"), None, false), None);
+    }
+
+    #[test]
+    fn an_error_then_a_finish_you_did_not_watch_is_done() {
+        let mut m = model_with_one();
+        assert!(m.set_word("t1", Some("error".into()), None, false));
+        assert_eq!(m.status("t1"), Some("blocked"));
+        assert!(m.set_word("t1", Some("idle".into()), None, false));
+        assert_eq!(
+            m.status("t1"),
+            Some("done"),
+            "an error is work the person hasn't seen finish"
+        );
     }
 
     #[test]

@@ -80,11 +80,171 @@ fn releases() -> String {
         .unwrap_or_else(|_| "https://xharvak.github.io/kompitum".into())
 }
 
-/// The version downloaded and waiting for a restart.
-static READY: Mutex<Option<String>> = Mutex::new(None);
+/// The app download's stage: idle, looking, a version waiting for a restart, or
+/// the version this process swapped to (nothing newer can be ready again).
+#[derive(Clone, Debug, PartialEq)]
+pub enum AppStage {
+    Idle,
+    Checking,
+    Ready(String),
+    Applied(String),
+}
+
+impl AppStage {
+    fn word(&self) -> &'static str {
+        match self {
+            AppStage::Idle => "idle",
+            AppStage::Checking => "checking",
+            AppStage::Ready(_) => "ready",
+            AppStage::Applied(_) => "applied",
+        }
+    }
+
+    fn ready(&self) -> Option<String> {
+        match self {
+            AppStage::Ready(version) => Some(version.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// The core's update stage. Its version and owner are facts beside it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CoreStage {
+    Idle,
+    Ready(String),
+    Updating(String),
+    Failed(String),
+}
+
+impl CoreStage {
+    fn word(&self) -> &'static str {
+        match self {
+            CoreStage::Idle => "idle",
+            CoreStage::Ready(_) => "ready",
+            CoreStage::Updating(_) => "updating",
+            CoreStage::Failed(_) => "failed",
+        }
+    }
+}
+
+struct CoreUpdate {
+    version: Option<String>,
+    /// A package manager that owns it (homebrew, nix, mise): never updated by the app.
+    managed: Option<String>,
+    stage: CoreStage,
+}
+
+/// Every update stage in one place, so they cannot disagree.
+struct Updates {
+    app: AppStage,
+    core: CoreUpdate,
+    /// Unix seconds of the last successful check; a failed check clears it.
+    checked: Option<u64>,
+}
+
+impl Updates {
+    /// Only while a pass runs; an applied app says so until it restarts.
+    fn begin_check(&mut self) {
+        // A ready update stays ready while the next pass looks, so a quit still applies it.
+        if matches!(self.app, AppStage::Idle) {
+            self.app = AppStage::Checking;
+        }
+    }
+
+    /// A successful app check: a newer staged release is ready, anything else idle.
+    fn app_found(&mut self, found: Option<String>) {
+        if matches!(self.app, AppStage::Applied(_)) {
+            return;
+        }
+        self.app = match found {
+            Some(version) => AppStage::Ready(version),
+            None => AppStage::Idle,
+        };
+    }
+
+    /// A failed app check: no old ready state survives.
+    /// A check that couldn't reach the releases: it says nothing about a staged
+    /// update, so a ready one stays ready.
+    fn app_failed(&mut self) {
+        self.checked = None;
+        if matches!(self.app, AppStage::Checking) {
+            self.app = AppStage::Idle;
+        }
+    }
+
+    fn record_check(&mut self, succeeded: bool, now: u64) {
+        self.checked = checked_at(succeeded, now);
+    }
+
+    fn applied(&mut self, version: &str) {
+        self.app = AppStage::Applied(version.to_owned());
+    }
+
+    /// Starts a core update unless one already runs. Clears an old error.
+    fn start_core_update(&mut self) -> bool {
+        let updating = match &self.core.stage {
+            CoreStage::Idle | CoreStage::Failed(_) => String::new(),
+            CoreStage::Ready(version) => version.clone(),
+            CoreStage::Updating(_) => return false,
+        };
+        self.core.stage = CoreStage::Updating(updating);
+        true
+    }
+
+    fn finish_core_update(&mut self, result: Result<String, String>) {
+        match result {
+            Ok(now) => {
+                self.core.version = Some(now.trim_start_matches("kom ").to_owned());
+                self.core.stage = CoreStage::Idle;
+            }
+            Err(error) => self.core.stage = CoreStage::Failed(error),
+        }
+    }
+
+    fn set_core(&mut self, version: Option<String>, managed: Option<String>) {
+        if let (Some(have), CoreStage::Ready(ready)) = (&version, &self.core.stage)
+            && !newer(ready, have)
+        {
+            self.core.stage = CoreStage::Idle;
+        }
+        self.core.version = version;
+        self.core.managed = managed;
+    }
+}
+
+impl Default for Updates {
+    fn default() -> Self {
+        Self {
+            app: AppStage::Idle,
+            core: CoreUpdate {
+                version: None,
+                managed: None,
+                stage: CoreStage::Idle,
+            },
+            checked: None,
+        }
+    }
+}
+
+static UPDATES: Mutex<Updates> = Mutex::new(Updates {
+    app: AppStage::Idle,
+    core: CoreUpdate {
+        version: None,
+        managed: None,
+        stage: CoreStage::Idle,
+    },
+    checked: None,
+});
+/// The changelog parsed once per ready version, not every 500 ms.
+static NOTES: Mutex<Option<(Option<String>, Vec<crate::update_notes::Note>)>> = Mutex::new(None);
+/// "Check now" wakes the checker early.
+static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+/// The checker exists (a release, or pointed at a test server).
+static RUNNING: AtomicBool = AtomicBool::new(false);
 
 pub fn ready() -> Option<String> {
-    READY.lock().unwrap().clone()
+    UPDATES.lock().unwrap().app.ready()
 }
 
 /// The core the app runs, from its `server.status`, and a newer release waiting.
@@ -96,37 +256,40 @@ pub struct CoreInfo {
     pub ready: Option<String>,
     pub updating: bool,
     pub error: Option<String>,
+    /// `idle`, `ready`, `updating` or `failed`.
+    pub stage: String,
 }
 
-static CORE: Mutex<CoreInfo> = Mutex::new(CoreInfo {
-    version: None,
-    managed: None,
-    ready: None,
-    updating: false,
-    error: None,
-});
-/// When the last check succeeded (unix seconds); a failed check clears it.
-static CHECKED: Mutex<Option<u64>> = Mutex::new(None);
-/// "Check now" wakes the checker early.
-static WAKE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
-/// The checker runs (a release, or pointed at a test server), and is looking right now.
-static RUNNING: AtomicBool = AtomicBool::new(false);
-static CHECKING: AtomicBool = AtomicBool::new(false);
-
 pub fn core() -> CoreInfo {
-    CORE.lock().unwrap().clone()
+    let u = UPDATES.lock().unwrap();
+    CoreInfo {
+        version: u.core.version.clone(),
+        managed: u.core.managed.clone(),
+        ready: match &u.core.stage {
+            CoreStage::Ready(version) => Some(version.clone()),
+            _ => None,
+        },
+        updating: matches!(u.core.stage, CoreStage::Updating(_)),
+        error: match &u.core.stage {
+            CoreStage::Failed(error) => Some(error.clone()),
+            _ => None,
+        },
+        stage: u.core.stage.word().to_owned(),
+    }
 }
 
 /// What the connected core says about itself (on connect and every reconnect).
 pub fn set_core(version: Option<String>, managed: Option<String>) {
-    let mut c = CORE.lock().unwrap();
-    if let (Some(have), Some(ready)) = (&version, &c.ready)
-        && !newer(ready, have)
-    {
-        c.ready = None;
+    UPDATES.lock().unwrap().set_core(version, managed);
+}
+
+fn notes(version: Option<String>) -> Vec<crate::update_notes::Note> {
+    let mut cache = NOTES.lock().unwrap();
+    if cache.as_ref().is_none_or(|(cached, _)| cached != &version) {
+        let loaded = crate::update_notes::notes(version.as_deref());
+        *cache = Some((version, loaded));
     }
-    c.version = version;
-    c.managed = managed;
+    cache.as_ref().unwrap().1.clone()
 }
 
 fn checks_app() -> Option<PathBuf> {
@@ -144,20 +307,31 @@ fn checks_core() -> bool {
 
 /// For the settings screen: both programs, what's waiting, when we last looked.
 pub fn status() -> serde_json::Value {
+    let (app_ready, app_stage, checked, checking) = {
+        let u = UPDATES.lock().unwrap();
+        (
+            u.app.ready(),
+            u.app.word(),
+            u.checked,
+            matches!(u.app, AppStage::Checking),
+        )
+    };
     serde_json::json!({
-        "app": { "version": env!("CARGO_PKG_VERSION"), "ready": ready(), "updates": checks_app().is_some() },
-        "notes": crate::update_notes::notes(ready().as_deref()),
+        "app": {
+            "version": env!("CARGO_PKG_VERSION"),
+            "ready": app_ready,
+            "updates": checks_app().is_some(),
+            "stage": app_stage,
+        },
+        "notes": notes(app_ready),
         "core": core(),
-        "checked": *CHECKED.lock().unwrap(),
+        "checked": checked,
         "checks": RUNNING.load(Ordering::Relaxed),
-        "checking": CHECKING.load(Ordering::Relaxed),
+        "checking": checking,
     })
 }
 
 pub fn check_now() {
-    if RUNNING.load(Ordering::Relaxed) {
-        CHECKING.store(true, Ordering::Relaxed);
-    }
     *WAKE.0.lock().unwrap() = true;
     WAKE.1.notify_all();
 }
@@ -177,27 +351,26 @@ pub fn start() {
         return;
     }
     RUNNING.store(true, Ordering::Relaxed);
-    CHECKING.store(true, Ordering::Relaxed);
     std::thread::spawn(move || {
         sleep(Duration::from_secs(10));
         loop {
-            CHECKING.store(true, Ordering::Relaxed);
+            UPDATES.lock().unwrap().begin_check();
             let mut wait = EVERY;
             let mut succeeded = true;
             if let Some(root) = &app {
                 match check(root) {
-                    Ok(found) => {
-                        if found.is_some() {
-                            *READY.lock().unwrap() = found;
-                        }
-                    }
+                    Ok(found) => UPDATES.lock().unwrap().app_found(found),
                     Err(e) => {
                         tracing::warn!("update check: {e}");
                         crate::telemetry::count("app_update_failed");
                         wait = RETRY;
                         succeeded = false;
+                        UPDATES.lock().unwrap().app_failed();
                     }
                 }
+            } else {
+                // A core-only checker still settles the app stage after its pass.
+                UPDATES.lock().unwrap().app_found(None);
             }
             if core && let Err(e) = check_core() {
                 tracing::warn!("core update check: {e}");
@@ -208,8 +381,7 @@ pub fn start() {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            *CHECKED.lock().unwrap() = checked_at(succeeded, now);
-            CHECKING.store(false, Ordering::Relaxed);
+            UPDATES.lock().unwrap().record_check(succeeded, now);
             sleep(wait);
         }
     });
@@ -222,8 +394,8 @@ fn checked_at(succeeded: bool, now: u64) -> Option<u64> {
 /// Looks for a newer core of this app's generation.
 fn check_core() -> Result<(), String> {
     let (have, managed) = {
-        let c = CORE.lock().unwrap();
-        (c.version.clone(), c.managed.clone())
+        let u = UPDATES.lock().unwrap();
+        (u.core.version.clone(), u.core.managed.clone())
     };
     let Some(have) = have else { return Ok(()) };
     if managed.is_some() {
@@ -231,7 +403,15 @@ fn check_core() -> Result<(), String> {
     }
     let latest = latest_core()?;
     let same = latest.generation == Some(crate::kom::GENERATION);
-    CORE.lock().unwrap().ready = (same && newer(&latest.version, &have)).then_some(latest.version);
+    let ready = (same && newer(&latest.version, &have)).then_some(latest.version);
+    let mut u = UPDATES.lock().unwrap();
+    // A running update or its failure says more than this check does.
+    if matches!(u.core.stage, CoreStage::Idle | CoreStage::Ready(_)) {
+        u.core.stage = match ready {
+            Some(version) => CoreStage::Ready(version),
+            None => CoreStage::Idle,
+        };
+    }
     Ok(())
 }
 
@@ -265,29 +445,17 @@ fn after_update_target<'a>(
 
 /// `kom update` (terminals keep running; the app reconnects when the core restarts).
 pub fn update_core() {
-    {
-        let mut c = CORE.lock().unwrap();
-        if c.updating {
-            return;
-        }
-        c.updating = true;
-        c.error = None;
+    if !UPDATES.lock().unwrap().start_core_update() {
+        return;
     }
     std::thread::spawn(|| {
         let result = crate::core_bin::update();
-        let mut c = CORE.lock().unwrap();
-        c.updating = false;
-        match result {
-            Ok(now) => {
-                c.version = Some(now.trim_start_matches("kom ").to_owned());
-                c.ready = None;
-                crate::telemetry::count("core_update_ok");
-            }
-            Err(e) => {
-                c.error = Some(e);
-                crate::telemetry::count("core_update_failed");
-            }
-        }
+        crate::telemetry::count(if result.is_ok() {
+            "core_update_ok"
+        } else {
+            "core_update_failed"
+        });
+        UPDATES.lock().unwrap().finish_core_update(result);
     });
 }
 
@@ -573,7 +741,7 @@ pub fn apply_on_startup() -> bool {
     ) else {
         return false;
     };
-    if !swap(&root) {
+    if !swap(&root, version) {
         return false;
     }
     relaunch_expected(Some(version))
@@ -585,18 +753,18 @@ pub fn apply_on_startup() -> bool {
 /// one goes on the next start (`after_update`).
 pub fn apply() -> bool {
     let Some(root) = root() else { return false };
-    let staged = staged_version(&root);
-    if ready().as_deref() != staged.as_deref()
-        || !staged
-            .as_deref()
-            .is_some_and(|version| newer(version, env!("CARGO_PKG_VERSION")))
+    let Some(staged) = staged_version(&root) else {
+        return false;
+    };
+    if ready().as_deref() != Some(&staged)
+        || !newer(&staged, env!("CARGO_PKG_VERSION"))
     {
         return false;
     }
-    swap(&root)
+    swap(&root, &staged)
 }
 
-fn swap(root: &Path) -> bool {
+fn swap(root: &Path, version: &str) -> bool {
     let staged = beside(root, ".new");
     let old = beside(root, ".old");
     let _ = std::fs::remove_dir_all(&old);
@@ -612,9 +780,14 @@ fn swap(root: &Path) -> bool {
         return false;
     }
     let _ = std::fs::remove_file(beside(root, ".new.json"));
-    *READY.lock().unwrap() = None;
+    UPDATES.lock().unwrap().applied(version);
     let _ = std::fs::write(marker(), "");
     true
+}
+
+/// Whether this build knows how to open itself again (an installed release).
+pub fn relaunch_available() -> bool {
+    root().is_some()
 }
 
 /// Opens the app again once this process has exited (after `apply`).
@@ -704,9 +877,11 @@ pub fn after_update() {
     if std::fs::remove_file(marker()).is_err() {
         return;
     }
+    if !UPDATES.lock().unwrap().start_core_update() {
+        return;
+    }
     std::thread::spawn(|| {
         let have = crate::core_bin::version(&crate::core_bin::path()).unwrap_or_default();
-        CORE.lock().unwrap().updating = true;
         let latest = latest_core()
             .map_err(|e| tracing::warn!("core release check after app update: {e}"))
             .ok();
@@ -717,22 +892,15 @@ pub fn after_update() {
             crate::kom::core_min(),
         );
         let result = crate::core_bin::update_to(target);
-        let mut core = CORE.lock().unwrap();
-        core.updating = false;
-        match result {
-            Ok(now) => {
-                if let Some(root) = root() {
-                    let _ = std::fs::remove_dir_all(beside(&root, ".old"));
-                }
-                tracing::info!("kompitum-core is {now}");
-                core.version = Some(now.trim_start_matches("kom ").to_owned());
-                core.error = None;
+        if let Ok(now) = &result {
+            if let Some(root) = root() {
+                let _ = std::fs::remove_dir_all(beside(&root, ".old"));
             }
-            Err(e) => {
-                tracing::warn!("kompitum-core update: {e}");
-                core.error = Some(e);
-            }
+            tracing::info!("kompitum-core is {now}");
+        } else if let Err(e) = &result {
+            tracing::warn!("kompitum-core update: {e}");
         }
+        UPDATES.lock().unwrap().finish_core_update(result);
     });
 }
 
@@ -1030,6 +1198,99 @@ mod tests {
             after_update_target("0.1.5", None, 1, "0.1.11"),
             Some("0.1.11")
         );
+    }
+
+    #[test]
+    fn an_app_check_is_checking_only_while_a_pass_runs() {
+        let mut u = Updates::default();
+        assert_eq!(u.app, AppStage::Idle);
+        u.begin_check();
+        assert_eq!(u.app, AppStage::Checking);
+        u.app_found(Some("0.3.0".into()));
+        assert_eq!(u.app, AppStage::Ready("0.3.0".into()));
+        u.begin_check();
+        assert_eq!(u.app, AppStage::Ready("0.3.0".into()), "a ready update stays ready while the next pass looks");
+        u.app_found(None);
+        assert_eq!(u.app, AppStage::Idle, "nothing newer means nothing ready");
+    }
+
+    #[test]
+    fn a_failed_check_is_idle_and_clears_the_last_good_time() {
+        let mut u = Updates::default();
+        u.record_check(true, 100);
+        u.begin_check();
+        u.app_failed();
+        assert_eq!(u.app, AppStage::Idle);
+        u.app_found(Some("0.3.0".into()));
+        u.app_failed();
+        assert_eq!(u.app, AppStage::Ready("0.3.0".into()), "a failed check leaves a staged update ready");
+        assert_eq!(u.checked, None);
+        u.record_check(false, 200);
+        assert_eq!(u.checked, None);
+    }
+
+    #[test]
+    fn an_applied_app_is_left_alone_by_later_checks() {
+        let mut u = Updates::default();
+        u.applied("0.3.0");
+        u.begin_check();
+        u.app_found(Some("0.4.0".into()));
+        u.app_failed();
+        assert_eq!(u.app, AppStage::Applied("0.3.0".into()));
+    }
+
+    #[test]
+    fn a_core_update_starts_once_and_clears_an_old_error() {
+        let mut u = Updates::default();
+        u.finish_core_update(Err("no network".into()));
+        assert_eq!(u.core.stage, CoreStage::Failed("no network".into()));
+        assert!(u.start_core_update());
+        assert_eq!(u.core.stage, CoreStage::Updating(String::new()));
+        assert!(!u.start_core_update(), "a second updater is refused");
+        u.finish_core_update(Ok("kom 0.2.0".into()));
+        assert_eq!(u.core.version.as_deref(), Some("0.2.0"));
+        assert_eq!(u.core.stage, CoreStage::Idle);
+        assert!(u.start_core_update(), "idle may start again");
+        u.finish_core_update(Ok("kom 0.2.1".into()));
+        u.core.stage = CoreStage::Ready("0.3.0".into());
+        assert!(u.start_core_update());
+        assert_eq!(u.core.stage, CoreStage::Updating("0.3.0".into()));
+    }
+
+    #[test]
+    fn a_core_ready_that_is_not_newer_goes_idle_again() {
+        let mut u = Updates::default();
+        u.set_core(Some("0.2.0".into()), None);
+        u.core.stage = CoreStage::Ready("0.2.0".into());
+        u.set_core(Some("0.2.0".into()), Some("brew".into()));
+        assert_eq!(u.core.stage, CoreStage::Idle);
+        assert_eq!(u.core.managed.as_deref(), Some("brew"));
+        u.core.stage = CoreStage::Ready("0.3.0".into());
+        u.set_core(Some("0.2.0".into()), None);
+        assert_eq!(u.core.stage, CoreStage::Ready("0.3.0".into()), "a newer core stays ready");
+        u.core.stage = CoreStage::Updating("0.4.0".into());
+        u.set_core(Some("0.2.0".into()), None);
+        assert_eq!(
+            u.core.stage,
+            CoreStage::Updating("0.4.0".into()),
+            "a running update is not a check result"
+        );
+    }
+
+    #[test]
+    fn status_keeps_the_settings_keys_and_names_the_stages() {
+        let status = status();
+        for key in ["ready", "updates", "version"] {
+            assert!(status["app"].get(key).is_some(), "app.{key}");
+        }
+        for key in ["ready", "updating", "error", "version", "managed"] {
+            assert!(status["core"].get(key).is_some(), "core.{key}");
+        }
+        assert!(status["app"]["stage"].is_string());
+        assert!(status["core"]["stage"].is_string());
+        for key in ["notes", "checked", "checks", "checking"] {
+            assert!(status.get(key).is_some(), "{key}");
+        }
     }
 
     #[test]

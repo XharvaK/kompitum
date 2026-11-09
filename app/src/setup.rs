@@ -50,6 +50,79 @@ pub struct Setup {
     state: State,
     requests: Option<async_channel::Receiver<Request>>,
     icon: Arc<Image>,
+    /// Answers control requests until the main window takes the receiver.
+    _answers: Option<Task<()>>,
+}
+
+impl Need {
+    fn word(&self) -> &'static str {
+        match self {
+            Need::Install => "install",
+            Need::Connect(_) => "connect",
+            Need::Fix(_) => "fix",
+        }
+    }
+
+    /// What's wrong, in words (`detail`), and the need as a command would say it.
+    fn detail(&self) -> String {
+        match self {
+            Need::Install => "kompitum-core isn't installed on this computer.".into(),
+            Need::Connect(error) => error.clone(),
+            Need::Fix(Mismatch::TooOld { have, need }) => {
+                format!("kompitum-core is {have}; this app needs {need} or newer.")
+            }
+            Need::Fix(Mismatch::Missing(methods)) => format!(
+                "kompitum-core can't do everything this app needs ({}).",
+                methods.join(", ")
+            ),
+            Need::Fix(Mismatch::Newer { generation }) => format!(
+                "kompitum-core speaks a newer protocol (generation {generation}) than this app understands."
+            ),
+        }
+    }
+
+    fn words(&self) -> String {
+        match self {
+            Need::Install => "kompitum-core isn't installed".into(),
+            Need::Connect(_) => "it can't connect to kompitum-core".into(),
+            Need::Fix(Mismatch::Newer { .. }) => "this Kompitum is older than kompitum-core".into(),
+            Need::Fix(_) => "kompitum-core needs an update".into(),
+        }
+    }
+}
+
+impl State {
+    fn word(&self) -> &'static str {
+        match self {
+            State::Ready => "ready",
+            State::Busy(_) => "busy",
+            State::Failed(_) => "failed",
+        }
+    }
+
+    fn error(&self) -> Option<String> {
+        match self {
+            State::Failed(error) => Some(error.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Answers what a control client asks while this screen is up.
+fn control_answer(need: &Need, state: &State, cmd: &serde_json::Value) -> serde_json::Value {
+    if cmd.get("status").is_some() {
+        return serde_json::json!({
+            "setup": {
+                "need": need.word(),
+                "detail": need.detail(),
+                "state": state.word(),
+                "error": state.error(),
+            }
+        });
+    }
+    serde_json::json!({
+        "error": format!("Kompitum is on its setup screen: {}", need.words()),
+    })
 }
 
 pub fn open(need: Need, requests: async_channel::Receiver<Request>, cx: &mut App) {
@@ -68,11 +141,32 @@ pub fn open(need: Need, requests: async_channel::Receiver<Request>, cx: &mut App
     };
     let icon = Arc::new(Image::from_bytes(ImageFormat::Png, ICON.to_vec()));
     cx.open_window(options, |_, cx| {
-        cx.new(|_| Setup {
-            need,
-            state: State::Ready,
-            requests: Some(requests),
-            icon,
+        cx.new(|cx| {
+            let answers = requests.clone();
+            let mut setup = Setup {
+                need,
+                state: State::Ready,
+                requests: Some(requests),
+                icon,
+                _answers: None,
+            };
+            setup._answers = Some(cx.spawn(async move |this, cx| {
+                while let Ok(request) = answers.recv().await {
+                    if let Request::Control { cmd, reply } = request {
+                        let answer = this
+                            .update(cx, |this: &mut Setup, _| {
+                                control_answer(&this.need, &this.state, &cmd)
+                            })
+                            .unwrap_or_else(|_| {
+                                serde_json::json!({
+                                    "error": "Kompitum's setup screen is closing",
+                                })
+                            });
+                        let _ = reply.send(answer);
+                    }
+                }
+            }));
+            setup
         })
     })
     .expect("cannot open the Kompitum window");
@@ -89,6 +183,8 @@ impl Setup {
                     let Some(requests) = self.requests.take() else {
                         return;
                     };
+                    // The main window answers from here on.
+                    self._answers.take();
                     window.remove_window();
                     crate::open_main(core, requests, cx);
                     return;
@@ -241,6 +337,62 @@ fn button(id: &'static str, label: &'static str, primary: bool) -> Stateful<Div>
                 .hover(|s| s.bg(c("raised")))
         })
         .child(label)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Mismatch, Need, State, control_answer};
+
+    #[test]
+    fn status_names_the_need_its_detail_and_the_state() {
+        let need = Need::Fix(Mismatch::TooOld {
+            have: "0.1.0".into(),
+            need: "0.1.5".into(),
+        });
+        let answer = control_answer(
+            &need,
+            &State::Failed("install failed".into()),
+            &serde_json::json!({ "status": true }),
+        );
+        assert_eq!(answer["setup"]["need"], "fix");
+        assert!(
+            answer["setup"]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("0.1.5")
+        );
+        assert_eq!(answer["setup"]["state"], "failed");
+        assert_eq!(answer["setup"]["error"], "install failed");
+        let ready = control_answer(
+            &Need::Install,
+            &State::Ready,
+            &serde_json::json!({ "status": true }),
+        );
+        assert_eq!(ready["setup"]["state"], "ready");
+        assert!(ready["setup"]["error"].is_null());
+    }
+
+    #[test]
+    fn other_requests_refuse_with_the_need_in_words() {
+        let answer = control_answer(
+            &Need::Install,
+            &State::Ready,
+            &serde_json::json!({ "ls": true }),
+        );
+        assert_eq!(
+            answer["error"],
+            "Kompitum is on its setup screen: kompitum-core isn't installed"
+        );
+        let answer = control_answer(
+            &Need::Fix(Mismatch::Newer { generation: 3 }),
+            &State::Ready,
+            &serde_json::json!({ "do": "space.new" }),
+        );
+        assert_eq!(
+            answer["error"],
+            "Kompitum is on its setup screen: this Kompitum is older than kompitum-core"
+        );
+    }
 }
 
 impl Render for Setup {

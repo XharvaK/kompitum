@@ -61,6 +61,78 @@ pub enum TerminalEvent {
     ContextMenu(Point<Pixels>),
 }
 
+/// Why a terminal's program stopped.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Ending {
+    Exited,
+    Killed,
+    Finished,
+}
+
+impl Ending {
+    fn from_reason(reason: &str) -> Self {
+        match reason {
+            "exited" => Ending::Exited,
+            "killed" => Ending::Killed,
+            _ => Ending::Finished,
+        }
+    }
+
+    fn word(self) -> &'static str {
+        match self {
+            Ending::Exited => "exited",
+            Ending::Killed => "killed",
+            Ending::Finished => "finished",
+        }
+    }
+}
+
+/// A terminal's one life: attaching, live, waiting for its core, ended for good,
+/// or failed to attach (tried again now and then, not on every listing).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Life {
+    Attaching,
+    Live,
+    Lost,
+    Ended(Ending),
+    Failed(String),
+}
+
+impl Life {
+    /// Ended is final; everything else may try a new core connection.
+    fn may_reattach(&self) -> bool {
+        !matches!(self, Life::Ended(_))
+    }
+
+    fn due_on_listing(&self, now: Instant, retry_at: Option<Instant>) -> bool {
+        match self {
+            Life::Lost => true,
+            Life::Failed(_) => retry_at.is_none_or(|at| now >= at),
+            _ => false,
+        }
+    }
+
+    fn word(&self) -> String {
+        match self {
+            Life::Attaching => "attaching".into(),
+            Life::Live => "live".into(),
+            Life::Lost => "lost".into(),
+            Life::Ended(ending) => format!("ended: {}", ending.word()),
+            Life::Failed(error) => format!("failed: {error}"),
+        }
+    }
+}
+
+/// What the pane says under its grid: a lost core hides an older attach error.
+fn status_text(life: &Life) -> Option<String> {
+    match life {
+        Life::Attaching | Life::Live => None,
+        Life::Lost => Some("reconnecting to core…".into()),
+        Life::Ended(ending) => Some(ending.word().into()),
+        Life::Failed(error) => Some(error.clone()),
+    }
+}
+
 /// What the canvas closures need, shared outside the entity so prepaint can resize.
 struct Grid {
     vt: Vt,
@@ -104,9 +176,12 @@ struct Grid {
 pub struct TerminalView {
     pub address: String,
     pub title: String,
-    pub ended: Option<String>,
-    /// The core connection dropped; waiting to reattach.
-    pub lost: bool,
+    /// Attaching, live, lost, ended for good or failed to attach.
+    pub life: Life,
+    /// Which connection's attach reply is current; older ones are detached.
+    connection: u64,
+    /// When a failed attach may be tried again by a listing (never on a reconnect).
+    retry_at: Option<Instant>,
     /// A left-button selection drag is in progress.
     selecting: bool,
     /// A scroll thumb drag is: the px into the thumb it was grabbed at.
@@ -272,8 +347,9 @@ impl TerminalView {
         let mut view = TerminalView {
             address: address.clone(),
             title: address.clone(),
-            ended: None,
-            lost: false,
+            life: Life::Attaching,
+            connection: 0,
+            retry_at: None,
             selecting: false,
             scrollbar_grab: None,
             selection_pointer: Point::default(),
@@ -323,21 +399,17 @@ impl TerminalView {
 
     /// Attaches to the same terminal on a (new) core connection.
     pub fn reattach(&mut self, core: Arc<Core>, cx: &mut Context<Self>) {
-        if matches!(
-            self.ended.as_deref(),
-            Some("exited" | "killed" | "finished")
-        ) {
+        if !self.life.may_reattach() {
             return;
         }
-        self.ended = None;
-        self.lost = false;
         self.connect(core, cx);
         cx.notify();
     }
 
     /// A kept terminal can restart without its core connection changing.
     pub fn reattach_if_needed(&mut self, core: Arc<Core>, cx: &mut Context<Self>) {
-        if self.lost || self.ended.is_some() {
+        let now = cx.background_executor().now();
+        if self.life.due_on_listing(now, self.retry_at) {
             self.reattach(core, cx);
         }
     }
@@ -345,6 +417,14 @@ impl TerminalView {
     /// Attaches off the UI thread: a terminal on a machine still dialing can
     /// take seconds, and the window must keep drawing meanwhile.
     fn connect(&mut self, core: Arc<Core>, cx: &mut Context<Self>) {
+        self.connection += 1;
+        let connection = self.connection;
+        // A fresh connection tells the core again whether this pane has focus,
+        // and waits for its first fit like a new one does.
+        self.was_focused = false;
+        self.attach_deadline = cx.background_executor().now() + Duration::from_millis(100);
+        self.life = Life::Attaching;
+        self.retry_at = None;
         let fit_ready = {
             let mut g = self.grid.borrow_mut();
             let (cols, rows) = (g.vt.cols, g.vt.rows);
@@ -368,6 +448,7 @@ impl TerminalView {
             }
         };
         let address = self.address.clone();
+        let attach_core = core.clone();
         let deadline = cx.background_executor().timer(
             self.attach_deadline
                 .saturating_duration_since(cx.background_executor().now()),
@@ -399,9 +480,9 @@ impl TerminalView {
                 .background_executor()
                 .spawn(async move { core.attach(&address, cols, rows, facts) })
                 .await;
-            let Ok(Some(rx)) =
-                this.update(cx, |this, cx| this.attached(attached, (cols, rows), cx))
-            else {
+            let Ok(Some(rx)) = this.update(cx, |this, cx| {
+                this.attached(connection, &attach_core, attached, (cols, rows), cx)
+            }) else {
                 return;
             };
             while let Ok(first) = rx.recv().await {
@@ -419,14 +500,23 @@ impl TerminalView {
 
     fn attached(
         &mut self,
+        connection: u64,
+        core: &Arc<Core>,
         attached: anyhow::Result<crate::kom::Attached>,
         attached_size: (u16, u16),
         cx: &mut Context<Self>,
     ) -> Option<async_channel::Receiver<Stream>> {
         cx.notify();
+        if connection != self.connection {
+            // A newer connection owns this pane now; never feed it an old channel.
+            if let Ok(attached) = attached {
+                core.detach(attached.channel);
+            }
+            return None;
+        }
         match attached {
             Ok(attached) => {
-                self.lost = false;
+                self.life = Life::Live;
                 let mut g = self.grid.borrow_mut();
                 // Replay uses the size requested by attach, not a newer pane layout.
                 if (g.vt.cols, g.vt.rows) != attached_size {
@@ -457,19 +547,21 @@ impl TerminalView {
                     || format!("{e:#}").contains("lost the core")
                     || format!("{e:#}").contains("no reply") =>
             {
-                self.lost = true;
+                self.life = Life::Lost;
+                self.retry_at = None;
                 None
             }
             // It ended between being listed and being attached: its pane goes,
             // like one whose program exits while shown.
             Err(e) if crate::kom::error_kind(&e) == Some("finished") => {
-                self.ended = Some("finished".into());
+                self.life = Life::Ended(Ending::Finished);
                 cx.emit(TerminalEvent::Ended);
                 None
             }
             Err(e) => {
                 // A failed lookup or reconnect is not evidence the program exited.
-                self.ended = Some(format!("{e:#}"));
+                self.life = Life::Failed(format!("{e:#}"));
+                self.retry_at = Some(cx.background_executor().now() + Duration::from_secs(10));
                 None
             }
         }
@@ -480,6 +572,11 @@ impl TerminalView {
         let mut g = self.grid.borrow_mut();
         let cell = device_cell(g.cell, g.scale);
         g.refresh_theme(&vt::theme(), cell);
+    }
+
+    /// Its life in one word for `kompitum-app ls`.
+    pub fn life_word(&self) -> String {
+        self.life.word()
     }
 
     /// Its title as shown (see `shown_title`); news only when that changed.
@@ -562,16 +659,16 @@ impl TerminalView {
                     Stream::Closed(why) => {
                         open = false;
                         g.channel = None;
-                        self.ended = Some(
-                            why.get("reason")
-                                .and_then(|r| r.as_str())
-                                .unwrap_or("ended")
-                                .to_owned(),
-                        );
+                        let reason = why
+                            .get("reason")
+                            .and_then(|r| r.as_str())
+                            .unwrap_or("finished");
+                        self.life = Life::Ended(Ending::from_reason(reason));
                     }
                     Stream::Lost => {
                         g.channel = None;
-                        self.lost = true;
+                        self.life = Life::Lost;
+                        self.retry_at = None;
                         cx.notify();
                         return false;
                     }
@@ -2470,10 +2567,7 @@ impl Render for TerminalView {
         let grid_paint = self.grid.clone();
         let selection_view = cx.entity().downgrade();
         let (input_focus, input_view) = (self.focus.clone(), cx.entity());
-        let ended = self
-            .ended
-            .clone()
-            .or_else(|| self.lost.then(|| "reconnecting to core…".to_owned()));
+        let ended = status_text(&self.life);
         let search_input = self
             .search_open
             .then(|| self.search_input.clone())
@@ -2849,8 +2943,87 @@ impl Focusable for TerminalView {
 
 #[cfg(test)]
 mod tests {
-    use super::{ScrollTarget, pages_to_lines, scroll_target};
+    use super::{Ending, Life, ScrollTarget, pages_to_lines, scroll_target, status_text};
     use serde_json::{Value, json};
+
+    #[test]
+    fn a_finished_terminal_never_reattaches_and_other_lives_may() {
+        assert!(!Life::Ended(Ending::Exited).may_reattach());
+        assert!(!Life::Ended(Ending::Killed).may_reattach());
+        assert!(!Life::Ended(Ending::Finished).may_reattach());
+        for life in [
+            Life::Attaching,
+            Life::Live,
+            Life::Lost,
+            Life::Failed("no reply".into()),
+        ] {
+            assert!(life.may_reattach(), "{life:?}");
+        }
+    }
+
+    #[test]
+    fn lost_retries_on_every_listing_and_failed_at_most_every_ten_seconds() {
+        let now = std::time::Instant::now();
+        assert!(Life::Lost.due_on_listing(now, None));
+        let failed = Life::Failed("no reply".into());
+        let retry_at = now + std::time::Duration::from_secs(10);
+        assert!(!failed.due_on_listing(now, Some(retry_at)));
+        assert!(!failed.due_on_listing(
+            now + std::time::Duration::from_millis(9999),
+            Some(retry_at)
+        ));
+        assert!(failed.due_on_listing(retry_at, Some(retry_at)));
+        assert!(!Life::Live.due_on_listing(now, None));
+        assert!(!Life::Attaching.due_on_listing(now, None));
+        assert!(!Life::Ended(Ending::Exited).due_on_listing(now, None));
+    }
+
+    #[test]
+    fn the_life_word_says_what_is_happening() {
+        assert_eq!(Life::Attaching.word(), "attaching");
+        assert_eq!(Life::Live.word(), "live");
+        assert_eq!(Life::Lost.word(), "lost");
+        assert_eq!(Life::Ended(Ending::Exited).word(), "ended: exited");
+        assert_eq!(Life::Ended(Ending::Killed).word(), "ended: killed");
+        assert_eq!(Life::Ended(Ending::Finished).word(), "ended: finished");
+        assert_eq!(Life::Failed("no reply".into()).word(), "failed: no reply");
+    }
+
+    #[test]
+    fn a_lost_core_is_shown_as_reconnecting_even_after_an_attach_failure() {
+        assert_eq!(
+            status_text(&Life::Lost).as_deref(),
+            Some("reconnecting to core…")
+        );
+        assert_eq!(
+            status_text(&Life::Failed("no reply".into())).as_deref(),
+            Some("no reply")
+        );
+        assert_eq!(status_text(&Life::Ended(Ending::Killed)).as_deref(), Some("killed"));
+        assert_eq!(status_text(&Life::Live), None);
+    }
+
+    #[gpui::test]
+    fn a_new_connection_sends_focus_again_and_waits_for_its_own_fit(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::*;
+
+        let terminal = cx.new(|cx| {
+            super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 5), cx)
+        });
+        cx.run_until_parked();
+        terminal.update(cx, |terminal, cx| {
+            terminal.was_focused = true;
+            terminal.attach_deadline = cx.background_executor().now();
+            terminal.reattach(crate::kom::offline(), cx);
+            assert!(!terminal.was_focused, "the new core must hear about focus");
+            assert!(
+                terminal.attach_deadline > cx.background_executor().now(),
+                "a reattach waits for its first fit again"
+            );
+        });
+    }
 
     #[gpui::test]
     fn attach_errors_do_not_announce_a_terminal_exit(cx: &mut gpui::TestAppContext) {
@@ -2871,12 +3044,15 @@ mod tests {
             0usize
         });
         cx.run_until_parked();
+        let (connection, core) = view.read_with(cx, |view, _| {
+            (view.connection, view.grid.borrow().core.clone())
+        });
         for kind in ["not_found", "unavailable", "permission_denied"] {
             view.update(cx, |view, cx| {
                 let error = crate::kom::RpcError(
                     json!({ "message": "attach failed", "data": { "kind": kind } }),
                 );
-                view.attached(Err(error.into()), (40, 5), cx);
+                view.attached(connection, &core, Err(error.into()), (40, 5), cx);
             });
             cx.run_until_parked();
             assert_eq!(ends.read_with(cx, |count, _| *count), 0, "{kind}");
@@ -2885,7 +3061,7 @@ mod tests {
             let error = crate::kom::RpcError(
                 json!({ "message": "program finished", "data": { "kind": "finished" } }),
             );
-            view.attached(Err(error.into()), (40, 5), cx);
+            view.attached(connection, &core, Err(error.into()), (40, 5), cx);
         });
         cx.run_until_parked();
         assert_eq!(ends.read_with(cx, |count, _| *count), 1);
@@ -2900,14 +3076,20 @@ mod tests {
         });
         cx.run_until_parked();
         terminal.read_with(cx, |terminal, _| {
-            assert!(!terminal.lost, "must not contact the core before layout")
+            assert!(
+                !matches!(terminal.life, super::Life::Lost),
+                "must not contact the core before layout"
+            )
         });
         terminal.update(cx, |terminal, _| {
             terminal.fit(114, 30, size(px(8.), px(18.)), 1.)
         });
         cx.run_until_parked();
         terminal.read_with(cx, |terminal, _| {
-            assert!(terminal.lost, "the fitted pane must attempt to attach");
+            assert!(
+                matches!(terminal.life, super::Life::Lost),
+                "the fitted pane must attempt to attach"
+            );
             assert_eq!(terminal.dimensions(), (114, 30));
         });
     }
@@ -2923,12 +3105,17 @@ mod tests {
         cx.executor()
             .advance_clock(std::time::Duration::from_millis(99));
         cx.run_until_parked();
-        terminal.read_with(cx, |terminal, _| assert!(!terminal.lost));
+        terminal.read_with(cx, |terminal, _| {
+            assert!(!matches!(terminal.life, super::Life::Lost))
+        });
         cx.executor()
             .advance_clock(std::time::Duration::from_millis(1));
         cx.run_until_parked();
         terminal.read_with(cx, |terminal, _| {
-            assert!(terminal.lost, "an unpainted view must not wait forever");
+            assert!(
+                matches!(terminal.life, super::Life::Lost),
+                "an unpainted view must not wait forever"
+            );
             assert_eq!(terminal.dimensions(), (120, 40));
         });
     }
@@ -2941,6 +3128,9 @@ mod tests {
             super::TerminalView::attach(crate::kom::offline(), "t1".into(), (120, 40), cx)
         });
         let (tx, rx) = async_channel::unbounded();
+        let (connection, core) = terminal.read_with(cx, |terminal, _| {
+            (terminal.connection, terminal.grid.borrow().core.clone())
+        });
         terminal.update(cx, |terminal, cx| {
             terminal.fit(114, 30, size(px(8.), px(18.)), 1.);
             let attached = crate::kom::Attached {
@@ -2948,7 +3138,11 @@ mod tests {
                 stream: rx,
                 terminal: json!({"title": "outdated replay"}),
             };
-            assert!(terminal.attached(Ok(attached), (120, 40), cx).is_none());
+            assert!(
+                terminal
+                    .attached(connection, &core, Ok(attached), (120, 40), cx)
+                    .is_none()
+            );
             assert!(terminal.grid.borrow().channel.is_none());
             assert_ne!(terminal.title, "outdated replay");
             assert!(
@@ -2956,6 +3150,36 @@ mod tests {
                 "the wrong-sized replay must not be consumed"
             );
         });
+    }
+
+    #[gpui::test]
+    fn an_attach_reply_from_an_older_connection_is_detached(cx: &mut gpui::TestAppContext) {
+        use gpui::*;
+
+        let terminal = cx.new(|cx| {
+            super::TerminalView::attach(crate::kom::offline(), "t1".into(), (40, 5), cx)
+        });
+        let (old, core) = terminal.read_with(cx, |terminal, _| {
+            (terminal.connection, terminal.grid.borrow().core.clone())
+        });
+        // A newer connection starts; the old attach's answer arrives afterwards.
+        terminal.update(cx, |terminal, cx| terminal.connect(core.clone(), cx));
+        let (tx, rx) = async_channel::unbounded();
+        terminal.update(cx, |terminal, cx| {
+            let attached = crate::kom::Attached {
+                channel: 9,
+                stream: rx,
+                terminal: json!({"title": "old connection"}),
+            };
+            assert!(
+                terminal
+                    .attached(old, &core, Ok(attached), (40, 5), cx)
+                    .is_none()
+            );
+            assert!(terminal.grid.borrow().channel.is_none());
+            assert_ne!(terminal.title, "old connection");
+        });
+        assert!(tx.is_closed(), "the old channel must be detached");
     }
 
     #[gpui::test]

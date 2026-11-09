@@ -382,19 +382,141 @@ enum TerminalChange {
 
 struct PendingTerminalChange {
     change: TerminalChange,
+    /// The core connection this change belongs to; a reply from an older one is dropped.
+    generation: u64,
     reply: std::sync::mpsc::Receiver<Result<(), String>>,
+}
+
+/// What is happening to a terminal's pane. Killing and Killed win over a keep
+/// still in flight, so a terminal being killed never comes back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum PaneChange {
+    Keeping,
+    Parking,
+    Killing,
+    Killed,
+}
+
+impl PaneChange {
+    fn refusing(self) -> bool {
+        matches!(self, PaneChange::Killing | PaneChange::Killed)
+    }
+}
+
+/// Keep and park refuse a terminal that is being killed.
+fn begin_pane_change(
+    changes: &mut HashMap<String, PaneChange>,
+    address: &str,
+    change: PaneChange,
+) -> Result<(), String> {
+    if changes.get(address).is_some_and(|c| c.refusing()) {
+        return Err("This terminal is being killed.".into());
+    }
+    changes.insert(address.to_owned(), change);
+    Ok(())
+}
+
+/// Whether a keep may add its pane: never once a kill has begun.
+fn pane_may_appear(changes: &HashMap<String, PaneChange>, address: &str) -> bool {
+    !changes.get(address).is_some_and(|c| c.refusing())
 }
 
 /// The slot of a terminal shown in a pane in place of its own (`<pane>#swap`).
 const SWAP: &str = "#swap";
 
+/// A mod copy's one state: running, never loaded, or running the last good copy
+/// after a reload failed.
+enum CopyState<R = Entity<ShellRoot>> {
+    Loaded(R),
+    Failed(String),
+    Stale { root: R, error: String },
+}
+
+impl<R> CopyState<R> {
+    fn root(&self) -> Option<&R> {
+        match self {
+            CopyState::Loaded(root) | CopyState::Stale { root, .. } => Some(root),
+            CopyState::Failed(_) => None,
+        }
+    }
+
+    fn error(&self) -> Option<&str> {
+        match self {
+            CopyState::Failed(error) | CopyState::Stale { error, .. } => Some(error),
+            CopyState::Loaded(_) => None,
+        }
+    }
+
+    /// A reload's result: a good one clears a stale error; a bad one keeps the
+    /// last good root running under `Stale`.
+    fn reloaded(self, error: Option<String>) -> Self {
+        match (self, error) {
+            (CopyState::Loaded(root), None) | (CopyState::Stale { root, .. }, None) => {
+                CopyState::Loaded(root)
+            }
+            (CopyState::Loaded(root), Some(error))
+            | (CopyState::Stale { root, .. }, Some(error)) => CopyState::Stale { root, error },
+            (CopyState::Failed(_), Some(new)) => CopyState::Failed(new),
+            (CopyState::Failed(error), None) => CopyState::Failed(error),
+        }
+    }
+}
+
 struct Copy {
     inst: Instance,
     /// Its number for commands (`mods::prepare_load`); 0 if it never loaded.
     id: u64,
-    root: Option<Entity<ShellRoot>>,
+    state: CopyState,
     _watch: Option<Watcher>,
-    error: Option<String>,
+}
+
+/// Why the window has no usable core connection.
+#[derive(Clone, Debug, PartialEq)]
+enum CoreLink {
+    Connected,
+    Lost { since: Instant },
+    Refused { why: String },
+}
+
+impl CoreLink {
+    /// The pill's words, once they help: a planned core restart takes under 2 s.
+    fn words(&self, now: Instant) -> Option<String> {
+        match self {
+            CoreLink::Connected => None,
+            CoreLink::Lost { since } if now.saturating_duration_since(*since) < Duration::from_secs(2) => {
+                None
+            }
+            CoreLink::Lost { .. } => Some("Reconnecting to Kompitum's core…".into()),
+            CoreLink::Refused { why } => Some(format!(
+                "Kompitum's core changed to a version this app can't use: {why}. Restart Kompitum."
+            )),
+        }
+    }
+
+    fn status(&self, now: Instant) -> Value {
+        match self {
+            CoreLink::Connected => json!({ "link": "connected" }),
+            CoreLink::Lost { since } => json!({
+                "link": "lost",
+                "lost_for_ms": now.saturating_duration_since(*since).as_millis() as u64,
+            }),
+            CoreLink::Refused { why } => json!({ "link": "refused", "why": why }),
+        }
+    }
+}
+
+/// Why a running core can't serve this app, in the person's words.
+fn mismatch_words(mismatch: crate::kom::Mismatch) -> String {
+    use crate::kom::Mismatch;
+    match mismatch {
+        Mismatch::TooOld { have, need } => {
+            format!("it is {have}, and this app needs {need} or newer")
+        }
+        Mismatch::Newer { generation } => format!(
+            "it speaks a newer protocol (generation {generation}) than this app understands"
+        ),
+        Mismatch::Missing(methods) => format!("it is missing {}", methods.join(", ")),
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -539,10 +661,14 @@ pub struct AppWindow {
     checking_closed: bool,
     documents_watching: bool,
     draining: bool,
-    changing_terminals: HashSet<String>,
-    /// Closed terminals stay excluded until kill completes and a listing drops them.
-    closing_terminals: HashMap<String, bool>,
+    /// Every pane change in flight, by terminal address (`Keeping`, `Parking`,
+    /// `Killing`, `Killed`), so keep, park and kill cannot disagree.
+    pane_changes: HashMap<String, PaneChange>,
     pending_terminals: std::collections::BTreeMap<String, PendingTerminalChange>,
+    /// The core connection: connected, lost since when, or refused after a change.
+    link: CoreLink,
+    /// Whether the link pill is drawn now, so the 400 ms poll redraws only when it changes.
+    link_shown: bool,
     /// Each machine owns a document; the empty key is this core.
     documents: std::collections::BTreeMap<String, crate::mirror_sync::Slot>,
     initial_view: Option<crate::mirror::View>,
@@ -654,9 +780,10 @@ impl AppWindow {
             checking_closed: false,
             documents_watching: false,
             draining: false,
-            changing_terminals: HashSet::new(),
-            closing_terminals: HashMap::new(),
+            pane_changes: HashMap::new(),
             pending_terminals: Default::default(),
+            link: CoreLink::Connected,
+            link_shown: false,
             documents: {
                 let mut local = crate::mirror_sync::Slot::default();
                 local.connection(true, None, None);
@@ -947,6 +1074,16 @@ impl AppWindow {
                 core.closed().await;
                 tracing::warn!("lost the core; reconnecting");
                 crate::telemetry::count("core_lost");
+                let since = Instant::now();
+                if this
+                    .update(cx, |this, cx| {
+                        this.link = CoreLink::Lost { since };
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
                 let fresh = loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(1000))
@@ -959,6 +1096,16 @@ impl AppWindow {
                         break core;
                     }
                 };
+                // A core that changed under us can't serve these panes: say so and stop.
+                if let Err(mismatch) = crate::kom::check(&fresh.hello) {
+                    let why = mismatch_words(mismatch);
+                    tracing::warn!("refusing the new core: {why}");
+                    let _ = this.update(cx, |this, cx| {
+                        this.link = CoreLink::Refused { why };
+                        cx.notify();
+                    });
+                    break;
+                }
                 if this
                     .update(cx, |this, cx| this.reconnected(fresh, cx))
                     .is_err()
@@ -1071,8 +1218,13 @@ impl AppWindow {
 
     fn reconnected(&mut self, core: Arc<Core>, cx: &mut Context<Self>) {
         tracing::info!("reconnected to the core");
+        self.link = CoreLink::Connected;
         self.core_generation += 1;
         self.documents_watching = false;
+        // What the old core was told, or checked, is told and checked again.
+        self.written_where.clear();
+        self.looked.clear();
+        self.folders_checked.clear();
         for (machine, slot) in &mut self.documents {
             slot.available = false;
             slot.connected = machine.is_empty();
@@ -1643,11 +1795,11 @@ impl AppWindow {
 
     fn remove_copy(&mut self, slot: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(copy) = self.copies.remove(slot)
-            && let (Some(runtime), Some(root)) = (&self.runtime, copy.root)
+            && let (Some(runtime), Some(root)) = (&self.runtime, copy.state.root())
         {
             runtime
                 .close(
-                    &root,
+                    root,
                     std::time::Instant::now() + Duration::from_millis(250),
                     window,
                     cx,
@@ -1664,7 +1816,7 @@ impl AppWindow {
     ) {
         let Some(runtime) = &self.runtime else { return };
         mods::final_cleanup(self.core.clone(), deadline, || {
-            for root in self.copies.values().filter_map(|copy| copy.root.as_ref()) {
+            for root in self.copies.values().filter_map(|copy| copy.state.root()) {
                 runtime.close_now(root, deadline, window, cx);
             }
         });
@@ -1858,7 +2010,7 @@ impl AppWindow {
             if !self.copies.contains_key(&slot) {
                 let copy = self.load(inst, window, cx);
                 if slot.starts_with("float:")
-                    && let Some(root) = &copy.root
+                    && let Some(root) = copy.state.root()
                 {
                     root.update(cx, |r, cx| r.set_fit_content(true, cx));
                 }
@@ -1975,6 +2127,7 @@ impl AppWindow {
             changed |= self.model.set_turn(&addr, turn, Some(turn));
             self.written_seen.insert(addr.clone(), turn);
             let core = self.core.clone();
+            let generation = self.core_generation;
             let guard = crate::inflight::track();
             let params =
                 json!({ "terminal": addr, "labels": { "kompitum.seen": turn.to_string() } });
@@ -1988,6 +2141,9 @@ impl AppWindow {
                 };
                 tracing::warn!("seen label for {addr}: {e:#}");
                 let _ = this.update(cx, |this, _| {
+                    if generation != this.core_generation {
+                        return;
+                    }
                     if this.written_seen.get(&addr) == Some(&turn) {
                         this.written_seen.remove(&addr);
                         this.looked.remove(&addr);
@@ -2146,13 +2302,12 @@ impl AppWindow {
         let mut copy = Copy {
             inst,
             id: 0,
-            root: None,
+            state: CopyState::Failed(String::new()),
             _watch: None,
-            error: None,
         };
         let (Some(runtime), Some(folder)) = (&self.runtime, self.folders.get(&copy.inst.name))
         else {
-            copy.error = Some(format!(
+            copy.state = CopyState::Failed(format!(
                 "no mod folder ~/.config/kompitum-app/mods/{}",
                 copy.inst.name
             ));
@@ -2167,11 +2322,11 @@ impl AppWindow {
                         .map_err(|e| tracing::warn!("{}: no hot reload: {e:#}", copy.inst.name))
                         .ok();
                 }
-                copy.root = Some(root);
+                copy.state = CopyState::Loaded(root);
             }
             Err(e) => {
                 tracing::warn!("mod {} failed to load: {e:#}", copy.inst.name);
-                copy.error = Some(format!("{e:#}"));
+                copy.state = CopyState::Failed(format!("{e:#}"));
             }
         }
         copy
@@ -2188,7 +2343,7 @@ impl AppWindow {
     fn refresh_mods_matching(&self, changed: impl Fn(u64) -> bool, cx: &mut Context<Self>) {
         if let Some(runtime) = &self.runtime {
             for c in self.copies.values() {
-                if let Some(root) = &c.root
+                if let Some(root) = c.state.root()
                     && changed(c.id)
                 {
                     let _ = runtime.refresh(root, cx);
@@ -2361,6 +2516,7 @@ impl AppWindow {
             // failed write is forgotten so the next publish tries again.
             self.written_where.insert(addr.clone(), place.clone());
             let core = self.core.clone();
+            let generation = self.core_generation;
             let guard = crate::inflight::track();
             let params = json!({ "terminal": addr, "labels": { "where": place } });
             let job = cx.background_executor().spawn(async move {
@@ -2373,6 +2529,9 @@ impl AppWindow {
                 };
                 tracing::warn!("where label for {addr}: {e:#}");
                 let _ = this.update(cx, |this, _| {
+                    if generation != this.core_generation {
+                        return;
+                    }
                     if this.written_where.get(&addr) == Some(&place) {
                         this.written_where.remove(&addr);
                     }
@@ -2465,7 +2624,14 @@ impl AppWindow {
             let result = pending.reply.recv_timeout(timeout).unwrap_or_else(|e| {
                 Err(format!("terminal change did not finish before quit: {e}"))
             });
-            self.apply_terminal_change(address, pending.change, result, window, cx);
+            self.apply_terminal_change(
+                address,
+                pending.change,
+                pending.generation,
+                result,
+                window,
+                cx,
+            );
         }
         let machines = self.documents.keys().cloned().collect::<Vec<_>>();
         for machine in machines {
@@ -2739,8 +2905,9 @@ impl AppWindow {
             }
         }
         self.live = live;
-        self.closing_terminals
-            .retain(|addr, completed| !*completed || self.live.contains_key(addr));
+        self.pane_changes.retain(|addr, change| {
+            *change != PaneChange::Killed || self.live.contains_key(addr)
+        });
         // A new sub-agent changes only this list; mods that show teams need to redraw.
         let terminals_changed = mods::publish_terminals(list);
         self.tend_terminals(true, window, cx);
@@ -2916,9 +3083,7 @@ impl AppWindow {
             .live
             .iter()
             .filter(|(a, _)| {
-                self.model.pane_of(a).is_none()
-                    && !self.changing_terminals.contains(*a)
-                    && !self.closing_terminals.contains_key(*a)
+                self.model.pane_of(a).is_none() && !self.pane_changes.contains_key(*a)
             })
             .filter_map(|(a, r)| {
                 let machine = a.split_once('/').map(|(m, _)| m);
@@ -2960,7 +3125,7 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.changing_terminals.insert(addr.clone());
+        self.pane_changes.insert(addr.clone(), PaneChange::Keeping);
         let core = self.core.clone();
         let generation = self.core_generation;
         cx.spawn_in(window, async move |this, cx| {
@@ -2980,11 +3145,14 @@ impl AppWindow {
                 })
                 .await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.changing_terminals.remove(&addr);
+                if matches!(this.pane_changes.get(&addr), Some(PaneChange::Keeping)) {
+                    this.pane_changes.remove(&addr);
+                }
                 if generation != this.core_generation || this.draining {
                     return;
                 }
                 if matches!(ready, Ok(true))
+                    && pane_may_appear(&this.pane_changes, &addr)
                     && this.model.pane_of(&addr).is_none()
                     && this
                         .require_document(addr.split_once('/').map(|(m, _)| m))
@@ -3096,7 +3264,7 @@ impl AppWindow {
                 );
                 // Another machine's terminal (`vps/t7`): git runs there.
                 todo.entry((addr.split_once('/').map(|(m, _)| m.to_owned()), cwd))
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(addr.clone());
             } else if let Some(last) = last {
                 last.busy = busy;
@@ -3109,6 +3277,7 @@ impl AppWindow {
             self.save();
         }
         // Once per machine and folder, however many terminals are there.
+        let generation = self.core_generation;
         for ((on, cwd), addrs) in todo {
             let home = home.clone();
             cx.spawn(async move |this, cx| {
@@ -3118,6 +3287,9 @@ impl AppWindow {
                     .spawn(async move { folder_info(&asked, &home, on.as_deref()) })
                     .await;
                 let _ = this.update(cx, |this, cx| {
+                    if generation != this.core_generation {
+                        return;
+                    }
                     let mut changed = false;
                     // Not one that moved on meanwhile: its own answer is coming.
                     for addr in addrs.into_iter().filter(|a| this.cwds.get(a) == Some(&cwd)) {
@@ -3166,14 +3338,16 @@ impl AppWindow {
         }
         // How its stream ended, for `reconcile` (`kom run --rm` leaves no record).
         if let Some(t) = self.terms.get(block)
-            && let Some(why) = t.view.read(cx).ended.clone()
+            && matches!(
+                t.view.read(cx).life,
+                crate::terminal::Life::Ended(_)
+            )
         {
             // The program ended on its own (or was killed): its pane goes now. A
-            // stream that just broke (the core died) says neither.
-            let closed = matches!(why.as_str(), "exited" | "killed" | "finished");
-            if closed && self.model.address_of(block).as_deref() == Some(t.address.as_str()) {
+            // stream that just broke (the core died) is not an ending.
+            if self.model.address_of(block).as_deref() == Some(t.address.as_str()) {
                 self.model.remove_pane(block);
-                return self.sync(window, cx);
+                self.sync(window, cx);
             }
         }
         // Otherwise the next listing checks closure; core owns lost terminals.
@@ -3189,6 +3363,7 @@ impl AppWindow {
             return;
         }
         let core = self.core.clone();
+        let generation = self.core_generation;
         let address = address.to_owned();
         cx.spawn_in(window, async move |this, cx| {
             let failure = cx.background_executor().spawn(async move {
@@ -3199,6 +3374,9 @@ impl AppWindow {
             }).await;
             if let Some(body) = failure {
                 let _ = this.update_in(cx, |this, window, cx| {
+                    if generation != this.core_generation {
+                        return;
+                    }
                     this.open_overlay(mods::new_overlay_id(), json!({"kind":"toast", "notification":{"title":"Terminal failed to start", "body":body, "level":"error"}}), window, cx);
                 });
             }
@@ -3351,7 +3529,10 @@ impl AppWindow {
         self.live
             .iter()
             .find(|(address, record)| {
-                !self.closing_terminals.contains_key(*address)
+                !self
+                    .pane_changes
+                    .get(*address)
+                    .is_some_and(|change| change.refusing())
                     && crate::lead::is_lead_record(record, program)
             })
             .map(|(address, _)| address.clone())
@@ -3996,15 +4177,19 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<Value, String> {
+        if let Some(change) = self.pane_changes.get(addr) {
+            return Err(if change.refusing() {
+                "This terminal is being killed.".into()
+            } else {
+                "This terminal already has a pane change in progress.".into()
+            });
+        }
         if let Some(p) = self.model.pane_of(addr) {
             self.model.focus_pane(&p);
             return Ok(json!({ "pane": p }));
         }
         if !self.live.contains_key(addr) {
             return Err(format!("no running terminal {addr:?}"));
-        }
-        if self.changing_terminals.contains(addr) {
-            return Err("This terminal already has a pane change in progress.".into());
         }
         let space = self
             .model
@@ -4068,10 +4253,14 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<Value, String> {
-        self.require_document(addr.split_once('/').map(|(m, _)| m))?;
-        if self.changing_terminals.contains(addr) {
-            return Err("This terminal already has a pane change in progress.".into());
+        if let Some(change) = self.pane_changes.get(addr) {
+            return Err(if change.refusing() {
+                "This terminal is being killed.".into()
+            } else {
+                "This terminal already has a pane change in progress.".into()
+            });
         }
+        self.require_document(addr.split_once('/').map(|(m, _)| m))?;
         self.start_terminal_change(addr.to_owned(), TerminalChange::Park, window, cx);
         Ok(json!({"pending":true,"terminal":addr}))
     }
@@ -4093,10 +4282,23 @@ impl AppWindow {
             ),
             TerminalChange::Park => (false, json!({"kompitum.space":"","kompitum.tab":""})),
         };
+        let pane_change = match &change {
+            TerminalChange::Keep { .. } => PaneChange::Keeping,
+            TerminalChange::Park => PaneChange::Parking,
+        };
+        if begin_pane_change(&mut self.pane_changes, &address, pane_change).is_err() {
+            return;
+        }
+        let generation = self.core_generation;
         let (tx, rx) = std::sync::mpsc::channel();
-        self.changing_terminals.insert(address.clone());
-        self.pending_terminals
-            .insert(address.clone(), PendingTerminalChange { change, reply: rx });
+        self.pending_terminals.insert(
+            address.clone(),
+            PendingTerminalChange {
+                change,
+                generation,
+                reply: rx,
+            },
+        );
         let core = self.core.clone();
         let addr = address.clone();
         // The drain must not need the foreground continuation to start this work.
@@ -4122,7 +4324,24 @@ impl AppWindow {
                     .reply
                     .try_recv()
                     .unwrap_or_else(|e| Err(format!("terminal change reply missing: {e}")));
-                this.apply_terminal_change(address, pending.change, result, window, cx);
+                if pending.generation != this.core_generation {
+                    // Started on a core that is gone: its answer is about another terminal.
+                    if matches!(
+                        this.pane_changes.get(&address),
+                        Some(PaneChange::Keeping | PaneChange::Parking)
+                    ) {
+                        this.pane_changes.remove(&address);
+                    }
+                    return;
+                }
+                this.apply_terminal_change(
+                    address,
+                    pending.change,
+                    pending.generation,
+                    result,
+                    window,
+                    cx,
+                );
             });
         })
         .detach();
@@ -4132,11 +4351,20 @@ impl AppWindow {
         &mut self,
         address: String,
         change: TerminalChange,
+        generation: u64,
         result: Result<(), String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.changing_terminals.remove(&address);
+        if generation != self.core_generation {
+            return;
+        }
+        if !matches!(
+            self.pane_changes.get(&address),
+            Some(PaneChange::Killing | PaneChange::Killed)
+        ) {
+            self.pane_changes.remove(&address);
+        }
         if let Err(error) = result {
             tracing::error!("terminal change for {address} failed: {error}");
             if !self.draining {
@@ -4154,6 +4382,9 @@ impl AppWindow {
                 axis,
             } => {
                 if !self.live.contains_key(&address) {
+                    return;
+                }
+                if !pane_may_appear(&self.pane_changes, &address) {
                     return;
                 }
                 if self.model.space(&space).is_none() {
@@ -4214,8 +4445,10 @@ impl AppWindow {
             }
             i += 1;
         }
-        self.closing_terminals
-            .extend(doomed.iter().cloned().map(|a| (a, false)));
+        for address in &doomed {
+            self.pane_changes
+                .insert(address.clone(), PaneChange::Killing);
+        }
         // Off the UI thread: a kill waits for the program to go, and for slow machines.
         // All start now, so a quit sees and waits for every one of them.
         let mut jobs = Vec::with_capacity(doomed.len());
@@ -4229,15 +4462,21 @@ impl AppWindow {
             });
             jobs.push((address, job));
         }
+        let generation = self.core_generation;
         cx.spawn(async move |this, cx| {
             for (address, job) in jobs {
                 let result = job.await;
                 let _ = this.update(cx, |this, _| {
+                    // A reply from the core before a reconnect says nothing about this one.
+                    if generation != this.core_generation {
+                        this.pane_changes.remove(&address);
+                        return;
+                    }
                     if result.is_ok() && this.live.contains_key(&address) {
                         // The live snapshot may still predate the kill's reply.
-                        this.closing_terminals.insert(address, true);
+                        this.pane_changes.insert(address, PaneChange::Killed);
                     } else {
-                        this.closing_terminals.remove(&address);
+                        this.pane_changes.remove(&address);
                     }
                 });
             }
@@ -5535,7 +5774,7 @@ impl AppWindow {
         if layout.is_none() {
             let copy = self.load(Instance { name, props }, window, cx);
             // Popups (menus) are as tall as what's in them; `height` is the most.
-            if fit && let Some(root) = &copy.root {
+            if fit && let Some(root) = copy.state.root() {
                 root.update(cx, |r, cx| r.set_fit_content(true, cx));
             }
             self.copies.insert(slot.clone(), copy);
@@ -5735,7 +5974,7 @@ impl AppWindow {
             return json!({ "ok": true });
         }
         if cmd.get("ls").is_some() {
-            return self.world();
+            return self.world(cx);
         }
         if cmd.get("status").is_some() {
             let round = |v: f32| (v as f64 * 100.0).round() / 100.0;
@@ -5744,7 +5983,7 @@ impl AppWindow {
                     .iter()
                     .filter_map(|w| std::fs::read_to_string(file(&format!("{w}.error"))).ok())
                     .chain(self.copies.values().filter_map(|c| {
-                        Some(format!("mod {}: {}", c.inst.name, c.error.as_ref()?))
+                        Some(format!("mod {}: {}", c.inst.name, c.state.error()?))
                     }))
                     .chain(self.documents.iter().filter_map(|(m, s)| {
                         s.error.as_ref().map(|e| {
@@ -5767,6 +6006,7 @@ impl AppWindow {
                     None => self.copies.get(&o.slot).map(|c| c.inst.name.clone()),
                 }).collect::<Vec<_>>(),
                 "errors": errors,
+                "core": self.link.status(Instant::now()),
             });
         }
         json!({ "error": "expected { do }, { ls }, { commands } or { status }" })
@@ -5774,7 +6014,7 @@ impl AppWindow {
 
     /// Spaces, their tabs and terminals, for `kompitum-app ls`. Sub-agents are listed
     /// under the terminal that started them.
-    fn world(&self) -> Value {
+    fn world(&self, cx: &App) -> Value {
         let m = &self.model;
         let children = |addr: &str| -> Vec<String> {
             let mut out: Vec<String> = self
@@ -5792,6 +6032,7 @@ impl AppWindow {
                 "terminal": addr, "pane": pane, "status": m.status(addr),
                 "app": m.agents.get(addr).and_then(|a| a.app.clone()),
                 "name": rec.and_then(|r| r.get("name")).cloned(),
+                "life": self.terms.get(pane).map(|t| t.view.read(cx).life_word()),
                 "sub_agents": children(addr),
             })
         };
@@ -5828,6 +6069,11 @@ impl AppWindow {
         if status != self.update_status {
             self.update_status = status;
             self.refresh_mods(cx);
+        }
+        let link_shown = self.link.words(Instant::now()).is_some();
+        if link_shown != self.link_shown {
+            self.link_shown = link_shown;
+            cx.notify();
         }
         if let Some(r) = &self.runtime {
             crate::bench::note_mods(&r.read_metrics());
@@ -5918,7 +6164,7 @@ impl AppWindow {
         let loaded: BTreeSet<u64> = self
             .copies
             .values()
-            .filter(|c| c.root.is_some())
+            .filter(|c| c.state.root().is_some())
             .map(|c| c.id)
             .collect();
         self.sync_folders(window, cx);
@@ -5930,15 +6176,18 @@ impl AppWindow {
             .values_mut()
             .filter(|c| edited.contains(&c.inst.name) && loaded.contains(&c.id))
         {
-            let Some(root) = &copy.root else { continue };
+            let Some(root) = copy.state.root().cloned() else {
+                continue;
+            };
             let error = runtime
-                .reload_now(root, window, cx)
+                .reload_now(&root, window, cx)
                 .err()
                 .map(|e| format!("{e:#}"));
             if let Some(e) = &error {
                 tracing::warn!("mod reload failed: {e}");
             }
-            copy.error = error;
+            let state = std::mem::replace(&mut copy.state, CopyState::Failed(String::new()));
+            copy.state = state.reloaded(error);
         }
     }
 
@@ -5968,7 +6217,10 @@ impl AppWindow {
         let retry: Vec<String> = self
             .copies
             .iter()
-            .filter(|(_, c)| c.root.is_none() && (edited.contains(&c.inst.name) || added))
+            .filter(|(_, c)| {
+                matches!(c.state, CopyState::Failed(_))
+                    && (edited.contains(&c.inst.name) || added)
+            })
             .map(|(s, _)| s.clone())
             .collect();
         for slot in &retry {
@@ -6307,47 +6559,46 @@ impl AppWindow {
         // A mod that is a pane in a tab: a click makes it the focused pane, and the
         // keyboard is its own (an editor, a board), like a terminal's.
         let in_pane = self.model.tab_of(slot).is_some();
-        match self.copies.get(slot) {
-            Some(Copy {
-                root: Some(root),
-                inst,
-                ..
-            }) => div()
-                .size_full()
-                .key_context(format!("Mod mod = {}", inst.name).as_str())
-                .when(in_pane, |d| {
-                    let id = slot.to_owned();
-                    d.on_any_mouse_down(cx.listener(move |this, _, _, cx| {
-                        if this.focused_pane.as_deref() != Some(id.as_str()) {
-                            this.model.focus_pane(&id);
-                            this.focused_pane = Some(id.clone());
-                            this.publish(cx);
-                            this.save();
-                            cx.notify();
-                        }
-                    }))
-                })
-                // Bare layout clicks leave the keyboard with the pane, but an input
-                // or other focusable control owns the keyboard once it takes focus.
-                .when(!in_overlay && !in_pane, |d| {
-                    d.capture_any_mouse_down(cx.listener(|_, _, window, cx| {
-                        cx.defer_in(window, |this, window, cx| this.refocus_pane(window, cx));
-                    }))
-                })
-                // Popups size to their content, up to the window: a column, so a mod
-                // root with `min_h(0)` can shrink and scroll. Layout mods fill their block.
-                // Not cached here: ShellRoot caches the mod's view itself and draws its
-                // spinners over it, waking only itself (GPUI rebuilds all under a cached
-                // view that changed, so a spinner step would rebuild the mod).
-                .map(|d| {
-                    if in_overlay {
-                        d.h_auto().min_h_0().flex().flex_col().child(root.clone())
-                    } else {
-                        d.child(root.clone())
-                    }
-                })
-                .into_any_element(),
-            Some(Copy { error, inst, .. }) => div()
+        let Some(copy) = self.copies.get(slot) else {
+            return div().into_any_element();
+        };
+        match &copy.state {
+            CopyState::Loaded(root) => {
+                self.render_running_copy(slot, root, &copy.inst, in_overlay, in_pane, cx)
+            }
+            CopyState::Stale { root, error } => {
+                let first = error.lines().next().unwrap_or(error);
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .w_full()
+                            .flex_none()
+                            .px_2()
+                            .py_1()
+                            .bg(c("blocked"))
+                            .text_color(c("background"))
+                            .text_xs()
+                            .child(format!("{} didn't reload: {first}", copy.inst.name)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(self.render_running_copy(
+                                slot,
+                                root,
+                                &copy.inst,
+                                in_overlay,
+                                in_pane,
+                                cx,
+                            )),
+                    )
+                    .into_any_element()
+            }
+            CopyState::Failed(error) => div()
                 .id(SharedString::from(format!("err-{slot}")))
                 .size_full()
                 .p_2()
@@ -6356,12 +6607,56 @@ impl AppWindow {
                 .overflow_y_scroll()
                 .child(format!(
                     "{} did not load:\n\n{}\n\nFix the files; Kompitum retries on save.",
-                    inst.name,
-                    error.as_deref().unwrap_or("?")
+                    copy.inst.name, error
                 ))
                 .into_any_element(),
-            None => div().into_any_element(),
         }
+    }
+
+    fn render_running_copy(
+        &self,
+        slot: &str,
+        root: &Entity<ShellRoot>,
+        inst: &Instance,
+        in_overlay: bool,
+        in_pane: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .size_full()
+            .key_context(format!("Mod mod = {}", inst.name).as_str())
+            .when(in_pane, |d| {
+                let id = slot.to_owned();
+                d.on_any_mouse_down(cx.listener(move |this, _, _, cx| {
+                    if this.focused_pane.as_deref() != Some(id.as_str()) {
+                        this.model.focus_pane(&id);
+                        this.focused_pane = Some(id.clone());
+                        this.publish(cx);
+                        this.save();
+                        cx.notify();
+                    }
+                }))
+            })
+            // Bare layout clicks leave the keyboard with the pane, but an input
+            // or other focusable control owns the keyboard once it takes focus.
+            .when(!in_overlay && !in_pane, |d| {
+                d.capture_any_mouse_down(cx.listener(|_, _, window, cx| {
+                    cx.defer_in(window, |this, window, cx| this.refocus_pane(window, cx));
+                }))
+            })
+            // Popups size to their content, up to the window: a column, so a mod
+            // root with `min_h(0)` can shrink and scroll. Layout mods fill their block.
+            // Not cached here: ShellRoot caches the mod's view itself and draws its
+            // spinners over it, waking only itself (GPUI rebuilds all under a cached
+            // view that changed, so a spinner step would rebuild the mod).
+            .map(|d| {
+                if in_overlay {
+                    d.h_auto().min_h_0().flex().flex_col().child(root.clone())
+                } else {
+                    d.child(root.clone())
+                }
+            })
+            .into_any_element()
     }
 
     /// Plain fallback for `"header": { "content": "tabs" }`.
@@ -6569,9 +6864,20 @@ impl AppWindow {
     fn render_overlays(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out = Vec::new();
         let mut toast_y = 16.0;
-        // Drawn last, so it stays clickable over an open dialog.
-        let pill = self.render_update_pill(cx);
+        // Drawn last, so they stay clickable over an open dialog.
+        let link = self.render_link_pill(cx);
+        let pill = self.render_update_pill(
+            cx,
+            if link.is_some() {
+                16.0 + UPDATE_PILL_HEIGHT + 8.0
+            } else {
+                16.0
+            },
+        );
         if pill.is_some() {
+            toast_y += UPDATE_PILL_HEIGHT + 8.0;
+        }
+        if link.is_some() {
             toast_y += UPDATE_PILL_HEIGHT + 8.0;
         }
         // Windows under dialogs, popups and toasts; each kind in the order opened
@@ -6705,8 +7011,58 @@ impl AppWindow {
                     .into_any_element(),
             );
         }
+        out.extend(link);
         out.extend(pill);
         out
+    }
+
+    /// "Reconnecting…" once the core has been gone a moment, or why a changed
+    /// core can't serve this app, with the Restart the update pill offers.
+    fn render_link_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let words = self.link.words(Instant::now())?;
+        let refused = matches!(self.link, CoreLink::Refused { .. })
+            && crate::update::relaunch_available();
+        let pill = div()
+            .absolute()
+            .right(settings::z(16.0))
+            .bottom(settings::z(16.0))
+            .h(settings::z(UPDATE_PILL_HEIGHT))
+            .pl(settings::z(14.0))
+            .pr(settings::z(6.0))
+            .flex()
+            .items_center()
+            .gap(settings::z(10.0))
+            .bg(c("popover"))
+            .border_1()
+            .border_color(c("border"))
+            .rounded_full()
+            .shadow_lg()
+            .occlude()
+            .text_size(settings::z(13.0))
+            .child(div().text_color(c("foreground")).child(words))
+            .when(refused, |pill| {
+                pill.child(
+                    div()
+                        .id("core-link-restart")
+                        .h(settings::z(24.0))
+                        .px(settings::z(10.0))
+                        .flex()
+                        .items_center()
+                        .rounded_full()
+                        .cursor_pointer()
+                        .bg(c("accent_fill"))
+                        .text_color(c("accent_foreground"))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .hover(|s| s.opacity(0.9))
+                        .child("Restart")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.drain_documents(window, cx);
+                            crate::update::relaunch();
+                            cx.quit();
+                        })),
+                )
+            });
+        Some(pill.into_any_element())
     }
 }
 
@@ -6726,7 +7082,7 @@ impl AppWindow {
         }
     }
 
-    fn render_update_pill(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_update_pill(&self, cx: &mut Context<Self>, bottom: f32) -> Option<AnyElement> {
         let app_version = crate::update::ready();
         let app_ready = app_version.is_some();
         let success = self.update_ready.is_none() && self.update_success;
@@ -6743,7 +7099,7 @@ impl AppWindow {
         let pill = div()
             .absolute()
             .right(settings::z(16.0))
-            .bottom(settings::z(16.0))
+            .bottom(settings::z(bottom))
             .h(settings::z(UPDATE_PILL_HEIGHT))
             .pl(settings::z(14.0))
             .pr(settings::z(6.0))
@@ -7596,8 +7952,112 @@ fn changed_asset_paths(
 
 #[cfg(test)]
 mod tests {
+    use super::{CoreLink, mismatch_words};
     use gpui::prelude::*;
     use gpui::{Context, IntoElement, Render, TestAppContext, Window, div, point, px, size};
+
+    #[test]
+    fn a_lost_core_shows_after_two_seconds_and_a_refusal_says_why() {
+        let now = std::time::Instant::now();
+        let lost = CoreLink::Lost { since: now };
+        assert_eq!(lost.words(now + std::time::Duration::from_millis(1999)), None);
+        assert_eq!(
+            lost.words(now + std::time::Duration::from_secs(2)).as_deref(),
+            Some("Reconnecting to Kompitum's core…")
+        );
+        let refused = CoreLink::Refused {
+            why: "it is 9.9.9, and this app needs 0.1.5 or newer".into(),
+        };
+        assert_eq!(
+            refused.words(now).as_deref(),
+            Some("Kompitum's core changed to a version this app can't use: it is 9.9.9, and this app needs 0.1.5 or newer. Restart Kompitum.")
+        );
+        assert_eq!(CoreLink::Connected.words(now), None);
+    }
+
+    #[test]
+    fn the_core_link_status_names_its_state_and_detail() {
+        let now = std::time::Instant::now();
+        assert_eq!(
+            CoreLink::Connected.status(now),
+            serde_json::json!({ "link": "connected" })
+        );
+        let lost = CoreLink::Lost { since: now };
+        assert_eq!(
+            lost.status(now + std::time::Duration::from_millis(2500)),
+            serde_json::json!({ "link": "lost", "lost_for_ms": 2500 })
+        );
+        let refused = CoreLink::Refused {
+            why: "too old".into(),
+        };
+        assert_eq!(
+            refused.status(now),
+            serde_json::json!({ "link": "refused", "why": "too old" })
+        );
+    }
+
+    #[test]
+    fn a_mismatch_is_explained_in_words() {
+        use crate::kom::Mismatch;
+        assert_eq!(
+            mismatch_words(Mismatch::TooOld {
+                have: "0.1.0".into(),
+                need: "0.1.5".into(),
+            }),
+            "it is 0.1.0, and this app needs 0.1.5 or newer"
+        );
+        assert_eq!(
+            mismatch_words(Mismatch::Newer { generation: 3 }),
+            "it speaks a newer protocol (generation 3) than this app understands"
+        );
+        assert_eq!(
+            mismatch_words(Mismatch::Missing(vec!["terminal.get".into()])),
+            "it is missing terminal.get"
+        );
+    }
+
+    #[test]
+    fn a_keep_that_arrives_after_a_kill_never_brings_the_pane_back() {
+        use super::{PaneChange, begin_pane_change, pane_may_appear};
+        let mut changes = std::collections::HashMap::new();
+        begin_pane_change(&mut changes, "t1", PaneChange::Keeping).unwrap();
+        assert!(pane_may_appear(&changes, "t1"));
+        // Kill starts while the keep is still in flight: it wins.
+        changes.insert("t1".into(), PaneChange::Killing);
+        assert!(!pane_may_appear(&changes, "t1"));
+        assert!(begin_pane_change(&mut changes, "t1", PaneChange::Keeping).is_err());
+        assert!(begin_pane_change(&mut changes, "t1", PaneChange::Parking).is_err());
+        // Kill's reply lands; a listing that still shows it keeps it excluded.
+        changes.insert("t1".into(), PaneChange::Killed);
+        assert!(!pane_may_appear(&changes, "t1"));
+        assert!(begin_pane_change(&mut changes, "t1", PaneChange::Keeping).is_err());
+    }
+
+    #[test]
+    fn a_failed_reload_keeps_the_last_good_copy_and_the_next_good_one_clears_it() {
+        let state = super::CopyState::Loaded("root");
+        assert_eq!(state.root(), Some(&"root"));
+        assert_eq!(state.error(), None);
+        let state = state.reloaded(Some("boom\nmore detail".into()));
+        assert!(matches!(
+            &state,
+            super::CopyState::Stale { root: "root", error } if error.starts_with("boom")
+        ));
+        assert_eq!(state.root(), Some(&"root"), "the old copy still runs");
+        assert_eq!(state.error(), Some("boom\nmore detail"));
+        let state = state.reloaded(None);
+        assert!(matches!(state, super::CopyState::Loaded("root")));
+        assert_eq!(state.error(), None, "a good reload clears the strip");
+    }
+
+    #[test]
+    fn a_copy_that_never_loaded_is_failed_not_stale() {
+        let state = super::CopyState::<&str>::Failed("no folder".into());
+        assert_eq!(state.root(), None);
+        assert_eq!(state.error(), Some("no folder"));
+        let state = state.reloaded(Some("still broken".into()));
+        assert!(matches!(state, super::CopyState::Failed(error) if error == "still broken"));
+    }
 
     #[test]
     fn going_back_into_a_split_column_takes_its_top_pane_whatever_the_fractions() {
@@ -8527,7 +8987,7 @@ mod tests {
         let roots: Vec<_> = view.update(cx, |this, _| {
             this.copies
                 .values()
-                .filter_map(|c| c.root.clone())
+                .filter_map(|c| c.state.root().cloned())
                 .collect()
         });
         assert!(!roots.is_empty(), "no mod loaded");

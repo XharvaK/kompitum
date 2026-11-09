@@ -153,7 +153,7 @@ impl AppWindow {
             (
                 _,
                 Some(Copy {
-                    root: Some(root),
+                    state: CopyState::Loaded(root),
                     inst,
                     ..
                 }),
@@ -165,7 +165,34 @@ impl AppWindow {
             (
                 _,
                 Some(Copy {
-                    error: Some(e),
+                    state: CopyState::Stale { root, error },
+                    inst,
+                    ..
+                }),
+                _,
+            ) => {
+                let first = error.lines().next().unwrap_or(error);
+                div()
+                    .key_context(format!("Mod mod = {}", inst.name).as_str())
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .w_full()
+                            .px_2()
+                            .py_1()
+                            .bg(c("blocked"))
+                            .text_color(c("background"))
+                            .text_xs()
+                            .child(format!("{} didn't reload: {first}", inst.name)),
+                    )
+                    .child(root.clone())
+                    .into_any_element()
+            }
+            (
+                _,
+                Some(Copy {
+                    state: CopyState::Failed(e),
                     inst,
                     ..
                 }),

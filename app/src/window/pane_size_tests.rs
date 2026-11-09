@@ -15,14 +15,20 @@ fn unpainted_hidden_pane(cx: &mut gpui::TestAppContext) {
         tab.root.split("a", super::Axis::Row, crate::model::pane("b", "probe-b"), "split".into());
         this.model.add_space("space", "test", "/", tab);
         this.sync(window, cx);
-        assert!(!this.terms["b"].view.read(cx).lost);
+        assert!(!matches!(
+            this.terms["b"].view.read(cx).life,
+            crate::terminal::Life::Lost
+        ));
         this.model.tab_mut("tab").unwrap().zoomed = Some("a".into());
         this.sync(window, cx);
     });
     cx.run_until_parked();
     cx.executor().advance_clock(std::time::Duration::from_millis(100));
     cx.run_until_parked();
-    assert!(view.update(cx, |this, cx| this.terms["b"].view.read(cx).lost),
+    assert!(view.update(cx, |this, cx| matches!(
+        this.terms["b"].view.read(cx).life,
+        crate::terminal::Life::Lost
+    )),
         "the hidden pane must attempt to attach without ever being painted");
 }
 
@@ -48,7 +54,10 @@ fn covered_pane_deadline(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     cx.executor().advance_clock(std::time::Duration::from_millis(100));
     cx.run_until_parked();
-    assert!(view.update(cx, |this, cx| this.terms["a"].view.read(cx).lost),
+    assert!(view.update(cx, |this, cx| matches!(
+        this.terms["a"].view.read(cx).life,
+        crate::terminal::Life::Lost
+    )),
         "a covered original pane must still attempt to attach");
 }
 
@@ -69,13 +78,17 @@ fn agent_only_first_fit(cx: &mut gpui::TestAppContext) {
         this.live.insert("probe-a".into(), serde_json::json!({"state": "live"}));
         this.agent = Some("probe-a".into());
         this.sync(window, cx);
-        assert!(!this.terms["a"].view.read(cx).lost);
+        assert!(!matches!(
+            this.terms["a"].view.read(cx).life,
+            crate::terminal::Life::Lost
+        ));
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
     view.update(cx, |this, cx| {
         let terminal = this.terms["a"].view.read(cx);
-        assert!(terminal.lost, "the drawn agent pane must attach before the deadline");
+        assert!(matches!(terminal.life, crate::terminal::Life::Lost),
+            "the drawn agent pane must attach before the deadline");
         assert_ne!(terminal.dimensions(), (120, 40), "replay must use agent-block layout");
     });
 }
