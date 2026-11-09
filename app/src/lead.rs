@@ -10,6 +10,10 @@ use std::path::{Path, PathBuf};
 
 #[path = "lead/conversation.rs"]
 pub mod conversation;
+pub use conversation::{
+    Conversation, Event, Item, Reveal, TerminalVis, event_from_hook, fold, items_from_transcript,
+    reveal_after_auth_status,
+};
 
 /// The compaction window each Claude terminal the app starts gets
 /// (the Owner, 2026-11-08). Part 5b's settings file uses it too.
@@ -526,10 +530,9 @@ pub struct Session {
     pub state: Option<State>,
     #[serde(default)]
     pub ask: Option<Ask>,
-    /// The Owner types in the lead's terminal itself ("Type in terminal"); otherwise typing there goes to
-    /// the composer.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub typing: bool,
+    /// The conversation the panel draws, and whether the terminal is shown.
+    #[serde(default)]
+    pub conversation: Conversation,
 }
 
 /// The kind of ask a blocking hook makes, or None for an event that is not one.
@@ -537,9 +540,68 @@ pub fn ask_kind(event: &str, input: &Value) -> Option<AskKind> {
     let tool = input.get("tool_name").and_then(Value::as_str).unwrap_or_default();
     match event {
         "PermissionRequest" => Some(if tool == "ExitPlanMode" { AskKind::Plan } else { AskKind::Permission }),
-        "PreToolUse" => Some(if tool == "AskUserQuestion" { AskKind::Question } else { AskKind::Permission }),
+        "PreToolUse" if tool == "AskUserQuestion" => Some(AskKind::Question),
         _ => None,
     }
+}
+
+/// What `lead()` publishes: state, ask, reveal, and conversation meta, never the items.
+pub fn published_session(session: &Session) -> Value {
+    json!({
+        "state": session.state,
+        "ask": session.ask,
+        "terminal": session.conversation.terminal,
+        "reveal": session.conversation.reveal,
+        "reveal_why": session.conversation.reveal_why,
+        "conversation": {
+            "version": session.conversation.version,
+            "length": session.conversation.items.len(),
+        },
+    })
+}
+
+/// Folds a hook into the session when it is a conversation event.
+pub fn apply_hook_event(session: &mut Session, event: &str, input: &Value) -> bool {
+    let Some(event) = event_from_hook(event, input) else {
+        return false;
+    };
+    session.conversation = fold(std::mem::take(&mut session.conversation), &event);
+    true
+}
+
+/// Reads the SessionStart transcript into the same items `fold` builds.
+/// Returns how many unknown line types were skipped; a missing path does nothing.
+pub fn apply_transcript_path(session: &mut Session, path: Option<&str>) -> u32 {
+    let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
+        return 0;
+    };
+    let (event, skipped) = match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let loaded = items_from_transcript(&text);
+            (Event::History { items: loaded.items }, loaded.skipped)
+        }
+        Err(_) => (Event::HistoryUnread, 0),
+    };
+    session.conversation = fold(std::mem::take(&mut session.conversation), &event);
+    skipped
+}
+
+/// Starts a lead from `claude auth status`'s exit code only.
+pub fn apply_auth_status(conversation: &mut Conversation, code: i32) {
+    let (terminal, reveal) = reveal_after_auth_status(code);
+    conversation.terminal = terminal;
+    conversation.reveal = reveal;
+    conversation.reveal_why = match reveal {
+        Some(Reveal::Login) => Some("Claude needs you to sign in.".into()),
+        _ => None,
+    };
+}
+
+/// Runs `claude auth status` through the core. Only the exit code is kept.
+pub fn claude_auth_status_code(kom: &Path) -> Result<i32, String> {
+    let (code, stdout, stderr) = claude_exec(kom, &["auth".into(), "status".into()])?;
+    drop((stdout, stderr));
+    Ok(code)
 }
 
 /// The Owner's answer to a card.
