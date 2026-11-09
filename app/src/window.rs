@@ -3079,6 +3079,7 @@ impl AppWindow {
                 .filter(|program| !program.is_empty())
                 .unwrap_or_else(|| "claude".into());
             if self.lead_terminal(&program).is_none() {
+                // lead.open holds when the CLI has models and none is saved.
                 self.run("lead.open", json!({}), window, cx);
             }
         }
@@ -3686,6 +3687,34 @@ impl AppWindow {
             .map(|(address, _)| address.clone())
     }
 
+    /// The CLI lists models and none is saved: ask before starting a process.
+    fn show_composer_for_model_pick(&mut self) -> Result<(), String> {
+        let existing = self.model.tabs().find_map(|tab| {
+            tab.root.panes().into_iter().find_map(|node| match node.content() {
+                Some(Content::Mod { name, .. }) if name == "composer" => Some(node.id.clone()),
+                _ => None,
+            })
+        });
+        if let Some(pane) = existing {
+            self.model.focus_pane(&pane);
+            return Ok(());
+        }
+        let space = self
+            .model
+            .active_space()
+            .filter(|space| space.machine.is_none())
+            .map(|space| space.id.clone())
+            .or_else(|| {
+                self.model
+                    .spaces
+                    .iter()
+                    .find(|space| space.machine.is_none())
+                    .map(|space| space.id.clone())
+            });
+        self.new_mod_tab(space, "Lead", "composer".into(), json!({}))?;
+        Ok(())
+    }
+
     /// Makes sure one composer copy sits under this terminal, in its own tab.
     fn ensure_composer(&mut self, terminal: &str) -> Result<Value, String> {
         let pane = self
@@ -3861,6 +3890,10 @@ impl AppWindow {
             return Err(format!(
                 "the lead's terminal {terminal:?} is alive but has no pane; keep it with terminal.keep"
             ));
+        }
+        if lead_needs_saved_model(&lead, &program) {
+            self.show_composer_for_model_pick()?;
+            return Ok(json!({ "ok": true, "needs": "model" }));
         }
         let spec = crate::programs::lead_spec(&program)
             .ok_or_else(|| format!("lead.program: {program:?} is not a key in programs.json"))?;
@@ -8060,6 +8093,15 @@ fn swap_by(args: &Value) -> Result<SwapBy<'_>, String> {
             "pane.swap direction is left, right, up or down, not {dir:?}"
         )),
     }
+}
+
+fn lead_needs_saved_model(lead: &crate::settings::Lead, program: &str) -> bool {
+    if lead.model.as_deref().is_some_and(|model| !model.is_empty()) {
+        return false;
+    }
+    crate::programs::lead_spec(program)
+        .and_then(|spec| spec.get("models").and_then(Value::as_array).cloned())
+        .is_some_and(|models| !models.is_empty())
 }
 
 fn needs_model_pane(name: &str, args: &Value) -> bool {

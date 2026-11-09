@@ -203,6 +203,7 @@ export default class Composer extends View {
     this.effortPreview = null;
     this.effortTouched = false;
     this.saveEffortOnRelease = true;
+    this.firstModel = null;
     this.handle = cx.focus_handle();
     this.text = TextareaState.new({});
     this.text.set_auto_grow(1, 6);
@@ -263,6 +264,10 @@ export default class Composer extends View {
       } catch {
         this.agents = [];
       }
+      if (this.needsFirstPick()) {
+        this.saveEffortOnRelease = false;
+        this.ensureEffortSlider(this.leadProgram());
+      }
     } finally {
       this.loading = false;
       cx.notify();
@@ -279,6 +284,12 @@ export default class Composer extends View {
       this.terminal
         && terminals().some((terminal) => terminal.address === this.terminal && terminal.state === "live"),
     );
+  }
+
+  needsFirstPick() {
+    if (this.leadLive()) return false;
+    if (this.person?.lead?.model) return false;
+    return (this.leadProgram().models ?? []).length > 0;
   }
 
   leadLine() {
@@ -637,24 +648,43 @@ export default class Composer extends View {
   }
 
   // The model chip writes the lead's model or reasoning for its next start, as Settings › Agents does.
-  saveLead(patch, cx) {
+  async writeLead(patch) {
     const lead = { ...(this.person?.lead ?? {}), ...patch };
     for (const [key, value] of Object.entries(patch)) {
       if (value == null) delete lead[key];
     }
     this.person = { ...(this.person ?? {}), lead };
+    const path = `${appHome()}/settings.json`;
+    const raw = await readTextFile(path);
+    const person = raw ? JSON.parse(raw) : {};
+    const next = { ...(person.lead ?? {}), ...patch };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value == null) delete next[key];
+    }
+    person.lead = next;
+    await writeTextFile(path, `${JSON.stringify(person, null, 2)}\n`, raw);
+    this.person = person;
+  }
+
+  saveLead(patch, cx) {
     cx.spawn(async (cx) => {
-      const path = `${appHome()}/settings.json`;
       try {
-        const raw = await readTextFile(path);
-        const person = raw ? JSON.parse(raw) : {};
-        const next = { ...(person.lead ?? {}), ...patch };
-        for (const [key, value] of Object.entries(patch)) {
-          if (value == null) delete next[key];
-        }
-        person.lead = next;
-        await writeTextFile(path, `${JSON.stringify(person, null, 2)}\n`, raw);
-        this.person = person;
+        await this.writeLead(patch);
+      } catch (error) {
+        this.error = `Couldn't save the lead's model: ${String(error?.message ?? error)}`;
+      }
+      cx.notify();
+    });
+  }
+
+  startFirstPick(cx) {
+    if (!this.firstModel) return;
+    const patch = { model: this.firstModel };
+    if (this.effortTouched && this.effortPreview) patch.effort = this.effortPreview;
+    cx.spawn(async (cx) => {
+      try {
+        await this.writeLead(patch);
+        run("lead.open");
       } catch (error) {
         this.error = `Couldn't save the lead's model: ${String(error?.message ?? error)}`;
       }
@@ -896,6 +926,7 @@ export default class Composer extends View {
   // One floating box: files, the text (no placeholder), then "+", the lead's status, its model and Send.
   // While the lead asks, its card sits above the text in the same box.
   bar(t, cx) {
+    const first = this.needsFirstPick();
     const ready = !this.sending && Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0;
     const send = h_flex()
       .id("composer-send")
@@ -962,20 +993,21 @@ export default class Composer extends View {
           .bg(t.raised)
           .when(this.chips.length > 0, (el) =>
             el.child(h_flex().gap(6).flex_wrap().children(this.chips.map((chip, index) => this.chip(t, cx, chip, index)))))
-          .when(Boolean(this.ask), (el) =>
+          .when(first, (el) => el.child(this.firstPickCard(t, cx)))
+          .when(!first && Boolean(this.ask), (el) =>
             el.child(v_flex().id("composer-asks").flex_1().min_h(0).overflow_y_scrollbar().child(this.card(t, cx))))
-          .when(!this.ask, (el) => el.child(div().flex_1().min_h(0).child(Textarea.new(this.text).w_full())))
+          .when(!first && !this.ask, (el) => el.child(div().flex_1().min_h(0).child(Textarea.new(this.text).w_full())))
           .child(
             h_flex()
               .w_full()
               .gap(6)
               .items_center()
               .child(plus)
-              .when(Boolean(this.terminal), (el) => el.child(keys))
+              .when(Boolean(this.terminal) && !first, (el) => el.child(keys))
               .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
               .child(div().flex_1())
-              .child(this.modelChip(t))
-              .when(!this.ask, (el) => el.child(send)),
+              .when(!first, (el) => el.child(this.modelChip(t)))
+              .when(!first && !this.ask, (el) => el.child(send)),
           ),
       );
   }
@@ -985,6 +1017,64 @@ export default class Composer extends View {
     const entry = this.leadProgram();
     const model = lead.model ? ` (${modelLabel(entry, lead.model)})` : "";
     return `Start ${leadName(entry, entry.key)}${model}`;
+  }
+
+  firstPickCard(t, cx) {
+    const entry = this.leadProgram();
+    const models = entry?.models ?? [];
+    const picked = this.firstModel;
+    const preview = this.effortPreview ?? this.person?.lead?.effort ?? null;
+    const word = effortWord(preview);
+    const start = h_flex()
+      .id("composer-first-start")
+      .h(32)
+      .px(14)
+      .items_center()
+      .rounded(8)
+      .bg(t.solid)
+      .text_color(t.solid_foreground)
+      .text_size(13)
+      .font_medium()
+      .child("Start the lead");
+    const button = picked
+      ? start.cursor_pointer().hover((s) => s.opacity(0.88)).on_click((_e, cx) => this.startFirstPick(cx))
+      : start.opacity(0.45);
+    return v_flex()
+      .id("composer-first")
+      .flex_1()
+      .min_h(0)
+      .gap(6)
+      .child(div().text_size(14).font_semibold().text_color(t.foreground).child("Which model should the lead use?"))
+      .child(div().text_size(12.5).text_color(t.dim).child("You can change it any time from the model menu below."))
+      .children(models.map((model) =>
+        v_flex()
+          .id(`composer-first-${model.id}`)
+          .h(44)
+          .px(12)
+          .gap(2)
+          .justify_center()
+          .rounded(10)
+          .border_1()
+          .border_color(picked === model.id ? t.accent : t.border)
+          .when(picked === model.id, (el) => el.bg(t.selected))
+          .cursor_pointer()
+          .on_click((_e, cx) => {
+            this.firstModel = model.id;
+            cx.notify();
+          })
+          .child(div().text_size(13.5).font_medium().text_color(t.foreground).child(model.label ?? model.id))
+          .when(Boolean(model.hint), (el) =>
+            el.child(div().text_size(12).text_color(t.dim).child(model.hint)))))
+      .when(effortIds(entry).length > 0, (el) => el
+        .child(
+          div()
+            .text_size(15)
+            .font_semibold()
+            .text_color(word ? t.accent : t.muted)
+            .child(word ?? "Its own default"),
+        )
+        .child(this.effortSliderEl(t, entry)))
+      .child(button);
   }
 
   // No live lead: one quiet line and the way to start it, in the middle of whatever room it has.
@@ -1279,7 +1369,7 @@ export default class Composer extends View {
 
   render(cx) {
     const t = theme();
-    if (!this.leadLive()) return this.empty(t);
-    return this.compose(t, cx);
+    if (this.needsFirstPick() || this.leadLive()) return this.compose(t, cx);
+    return this.empty(t);
   }
 }
