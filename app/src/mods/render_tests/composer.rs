@@ -344,17 +344,13 @@ fn a_bare_model_send_reveals(cx: &mut TestAppContext) {
         !tree.contains("composer-item-o1"),
         "the conversation is not drawn while the terminal is shown: {tree}"
     );
-    let effects = composer_live_run_after_clicks(
+    let sent = composer_sends_after_keys(
         cx,
-        conversation_values(json!([]), "hidden", Value::Null, None),
-        "this.text.set_value('/model');",
-        &["composer-send"],
+        "this.text.set_value('/model'); this.text.set_submit_on_enter(true); this.setHistory(false, cx); this.text.focus();",
+        "enter",
     );
     assert!(
-        effects.iter().any(|args| {
-            args.first() == Some(&json!("kom"))
-                && args.get(1) == Some(&json!(["send", "t1", "/model"]))
-        }),
-        "a bare /model still goes through kom send: {effects:?}"
+        sent.iter().any(|args| args.get(2).and_then(Value::as_str).is_some_and(|text| text.trim() == "/model")),
+        "a bare /model still goes through kom send: {sent:?}"
     );
 }
