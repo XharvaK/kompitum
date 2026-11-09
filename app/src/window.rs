@@ -3079,6 +3079,7 @@ impl AppWindow {
                 .filter(|program| !program.is_empty())
                 .unwrap_or_else(|| "claude".into());
             if self.lead_terminal(&program).is_none() {
+                // lead.open holds when the CLI has models and none is saved.
                 self.run("lead.open", json!({}), window, cx);
             }
         }
@@ -3686,6 +3687,34 @@ impl AppWindow {
             .map(|(address, _)| address.clone())
     }
 
+    /// The CLI lists models and none is saved: ask before starting a process.
+    fn show_composer_for_model_pick(&mut self) -> Result<(), String> {
+        let existing = self.model.tabs().find_map(|tab| {
+            tab.root.panes().into_iter().find_map(|node| match node.content() {
+                Some(Content::Mod { name, .. }) if name == "composer" => Some(node.id.clone()),
+                _ => None,
+            })
+        });
+        if let Some(pane) = existing {
+            self.model.focus_pane(&pane);
+            return Ok(());
+        }
+        let space = self
+            .model
+            .active_space()
+            .filter(|space| space.machine.is_none())
+            .map(|space| space.id.clone())
+            .or_else(|| {
+                self.model
+                    .spaces
+                    .iter()
+                    .find(|space| space.machine.is_none())
+                    .map(|space| space.id.clone())
+            });
+        self.new_mod_tab(space, "Lead", "composer".into(), json!({}))?;
+        Ok(())
+    }
+
     /// Makes sure one composer copy sits under this terminal, in its own tab.
     fn ensure_composer(&mut self, terminal: &str) -> Result<Value, String> {
         let pane = self
@@ -3841,6 +3870,10 @@ impl AppWindow {
             return Err(format!(
                 "the lead's terminal {terminal:?} is alive but has no pane; keep it with terminal.keep"
             ));
+        }
+        if lead_needs_saved_model(&lead, &program) {
+            self.show_composer_for_model_pick()?;
+            return Ok(json!({ "ok": true, "needs": "model" }));
         }
         let spec = crate::programs::lead_spec(&program)
             .ok_or_else(|| format!("lead.program: {program:?} is not a key in programs.json"))?;
@@ -8124,6 +8157,15 @@ fn swap_by(args: &Value) -> Result<SwapBy<'_>, String> {
     }
 }
 
+fn lead_needs_saved_model(lead: &crate::settings::Lead, program: &str) -> bool {
+    if lead.model.as_deref().is_some_and(|model| !model.is_empty()) {
+        return false;
+    }
+    crate::programs::lead_spec(program)
+        .and_then(|spec| spec.get("models").and_then(Value::as_array).cloned())
+        .is_some_and(|models| !models.is_empty())
+}
+
 fn needs_model_pane(name: &str, args: &Value) -> bool {
     match name {
         "pane.split" | "pane.close" | "pane.zoom" | "pane.swap" | "terminal.show" => {
@@ -10449,6 +10491,52 @@ export default class Probe extends View {
             assert!(!this.swapped.contains_key("p1"), "the lead's pane must show the lead, not a swapped-in terminal");
             assert_eq!(this.agent.as_deref(), Some("t1"));
             assert!(this.model.pane_of("t1").is_some());
+        });
+    }
+
+    #[test]
+    fn lead_open_asks_for_a_model_when_none_is_saved() {
+        in_own_process("lead_open_asks_for_a_model");
+    }
+
+    #[gpui::test]
+    fn lead_open_asks_for_a_model(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_open_asks_for_a_model") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.model = crate::model::Model::default();
+            this.model.add_space(
+                "sp1",
+                "test",
+                "/tmp",
+                crate::model::Tab::new("tb1", "", "p1", "t1"),
+            );
+            this.documents.get_mut("").unwrap().available = true;
+            let before = this.live.len();
+            let result = this.lead_open(window, cx);
+            assert!(result.is_ok(), "lead.open: {result:?}");
+            assert_eq!(
+                result.unwrap(),
+                json!({ "ok": true, "needs": "model" })
+            );
+            assert_eq!(this.live.len(), before, "lead.open starts nothing");
+            let has_composer = this.model.tabs().any(|tab| {
+                tab.root.panes().iter().any(|node| {
+                    matches!(
+                        node.content(),
+                        Some(crate::layout::Content::Mod { name, .. }) if name == "composer"
+                    )
+                })
+            });
+            assert!(has_composer, "lead.open shows the composer's tab");
         });
     }
 

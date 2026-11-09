@@ -6,7 +6,7 @@
 // the box's place, and the Owner's click or key answers the hook.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, Textarea, TextareaState, InputState, Input, TextView, Popover } from "gpui-base";
+import { v_flex, h_flex, Textarea, TextareaState, InputState, Input, TextView, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb } from "gpui-base";
 import {
   kom,
   run,
@@ -86,17 +86,22 @@ function leadName(entry, key) {
   return key === "claude" ? "Claude" : entry?.name ?? key;
 }
 
-const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
+const EFFORT_WORDS = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
 
-// The catalog's own label for the chosen effort; a bare level says it is effort.
-function effortWords(entry, effort) {
+function cap(text) {
+  const value = String(text ?? "");
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+function effortWord(effort) {
   if (!effort) return null;
-  const found = (entry?.efforts ?? []).find((level) => {
-    const id = typeof level === "string" ? level : level?.id;
-    return id === effort || level?.label === effort;
-  });
-  const label = String(typeof found === "object" ? found?.label ?? effort : found ?? effort);
-  return EFFORT_LEVELS.includes(label) ? `${label} effort` : label;
+  return EFFORT_WORDS[effort] ?? cap(effort);
+}
+
+function effortIds(entry) {
+  return (entry?.efforts ?? [])
+    .map((level) => (typeof level === "string" ? level : level?.id))
+    .filter(Boolean);
 }
 
 function leadStatus(state) {
@@ -191,6 +196,14 @@ export default class Composer extends View {
     this.noteInput = null;
     this.noteAction = null;
     this.answers = {};
+    this.modelOpen = false;
+    this.pickerView = "models";
+    this.effortSlider = null;
+    this.effortSliderMax = null;
+    this.effortPreview = null;
+    this.effortTouched = false;
+    this.saveEffortOnRelease = true;
+    this.firstModel = null;
     this.handle = cx.focus_handle();
     this.text = TextareaState.new({});
     this.text.set_auto_grow(1, 6);
@@ -248,6 +261,10 @@ export default class Composer extends View {
       } catch {
         this.agents = [];
       }
+      if (this.needsFirstPick()) {
+        this.saveEffortOnRelease = false;
+        this.ensureEffortSlider(this.leadProgram());
+      }
     } finally {
       this.loading = false;
       cx.notify();
@@ -266,12 +283,18 @@ export default class Composer extends View {
     );
   }
 
+  needsFirstPick() {
+    if (this.leadLive()) return false;
+    if (this.person?.lead?.model) return false;
+    return (this.leadProgram().models ?? []).length > 0;
+  }
+
   leadLine() {
     const lead = this.person?.lead ?? {};
     const entry = this.leadProgram();
     const parts = [leadName(entry, entry.key)];
     if (lead.model) parts.push(modelLabel(entry, lead.model));
-    const effort = effortWords(entry, lead.effort);
+    const effort = effortWord(lead.effort);
     if (effort) parts.push(effort);
     return parts.join(" · ");
   }
@@ -622,15 +645,28 @@ export default class Composer extends View {
   }
 
   // The model chip writes the lead's model or reasoning for its next start, as Settings › Agents does.
+  async writeLead(patch) {
+    const lead = { ...(this.person?.lead ?? {}), ...patch };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value == null) delete lead[key];
+    }
+    this.person = { ...(this.person ?? {}), lead };
+    const path = `${appHome()}/settings.json`;
+    const raw = await readTextFile(path);
+    const person = raw ? JSON.parse(raw) : {};
+    const next = { ...(person.lead ?? {}), ...patch };
+    for (const [key, value] of Object.entries(patch)) {
+      if (value == null) delete next[key];
+    }
+    person.lead = next;
+    await writeTextFile(path, `${JSON.stringify(person, null, 2)}\n`, raw);
+    this.person = person;
+  }
+
   saveLead(patch, cx) {
     cx.spawn(async (cx) => {
-      const path = `${appHome()}/settings.json`;
       try {
-        const raw = await readTextFile(path);
-        const person = raw ? JSON.parse(raw) : {};
-        person.lead = { ...(person.lead ?? {}), ...patch };
-        await writeTextFile(path, `${JSON.stringify(person, null, 2)}\n`, raw);
-        this.person = person;
+        await this.writeLead(patch);
       } catch (error) {
         this.error = `Couldn't save the lead's model: ${String(error?.message ?? error)}`;
       }
@@ -638,47 +674,208 @@ export default class Composer extends View {
     });
   }
 
-  // The lead's model and reasoning, as one quiet chip that opens a list upward.
+  startFirstPick(cx) {
+    if (!this.firstModel) return;
+    const patch = { model: this.firstModel };
+    if (this.effortTouched && this.effortPreview) patch.effort = this.effortPreview;
+    cx.spawn(async (cx) => {
+      try {
+        await this.writeLead(patch);
+        run("lead.open");
+      } catch (error) {
+        this.error = `Couldn't save the lead's model: ${String(error?.message ?? error)}`;
+      }
+      cx.notify();
+    });
+  }
+
+  ensureEffortSlider(entry) {
+    const levels = effortIds(entry);
+    const max = Math.max(0, levels.length - 1);
+    const saved = this.person?.lead?.effort ?? null;
+    const index = saved && levels.includes(saved) ? levels.indexOf(saved) : 0;
+    if (this.effortSlider && this.effortSliderMax === max) return;
+    this.effortSlider = SliderState.new({ min: 0, max, step: 1, value: index });
+    this.effortSliderMax = max;
+    this.effortSlider.on("change", (value, cx) => {
+      const levels = effortIds(this.leadProgram());
+      this.effortTouched = true;
+      this.effortPreview = levels[Number(value)] ?? null;
+      cx.notify();
+    });
+    this.effortSlider.on("release", (value, cx) => {
+      const levels = effortIds(this.leadProgram());
+      const effort = levels[Number(value)] ?? null;
+      this.effortTouched = true;
+      this.effortPreview = effort;
+      if (this.saveEffortOnRelease && effort) this.saveLead({ effort }, cx);
+      cx.notify();
+    });
+  }
+
+  pickModel(id, cx) {
+    this.saveLead({ model: id }, cx);
+    const entry = this.leadProgram();
+    if (effortIds(entry).length > 0) {
+      this.pickerView = "effort";
+      this.ensureEffortSlider(entry);
+    } else {
+      this.modelOpen = false;
+    }
+    cx.notify();
+  }
+
+  resetEffort(cx) {
+    this.saveLead({ effort: null }, cx);
+    this.effortTouched = false;
+    this.effortPreview = null;
+    this.effortSlider?.set_value(0);
+    cx.notify();
+  }
+
+  // Dots sit on the track; those already on the fill use the accent at half strength.
+  effortDots(t, count, filledThrough) {
+    return h_flex()
+      .absolute()
+      .inset_0()
+      .items_center()
+      .justify_between()
+      .children(Array.from({ length: count }, (_, index) => {
+        const onFill = filledThrough != null && index <= filledThrough;
+        return div()
+          .w(4)
+          .h(4)
+          .rounded(2)
+          .bg(onFill ? t.accent_foreground : t.dim)
+          .when(onFill, (el) => el.opacity(0.5));
+      }));
+  }
+
+  effortSliderEl(t, entry) {
+    const levels = effortIds(entry);
+    if (!this.effortSlider || levels.length === 0) return null;
+    const preview = this.effortPreview ?? this.person?.lead?.effort ?? null;
+    const filledThrough = this.effortTouched && preview && levels.includes(preview)
+      ? levels.indexOf(preview)
+      : null;
+    let indicator = SliderIndicator.new(this.effortSlider)
+      .absolute()
+      .top(0)
+      .left(0)
+      .w_full()
+      .h(30)
+      .rounded(15);
+    if (this.effortTouched) {
+      indicator = indicator
+        .range_style((fill) => fill.rounded(15).bg(t.accent))
+        .child(
+          SliderThumb.new(this.effortSlider)
+            .size(24)
+            .rounded(12)
+            .bg(t.accent_foreground)
+            .border_1()
+            .border_color(t.border)
+            .mt(3)
+            .ml(-12),
+        );
+    }
+    return Slider.new(this.effortSlider)
+      .id("composer-effort-slider")
+      .w_full()
+      .h(30)
+      .mt(10)
+      .child(
+        SliderTrack.new(this.effortSlider)
+          .relative()
+          .w_full()
+          .h(30)
+          .rounded(15)
+          .bg(t.hover)
+          .child(this.effortDots(t, levels.length, filledThrough))
+          .child(indicator),
+      );
+  }
+
+  modelsView(t, entry, lead) {
+    const models = entry?.models ?? [];
+    return v_flex()
+      .child(div().px(8).pt(4).pb(2).text_size(11.5).text_color(t.dim).child("Model"))
+      .children(models.map((model) =>
+        h_flex()
+          .id(`composer-model-${model.id}`)
+          .h(32)
+          .px(8)
+          .items_center()
+          .rounded(7)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => this.pickModel(model.id, cx))
+          .child(div().flex_1().text_size(13).text_color(t.foreground).child(model.label ?? model.id))
+          .when(model.id === lead.model, (el) =>
+            el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)))))
+      .child(div().px(8).pt(6).pb(2).text_size(11.5).text_color(t.dim)
+        .child("For the lead's next start. Type /model to switch now."));
+  }
+
+  effortView(t, entry, lead) {
+    const preview = this.effortPreview ?? lead.effort ?? null;
+    const word = effortWord(preview);
+    return v_flex()
+      .id("composer-effort")
+      .relative()
+      .w_full()
+      .items_center()
+      .child(
+        div()
+          .text_size(15)
+          .font_semibold()
+          .text_color(word ? t.accent : t.muted)
+          .child(word ?? "Its own default"),
+      )
+      .when(Boolean(lead.effort), (el) => el.child(
+        h_flex()
+          .id("composer-effort-reset")
+          .absolute()
+          .top(0)
+          .right(0)
+          .w(24)
+          .h(24)
+          .items_center()
+          .justify_center()
+          .rounded(6)
+          .cursor_pointer()
+          .text_color(t.muted)
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip("Use its own default")
+          .on_click((_e, cx) => this.resetEffort(cx))
+          .child(svg("mods/composer/rotate-ccw.svg").size(14)),
+      ))
+      .child(
+        h_flex()
+          .id("composer-effort-model")
+          .gap(4)
+          .items_center()
+          .cursor_pointer()
+          .text_size(12.5)
+          .text_color(t.muted)
+          .hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => {
+            this.pickerView = "models";
+            cx.notify();
+          })
+          .child(lead.model ? modelLabel(entry, lead.model) : "")
+          .child("›"),
+      )
+      .child(this.effortSliderEl(t, entry));
+  }
+
+  // The lead's model and reasoning: models first, then Codex-style effort.
   modelChip(t) {
     const entry = this.leadProgram();
     const lead = this.person?.lead ?? {};
-    const models = (entry?.models ?? []).map((model) => [model.id, model.label]);
-    const efforts = (entry?.efforts ?? []).map((level) => [level, level.replace(/^./, (c) => c.toUpperCase())]);
-    const label =
-      [lead.model ? modelLabel(entry, lead.model) : null, effortWords(entry, lead.effort)].filter(Boolean).join(" · ") ||
-      leadName(entry, entry.key);
-    const group = (key, title, list, chosen) =>
-      v_flex()
-        .gap(1)
-        .child(div().px(8).pt(6).pb(2).text_size(11).text_color(t.dim).child(title))
-        .children(list.map(([value, text]) =>
-          h_flex()
-            .id(`composer-${key}-${value}`)
-            .h(28)
-            .px(8)
-            .gap(8)
-            .items_center()
-            .rounded(6)
-            .cursor_pointer()
-            .hover((s) => s.bg(t.hover))
-            .on_click((_e, cx) => {
-              this.modelOpen = false;
-              this.saveLead({ [key]: value }, cx);
-            })
-            .child(div().flex_1().text_size(13).text_color(t.foreground).child(text))
-            .when(value === chosen, (el) => el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)))));
-    const content = v_flex()
-      .w(230)
-      .p(4)
-      .rounded(10)
-      .border_1()
-      .border_color(t.border)
-      .bg(t.popover)
-      .when(models.length > 0, (el) => el.child(group("model", "Model", models, lead.model)))
-      .when(efforts.length > 0, (el) => el.child(group("effort", "Reasoning", efforts, lead.effort)))
-      .child(div().px(8).pt(6).pb(4).text_size(11.5).line_height("16px").text_color(t.dim)
-        .child("For the lead's next start. Type /model to switch now."));
-    const trigger = h_flex()
+    const model = lead.model ? modelLabel(entry, lead.model) : null;
+    const level = effortWord(lead.effort);
+    let trigger = h_flex()
       .id("composer-model")
       .h(28)
       .px(8)
@@ -686,17 +883,37 @@ export default class Composer extends View {
       .items_center()
       .rounded(7)
       .cursor_pointer()
-      .text_size(12.5)
-      .text_color(t.muted)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .tooltip(`The lead: ${this.leadLine()}`)
-      .child(label)
-      .child(svg("mods/workspace-chrome/chevron-down.svg").size(11));
+      .hover((s) => s.bg(t.hover))
+      .tooltip("The lead's model and reasoning, for its next start");
+    if (model) {
+      trigger = trigger.child(div().text_size(12.5).font_medium().text_color(t.foreground).child(model));
+      if (level) trigger = trigger.child(div().text_size(12.5).text_color(t.dim).child(level));
+    } else {
+      trigger = trigger.child(div().text_size(12.5).text_color(t.muted).child("Choose a model"));
+    }
+    trigger = trigger.child(svg("mods/workspace-chrome/chevron-down.svg").size(11).text_color(t.dim));
+    const content = v_flex()
+      .w(260)
+      .p(6)
+      .rounded(12)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.popover)
+      .child(this.pickerView === "effort" && effortIds(entry).length > 0
+        ? this.effortView(t, entry, lead)
+        : this.modelsView(t, entry, lead));
     return Popover.new("composer-model-menu")
       .anchor("bottom_right")
       .open(Boolean(this.modelOpen))
       .on_open_change((open, cx) => {
         this.modelOpen = open;
+        if (open) {
+          this.pickerView = "models";
+          this.effortPreview = lead.effort ?? null;
+          this.effortTouched = Boolean(lead.effort);
+          this.saveEffortOnRelease = true;
+          this.ensureEffortSlider(entry);
+        }
         cx.notify();
       })
       .trigger(trigger)
@@ -706,6 +923,7 @@ export default class Composer extends View {
   // One floating box: files, the text (no placeholder), then "+", the lead's status, its model and Send.
   // While the lead asks, its card sits above the text in the same box.
   bar(t, cx) {
+    const first = this.needsFirstPick();
     const ready = !this.sending && Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0;
     const send = h_flex()
       .id("composer-send")
@@ -756,9 +974,10 @@ export default class Composer extends View {
           .bg(t.raised)
           .when(this.chips.length > 0, (el) =>
             el.child(h_flex().gap(6).flex_wrap().children(this.chips.map((chip, index) => this.chip(t, cx, chip, index)))))
-          .when(Boolean(this.ask), (el) =>
+          .when(first, (el) => el.child(this.firstPickCard(t, cx)))
+          .when(!first && Boolean(this.ask), (el) =>
             el.child(v_flex().id("composer-asks").flex_1().min_h(0).overflow_y_scrollbar().child(this.card(t, cx))))
-          .when(!this.ask, (el) => el.child(div().flex_1().min_h(0).child(Textarea.new(this.text).w_full())))
+          .when(!first && !this.ask, (el) => el.child(div().flex_1().min_h(0).child(Textarea.new(this.text).w_full())))
           .child(
             h_flex()
               .w_full()
@@ -767,8 +986,8 @@ export default class Composer extends View {
               .child(plus)
               .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
               .child(div().flex_1())
-              .child(this.modelChip(t))
-              .when(!this.ask, (el) => el.child(send)),
+              .when(!first, (el) => el.child(this.modelChip(t)))
+              .when(!first && !this.ask, (el) => el.child(send)),
           ),
       );
   }
@@ -778,6 +997,64 @@ export default class Composer extends View {
     const entry = this.leadProgram();
     const model = lead.model ? ` (${modelLabel(entry, lead.model)})` : "";
     return `Start ${leadName(entry, entry.key)}${model}`;
+  }
+
+  firstPickCard(t, cx) {
+    const entry = this.leadProgram();
+    const models = entry?.models ?? [];
+    const picked = this.firstModel;
+    const preview = this.effortPreview ?? this.person?.lead?.effort ?? null;
+    const word = effortWord(preview);
+    const start = h_flex()
+      .id("composer-first-start")
+      .h(32)
+      .px(14)
+      .items_center()
+      .rounded(8)
+      .bg(t.solid)
+      .text_color(t.solid_foreground)
+      .text_size(13)
+      .font_medium()
+      .child("Start the lead");
+    const button = picked
+      ? start.cursor_pointer().hover((s) => s.opacity(0.88)).on_click((_e, cx) => this.startFirstPick(cx))
+      : start.opacity(0.45);
+    return v_flex()
+      .id("composer-first")
+      .flex_1()
+      .min_h(0)
+      .gap(6)
+      .child(div().text_size(14).font_semibold().text_color(t.foreground).child("Which model should the lead use?"))
+      .child(div().text_size(12.5).text_color(t.dim).child("You can change it any time from the model menu below."))
+      .children(models.map((model) =>
+        v_flex()
+          .id(`composer-first-${model.id}`)
+          .h(44)
+          .px(12)
+          .gap(2)
+          .justify_center()
+          .rounded(10)
+          .border_1()
+          .border_color(picked === model.id ? t.accent : t.border)
+          .when(picked === model.id, (el) => el.bg(t.selected))
+          .cursor_pointer()
+          .on_click((_e, cx) => {
+            this.firstModel = model.id;
+            cx.notify();
+          })
+          .child(div().text_size(13.5).font_medium().text_color(t.foreground).child(model.label ?? model.id))
+          .when(Boolean(model.hint), (el) =>
+            el.child(div().text_size(12).text_color(t.dim).child(model.hint)))))
+      .when(effortIds(entry).length > 0, (el) => el
+        .child(
+          div()
+            .text_size(15)
+            .font_semibold()
+            .text_color(word ? t.accent : t.muted)
+            .child(word ?? "Its own default"),
+        )
+        .child(this.effortSliderEl(t, entry)))
+      .child(button);
   }
 
   // No live lead: one quiet line and the way to start it, in the middle of whatever room it has.
@@ -1072,7 +1349,7 @@ export default class Composer extends View {
 
   render(cx) {
     const t = theme();
-    if (!this.leadLive()) return this.empty(t);
-    return this.compose(t, cx);
+    if (this.needsFirstPick() || this.leadLive()) return this.compose(t, cx);
+    return this.empty(t);
   }
 }

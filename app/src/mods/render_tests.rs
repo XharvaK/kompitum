@@ -251,6 +251,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                         .clone()
                         .map_or(Value::Null, |person| Value::String(person.to_string())),
                 ),
+                "writeTextFile" if first == "/fixture/app/settings.json" => Some(Value::Null),
                 "readTextFile" if first == "/fixture/.ssh/config" => Some(Value::Null),
                 "readTextFile" if first.as_str().is_some_and(|p| p.starts_with("/fixture/vault/")) => {
                     Some(json!("# Fixture note\n\nA body from the vault.\n"))
@@ -793,8 +794,8 @@ fn the_lead_chip_shows_its_model_and_opens_the_lead(cx: &mut TestAppContext) {
     );
 }
 
-/// The composer draws its box under a live lead, and one line with Open when
-/// no lead terminal is alive.
+/// The composer draws its box under a live lead, and the first-pick card when
+/// no lead terminal is alive and no model is saved.
 #[gpui::test]
 fn the_composer_renders_with_and_without_a_lead(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -802,18 +803,22 @@ fn the_composer_renders_with_and_without_a_lead(cx: &mut TestAppContext) {
     let mut with = fixture(true, props(), updates("current", "current"));
     with.insert("knownAgents".into(), agent_catalog());
     let tree = describe_settled(cx, &staged, "mods/composer", with, None).unwrap();
-    assert!(tree.contains("Claude"), "{tree}");
     assert!(tree.contains("composer-send"), "{tree}");
+    assert!(tree.contains("Choose a model"), "{tree}");
     assert!(!tree.contains("The lead isn't running"), "{tree}");
+    assert!(!tree.contains("composer-first"), "{tree}");
 
     let mut without = fixture(false, props(), updates("current", "current"));
     without.insert("knownAgents".into(), agent_catalog());
     let tree = describe_settled(cx, &staged, "mods/composer", without, None).unwrap();
-    assert!(tree.contains("The lead isn't running"), "{tree}");
-    assert!(tree.contains("composer-open"), "{tree}");
+    assert!(tree.contains("composer-first"), "{tree}");
+    assert!(tree.contains("Which model should the lead use?"), "{tree}");
+    assert!(!tree.contains("The lead isn't running"), "{tree}");
+    assert!(!tree.contains("composer-open"), "{tree}");
 }
 
-/// A listed terminal that has ended is not the lead: the composer shows Open.
+/// A listed terminal that has ended is not the lead: with no saved model, the
+/// composer asks which one to use.
 #[gpui::test]
 fn the_composer_needs_a_live_lead(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -822,8 +827,10 @@ fn the_composer_needs_a_live_lead(cx: &mut TestAppContext) {
     values.insert("knownAgents".into(), agent_catalog());
     values.get_mut("terminals").unwrap()[0]["state"] = json!("exited");
     let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
-    assert!(tree.contains("The lead isn't running"), "{tree}");
-    assert!(tree.contains("composer-open"), "{tree}");
+    assert!(tree.contains("composer-first"), "{tree}");
+    assert!(tree.contains("Which model should the lead use?"), "{tree}");
+    assert!(!tree.contains("The lead isn't running"), "{tree}");
+    assert!(!tree.contains("composer-open"), "{tree}");
 }
 
 /// Under a lead that isn't running, the button starts that lead, model and all.
@@ -865,7 +872,13 @@ fn the_composer_header_names_the_lead_and_its_status(cx: &mut TestAppContext) {
         );
         values.insert("lead".into(), json!({"state": state, "ask": null}));
         let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
-        assert!(tree.contains("Claude · Haiku · low effort"), "{state}: {tree}");
+        assert!(tree.contains("Haiku"), "{state}: {tree}");
+        assert!(tree.contains("Low"), "{state}: {tree}");
+        assert!(!tree.contains("low effort"), "{state}: {tree}");
+        assert!(
+            tree.contains("The lead's model and reasoning, for its next start"),
+            "{state}: {tree}"
+        );
         for word in ["Working", "Waiting for you", "Your turn"] {
             assert_eq!(tree.contains(word), expected == Some(word), "{state}/{word}: {tree}");
         }
@@ -878,7 +891,8 @@ fn the_composer_header_names_the_lead_and_its_status(cx: &mut TestAppContext) {
     );
     values.insert("lead".into(), json!({"state": "working", "ask": null}));
     let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
-    assert!(tree.contains("Claude · Haiku · careful"), "{tree}");
+    assert!(tree.contains("Haiku"), "{tree}");
+    assert!(tree.contains("Careful"), "{tree}");
     assert!(!tree.contains("careful effort"), "{tree}");
 }
 
@@ -1389,6 +1403,114 @@ fn composer_run_effects_after_keys(
     let calls = calls.borrow();
     assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
     calls.effects.iter().filter(|(name, _)| name == "run").map(|(_, args)| args.clone()).collect()
+}
+
+
+/// Mounts the composer, runs `setup`, clicks each id, and says whether each
+/// of `want` is laid out afterwards.
+fn composer_laid_out_after_clicks(
+    cx: &mut TestAppContext,
+    person: Value,
+    setup: &str,
+    clicks: &[&'static str],
+    want: &[&'static str],
+) -> Vec<(String, bool)> {
+    use gpui::{Modifiers, MouseButton};
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.insert("person".into(), person);
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-picker.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    for id in clicks {
+        let at = visual
+            .debug_bounds(id)
+            .unwrap_or_else(|| panic!("{id} is laid out"))
+            .center();
+        visual.simulate_mouse_move(at, None, Modifiers::default());
+        visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        visual.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    let found = want
+        .iter()
+        .map(|id| ((*id).to_string(), visual.debug_bounds(id).is_some()))
+        .collect();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    found
+}
+
+/// Mounts the composer without a live lead, clicks each id, and returns `run` effects.
+fn composer_run_effects_after_clicks(
+    cx: &mut TestAppContext,
+    person: Value,
+    setup: &str,
+    clicks: &[&'static str],
+) -> Vec<Vec<Value>> {
+    use gpui::{Modifiers, MouseButton};
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(false, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.insert("person".into(), person);
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-first-pick.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    for id in clicks {
+        let at = visual
+            .debug_bounds(id)
+            .unwrap_or_else(|| panic!("{id} is laid out"))
+            .center();
+        visual.simulate_mouse_move(at, None, Modifiers::default());
+        visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        visual.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    calls
+        .effects
+        .iter()
+        .filter(|(name, _)| name == "run")
+        .map(|(_, args)| args.clone())
+        .collect()
 }
 
 /// A mod's localStorage write lands on the executor; one that lands after the
@@ -2219,7 +2341,12 @@ fn agent_catalog() -> Value {
             "run": ["claude"], "installed": true,
             "flags": {"model": ["--model", "{model}"], "effort": ["--effort", "{effort}"]},
             "efforts": ["low", "medium", "high", "xhigh", "max"],
-            "models": [{"id": "default", "label": "Default"}, {"id": "sonnet", "label": "Sonnet"}],
+            "models": [
+                {"id": "fable", "label": "Fable", "hint": "The most capable. Has its own weekly limit."},
+                {"id": "opus", "label": "Opus", "hint": "Deep work and planning."},
+                {"id": "sonnet", "label": "Sonnet", "hint": "Fast and capable."},
+                {"id": "haiku", "label": "Haiku", "hint": "Quick and light."}
+            ],
             "reports": "status_line"
         },
         {
@@ -2268,7 +2395,12 @@ fn welcome_agents() -> Value {
             "run": ["claude"], "installed": true,
             "flags": {"model": ["--model", "{model}"], "effort": ["--effort", "{effort}"]},
             "efforts": ["low", "medium", "high", "xhigh", "max"],
-            "models": [{"id": "default", "label": "Default"}, {"id": "sonnet", "label": "Sonnet"}],
+            "models": [
+                {"id": "fable", "label": "Fable", "hint": "The most capable. Has its own weekly limit."},
+                {"id": "opus", "label": "Opus", "hint": "Deep work and planning."},
+                {"id": "sonnet", "label": "Sonnet", "hint": "Fast and capable."},
+                {"id": "haiku", "label": "Haiku", "hint": "Quick and light."}
+            ],
             "install": {
                 "windows": ["powershell", "-NoProfile", "-Command", "irm https://claude.ai/install.ps1 | iex"],
                 "linux": ["sh", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
@@ -2507,7 +2639,8 @@ fn agent_lead_dropdowns_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
         "the list stays closed: {tree}"
     );
     assert!(tree.contains("st-lead-model"), "{tree}");
-    assert!(tree.contains("Its own default"), "{tree}");
+    assert!(tree.contains("Choose…"), "no saved model shows the empty text: {tree}");
+    assert!(tree.contains("Its own default"), "reasoning keeps its own default: {tree}");
     assert!(tree.contains("st-lead-effort"), "{tree}");
     assert!(
         !tree.contains("st-lead-effort-low"),
@@ -2521,8 +2654,18 @@ fn agent_lead_dropdowns_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
         Some("this.agentPage.leadModel.open = true; this.agentPage.leadEffort.open = true;"),
     )
     .unwrap();
-    assert!(tree.contains("st-lead-model-default"), "{tree}");
-    assert!(tree.contains("st-lead-model-sonnet"), "{tree}");
+    assert!(
+        !tree.contains(r#":id[Str("st-lead-model-")]"#),
+        "the model list has no 'Its own default' row: {tree}"
+    );
+    for id in ["fable", "opus", "sonnet", "haiku"] {
+        assert!(
+            tree.contains(&format!("st-lead-model-{id}")),
+            "missing {id}: {tree}"
+        );
+    }
+    assert!(!tree.contains("st-lead-model-default"), "{tree}");
+    assert!(tree.contains(r#":id[Str("st-lead-effort-")]"#), "reasoning keeps its own default: {tree}");
     assert!(tree.contains("st-lead-effort-low"), "{tree}");
     assert!(tree.contains("st-lead-effort-max"), "{tree}");
 }
