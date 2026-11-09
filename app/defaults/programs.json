@@ -5,7 +5,7 @@
     "claude": {"name":"Claude Code","icon":"icons/claude.svg","run":["claude"],"match":["claude-code"],"tint":false,"tile":"#1c1d21","color":"#ffffff",
       "flags":{"model":["--model","{model}"],"effort":["--effort","{effort}"]},
       "efforts":["low","medium","high","xhigh","max"],
-      "models":[{"id":"default","label":"Default"},{"id":"best","label":"Best"},{"id":"fable","label":"Fable"},{"id":"opus","label":"Opus"},{"id":"sonnet","label":"Sonnet"},{"id":"haiku","label":"Haiku"},{"id":"sonnet[1m]","label":"Sonnet 1M context"},{"id":"opus[1m]","label":"Opus 1M context"},{"id":"opusplan","label":"Opus plan / Sonnet execute"}],
+      "models":[{"id":"fable","label":"Fable","hint":"The most capable. Has its own weekly limit."},{"id":"opus","label":"Opus","hint":"Deep work and planning."},{"id":"sonnet","label":"Sonnet","hint":"Fast and capable."},{"id":"haiku","label":"Haiku","hint":"Quick and light."}],
       "session":{"new":["--session-id","{id}"],"resume":["--resume","{id}"]},
       "install":{"windows":["powershell","-NoProfile","-Command","irm https://claude.ai/install.ps1 | iex"],"macos":["sh","-c","curl -fsSL https://claude.ai/install.sh | bash"],"linux":["sh","-c","curl -fsSL https://claude.ai/install.sh | bash"],"page":"https://code.claude.com/docs/en/setup"},
       "login":["claude","auth","login"],

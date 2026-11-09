@@ -2208,7 +2208,12 @@ fn agent_catalog() -> Value {
             "run": ["claude"], "installed": true,
             "flags": {"model": ["--model", "{model}"], "effort": ["--effort", "{effort}"]},
             "efforts": ["low", "medium", "high", "xhigh", "max"],
-            "models": [{"id": "default", "label": "Default"}, {"id": "sonnet", "label": "Sonnet"}],
+            "models": [
+                {"id": "fable", "label": "Fable", "hint": "The most capable. Has its own weekly limit."},
+                {"id": "opus", "label": "Opus", "hint": "Deep work and planning."},
+                {"id": "sonnet", "label": "Sonnet", "hint": "Fast and capable."},
+                {"id": "haiku", "label": "Haiku", "hint": "Quick and light."}
+            ],
             "reports": "status_line"
         },
         {
@@ -2257,7 +2262,12 @@ fn welcome_agents() -> Value {
             "run": ["claude"], "installed": true,
             "flags": {"model": ["--model", "{model}"], "effort": ["--effort", "{effort}"]},
             "efforts": ["low", "medium", "high", "xhigh", "max"],
-            "models": [{"id": "default", "label": "Default"}, {"id": "sonnet", "label": "Sonnet"}],
+            "models": [
+                {"id": "fable", "label": "Fable", "hint": "The most capable. Has its own weekly limit."},
+                {"id": "opus", "label": "Opus", "hint": "Deep work and planning."},
+                {"id": "sonnet", "label": "Sonnet", "hint": "Fast and capable."},
+                {"id": "haiku", "label": "Haiku", "hint": "Quick and light."}
+            ],
             "install": {
                 "windows": ["powershell", "-NoProfile", "-Command", "irm https://claude.ai/install.ps1 | iex"],
                 "linux": ["sh", "-c", "curl -fsSL https://claude.ai/install.sh | bash"],
@@ -2512,7 +2522,7 @@ fn agent_lead_dropdowns_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
     )
     .unwrap();
     assert!(
-        !tree.contains(r#":id("st-lead-model-")"#),
+        !tree.contains(r#":id[Str("st-lead-model-")]"#),
         "the model list has no 'Its own default' row: {tree}"
     );
     for id in ["fable", "opus", "sonnet", "haiku"] {
@@ -2522,7 +2532,7 @@ fn agent_lead_dropdowns_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
         );
     }
     assert!(!tree.contains("st-lead-model-default"), "{tree}");
-    assert!(tree.contains(r#":id("st-lead-effort-")"#), "reasoning keeps its own default: {tree}");
+    assert!(tree.contains(r#":id[Str("st-lead-effort-")]"#), "reasoning keeps its own default: {tree}");
     assert!(tree.contains("st-lead-effort-low"), "{tree}");
     assert!(tree.contains("st-lead-effort-max"), "{tree}");
 }

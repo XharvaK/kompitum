@@ -228,9 +228,9 @@ function chip(t, id, label, on, onClick) {
     .child(label);
 }
 
-// Claude's `default` alias; other CLIs keep the model their own config names until one is picked.
+// Nothing is saved until the Owner picks a model; every CLI starts without one.
 function defaultModel(entry) {
-  return entry?.key === "claude" ? "default" : null;
+  return null;
 }
 
 function saveLead(view, patch, cx) {
@@ -320,8 +320,8 @@ function leadSection(view, t, cx, s) {
     width: 300,
   });
   const live = s.listModels[entry.key];
-  const modelItems = [{ value: "", label: "Its own default" }];
-  const seen = new Set([""]);
+  const modelItems = [];
+  const seen = new Set();
   for (const model of entry.models ?? []) {
     if (seen.has(model.id)) continue;
     seen.add(model.id);

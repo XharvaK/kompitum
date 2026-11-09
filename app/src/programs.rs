@@ -107,6 +107,8 @@ struct Session {
 struct Model {
     id: String,
     label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
 }
 
 /// How a CLI installs on each OS, keyed by `std::env::consts::OS`; the ones
@@ -864,6 +866,10 @@ mod tests {
         let list = startable();
         let claude = list.iter().find(|a| a["key"] == "claude").unwrap();
         assert_eq!(claude["flags"]["model"], json!(["--model", "{model}"]));
+        assert_eq!(
+            claude["models"][0]["hint"],
+            json!("The most capable. Has its own weekly limit.")
+        );
         assert_eq!(claude["reports"], json!("status_line"));
         assert_eq!(claude["login"], json!(["claude", "auth", "login"]));
         assert_eq!(claude["signed_in"], json!(["claude", "auth", "status"]));
