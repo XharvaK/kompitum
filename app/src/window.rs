@@ -5440,9 +5440,9 @@ impl AppWindow {
             }
             // ---- terminals
             "terminal.open" => {
-                let argv = Self::argv(a);
-                let stay = a.get("stay").and_then(Value::as_bool).unwrap_or(true);
                 let machine = Self::arg(a, "machine");
+                let argv = local_core(Self::argv(a), machine, &crate::core_bin::path());
+                let stay = a.get("stay").and_then(Value::as_bool).unwrap_or(true);
                 let place = Self::arg(a, "place").unwrap_or("tab");
                 let r = match place {
                     "right" | "down" => {
@@ -8437,6 +8437,16 @@ fn typed_text(k: &gpui::Keystroke) -> Option<String> {
     k.key_char.clone().filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
 }
 
+/// `kom` first in the argv of a tab on this computer (`machine: ""`) is the core the app runs: a new
+/// terminal's PATH can lead to another one.
+fn local_core(argv: Option<Vec<String>>, machine: Option<&str>, core: &std::path::Path) -> Option<Vec<String>> {
+    let mut argv = argv?;
+    if machine == Some("") && argv.first().is_some_and(|program| program == "kom") {
+        argv[0] = core.to_string_lossy().into_owned();
+    }
+    Some(argv)
+}
+
 /// Why a split or swap that would move the lead's terminal or its composer is refused.
 const PINNED: &str = "The lead's terminal and its composer stay in place.";
 
@@ -8778,6 +8788,18 @@ mod tests {
         assert_eq!(key("enter", Some("\r")), None, "Enter answers the program's own menus");
         assert_eq!(key("escape", None), None);
         assert_eq!(key("up", None), None);
+    }
+
+    #[test]
+    fn kom_on_this_computer_is_the_apps_core() {
+        let core = std::path::Path::new("core-dir").join("kom");
+        let argv = |program: &str| Some(vec![program.to_owned(), "machine".to_owned()]);
+        let ran = |machine| super::local_core(argv("kom"), machine, &core).unwrap();
+        assert_eq!(ran(Some(""))[0], core.to_string_lossy(), "this computer runs the app's core");
+        assert_eq!(ran(Some("devbox"))[0], "kom", "another machine finds its own");
+        assert_eq!(ran(None)[0], "kom", "the shown space may be on another machine");
+        assert_eq!(super::local_core(argv("git"), Some(""), &core).unwrap()[0], "git");
+        assert_eq!(super::local_core(None, Some(""), &core), None);
     }
 
     #[test]

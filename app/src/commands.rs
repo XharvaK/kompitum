@@ -116,7 +116,7 @@ pub const COMMANDS: &[Command] = &[
             opt("stay"),
             opt("machine"),
         ],
-        "Start a terminal: as a new tab (place \"tab\", default) on `machine` (default: the shown space; \"\": this computer), or \"right\"/\"down\" of the focused pane; `stay: false` ends it with its program on this computer.",
+        "Start a terminal: as a new tab (place \"tab\", default) on `machine` (default: the shown space; \"\": this computer, where a first `kom` is the app's own core), or \"right\"/\"down\" of the focused pane; `stay: false` ends it with its program on this computer.",
     ),
     cmd(
         "terminal.keep",

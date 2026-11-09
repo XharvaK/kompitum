@@ -1,15 +1,19 @@
 // Add a machine: the hosts in ~/.ssh/config to pick from (or type one),
 // each added with one click (`kom machine add`). When the machine needs
 // something first (kompitum-core installed there, a password, a new host
-// key), the picker explains what to run in a terminal. Machines that need
-// no answers are added quietly. Opened as a dialog
+// key), the picker offers to finish it in a terminal where the Owner can
+// answer. Machines that need no answers are added quietly. Opened as a dialog
 // (`mod.open machine-add`); Settings › Machines and the welcome open it.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
-import { kom, exec, home, readTextFile, theme, props, closeOverlay } from "kompitum";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { kom, exec, home, readTextFile, theme, props, closeOverlay, run } from "kompitum";
 
 const I = (name) => `mods/workspace-chrome/${name}.svg`;
+
+// The program that adds a machine: on this computer (`machine: ""`) the window
+// runs the core the app runs for `kom`, wherever the terminal's PATH points.
+const KOM = "kom";
 
 // An Include's files, as ssh finds them: ~ is home, a relative path is
 // under ~/.ssh, and a pattern matches files (through sh; none where there's no sh).
@@ -49,11 +53,24 @@ async function parseConfig(text, hosts = [], depth = 0) {
   return hosts;
 }
 
+// Whether adding stopped for something only a person at a terminal can answer.
+function needsAnswer(why) {
+  return (
+    ["kom_missing", "incompatible", "login_needed", "auth_failed", "host_key"].includes(why.kind) ||
+    /password|passphrase|host key|permission denied|login/i.test(why.message ?? "")
+  );
+}
+
+// One ssh target as one shell word, for the command the button runs.
+function shellQuote(target) {
+  return /^[a-z0-9_@%+=:,./-]+$/i.test(target) ? target : "'" + target.replace(/'/g, "'\\''") + "'";
+}
+
 export default class MachineAdd extends View {
   init(_props, cx) {
     this.hosts = null;
     this.added = [];
-    this.state = {}; // target -> "adding" | error text
+    this.state = {}; // target -> "adding" | pending guidance | error text
     this.pending = new Set();
     this.refreshing = false;
     this.typed = "";
@@ -130,8 +147,10 @@ export default class MachineAdd extends View {
         this.typed = "";
         await this.refresh();
         await this.checkMac(target);
-      } else if (["kom_missing", "incompatible", "login_needed", "auth_failed", "host_key"].includes(why.kind) || /password|passphrase|host key|permission denied|login/i.test(why.message ?? "")) {
-        const quoted = /^[a-z0-9_@%+=:,./-]+$/i.test(target) ? target : "'" + target.replace(/'/g, "'\\''") + "'";
+      } else if (needsAnswer(why)) {
+        // Kept as the sentence the old picker printed (the JS tests and the
+        // tooltip read it); the render shows the short line and the button.
+        const quoted = shellQuote(target);
         this.pending.add(target);
         this.state[target] = `Couldn't add ${target} here: it needs you to answer something (a password, a new host key, or installing kompitum-core there). Run \`kom machine add ${quoted}\` in a terminal. \`kom machine --help\` shows the options.`;
       } else this.state[target] = why.message || "it didn't work";
@@ -208,35 +227,94 @@ export default class MachineAdd extends View {
     if (e.key === "escape") { this.close(); cx.stop_propagation(); }
   }
 
-  message(t, target) {
-    const text = String(this.state[target]).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return div().text_size(12).text_color(t.blocked).child(TextView.html(`ma-message-${target}`, `<span>${text}</span>`).selectable(true));
+  // "It needs you to answer something": one short line and the way to do it
+  // where the questions can be asked.
+  answer(t, target) {
+    return v_flex()
+      .gap(8)
+      .child(
+        div()
+          .id(`ma-message-${target}`)
+          .text_size(12)
+          .line_height("16px")
+          .text_color(t.muted)
+          .child(`${target} needs an answer from you: a password, a new host key, or installing Kompitum there.`),
+      )
+      .child(
+        div()
+          .id(`ma-finish-${target}`)
+          .h(26)
+          .px(10)
+          .flex()
+          .items_center()
+          .rounded(7)
+          .bg(t.solid)
+          .text_color(t.solid_foreground)
+          .text_size(12)
+          .font_medium()
+          .cursor_pointer()
+          .hover((s) => s.opacity(0.88))
+          .tooltip(`Runs \`kom machine add ${shellQuote(target)}\` in a new tab.`)
+          .on_click((_e, cx) => {
+            run("terminal.open", {
+              argv: [KOM, "machine", "add", target],
+              place: "tab",
+              stay: true,
+              machine: "",
+              name: `Add ${target}`,
+            });
+            this.close();
+            cx.stop_propagation();
+          })
+          .child("Finish in a terminal"),
+      );
+  }
+
+  // Anything else that went wrong: two lines at most, the whole text on hover.
+  error(t, target) {
+    const text = String(this.state[target]);
+    return div()
+      .id(`ma-message-${target}`)
+      .text_size(12)
+      .line_height("16px")
+      .max_h(32)
+      .overflow_hidden()
+      .text_color(t.blocked)
+      .tooltip(text)
+      .child(text);
+  }
+
+  reply(t, target) {
+    const st = this.state[target];
+    if (!st || st === "adding") return null;
+    return this.pending.has(target) ? this.answer(t, target) : this.error(t, target);
   }
 
   row(t, target, label, sub) {
     const st = this.state[target];
     const done = this.isAdded(target);
+    const answer = this.pending.has(target);
     const right = done
       ? h_flex().gap(5).items_center().text_size(12).text_color(t.ansi2).child(svg(I("circle-check")).size(13)).child("Added")
       : st === "adding"
-        ? h_flex().gap(6).items_center().text_size(12).text_color(t.muted).child(svg(I("spinner")).size(12).text_color(t.working).spin(900)).child("Connecting")
-        : div()
+        ? div().id(`ma-add-${target}`).h(26).px(8).flex().items_center().rounded(6).text_size(12).text_color(t.dim).child("Adding…")
+        : answer
+          ? div()
+          : div()
               .id(`ma-add-${target}`)
-              .px(10)
               .h(26)
+              .px(8)
               .flex()
               .items_center()
-              .rounded(7)
-              .border_1()
-              .border_color(t.input)
-              .bg(t.raised)
+              .rounded(6)
               .text_size(12)
               .font_medium()
+              .text_color(t.foreground)
               .cursor_pointer()
               .hover((s) => s.bg(t.hover))
               .on_click((_e, cx) => this.add(target, cx))
               .child("Add");
-    const idle = !done && !st;
+    const message = this.reply(t, target);
     return v_flex()
       .flex_none()
       .child(
@@ -247,20 +325,20 @@ export default class MachineAdd extends View {
           .gap(10)
           .items_center()
           .rounded(8)
-          .hover((s) => s.bg(t.hover))
-          .when(idle, (el) => el.cursor_pointer().on_click((_e, cx) => this.add(target, cx)))
           .child(svg(I("server")).size(15).text_color(t.muted))
-          .child(div().flex_none().text_size(13).text_color(t.foreground).child(label))
+          .child(div().flex_none().text_size(13.5).text_color(t.foreground).child(label))
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(sub ?? ""))
           .child(right),
       )
-      .when(typeof st === "string" && st !== "adding", (el) => el.child(div().px(35).pb(6).child(this.message(t, target))))
+      .when(Boolean(message), (el) => el.child(div().px(35).pb(8).child(message)))
       .when(Boolean(this.macs[target]), (el) => el.child(this.macCard(t, target)));
   }
 
   render() {
     const t = theme();
     const hosts = this.hosts ?? [];
+    const typed = this.typed.trim();
+    const typedMessage = typed ? this.reply(t, typed) : null;
     return v_flex()
       .id("machine-add")
       .track_focus(this.handle)
@@ -323,12 +401,11 @@ export default class MachineAdd extends View {
               .text_color(t.solid_foreground)
               .text_size(12.5)
               .font_medium()
-              .when(!this.typed.trim(), (el) => el.opacity(0.4))
-              .cursor_pointer()
-              .on_click((_e, cx) => this.add(this.typed, cx))
+              .when(!typed, (el) => el.opacity(0.4))
+              .when(Boolean(typed), (el) => el.cursor_pointer().on_click((_e, cx) => this.add(this.typed, cx)))
               .child("Add"),
           ),
       )
-      .when(Boolean(this.typed.trim() && this.state[this.typed.trim()]), (el) => el.child(div().pt(6).child(this.message(t, this.typed.trim()))));
+      .when(Boolean(typedMessage), (el) => el.child(div().pt(8).child(typedMessage)));
   }
 }
