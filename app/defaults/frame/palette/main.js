@@ -231,13 +231,22 @@ export default class Palette extends View {
       y += (head ? HEAD_H : 0) + ROW_H;
     });
     const total = y;
-    const fixed = total > LIST_H;
-    this.maxScroll = Math.max(0, total - LIST_H);
+    // Stop at a whole row (or group title) edge: a half row at the bottom is
+    // never clipped by the popup.
+    const edge = Math.max(
+      0,
+      ...tops
+        .flatMap((t) => [t.title, t.row, t.row + ROW_H])
+        .filter((at) => at <= LIST_H),
+    );
+    const viewH = total > LIST_H ? Math.max(ROW_H, edge) : total;
+    const fixed = total > viewH;
+    this.maxScroll = Math.max(0, total - viewH);
     const sel = tops[this.at];
     if (sel) {
       const from = sel.head ? sel.title : sel.row;
       if (from < this.scroll) this.scroll = from;
-      if (sel.row + ROW_H > this.scroll + LIST_H) this.scroll = sel.row + ROW_H - LIST_H;
+      if (sel.row + ROW_H > this.scroll + viewH) this.scroll = sel.row + ROW_H - viewH;
     }
     this.scroll = Math.max(0, Math.min(this.scroll, this.maxScroll));
     const key = (k) =>
@@ -248,9 +257,9 @@ export default class Palette extends View {
     // by row 40, cutting the selection off). Edges from the model can't add up.
     const place = (el, start, end) =>
       fixed
-        ? el.absolute().left(0).right(0).top(start - this.scroll).bottom(LIST_H - (end - this.scroll))
+        ? el.absolute().left(0).right(0).top(start - this.scroll).bottom(viewH - (end - this.scroll))
         : el.flex_none().h(end - start);
-    const visible = (start, end) => !fixed || (end > this.scroll && start < this.scroll + LIST_H);
+    const visible = (start, end) => !fixed || (end > this.scroll && start < this.scroll + viewH);
     const list = [];
     rows.forEach((r, i) => {
       const { head, title, row } = tops[i];
@@ -317,14 +326,14 @@ export default class Palette extends View {
               .id("palette-rows")
               .relative()
               .mb(6)
-              .when(fixed, (el) => el.h(LIST_H).overflow_hidden())
+              .when(fixed, (el) => el.h(viewH).overflow_hidden())
               .on_scroll_wheel((e, cx) => {
                 // The event bridge converts both wheel and touchpad deltas to pixels.
                 this.scroll = Math.max(0, Math.min(this.scroll - e.delta.y, this.maxScroll));
                 // The selection stays on screen, so the next frame doesn't scroll back to it.
                 // A row that opens a group is shown with its title, so the title counts.
                 while (this.at < rows.length - 1 && (tops[this.at].head ? tops[this.at].title : tops[this.at].row) < this.scroll) this.at++;
-                while (this.at > 0 && tops[this.at].row + ROW_H > this.scroll + LIST_H) this.at--;
+                while (this.at > 0 && tops[this.at].row + ROW_H > this.scroll + viewH) this.at--;
                 cx.notify();
               })
               .children(fixed ? list : [v_flex().children(list)])

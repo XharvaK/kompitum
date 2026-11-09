@@ -14,7 +14,7 @@ const active = () => windowState().active === true && nodeVisible(layout(), "con
 const color = status => status === "blocked" ? theme().blocked :
   status === "working" || status === "done" ? theme().accent : status === "idle" ? theme().dim : theme().muted;
 const text = (value, tint = theme().foreground) => div().text_size(FONT).text_color(tint).child(String(value));
-const base = () => v_flex().text_size(FONT).font_family("JetBrains Mono").text_color(theme().foreground);
+const base = () => v_flex().text_size(FONT).text_color(theme().foreground);
 const identity = a => `${a.title}\n${a.space_name} / ${a.tab_name}\n${a.address}${a.child ? " (child, opens peek)" : ""}`;
 const focus = a => {
   if (["dead", "unavailable"].includes(a.status)) return;
@@ -133,7 +133,7 @@ export default class ControlPanel extends View {
   topbar() {
     const rows = liveRows(), blocked = rows.filter(a => a.status === "blocked");
     return h_flex().id("control-panel-bar").size_full().pl(windowState().platform === "macos" ? 88 : 24).pr(16)
-      .gap(24).items_center().bg(theme().chrome).text_size(FONT).font_family("JetBrains Mono")
+      .gap(24).items_center().bg(theme().chrome).text_size(FONT)
       .child(text("CONTROL PANEL").font_semibold())
       .child(text(`${String(rows.length).padStart(2, "0")} agents / ${String(spaces().length).padStart(2, "0")} spaces`, theme().muted))
       .child(div().flex_1())
@@ -221,14 +221,14 @@ export default class ControlPanel extends View {
   }
   livebar() {
     const space = spaces().find(s => s.active), tab = space?.tabs.find(t => t.active);
-    return h_flex().size_full().px(24).items_center().gap(24).bg(theme().chrome).text_size(FONT).font_family("JetBrains Mono")
+    return h_flex().size_full().px(24).items_center().gap(24).bg(theme().chrome).text_size(FONT)
       .child(text("TERMINAL", theme().muted))
       .child(text(space && tab ? `${plain(space.name)} / ${plain(tab.name)}` : "No active tab", theme().foreground).truncate().flex_1().min_w(0))
       .child(button("control-panel-tabs", "Browse tabs", () => openOverlay({ mod: "control-panel", props: { role: "tabs" }, kind: "popup", width: 480, height: 360 })));
   }
   pane() {
     const p = panes().find(p => p.pane === props()?.pane);
-    return h_flex().size_full().px(16).gap(16).items_center().bg(theme().chrome).text_size(FONT).font_family("JetBrains Mono")
+    return h_flex().size_full().px(16).gap(16).items_center().bg(theme().chrome).text_size(FONT)
       .on_click(() => { if (p?.pane) run("pane.focus", { pane: p.pane }); })
       .child(text(p?.terminal ?? "pane", p?.focused ? theme().accent : theme().muted))
       .child(text(plain(p?.title) || "Terminal", theme().muted).truncate().flex_1().min_w(0))

@@ -146,6 +146,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let workers_json = values.remove("workersJson");
     let status_json = values.remove("statusJson");
     let vault_missing = values.remove("vaultMissing");
+    let thread_json = values.remove("threadJson");
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
         if name == "person" {
@@ -220,6 +221,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let workers_json = workers_json.clone();
         let status_json = status_json.clone();
         let vault_missing = vault_missing.clone();
+        let thread_json = thread_json.clone();
         module = module.async_function(name, move |a| {
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
             let reply = match name {
@@ -300,10 +302,10 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     Some(json!({"code":0,"stdout":"","stderr":""}))
                 }
                 // The Line: one note from Manager.
-                "kom" if first == json!(["vault", "thread", "manager", "--json"]) => Some(json!({"code":0,"stdout":json!({
+                "kom" if first == json!(["vault", "thread", "manager", "--json"]) => Some(json!({"code":0,"stdout":thread_json.clone().map(|v| v.to_string()).unwrap_or_else(|| json!({
                     "agent": "opus",
                     "notes": [{"path": "manager/to/opus/2026-11-08-tests-pass.md", "from": "manager", "to": ["opus"], "title": "Tests pass", "date": "2026-11-08T09:00:00+03:00", "status": "open"}]
-                }).to_string(),"stderr":""})),
+                }).to_string()),"stderr":""})),
                 // Settings › Connect: the vault's folder and notes.
                 "kom" if first == json!(["vault", "open", "--json", "--as", "opus"]) => Some(json!({"code":0,"stdout":json!({
                     "vault": "/fixture/vault", "agent": "opus", "unpushed": 0, "problems": [], "notes": []
@@ -732,6 +734,25 @@ fn the_lead_overlay_draws_the_hand_off_with_a_way_out(cx: &mut TestAppContext) {
     assert!(tree.contains("Hand the lead to Manager"), "{tree}");
     assert!(tree.contains("lead-close"), "{tree}");
     assert!(!tree.contains("Lead · "), "the pill drew instead: {tree}");
+}
+
+#[gpui::test]
+fn the_lead_chip_shows_its_model_and_opens_the_lead(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.get_mut("settings").unwrap()["lead"] = json!({"program": "claude", "model": "opus"});
+    let tree = describe_settled(cx, &staged, "mods/lead", values, None).unwrap();
+    assert!(
+        tree.contains("The lead: Claude, Opus. Click to open it."),
+        "{tree}"
+    );
+    assert!(tree.contains("Open Manager's chat"), "{tree}");
+    assert!(
+        !tree.contains("Lead · "),
+        "the chip shows only the model: {tree}"
+    );
 }
 
 /// The composer draws its box under a live lead, and one line with Open when
@@ -2481,35 +2502,129 @@ fn picker_scrolls_the_selection_into_view(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn status_bar_shows_the_real_palette_key(cx: &mut TestAppContext) {
+fn status_bar_carries_no_palette_hint(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let mut bound = fixture(true, props(), updates("current", "current"));
-    bound.insert(
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert(
         "keys".into(),
         json!([{"section":"global","keys":"ctrl-p","action":"app.palette"}]),
     );
-    let tree = describe_with_values(cx, &staged, "mods/workspace-status", bound, None).unwrap();
+    let tree = describe_with_values(cx, &staged, "mods/workspace-status", values, None).unwrap();
     assert!(
-        tree.contains("Ctrl+P"),
-        "hint must show the real binding: {tree}"
+        !tree.contains("palette"),
+        "the palette hint moved to the empty main card: {tree}"
     );
-    assert!(!tree.contains("Shift P"), "stale hardcoded hint: {tree}");
+    assert!(!tree.contains("Ctrl+P"), "{tree}");
+}
 
-    let mut unbound = fixture(true, props(), updates("current", "current"));
-    unbound.insert(
-        "keys".into(),
-        json!([{"section":"global","keys":"ctrl-k","action":"app.help"}]),
+#[gpui::test]
+fn board_counts_ready_workers_and_names_them_as_the_catalog_does(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.insert(
+        "statusJson".into(),
+        json!({
+            "tasks": {"review": [], "running": [], "queued": []},
+            "workers": [
+                {"label": "opencode Go", "cli": "opencode", "status": "ready"},
+                {"label": "Command Code", "cli": "command_code", "status": "ready"},
+                {"label": "Codex", "cli": "codex", "status": "ready"},
+                {"label": "Pi", "cli": "pi", "status": "ready"}
+            ],
+            "claude": null
+        }),
     );
-    let tree = describe_with_values(cx, &staged, "mods/workspace-status", unbound, None).unwrap();
+    let tree = describe_settled(cx, &staged, "mods/board", values, None).unwrap();
+    assert!(tree.contains("4 workers ready"), "{tree}");
     assert!(
-        tree.contains("commands"),
-        "unbound hint still offers commands: {tree}"
+        tree.contains("OpenCode Go ready"),
+        "the tooltip names it: {tree}"
+    );
+    assert!(!tree.contains("opencode Go ready"), "{tree}");
+}
+
+#[gpui::test]
+fn the_line_says_it_may_be_behind_and_strips_markdown_previews(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert(
+        "threadJson".into(),
+        json!({
+            "vault": "/fixture/vault", "agent": "opus", "unpushed": 0,
+            "problems": ["The vault couldn't be updated, so this may be behind (git: fixture)."],
+            "notes": [{
+                "path": "manager/to/opus/2026-11-08-markdown.md", "from": "manager", "to": ["opus"],
+                "title": "Tests pass", "date": "2026-11-08T09:00:00+03:00", "status": "open",
+                "body": "**First, now:**\n# Heading\nUse `code` and __bold__."
+            }]
+        }),
+    );
+    let tree = describe_settled(cx, &staged, "mods/line", values, None).unwrap();
+    assert!(tree.contains("The Line may be behind."), "{tree}");
+    assert!(
+        tree.contains("line-retry") && tree.contains("Retry"),
+        "{tree}"
     );
     assert!(
-        !tree.contains("Shift P"),
-        "unbound hint must not invent a key: {tree}"
+        tree.contains("line-details") && tree.contains("Details"),
+        "{tree}"
     );
+    assert!(
+        !tree.contains("raw git") && !tree.contains("couldn't be updated"),
+        "{tree}"
+    );
+}
+
+#[gpui::test]
+fn line_previews_drop_markdown_but_the_note_does_not(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    std::fs::write(staged.0.join("main.js"), r#"
+import { View, div } from 'gpui-kit';
+import { stripMarkdown } from './mods/line/main.js';
+export default class Probe extends View {
+  render() { return div().child(stripMarkdown('**First, now:**\n# Heading\nUse `code` and __bold__')); }
+}
+"#).unwrap();
+    let tree = describe(
+        cx,
+        &staged,
+        ".",
+        false,
+        props(),
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("First, now:"), "{tree}");
+    assert!(tree.contains("Heading"), "{tree}");
+    assert!(tree.contains("Use code and bold"), "{tree}");
+    assert!(
+        !tree.contains("**") && !tree.contains("`") && !tree.contains("__") && !tree.contains("#"),
+        "{tree}"
+    );
+}
+
+#[gpui::test]
+fn agents_empty_state_is_calm(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe(
+        cx,
+        &staged,
+        "mods/agents",
+        false,
+        props(),
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("No agents running."), "{tree}");
+    assert!(!tree.contains("Older versions"), "{tree}");
 }
 
 #[gpui::test]

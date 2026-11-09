@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, kom, theme, shared, setShared, watchFolder, window, layout, pickFolder } from "kompitum";
+import { spaces, machines, panes, run, openOverlay, exec, kom, theme, shared, setShared, watchFolder, window, layout, pickFolder, props } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -466,9 +466,29 @@ export default class Spaces extends View {
       .child(div().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
   }
 
-  render() {
+  // In a sidebar that fits it (props.fit), the list keeps its own height so
+  // the agents list starts right under it instead of halfway down.
+  fit(cx) {
+    if (props()?.fit !== true || narrow()) return;
+    const rows = this.ordered();
+    const remote = [...new Set(rows.map(r => r.w.machine).filter(Boolean))];
+    let height = 31 + 14;
+    if (remote.length) {
+      height += (remote.length + 1) * 26;
+      height += rows.reduce((n, r) => n + rowHeight(r), 0);
+    } else {
+      height += rows.length ? rows.reduce((n, r) => n + rowHeight(r), 0) : 28;
+    }
+    height = Math.min(height, 320);
+    if (this.fitHeight === height) return;
+    this.fitHeight = height;
+    run("layout.resize", { id: props().id ?? "spaces", px: height });
+  }
+
+  render(cx) {
     const t = theme();
     const collapsed = narrow();
+    this.fit(cx);
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
     const ids = new Set(sp.map(p => p.id));

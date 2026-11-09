@@ -637,6 +637,9 @@ pub struct Settings {
     pub minimum_contrast: f32,
     pub option_as_alt: OptionAsAlt,
     pub sounds: Sounds,
+    /// The lead the composer will start: program, model and reasoning level.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lead: Option<Lead>,
 }
 
 /// Attention sounds: when an agent needs you, and when one finished while you
@@ -685,6 +688,7 @@ impl Default for Settings {
             minimum_contrast: 1.0,
             option_as_alt: OptionAsAlt::Auto,
             sounds: Sounds::default(),
+            lead: None,
         }
     }
 }
@@ -737,6 +741,7 @@ impl Settings {
             quiet_while_fullscreen: person.quiet_while_fullscreen,
             minimum_contrast: person.minimum_contrast,
             option_as_alt: person.option_as_alt,
+            lead: person.lead.clone(),
         }
     }
 }

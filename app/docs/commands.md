@@ -424,7 +424,7 @@ Reset a shipped layout and its clicks (the old file is kept aside).
 
 ## `mod.open`
 
-Toggle a mod as the overlay its mod.json describes; calling again closes it.
+Toggle a mod's overlay, of any kind; calling it again (or when it is already open) closes it.
 
 | Argument | Required |
 |---|---|
@@ -432,11 +432,12 @@ Toggle a mod as the overlay its mod.json describes; calling again closes it.
 
 ## `overlay.close`
 
-Close an overlay (default: the top dialog or popup).
+Close an overlay: one by id, a mod's overlay of any kind, or (default) the top dialog or popup.
 
 | Argument | Required |
 |---|---|
 | `id` | no |
+| `mod` | no |
 
 ## `app.help`
 

@@ -26,6 +26,13 @@ reports the core connection as `core.link`: `connected`, `lost` with
 `lost_for_ms`, or `refused` with `why`. On the setup screen, `status` answers with `setup`
 (`need`, `detail`, `state`, `error`); other commands refuse with that need.
 
+`status` lists every overlay as `{"id": ..., "mod": ..., "kind": ...}`;
+`kind` is `dialog`, `popup`, `toast` or `window`, and `mod` is null for a
+layout-only window. Close one with `overlay.close --id <id>`, or close a
+mod's overlay of any kind with `overlay.close --mod <name>`. `mod.open`
+opens a mod's overlay and, when that mod already has one of any kind, closes
+it instead.
+
 `app.check_updates` checks for newer releases. Settings reports "Up to date"
 only after a successful check; on failure, check the connection and retry.
 

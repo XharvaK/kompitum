@@ -2,8 +2,7 @@
   "id": "control-panel-root", "type": "column", "titlebar": "none",
   "traffic_lights": [24, 20], "theme": "control-panel",
   "preview": "mods/control-panel/preview.svg",
-  "font": "JetBrains Mono", "font_size": 13.333333333333334,
-  "ui_font": "JetBrains Mono", "terminal_padding": [16, 24], "terminal_opacity": 1,
+  "terminal_padding": [16, 24], "terminal_opacity": 1,
   "background": "canvas", "resizable": false,
   "children": [
     { "id": "control-panel-topbar", "type": "block", "size": {"px": 48}, "window_drag": true,

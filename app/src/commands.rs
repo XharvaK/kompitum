@@ -283,12 +283,12 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "mod.open",
         &[req("name")],
-        "Toggle a mod as the overlay its mod.json describes; calling again closes it.",
+        "Toggle a mod's overlay, of any kind; calling it again (or when it is already open) closes it.",
     ),
     cmd(
         "overlay.close",
-        &[opt("id")],
-        "Close an overlay (default: the top dialog or popup).",
+        &[opt("id"), opt("mod")],
+        "Close an overlay: one by id, a mod's overlay of any kind, or (default) the top dialog or popup.",
     ),
     // The app.
     cmd("app.help", &[], "Toggle the keys dialog."),

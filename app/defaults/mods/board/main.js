@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings } from "kompitum";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings, knownAgents } from "kompitum";
 
 // The two orchestrators keep these colors in the Line panel too.
 const OPUS = "accent";
@@ -79,7 +79,7 @@ function workersOf(workers) {
   return list.filter((w) => w && typeof w === "object"
     && typeof (w.label ?? w.name) === "string"
     && typeof (w.status ?? w.state) === "string")
-    .map((w) => ({ label: w.label ?? w.name, status: w.status ?? w.state, until: w.until ?? w.until_ms }));
+    .map((w) => ({ label: w.label ?? w.name, cli: w.cli ?? w.key, status: w.status ?? w.state, until: w.until ?? w.until_ms }));
 }
 
 function untilText(value) {
@@ -91,6 +91,23 @@ function untilText(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return "";
   return stamp(new Date(n > 1e12 ? n : n * 1000));
+}
+
+// The catalog names a worker's CLI ("OpenCode", not "opencode"); a plan after
+// the CLI's old label ("Go") stays.
+function workerName(catalog, worker) {
+  const cli = text(worker.cli);
+  const entry = cli ? catalog.find((item) => item.worker === cli || item.key === cli) : null;
+  const label = text(worker.label);
+  if (!entry?.name) return label;
+  return label.toLowerCase().startsWith(cli.toLowerCase()) ? entry.name + label.slice(cli.length) : entry.name;
+}
+
+function workerWords(catalog, worker) {
+  const status = worker.status.replace(/_/g, " ");
+  const blocked = /block|out/i.test(status);
+  const until = blocked ? untilText(worker.until) : "";
+  return `${workerName(catalog, worker)} ${status}${until ? ` until ${until}` : ""}`;
 }
 
 export default class Board extends View {
@@ -106,8 +123,15 @@ export default class Board extends View {
     this.confirm = null;
     this.accepting = null;
     this.handle = cx.focus_handle();
+    this.catalog = [];
     if (this.mode !== "panel") return;
     this.refresh(cx);
+    cx.spawn(async (cx) => {
+      try {
+        this.catalog = await knownAgents();
+      } catch {}
+      cx.notify();
+    });
     cx.timer.every(3000, (cx) => this.refresh(cx));
     // A toast can open a review: notify's action names this mod command.
     cx.spawn(async (cx) => {
@@ -427,12 +451,9 @@ export default class Board extends View {
     if (blockedCount > 0) waits.push(`${blockedCount} ${blockedCount === 1 ? "agent" : "agents"} blocked`);
     const headline = waits.length ? waits.join(" · ") : "Nothing waits for you";
     const workers = workersOf(data.workers);
-    const workerLine = workers.map((w) => {
-      const status = w.status.replace(/_/g, " ");
-      const blockedWorker = /block|out/i.test(status);
-      const until = blockedWorker ? untilText(w.until) : "";
-      return `${w.label} ${status}${until ? ` until ${until}` : ""}`;
-    }).join(" · ");
+    const ready = workers.filter((w) => w.status === "ready").length;
+    const workerLine = ready === 1 ? "1 worker ready" : ready > 1 ? `${ready} workers ready` : "";
+    const workerDetail = workers.map((w) => workerWords(this.catalog, w)).join(" · ");
     const claude = data.claude && typeof data.claude === "object" ? data.claude : null;
     const reset = claude ? Number(claude.five_hour_resets_at) : NaN;
     const resetAt = Number.isFinite(reset) && reset > 0 ? new Date(reset * 1000) : null;
@@ -461,7 +482,9 @@ export default class Board extends View {
       })
       .child(v_flex().flex_none().px(12).pt(10).pb(8).gap(3)
         .child(div().text_size(13).font_semibold().text_color(waits.length ? t.foreground : t.muted).child(headline))
-        .when(Boolean(workerLine), (el) => el.child(div().text_size(11).text_color(t.muted).child(workerLine)))
+        .when(Boolean(workerLine), (el) => el.child(div().id("board-workers").text_size(11).text_color(t.muted)
+          .when(Boolean(workerDetail), (line) => line.tooltip(workerDetail))
+          .child(workerLine)))
         .when(Boolean(resetAt), (el) => el.child(div().text_size(11).text_color(t.muted)
           .child(`Claude's 5h limit resets at ${clock(resetAt)}`)))
         .when(Boolean(this.error), (el) => el.child(div().text_size(11).text_color(t.muted).child(this.error))))

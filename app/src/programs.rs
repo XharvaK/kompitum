@@ -275,6 +275,8 @@ pub fn lead_spec(key: &str) -> Option<Value> {
             "run": e.run,
             "flags": e.flags,
             "session": e.session,
+            "name": e.name,
+            "models": e.models,
         }))
     })
 }

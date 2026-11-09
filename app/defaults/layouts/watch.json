@@ -37,37 +37,52 @@
         { "id": "tabs", "type": "block", "size": { "px": 42 }, "window_drag": true, "content": { "mod": "tabs" } },
         {
           "id": "work-body",
-          "type": "column",
+          "type": "row",
           "padding": 8,
           "gap": 8,
           "children": [
             {
-              "id": "board",
-              "type": "block",
-              "size": { "weight": 3 },
-              "min": 180,
-              "radius": 10,
-              "border": { "width": 1, "color": "border" },
-              "background": "surface",
-              "content": { "mod": "board" }
+              "id": "board-main",
+              "type": "column",
+              "children": [
+                {
+                  "id": "board",
+                  "type": "block",
+                  "size": { "weight": 3 },
+                  "min": 180,
+                  "radius": 10,
+                  "border": { "width": 1, "color": "border" },
+                  "background": "surface",
+                  "content": { "mod": "board" }
+                },
+                {
+                  "id": "main",
+                  "type": "block",
+                  "size": { "weight": 2 },
+                  "min": 160,
+                  "content": {
+                    "tab": "active",
+                    "pane": {
+                      "gap": 8,
+                      "radius": 10,
+                      "background": "background",
+                      "lone": true,
+                      "border": { "width": 1, "color": "border" },
+                      "focus": { "width": 1, "color": "accent" },
+                      "header": { "content": { "mod": "pane" }, "height": 30, "position": "top", "reveal": "always" }
+                    }
+                  }
+                }
+              ]
             },
             {
-              "id": "main",
+              "id": "line",
               "type": "block",
-              "size": { "weight": 2 },
-              "min": 160,
-              "content": {
-                "tab": "active",
-                "pane": {
-                  "gap": 8,
-                  "radius": 10,
-                  "background": "background",
-                  "lone": true,
-                  "border": { "width": 1, "color": "border" },
-                  "focus": { "width": 1, "color": "accent" },
-                  "header": { "content": { "mod": "pane" }, "height": 30, "position": "top", "reveal": "always" }
-                }
-              }
+              "size": { "px": 360 },
+              "min": 280,
+              "max": 720,
+              "background": "chrome",
+              "content": { "mod": "line" }
             }
           ]
         },
@@ -82,15 +97,6 @@
           ]
         }
       ]
-    },
-    {
-      "id": "line",
-      "type": "block",
-      "size": { "px": 360 },
-      "min": 280,
-      "max": 720,
-      "background": "chrome",
-      "content": { "mod": "line" }
     }
   ]
 }

@@ -40,9 +40,6 @@
           "type": "row",
           "padding": 8,
           "gap": 8,
-          "floating": [
-            { "id": "board-drawer", "content": { "mod": "board", "props": { "drawer": true } }, "edge": "right", "align": "start", "peek": 40 }
-          ],
           "children": [
             {
               "id": "main",

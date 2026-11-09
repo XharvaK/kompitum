@@ -53,9 +53,26 @@ function problemText(problem) {
   return String(problem ?? "");
 }
 
+export function stripMarkdown(value) {
+  return String(value ?? "")
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "")
+    .replace(/[*_`]/g, "")
+    .replace(/(^|\n)\s*#{1,6}\s*/g, "$1");
+}
+
 function bodyLines(body) {
   const value = String(body ?? "").replace(/\r\n/g, "\n");
-  return value ? value.split("\n").slice(0, 4) : [];
+  return value ? value.split("\n").slice(0, 4).map(stripMarkdown) : [];
+}
+
+// The core says a read's pull failed with these words; they belong behind
+// "Details", not over a card.
+function behindProblems(problems) {
+  return problems.filter((problem) => {
+    const words = problemText(problem);
+    return /vault (?:couldn't|could not) be (?:updated|pulled)|another kom is still working in the vault|nothing was pulled/i.test(words);
+  });
 }
 
 // The row heights the cards below are built from: padding, border, one line
@@ -112,19 +129,34 @@ export default class Line extends View {
     this.loaded = false;
     this.loading = false;
     this.error = null;
+    this.details = false;
+    this.startedAt = 0;
     this.newest = "";
     this.scroll = this.mode === "panel" ? VirtualListScrollHandle.new() : null;
     if (this.mode !== "panel") return;
     this.refresh(cx);
     cx.timer.every(60000, (cx) => this.refresh(cx));
+    // A read that never settles (a layout switch can drop its first one) must
+    // not leave the panel loading for ever: ask again.
+    cx.timer.every(5000, (cx) => {
+      if (this.loaded || this.error || !this.loading) return;
+      if (this.startedAt > 0 && Date.now() - this.startedAt > 10000) {
+        this.loading = false;
+        this.refresh(cx);
+      }
+    });
   }
 
   refresh(cx) {
     if (this.loading) return;
     this.loading = true;
+    this.startedAt = Date.now();
+    const seq = (this.seq = (this.seq ?? 0) + 1);
     cx.spawn(async (cx) => {
       try {
         const result = await kom(["vault", "thread", this.other, "--json"]);
+        // A newer read started meanwhile (Retry, the watchdog): it decides.
+        if (seq !== this.seq) return;
         if (result.code !== 0) {
           this.error = errorText(result);
         } else {
@@ -163,9 +195,12 @@ export default class Line extends View {
           }
         }
       } catch (e) {
-        this.error = firstLine(e?.message ?? e) || "thread failed";
+        if (seq === this.seq) this.error = firstLine(e?.message ?? e) || "thread failed";
       } finally {
-        this.loading = false;
+        if (seq === this.seq) {
+          this.loading = false;
+          this.startedAt = 0;
+        }
         cx.notify();
       }
     });
@@ -261,8 +296,16 @@ export default class Line extends View {
     });
   }
 
+  retry(cx) {
+    this.loading = false;
+    this.refresh(cx);
+  }
+
   renderPanel() {
     const t = theme();
+    const behind = behindProblems(this.problems);
+    const details = behind;
+    const otherProblems = this.problems.filter((problem) => !behind.includes(problem));
     return v_flex()
       .id("line")
       .size_full()
@@ -286,14 +329,31 @@ export default class Line extends View {
           .child(svg("frame/settings/refresh.svg").size(13))))
       .when(this.unpushed > 0, (el) => el.child(div().px(12).pt(6).text_size(11).text_color(t.muted)
         .child(`${this.unpushed} unpushed`)))
-      .children(this.problems.map((problem, i) => div()
+      .when(details.length > 0, (el) => el.child(h_flex().id("line-behind").px(12).pt(6).gap(8).items_center()
+        .child(div().text_size(11).text_color(t.muted).child("The Line may be behind."))
+        .child(div().id("line-retry").text_size(11).text_color(t.accent).cursor_pointer()
+          .hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => this.retry(cx))
+          .child("Retry"))
+        .child(div().id("line-details").text_size(11).text_color(t.dim).cursor_pointer()
+          .hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => { this.details = !this.details; cx.notify(); })
+          .child("Details"))))
+      .when(this.details && details.length > 0, (el) => el.child(v_flex().px(12).pt(4).gap(2)
+        .children(details.map((problem) => div().text_size(11).text_color(t.dim).child(problemText(problem))))))
+      .when(Boolean(this.error), (el) => el.child(h_flex().id("line-error").px(12).pt(6).gap(8).items_center()
+        .child(div().flex_1().min_w(0).text_size(11).text_color(t.muted).child(this.error))
+        .child(div().id("line-error-retry").text_size(11).text_color(t.accent).cursor_pointer()
+          .hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => this.retry(cx))
+          .child("Retry"))))
+      .children(otherProblems.map((problem, i) => div()
         .id(`line-problem-${i}`)
         .px(12)
         .pt(4)
         .text_size(11)
         .text_color(t.muted)
         .child(problemText(problem))))
-      .when(Boolean(this.error), (el) => el.child(div().px(12).pt(6).text_size(11).text_color(t.muted).child(this.error)))
       .child(v_flex().flex_1().min_h(0).relative()
         .when(this.notes.length === 0, (el) => el.p(12).child(div().text_size(12).text_color(t.muted)
           .child(this.error ? "No notes to show." : this.loaded ? "No notes yet." : "Loading notes…")))

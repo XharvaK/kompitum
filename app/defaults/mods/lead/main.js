@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { kom, theme, notify, openOverlay, closeOverlay, shared, setShared, props, appLink, openLink } from "kompitum";
+import { kom, theme, notify, openOverlay, closeOverlay, shared, setShared, props, appLink, openLink, settings, knownAgents, run } from "kompitum";
 
 const LEAD_KEY = "lead";
 const DOOR = "grokbot://";
@@ -162,6 +162,21 @@ function backNoteLine(note) {
   return `${note.title ? String(note.title) : "(untitled)"} — ${note.path ? String(note.path) : "no path"}`;
 }
 
+function modelLabel(entry, id) {
+  const models = entry?.models ?? [];
+  if (id) return models.find((model) => model.id === id)?.label ?? String(id).split("/").pop().replace(/[-_]/g, " ").replace(/^./, (c) => c.toUpperCase());
+  return models.find((model) => model.id === "default")?.label ?? "Default";
+}
+
+function leadInfo(agents) {
+  const lead = settings()?.lead ?? {};
+  const key = lead.program || "claude";
+  const entry = agents.find((agent) => agent.key === key) ?? { key, name: key === "claude" ? "Claude" : key, models: [] };
+  const name = key === "claude" ? "Claude" : entry.name ?? key;
+  const model = modelLabel(entry, lead.model);
+  return { name, model };
+}
+
 function noteLines(notes) {
   return notes.map((note) => `- ${openNoteLine(note)}`).join("\n");
 }
@@ -229,7 +244,14 @@ export default class Lead extends View {
     this.handoff = Boolean(p && p.mode === "handoff" && typeof p.markdown === "string");
     this.sending = false;
     this.busy = false;
+    this.agents = [];
     if (this.handoff) cx.timer.after(80, () => this.handle.focus());
+    else cx.spawn(async (cx) => {
+      try {
+        this.agents = await knownAgents();
+      } catch {}
+      cx.notify();
+    });
   }
 
   flip(cx) {
@@ -351,8 +373,7 @@ export default class Lead extends View {
   }
 
   renderPill(t) {
-    const state = readLead();
-    const manager = state.who === "manager";
+    const lead = leadInfo(this.agents);
     return h_flex()
       .id("lead-root")
       .h_full()
@@ -368,12 +389,13 @@ export default class Lead extends View {
           .rounded(10)
           .border_1()
           .border_color(t.border)
-          .bg(manager ? t.selected : t.raised)
+          .bg(t.raised)
           .text_color(t.foreground)
           .cursor_pointer()
           .hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => this.flip(cx))
-          .child(`Lead · ${manager ? "Manager" : "Opus"}`),
+          .tooltip(`The lead: ${lead.name}, ${lead.model}. Click to open it.`)
+          .on_click(() => run("lead.open"))
+          .child(lead.model),
       )
       .child(
         h_flex()
@@ -388,6 +410,7 @@ export default class Lead extends View {
           .text_color(t.muted)
           .cursor_pointer()
           .hover((s) => s.bg(t.hover))
+          .tooltip("Open Manager's chat")
           .on_click(() => this.door())
           .child("Manager ↗"),
       );

@@ -154,7 +154,7 @@ export function openLink(url: string): void;
  *   Shipped layouts/mods are replaced at start; edits move to <name>-edited.
  *   Kompitum (main) inherits settings; Kompitum 98 and Terminals bring their own look. Clone to change shipped looks beyond theme picks.
  *   layout.reset {name?} resets a shipped layout and its clicks.
- * App: mod.open {name}, overlay.close {id?}, app.help, app.reset, app.theme {name}, app.zoom_in|zoom_out|zoom_reset.
+ * App: mod.open {name}, overlay.close {id? | mod?}, app.help, app.reset, app.theme {name}, app.zoom_in|zoom_out|zoom_reset.
  * Mods: "<mod>.<command>" delivers <command> to that mod's nextCommand().
  */
 export function run(name: string, args?: Record<string, unknown>): null;

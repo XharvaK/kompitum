@@ -82,6 +82,8 @@ pub struct Model {
     pub recent: Vec<Recent>,
     /// Each pane's live folder, for its display name.
     pub pane_folders: BTreeMap<String, String>,
+    /// What each terminal runs, for an unnamed one-terminal tab's name.
+    pub pane_programs: BTreeMap<String, String>,
     pub agents: HashMap<String, Agent>,
     seq: u64,
     /// Where each terminal works now: its repo (worktrees included) and branch.
@@ -292,10 +294,19 @@ impl Model {
         folder_name(&folder, home)
     }
 
-    /// What a tab is called: its name, else its place in its space (1, 2, ...).
-    pub fn tab_name(p: &Space, c: &Tab) -> String {
+    /// What a tab is called: its name, else what its one terminal runs, else
+    /// its place in its space (1, 2, ...).
+    pub fn tab_name(&self, p: &Space, c: &Tab) -> String {
         if !c.name.is_empty() {
             return c.name.clone();
+        }
+        let terminals = c.root.terminals();
+        if let [only] = terminals.as_slice()
+            && let Some(name) = only
+                .terminal()
+                .and_then(|address| self.pane_programs.get(address))
+        {
+            return name.clone();
         }
         (p.tabs.iter().position(|x| x.id == c.id).unwrap_or(0) + 1).to_string()
     }
@@ -762,7 +773,7 @@ pub fn space_json(m: &Model, p: &Space, index: usize, branch: Option<&str>, home
             json!({
                 "id": c.id,
                 "index": i + 1,
-                "name": Model::tab_name(p, c),
+                "name": m.tab_name(p, c),
                 "named": !c.name.is_empty(),
                 "active": Some(&c.id) == active.as_ref(),
                 "status": m.rollup(&addresses(&c.root)),
@@ -830,10 +841,18 @@ mod tests {
             },
         );
         assert_eq!(m.space_name(&p, "/home/me"), "kompitum");
-        let names: Vec<String> = p.tabs.iter().map(|c| Model::tab_name(&p, c)).collect();
+        let names: Vec<String> = p.tabs.iter().map(|c| m.tab_name(&p, c)).collect();
         assert_eq!(
             names.iter().map(String::as_str).collect::<Vec<_>>(),
             ["1", "review", "3"]
+        );
+        // One unnamed terminal names its tab after what runs in it.
+        m.pane_programs.insert("t1".into(), "powershell".into());
+        m.pane_programs.insert("t3".into(), "claude".into());
+        let names: Vec<String> = p.tabs.iter().map(|c| m.tab_name(&p, c)).collect();
+        assert_eq!(
+            names.iter().map(String::as_str).collect::<Vec<_>>(),
+            ["powershell", "review", "claude"]
         );
         m.space_mut("p1").unwrap().name = "api".into();
         assert_eq!(m.space_name(m.space("p1").unwrap(), "/home/me"), "api");
