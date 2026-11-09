@@ -1546,31 +1546,28 @@ export default class Composer extends View {
     return null;
   }
 
+  // The empty state: the lead CLI's catalog name, centred in the panel's space above the box.
   conversationEmpty(t) {
     const entry = this.leadProgram();
-    const name = leadName(entry, entry.key);
     return v_flex()
       .id("composer-conversation-empty")
-      .flex_1()
-      .min_h(0)
+      .size_full()
       .items_center()
       .justify_center()
-      .gap(6)
-      .child(div().text_size(14).text_color(t.foreground).child(name))
-      .child(div().text_size(13).text_color(t.dim).child("Ask the lead anything."));
+      .child(div().text_size(20).font_semibold().text_color(t.foreground).child(entry?.name || entry?.key));
   }
 
   conversationPanel(t, cx) {
+    // No items: the empty state fills the panel itself, outside the scroll area, so it can centre.
+    if (this.items.length === 0) {
+      return div().id("composer-panel").flex_1().min_h(0).relative().child(this.conversationEmpty(t));
+    }
     // The padding sits on an inner column: on the scroll area itself it would count as content to scroll past.
     // The conversation and the box share one column: at most 760 px, centred, with 20 px gutters when narrower.
     const column = v_flex().w_full().max_w(760).px(20).pt(16).pb(16).gap(14);
-    if (this.items.length === 0) {
-      column.child(this.conversationEmpty(t));
-    } else {
-      for (const group of this.conversationGroups()) {
-        if (group.type === "tools") column.child(this.toolsGroup(t, group, cx));
-        else column.child(this.drawItem(t, group.item, cx));
-      }
+    for (const group of this.conversationGroups()) {
+      if (group.type === "tools") column.child(this.toolsGroup(t, group, cx));
+      else column.child(this.drawItem(t, group.item, cx));
     }
     const list = v_flex()
       .id("composer-conversation")

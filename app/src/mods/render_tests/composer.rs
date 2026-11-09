@@ -304,7 +304,10 @@ fn the_conversation_has_no_terminal_toggle(cx: &mut TestAppContext) {
     )
     .unwrap();
     assert!(!tree.contains("lead-terminal"), "{tree}");
-    assert!(tree.contains("Ask the lead anything."), "{tree}");
+    // The empty state is the catalog name alone, outside the scroll column.
+    assert!(tree.contains("composer-conversation-empty"), "{tree}");
+    assert!(tree.contains("Claude Code"), "{tree}");
+    assert!(!tree.contains("Ask the lead anything."), "{tree}");
 }
 
 /// "+" opens the system's file picker on a click: its handler takes the click's own context.
