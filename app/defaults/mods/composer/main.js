@@ -6,7 +6,7 @@
 // the box's place, and the Owner's click or key answers the hook.
 
 import { View, div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, Textarea, TextareaState, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, Textarea, TextareaState, InputState, Input, TextView } from "gpui-base";
 import {
   kom,
   exec,
@@ -57,6 +57,11 @@ function errorText(error) {
 
 function firstLine(text) {
   return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+function planText(ask) {
+  const plan = ask?.input?.tool_input?.plan;
+  return typeof plan === "string" && plan.trim() ? plan : null;
 }
 
 function baseName(path) {
@@ -931,11 +936,19 @@ export default class Composer extends View {
   }
 
   planCard(t, cx, ask) {
+    const plan = planText(ask);
     const buttons = h_flex().w_full().gap(6).items_center()
       .child(this.cardButton("composer-approve", "Approve", () => this.answer(ask, { action: "approve" }, cx), t, { filled: true }))
       .child(this.cardButton("composer-keep-planning", "Keep planning", () => this.openNote("keep_planning", cx), t));
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
       .child(div().text_size(13).font_medium().text_color(t.foreground).child("Claude's plan is ready"))
+      .when(Boolean(plan), (el) => el.child(
+        div()
+          .w_full()
+          .max_h(240)
+          .overflow_y_scrollbar()
+          .child(TextView.markdown("composer-plan-text", plan).text_size(12.5).text_color(t.muted).selectable(true)),
+      ))
       .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
       .when(!this.noteOpen, (el) => el.child(buttons))
       .child(this.terminalAnswerLink(ask, t, cx));

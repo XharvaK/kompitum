@@ -120,7 +120,7 @@ Close a pane and end its terminal.
 
 ## `terminal.open`
 
-Start a terminal: as a new tab (place "tab", default), or "right"/"down" of the focused pane.
+Start a terminal: as a new tab (place "tab", default) on `machine` (default: the shown space; "": this computer), or "right"/"down" of the focused pane; `stay: false` ends it with its program on this computer.
 
 | Argument | Required |
 |---|---|
@@ -128,6 +128,8 @@ Start a terminal: as a new tab (place "tab", default), or "right"/"down" of the 
 | `folder` | no |
 | `place` | no |
 | `name` | no |
+| `stay` | no |
+| `machine` | no |
 
 ## `terminal.keep`
 

@@ -3593,9 +3593,9 @@ impl AppWindow {
         })
     }
 
-    /// The lead, in a shell that ends with it: nothing stays open after the
-    /// lead exits, and the terminal's exit code is the lead's.
-    fn lead_argv(
+    /// A program in a shell that ends with it: nothing stays open after the
+    /// program exits, and the terminal's exit code is the program's.
+    fn ending_argv(
         argv: Option<Vec<String>>,
         task: Option<&str>,
         on: Option<&str>,
@@ -3715,6 +3715,7 @@ impl AppWindow {
                 argv,
                 None,
                 labels,
+                true,
                 window,
             ),
             None => self.new_space(
@@ -3725,6 +3726,7 @@ impl AppWindow {
                 None,
                 None,
                 labels,
+                true,
                 window,
             ),
         }
@@ -4137,6 +4139,7 @@ impl AppWindow {
         task: Option<&str>,
         machine: Option<String>,
         labels: Option<Value>,
+        stay: bool,
         window: &Window,
     ) -> Result<Value, String> {
         let follow = folder.is_none();
@@ -4164,8 +4167,8 @@ impl AppWindow {
             self.model.fresh_id_on("p", on),
         );
         let size = self.initial_size(&Tab::new(&ctx, "", &pane, "").root, &pane, window);
-        let wrapped = if lead {
-            Self::lead_argv(argv.clone(), task, on)
+        let wrapped = if lead || !stay {
+            Self::ending_argv(argv.clone(), task, on)
         } else {
             Self::agent_argv(argv.clone(), task, on)
         };
@@ -4203,6 +4206,7 @@ impl AppWindow {
         argv: Option<Vec<String>>,
         task: Option<&str>,
         labels: Option<Value>,
+        stay: bool,
         window: &Window,
     ) -> Result<Value, String> {
         let space = space
@@ -4225,8 +4229,8 @@ impl AppWindow {
             self.model.fresh_id_on("p", on.as_deref()),
         );
         let size = self.initial_size(&Tab::new(&ctx, "", &pane, "").root, &pane, window);
-        let wrapped = if lead {
-            Self::lead_argv(argv.clone(), task, on.as_deref())
+        let wrapped = if lead || !stay {
+            Self::ending_argv(argv.clone(), task, on.as_deref())
         } else {
             Self::agent_argv(argv.clone(), task, on.as_deref())
         };
@@ -4288,6 +4292,7 @@ impl AppWindow {
         axis: Axis,
         argv: Option<Vec<String>>,
         folder: Option<String>,
+        stay: bool,
         window: &Window,
     ) -> Result<Value, String> {
         let target = pane
@@ -4310,6 +4315,11 @@ impl AppWindow {
             .and_then(|a| a.split_once('/').map(|(m, _)| m.to_owned()))
             .or_else(|| self.machine_of(&space));
         let argv = Self::app_claude_argv(argv, on.as_deref())?;
+        let argv = if stay {
+            argv
+        } else {
+            Self::ending_argv(argv, None, on.as_deref())
+        };
         let new = self.model.fresh_id_on("p", on.as_deref());
         let mut root = self.model.tab(&ctx).expect("target tab").root.clone();
         root.split(
@@ -4990,6 +5000,7 @@ impl AppWindow {
                     Self::arg(a, "task"),
                     Self::owned(a, "machine").filter(|m| !m.is_empty()),
                     None,
+                    true,
                     window,
                 );
                 self.answer(r);
@@ -5094,6 +5105,7 @@ impl AppWindow {
                             Self::arg(a, "task"),
                             None,
                             None,
+                            true,
                             window,
                         )
                     }
@@ -5104,6 +5116,7 @@ impl AppWindow {
                         Self::argv(a),
                         Self::arg(a, "task"),
                         None,
+                        true,
                         window,
                     ),
                 };
@@ -5225,7 +5238,7 @@ impl AppWindow {
                         name,
                         a.get("props").cloned().unwrap_or(Value::Null),
                     ),
-                    None => self.split(Self::owned(a, "pane"), axis, Self::argv(a), None, window),
+                    None => self.split(Self::owned(a, "pane"), axis, Self::argv(a), None, true, window),
                 };
                 self.answer(r);
             }
@@ -5324,10 +5337,20 @@ impl AppWindow {
             // ---- terminals
             "terminal.open" => {
                 let argv = Self::argv(a);
-                let r = match Self::arg(a, "place").unwrap_or("tab") {
-                    "right" => self.split(None, Axis::Row, argv, Self::owned(a, "folder"), window),
-                    "down" => {
-                        self.split(None, Axis::Column, argv, Self::owned(a, "folder"), window)
+                let stay = a.get("stay").and_then(Value::as_bool).unwrap_or(true);
+                let machine = Self::arg(a, "machine");
+                let place = Self::arg(a, "place").unwrap_or("tab");
+                let r = match place {
+                    "right" | "down" => {
+                        if machine.is_some() {
+                            return self.fail("machine works with place tab only");
+                        }
+                        let axis = if place == "right" {
+                            Axis::Row
+                        } else {
+                            Axis::Column
+                        };
+                        self.split(None, axis, argv, Self::owned(a, "folder"), stay, window)
                     }
                     _ => {
                         let name = Self::owned(a, "name")
@@ -5337,15 +5360,48 @@ impl AppWindow {
                                     .map(|p| p.rsplit('/').next().unwrap_or(p).to_owned())
                             })
                             .unwrap_or_else(|| "shell".into());
-                        self.new_tab(
-                            None,
-                            &name,
-                            Self::owned(a, "folder"),
-                            argv,
-                            None,
-                            None,
-                            window,
-                        )
+                        let folder = Self::owned(a, "folder");
+                        match machine {
+                            Some(machine) => {
+                                let on = (!machine.is_empty()).then(|| machine.to_owned());
+                                let active = self.model.active_space().map(|s| s.id.clone());
+                                let space =
+                                    tab_space(on.as_deref(), active.as_deref(), &self.model.spaces);
+                                match space {
+                                    Some(space) => self.new_tab(
+                                        Some(space),
+                                        &name,
+                                        folder,
+                                        argv,
+                                        None,
+                                        None,
+                                        stay,
+                                        window,
+                                    ),
+                                    None => self.new_space(
+                                        "",
+                                        folder,
+                                        Some(&name),
+                                        argv,
+                                        None,
+                                        on,
+                                        None,
+                                        stay,
+                                        window,
+                                    ),
+                                }
+                            }
+                            None => self.new_tab(
+                                None,
+                                &name,
+                                folder,
+                                argv,
+                                None,
+                                None,
+                                stay,
+                                window,
+                            ),
+                        }
                     }
                 };
                 self.answer(r);
@@ -5480,20 +5536,28 @@ impl AppWindow {
                 self.answer(r);
             }
             "lead.setup" => {
-                let program = match settings::load_person() {
-                    Ok(person) => person
-                        .lead
-                        .and_then(|lead| lead.program)
-                        .unwrap_or_else(|| "claude".into()),
-                    Err(error) => return self.fail(format!("settings.json: {error}")),
-                };
-                if program != "claude" {
-                    return self.fail(format!(
-                        "lead.setup is for Claude Code; the lead is {program:?}"
-                    ));
+                if let Err(error) = lead_setup_check(settings::load_person()) {
+                    return self.fail(error);
                 }
-                let r = crate::lead::setup(&crate::core_bin::path(), &mods::home());
-                self.answer(r);
+                let (tx, rx) = async_channel::bounded(1);
+                start_lead_setup(move |result| {
+                    let _ = tx.send_blocking(result);
+                });
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = rx
+                        .recv()
+                        .await
+                        .unwrap_or_else(|_| json!({ "error": "lead.setup stopped" }));
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        let spec = json!({
+                            "kind": "toast",
+                            "notification": lead_setup_toast(&result)
+                        });
+                        this.open_overlay(mods::new_overlay_id(), spec, window, cx);
+                    });
+                })
+                .detach();
+                self.reply = Some(json!({ "started": true }));
             }
             "lead.answer" => {
                 let id = Self::arg(a, "id").unwrap_or_default();
@@ -6225,6 +6289,15 @@ impl AppWindow {
                 if cmd.get("do").and_then(Value::as_str) == Some("lead.hook") {
                     let args = cmd.get("args").cloned().unwrap_or(Value::Null);
                     self.lead_hook(&args, Some(reply), cx);
+                } else if cmd.get("do").and_then(Value::as_str) == Some("lead.setup") {
+                    match lead_setup_check(settings::load_person()) {
+                        Ok(()) => start_lead_setup(move |result| {
+                            let _ = reply.send(result);
+                        }),
+                        Err(error) => {
+                            let _ = reply.send(lead_setup_reply(Err(error)));
+                        }
+                    }
                 } else {
                     let _ = reply.send(self.control(cmd, window, cx));
                 }
@@ -6291,6 +6364,8 @@ impl AppWindow {
                         })
                     }))
                     .collect();
+            let mut asks: Vec<_> = self.lead_asks.values().collect();
+            asks.sort_by(|a, b| a.ask.id.cmp(&b.ask.id));
             return json!({
                 "zoom": round(settings::zoom()),
                 "font_size": round(settings::font_size()),
@@ -6305,6 +6380,11 @@ impl AppWindow {
                     "id": o.id,
                     "mod": o.mod_name.clone(),
                     "kind": o.kind.name(),
+                })).collect::<Vec<_>>(),
+                "asks": asks.iter().map(|pending| json!({
+                    "id": pending.ask.id,
+                    "terminal": pending.ask.terminal,
+                    "kind": pending.ask.kind,
                 })).collect::<Vec<_>>(),
                 "errors": errors,
                 "core": self.link.status(Instant::now()),
@@ -7877,6 +7957,63 @@ fn run_following_folder(
         result => result?,
     };
     Ok((address, folder))
+}
+
+/// `lead.setup` only works with a `claude` lead; the words name any other.
+fn lead_setup_check(person: Result<settings::Person, String>) -> Result<(), String> {
+    let program = match person {
+        Ok(person) => person
+            .lead
+            .and_then(|lead| lead.program)
+            .unwrap_or_else(|| "claude".into()),
+        Err(error) => return Err(format!("settings.json: {error}")),
+    };
+    if program != "claude" {
+        return Err(format!(
+            "lead.setup is for Claude Code; the lead is {program:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// The reply a `lead.setup` caller gets: the setup's result or its error words.
+fn lead_setup_reply(result: Result<Value, String>) -> Value {
+    result.unwrap_or_else(|error| json!({ "error": error }))
+}
+
+/// Runs `lead.setup` off the window thread; `done` gets its reply.
+fn start_lead_setup(done: impl FnOnce(Value) + Send + 'static) {
+    std::thread::spawn(move || {
+        let reply = lead_setup_reply(crate::lead::setup(&crate::core_bin::path(), &mods::home()));
+        done(reply);
+    });
+}
+
+/// The toast posted when a `lead.setup` started by a key, the palette or a mod ends.
+fn lead_setup_toast(reply: &Value) -> Value {
+    match reply.get("error").and_then(Value::as_str) {
+        Some(error) => json!({
+            "title": "Kompitum's tools are not ready",
+            "body": error,
+            "level": "error"
+        }),
+        None => json!({
+            "title": "Kompitum's tools are ready",
+            "body": "Kompitum's tools are ready in Claude Code.",
+            "level": "info"
+        }),
+    }
+}
+
+/// Where a `terminal.open` tab for `machine` goes: the shown space when it is
+/// on that machine, else the first space there. None: make a space there.
+fn tab_space(machine: Option<&str>, active: Option<&str>, spaces: &[model::Space]) -> Option<String> {
+    let on = machine.filter(|m| !m.is_empty());
+    active
+        .and_then(|id| spaces.iter().find(|s| s.id == id))
+        .filter(|s| s.machine.as_deref() == on)
+        .or_else(|| spaces.iter().find(|s| s.machine.as_deref() == on))
+        .map(|s| s.id.clone())
 }
 
 fn new_space_machine(args: &Value, person: bool, model: &Model) -> Option<String> {
@@ -9679,24 +9816,165 @@ export default class Probe extends View {
     }
 
     #[test]
-    fn the_lead_leaves_no_shell_behind() {
-        let lead = super::AppWindow::lead_argv(Some(vec!["claude".into()]), None, None).unwrap();
+    fn the_ending_wrapper_leaves_no_shell_behind() {
+        let ending = super::AppWindow::ending_argv(Some(vec!["claude".into()]), None, None).unwrap();
         let agent = super::AppWindow::agent_argv(Some(vec!["claude".into()]), None, None).unwrap();
         if cfg!(windows) {
-            assert!(!lead.iter().any(|word| word == "-NoExit"), "the lead's PowerShell line must not stay: {lead:?}");
+            assert!(!ending.iter().any(|word| word == "-NoExit"), "stay: false must not stay: {ending:?}");
             assert!(
-                lead.last().is_some_and(|line| line.ends_with("; exit $LASTEXITCODE")),
-                "the lead's exit code must be the terminal's: {lead:?}"
+                ending.last().is_some_and(|line| line.ends_with("; exit $LASTEXITCODE")),
+                "stay: false must pass on the exit code: {ending:?}"
             );
             assert!(agent.iter().any(|word| word == "-NoExit"), "other agents keep their staying shell: {agent:?}");
         } else {
-            assert_eq!(lead[2], "exec \"$@\"", "{lead:?}");
+            assert_eq!(ending[2], "exec \"$@\"", "{ending:?}");
             assert!(agent[2].contains("exec \"$0\""), "other agents keep their staying shell: {agent:?}");
         }
         let sh = super::unix_lead_argv("sh".into(), vec!["claude".into()], false);
         assert_eq!(sh[2], "exec \"$@\"", "{sh:?}");
         let fish = super::unix_lead_argv("fish".into(), vec!["claude".into()], true);
         assert_eq!(fish[2], "exec $argv[2..]", "{fish:?}");
+    }
+
+    #[test]
+    fn lead_setup_checks_the_program_and_routes_its_reply() {
+        use crate::settings::{Lead, Person};
+        use serde_json::json;
+        let person = |program: Option<&str>| Person {
+            lead: Some(Lead {
+                program: program.map(str::to_owned),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(
+            super::lead_setup_check(Ok(person(None))).is_ok(),
+            "no lead program means claude"
+        );
+        assert!(super::lead_setup_check(Ok(person(Some("claude")))).is_ok());
+        assert_eq!(
+            super::lead_setup_check(Ok(person(Some("codex")))),
+            Err("lead.setup is for Claude Code; the lead is \"codex\"".into())
+        );
+        assert_eq!(
+            super::lead_setup_check(Err("broken".into())),
+            Err("settings.json: broken".into())
+        );
+        assert_eq!(
+            super::lead_setup_reply(Ok(json!({"mcp": "present"}))),
+            json!({"mcp": "present"})
+        );
+        assert_eq!(
+            super::lead_setup_reply(Err("claude said no".into())),
+            json!({"error": "claude said no"})
+        );
+        let ready = json!({"mcp": "present", "skill": "present"});
+        assert_eq!(
+            super::lead_setup_toast(&ready)["body"],
+            "Kompitum's tools are ready in Claude Code."
+        );
+        let failed = json!({"error": "claude said no"});
+        assert_eq!(super::lead_setup_toast(&failed)["body"], "claude said no");
+        assert_eq!(super::lead_setup_toast(&failed)["level"], "error");
+    }
+
+    #[test]
+    fn a_terminal_open_machine_uses_its_space_or_makes_one() {
+        use crate::model::{Model, Tab};
+        let mut model = Model::default();
+        assert_eq!(
+            super::tab_space(Some(""), None, &model.spaces),
+            None,
+            "no space on this computer: make one"
+        );
+        model.add_space("sp-local", "local", "/tmp", Tab::new("tb1", "", "p1", "t1"));
+        model.add_space("sp-remote", "remote", "/tmp", Tab::new("tb2", "", "p2", "t2"));
+        model.spaces[1].machine = Some("vps".into());
+        assert_eq!(
+            super::tab_space(Some(""), Some("sp-remote"), &model.spaces).as_deref(),
+            Some("sp-local"),
+            "a remote space is shown: use the first local space"
+        );
+        assert_eq!(
+            super::tab_space(Some(""), Some("sp-local"), &model.spaces).as_deref(),
+            Some("sp-local"),
+            "the shown local space"
+        );
+        assert_eq!(
+            super::tab_space(Some("vps"), Some("sp-local"), &model.spaces).as_deref(),
+            Some("sp-remote"),
+            "the first space on that machine"
+        );
+    }
+
+    #[test]
+    fn terminal_open_refuses_a_machine_on_a_split() {
+        in_own_process("terminal_open_machine_split");
+    }
+
+    #[gpui::test]
+    fn terminal_open_machine_split(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("terminal_open_machine_split") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        let reply = cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.run_as(
+                    "terminal.open",
+                    json!({ "place": "right", "machine": "" }),
+                    false,
+                    window,
+                    cx,
+                )
+            })
+        });
+        assert_eq!(reply["error"], "machine works with place tab only");
+    }
+
+    #[test]
+    fn terminal_open_with_a_machine_makes_a_space_on_a_fresh_install() {
+        in_own_process("terminal_open_fresh_machine");
+    }
+
+    #[gpui::test]
+    fn terminal_open_fresh_machine(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("terminal_open_fresh_machine") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update(cx, |this, _| {
+            this.documents.get_mut("").unwrap().available = true;
+        });
+        let reply = cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.run_as(
+                    "terminal.open",
+                    json!({ "machine": "", "argv": ["echo", "hi"], "stay": false }),
+                    false,
+                    window,
+                    cx,
+                )
+            })
+        });
+        let error = reply["error"].as_str().unwrap_or_default();
+        assert!(
+            error.starts_with("cannot start a terminal:"),
+            "it must make a space and try to start the tab, not say there is no space: {reply}"
+        );
+        assert!(!error.contains("no space yet"), "{reply}");
     }
 
     #[test]
@@ -9713,7 +9991,7 @@ export default class Probe extends View {
         }
         let (view, cx) =
             open_window(cx, "unused", "", json!({ "id": "root", "type": "block", "content": { "tab": "active" } }));
-        view.update_in(cx, |this, _window, cx| {
+        view.update_in(cx, |this, window, cx| {
             this.live.insert(
                 "t1".into(),
                 json!({"state": "live", "labels": {"lead": "claude"}}),
@@ -9759,6 +10037,11 @@ export default class Probe extends View {
                 this.lead_sessions["t1"].ask.as_ref().map(|ask| ask.id.as_str()),
                 Some("a1")
             );
+            assert_eq!(
+                this.control(json!({ "status": true }), window, cx)["asks"],
+                json!([{"id": "a1", "terminal": "t1", "kind": "permission"}]),
+                "status lists the open ask"
+            );
 
             // A newer ask replaces the older one; the older hook gets no output.
             let (second, second_reply) = std::sync::mpsc::channel();
@@ -9797,6 +10080,11 @@ export default class Probe extends View {
                 "an answer goes back to working"
             );
             assert!(this.lead_sessions["t1"].ask.is_none());
+            assert_eq!(
+                this.control(json!({ "status": true }), window, cx)["asks"],
+                json!([]),
+                "no open ask: an empty list"
+            );
 
             let (third, third_reply) = std::sync::mpsc::channel();
             this.lead_hook(

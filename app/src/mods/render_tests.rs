@@ -879,6 +879,26 @@ fn the_plan_card_offers_approve_and_keep_planning(cx: &mut TestAppContext) {
     assert!(!tree.contains("composer-allow"), "{tree}");
 }
 
+/// The plan card shows the plan itself, under its title.
+#[gpui::test]
+fn the_plan_card_shows_the_plan_text(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        composer_with_ask(
+            "plan",
+            json!({"tool_name": "ExitPlanMode", "tool_input": {"plan": "Rename **note.txt**"}}),
+        ),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("note.txt"), "the plan's text is drawn: {tree}");
+    assert!(tree.contains("composer-card"), "{tree}");
+}
+
 /// A question card shows its header, text, options and descriptions.
 #[gpui::test]
 fn the_question_card_shows_every_question_and_option(cx: &mut TestAppContext) {
@@ -1682,6 +1702,7 @@ fn settings_general_draws_the_home_folder_row(cx: &mut TestAppContext) {
     assert!(tree.contains("Home folder"), "{tree}");
     assert!(tree.contains("/fixture/projects"), "{tree}");
     assert!(tree.contains("st-general-folder"), "{tree}");
+    assert!(tree.contains("st-general-welcome"), "{tree}");
     assert!(tree.contains("Show again"), "{tree}");
 }
 

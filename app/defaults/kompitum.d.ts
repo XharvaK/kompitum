@@ -72,10 +72,11 @@ export interface AgentSession {
 /** The agents people can start from a menu (entries with `run` in programs.json), most picked
  *  first, and whether each is installed: asked of the shell agents start in (on another machine,
  *  `on`, its login/interactive shell when supported), at most once a minute per machine.
+ *  `fresh: true` checks again now and stores the new answer.
  *  Start one with its `run` as `argv`. An entry that can lead carries `flags`, `efforts`, `models`
  *  and sometimes `list_models`; an entry the core can run as a worker carries `worker` and `route`,
  *  and the models it knows; `plans` and `usage` say what its subscription reports. */
-export function knownAgents(options?: { on?: string | null }): Promise<(Program & {
+export function knownAgents(options?: { on?: string | null; fresh?: boolean }): Promise<(Program & {
   run: string[];
   installed: boolean;
   flags?: AgentFlags;
@@ -136,7 +137,7 @@ export function openLink(url: string): void;
  * Panes: pane.split {direction: "right" | "down", pane?}, pane.close {pane?}, pane.zoom {pane?},
  *   pane.focus {pane | terminal}, pane.go {direction}, pane.swap {pane?, direction | target}.
  *   Pane menus get target { pane, terminal }.
- * Terminals: terminal.open {argv?, folder?, place?: "tab" | "right" | "down"}, terminal.kill {terminal},
+ * Terminals: terminal.open {argv?, folder?, place?: "tab" | "right" | "down", name?, stay?, machine?}, terminal.kill {terminal},
  *   terminal.keep {terminal, place?} (a running one without a pane, e.g. a sub-agent, gets one),
  *   terminal.park {terminal} (its pane goes, it keeps running; the menu's "Send back"),
  *   terminal.peek {terminal} (peek over the tab, with keep-as-tab and close),

@@ -582,8 +582,10 @@ The main ones:
   `terminal.show` fail, as do `terminal.open`/`terminal.keep` with place right/down.
   They never act on the terminal's source pane. An explicit `pane` still targets that
   model pane; composition edits belong to the mod (edit its layout instead).
-- Terminals: `terminal.open {argv?, folder?, place?, name?}` (`folder` sets the
-  starting directory for tabs and right/down splits, with or without `argv`), `terminal.kill {terminal}`,
+- Terminals: `terminal.open {argv?, folder?, place?, name?, stay?, machine?}` (`folder` sets the
+  starting directory for tabs and right/down splits, with or without `argv`; `stay: false` ends the
+  terminal with its program on this computer (another machine keeps its login shell); `machine` puts a tab on that machine, `""` meaning this computer, and
+  is for place `tab` only), `terminal.kill {terminal}`,
   `terminal.keep {terminal, place?}`, `terminal.park {terminal}`,
   `terminal.peek {terminal}` (peek over the tab, with keep-as-tab and close),
   `terminal.show {terminal?, pane?}`, `terminal.search` (screen and scrollback;
@@ -615,7 +617,7 @@ The main ones:
 - Agents: `agent.next`, `agent.prev`, `agent.focus {terminal}`, `lead.open`
   (focus the lead and put the composer under it, starting it when needed),
   `lead.setup` (add Kompitum's MCP tools and kom skill to the `claude` lead),
-  `lead.answer {id, answer}` (answer the lead's card: the hook's reply).
+  `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`
   (personal tree edits; on shipped layouts only click/look fields change),

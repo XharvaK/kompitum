@@ -85,8 +85,8 @@ export default class Welcome extends View {
     this.chosen = lead.program || null;
   }
 
-  async loadAgents() {
-    const list = (await knownAgents().catch(() => [])) ?? [];
+  async loadAgents(fresh) {
+    const list = (await knownAgents({ fresh }).catch(() => [])) ?? [];
     this.agents = list.filter((agent) => agent.flags);
     if (!this.chosen || !this.agents.some((agent) => agent.key === this.chosen)) {
       this.chosen = this.defaultChoice();
@@ -142,9 +142,9 @@ export default class Welcome extends View {
     if (!argv?.length) return;
     const name = kind === "Install" ? `Install ${agent.name}` : `Sign in to ${agent.name}`;
     this.chosen = agent.key;
-    this.runs[agent.key] = { kind, name };
+    this.runs[agent.key] = { kind, name, started: Date.now() };
     this.notes[agent.key] = null;
-    run("terminal.open", { argv, place: "tab", name });
+    run("terminal.open", { argv, place: "tab", name, stay: false, machine: "" });
     cx.notify();
   }
 
@@ -173,17 +173,21 @@ export default class Welcome extends View {
     const live = terminals();
     for (const [key, running] of Object.entries(this.runs)) {
       const terminal = this.runTerminal(running, live);
-      if (!terminal) continue;
-      const ended = terminal.exit_code != null || (terminal.state && terminal.state !== "live");
+      // Its tab closes when the program ends: a run seen once, or older than a
+      // few seconds, that can't be found any more has ended.
+      const gone = !terminal && (Boolean(running.terminal) || Date.now() - running.started > 3000);
+      if (!terminal && !gone) continue;
+      const ended = gone || terminal.exit_code != null || (terminal.state && terminal.state !== "live");
       if (!ended) continue;
       delete this.runs[key];
-      const code = terminal.exit_code;
-      this.notes[key] =
-        code != null && code !== 0
-          ? `${running.kind} ended with code ${code}. Its tab shows why.`
-          : null;
+      const code = terminal?.exit_code;
+      this.notes[key] = code != null && code !== 0 ? `${running.kind} ended with code ${code}.` : null;
       cx.spawn(async (cx) => {
-        await this.loadAgents();
+        await this.loadAgents(true);
+        const agent = this.agents.find((one) => one.key === key);
+        if (running.kind === "Install" && agent && !agent.installed && !this.notes[key]) {
+          this.notes[key] = `The install ended, but Kompitum can't find ${agent.name} yet.`;
+        }
         cx.notify();
       });
     }

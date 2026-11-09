@@ -108,8 +108,15 @@ pub const COMMANDS: &[Command] = &[
     ),
     cmd(
         "terminal.open",
-        &[opt("argv"), opt("folder"), opt("place"), opt("name")],
-        "Start a terminal: as a new tab (place \"tab\", default), or \"right\"/\"down\" of the focused pane.",
+        &[
+            opt("argv"),
+            opt("folder"),
+            opt("place"),
+            opt("name"),
+            opt("stay"),
+            opt("machine"),
+        ],
+        "Start a terminal: as a new tab (place \"tab\", default) on `machine` (default: the shown space; \"\": this computer), or \"right\"/\"down\" of the focused pane; `stay: false` ends it with its program on this computer.",
     ),
     cmd(
         "terminal.keep",

@@ -1116,8 +1116,14 @@ pub fn run_here(command: &str, args: &[String]) -> Option<String> {
         .map(|(_, out, _)| out)
 }
 
+/// Whether a cached `knownAgents` answer may be used: it is under a minute
+/// old and was asked for the same commands, unless `fresh` asks again.
+fn cache_is_usable(age: Duration, checked: &[String], commands: &[String], fresh: bool) -> bool {
+    !fresh && age < Duration::from_secs(60) && checked == commands
+}
+
 /// The agents a machine can start (`knownAgents()`), asked at most once a minute.
-fn known_agents(on: Option<String>, list: Vec<Value>) -> Value {
+fn known_agents(on: Option<String>, list: Vec<Value>, fresh: bool) -> Value {
     type InstalledCache =
         std::collections::HashMap<Option<String>, (std::time::Instant, Vec<String>, Vec<String>)>;
     static SEEN: std::sync::Mutex<Option<InstalledCache>> = std::sync::Mutex::new(None);
@@ -1126,10 +1132,8 @@ fn known_agents(on: Option<String>, list: Vec<Value>) -> Value {
         .filter_map(|a| a["run"][0].as_str().map(str::to_owned))
         .collect();
     let cached = SEEN.lock().ok().and_then(|s| {
-        s.as_ref()?
-            .get(&on)
-            .filter(|(at, checked, _)| at.elapsed().as_secs() < 60 && checked == &commands)
-            .map(|(_, _, v)| v.clone())
+        let (at, checked, value) = s.as_ref()?.get(&on)?;
+        cache_is_usable(at.elapsed(), checked, &commands, fresh).then(|| value.clone())
     });
     let have = cached.unwrap_or_else(|| {
         let found = crate::programs::installed(&commands, on.as_deref());
@@ -1292,11 +1296,16 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
         .function("telemetry", |_| Ok(to_host(&crate::telemetry::status())))
         .async_function("knownAgents", |a| {
             let on = opt_str(a.get(0), "on");
+            let fresh = a
+                .get(0)
+                .and_then(|o| o.get("fresh"))
+                .and_then(HostValue::as_bool)
+                .unwrap_or(false);
             // The table is loaded on the window thread; workers have only defaults.
             let list = crate::programs::startable();
             let (tx, rx) = async_channel::bounded(1);
             std::thread::spawn(move || {
-                let _ = tx.send_blocking(known_agents(on, list));
+                let _ = tx.send_blocking(known_agents(on, list, fresh));
             });
             Ok(async move { Ok(to_host(&rx.recv().await.unwrap_or(Value::Array(Vec::new())))) })
         })
@@ -1764,7 +1773,7 @@ mod tests {
     #[test]
     fn known_agents_uses_snapshot_and_refreshes_changed_commands() {
         let snapshot = vec![json!({"key": "claude", "run": ["kompitum_issue57_not_installed"]})];
-        let first = std::thread::spawn(move || known_agents(None, snapshot))
+        let first = std::thread::spawn(move || known_agents(None, snapshot, false))
             .join()
             .unwrap();
         assert_eq!(first[0]["run"], json!(["kompitum_issue57_not_installed"]));
@@ -1773,13 +1782,31 @@ mod tests {
             json!({"key": "claude", "run": ["printf"]}),
             json!({"key": "claude-alt", "run": ["printf"]}),
         ];
-        let next = std::thread::spawn(move || known_agents(None, snapshot))
+        let next = std::thread::spawn(move || known_agents(None, snapshot, false))
             .join()
             .unwrap();
         assert_eq!(next.as_array().unwrap().len(), 2);
         assert_eq!(next[0]["installed"], true);
         assert_eq!(next[1]["key"], "claude-alt");
         assert_eq!(next[1]["installed"], true);
+    }
+
+    #[test]
+    fn a_known_agents_answer_is_reused_only_until_it_is_old_or_fresh_is_asked() {
+        let commands = vec!["claude".to_string()];
+        let same = vec!["claude".to_string()];
+        let changed = vec!["codex".to_string()];
+        assert!(cache_is_usable(Duration::ZERO, &commands, &same, false));
+        assert!(cache_is_usable(Duration::from_secs(59), &commands, &same, false));
+        assert!(!cache_is_usable(Duration::from_secs(60), &commands, &same, false));
+        assert!(
+            !cache_is_usable(Duration::ZERO, &commands, &same, true),
+            "fresh skips the cache"
+        );
+        assert!(
+            !cache_is_usable(Duration::ZERO, &commands, &changed, false),
+            "changed commands check again"
+        );
     }
 
     #[test]

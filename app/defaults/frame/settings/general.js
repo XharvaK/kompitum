@@ -2,7 +2,7 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { home, pickFolder, run } from "kompitum";
+import { home, pickFolder, run, closeOverlay, props } from "kompitum";
 
 function chooseFolder(view, cx) {
   cx.spawn(async (cx) => {
@@ -38,7 +38,10 @@ export function generalPage(view, t, cx) {
         t,
         "Welcome",
         null,
-        view.button(t, "st-general-welcome", "Show again", () => run("app.welcome")),
+        view.button(t, "st-general-welcome", "Show again", () => {
+          closeOverlay(props().overlay);
+          run("app.welcome");
+        }),
         "welcome",
       ),
     );

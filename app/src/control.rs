@@ -2,7 +2,7 @@
 //! and `kompitum-app status`: drive a running window from a shell (agents, tests)
 //! over `$KOMPITUM_APP_HOME/kompitum-app.sock`, one JSON line each way.
 
-use crate::mods::{self, Request};
+use crate::mods::{self, EXEC_LIMIT, Request};
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(unix)]
@@ -49,6 +49,7 @@ fn serve(stream: UnixStream, tx: async_channel::Sender<Request>) {
     let reply = match serde_json::from_str::<Value>(&line) {
         Ok(mut cmd) => {
             let shot = cmd.get("shot").is_some();
+            let lead_setup = cmd.get("do").and_then(Value::as_str) == Some("lead.setup");
             let hook = cmd.get("do").and_then(Value::as_str) == Some("lead.hook");
             let blocking = hook && blocking_event(&cmd);
             let hook_id = blocking.then(hook_id);
@@ -88,7 +89,13 @@ fn serve(stream: UnixStream, tx: async_channel::Sender<Request>) {
                     .recv()
                     .unwrap_or_else(|_| json!({ "error": "the window did not answer" }))
             } else {
-                let timeout = Duration::from_secs(if shot { 30 } else { 5 });
+                let timeout = Duration::from_secs(if shot {
+                    30
+                } else if lead_setup {
+                    2 * EXEC_LIMIT.as_secs() + 5
+                } else {
+                    5
+                });
                 reply_rx
                     .recv_timeout(timeout)
                     .unwrap_or_else(|_| json!({ "error": "the window did not answer" }))
@@ -201,7 +208,13 @@ pub fn client(args: &[String]) -> i32 {
             ));
         }
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(35)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(
+        if cmd.get("do").and_then(Value::as_str) == Some("lead.setup") {
+            2 * EXEC_LIMIT.as_secs() + 10
+        } else {
+            35
+        },
+    )));
     let mut line = String::new();
     if stream.write_all(format!("{cmd}\n").as_bytes()).is_err()
         || BufReader::new(&stream).read_line(&mut line).is_err()

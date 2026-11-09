@@ -33,6 +33,11 @@ mod's overlay of any kind with `overlay.close --mod <name>`. `mod.open`
 opens a mod's overlay and, when that mod already has one of any kind, closes
 it instead.
 
+`status` also lists every open lead ask as `{"id": ..., "terminal": ...,
+"kind": ...}`, sorted by id; `kind` is `permission`, `plan` or `question`.
+Answer one with `lead.answer --id <id> --answer '<answer>'`. With no open
+ask, the list is empty.
+
 `app.check_updates` checks for newer releases. Settings reports "Up to date"
 only after a successful check; on failure, check the connection and retry.
 
@@ -64,7 +69,10 @@ login/interactive shell (sh, bash, zsh, dash, ksh or fish), including its
 configured PATH. Other shells keep the sh launcher.
 `terminal.open --folder /path --place down` starts the split in that folder,
 including when `--argv` supplies a program. Without `--folder`, it follows the
-focused terminal's folder. If an inherited local folder was deleted, new spaces,
+focused terminal's folder. `terminal.open --stay false` ends the terminal with
+its program on this computer (its exit code is the terminal's; another machine keeps its login shell); `--machine <name>` puts the tab
+on that machine, and `--machine ''` on this computer, with place `tab` only.
+If an inherited local folder was deleted, new spaces,
 tabs and splits retry in that machine's home. An explicit invalid folder
 still fails.
 `kom machine ls` lists machines. Use `kom run --on vps ...`, `kom exec --on vps ...`
