@@ -509,7 +509,8 @@ export default class Mailbox extends View {
         .min_h(0)
         .items_center()
         .justify_center()
-        .child(div().text_size(13).text_color(t.dim).child(this.loaded ? "Pick a note to read it." : "Loading notes…"));
+        // While the list loads it says so itself; the reading pane stays empty.
+        .when(this.loaded, (el) => el.child(div().text_size(13).text_color(t.dim).child("Pick a note to read it.")));
     }
     const owner = forOwner(note);
     const kind = text(note.kind) || "note";
