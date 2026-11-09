@@ -250,9 +250,9 @@ pub const COMMANDS: &[Command] = &[
         "Size the lead's composer to its text while its lead isn't asking: px from 80 to 320.",
     ),
     cmd(
-        "lead.type",
-        &[req("terminal"), opt("on")],
-        "Type in the lead's terminal itself (on, the default), or send typing there to its composer again (on: false).",
+        "lead.terminal",
+        &[req("terminal"), opt("show")],
+        "Show or hide the lead's terminal by hand (show: true or false; omitted toggles). A reveal by hand stays until this hides it.",
     ),
     cmd(
         "lead.answer",

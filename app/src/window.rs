@@ -3719,34 +3719,10 @@ impl AppWindow {
         })
     }
 
-    /// Typing on the lead's terminal goes to its composer, unless the Owner turned on "Type in terminal".
-    /// Keys with Ctrl, Alt or Cmd (shortcuts, the program's own keys), Enter, arrows and Esc stay with the
-    /// terminal.
-    fn type_into_composer(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(text) = typed_text(&ev.keystroke) else { return false };
-        let Some(terminal) = self
-            .terms
-            .values()
-            .find(|t| t.view.read(cx).owns_keyboard_focus(window, cx))
-            .map(|t| t.address.clone())
-        else {
-            return false;
-        };
-        if self.lead_sessions.get(&terminal).is_some_and(|s| s.typing) {
-            return false;
-        }
-        let Some(composer) = self.composer_pane(&terminal) else { return false };
-        self.focus_block(&composer, window, cx);
-        if let Some(copy) = self.copies.get(&composer) {
-            mods::send_command_to(copy.id, &format!("type:{text}"));
-        }
-        true
-    }
-
     /// A composer sits under its lead's terminal, as tall as its text, and grows to hold a card while its lead asks.
     fn fit_composers(&mut self) {
         for tab in self.model.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()) {
-            let composers: Vec<(String, f32)> = tab
+            let composers: Vec<(String, f32, bool)> = tab
                 .root
                 .panes()
                 .into_iter()
@@ -3754,14 +3730,18 @@ impl AppWindow {
                     Some(Content::Mod { name, props }) if name == "composer" => {
                         let terminal = props.get("terminal").and_then(Value::as_str)?;
                         let asking = self.lead_sessions.get(terminal).and_then(|s| s.ask.as_ref()).map(|ask| ask.kind);
-                        Some((node.id.clone(), composer_height(asking, self.composer_px.get(terminal).copied())))
+                        let shown = self
+                            .lead_sessions
+                            .get(terminal)
+                            .is_some_and(|s| s.conversation.terminal == crate::lead::TerminalVis::Shown);
+                        Some((node.id.clone(), composer_height(asking, self.composer_px.get(terminal).copied()), shown))
                     }
                     _ => None,
                 })
                 .collect();
-            for (id, px) in composers {
+            for (id, px, shown) in composers {
                 if let Some(node) = tab.root.find_mut(&id) {
-                    node.size = Some(Span::Px { px });
+                    node.size = if shown { Some(Span::Px { px }) } else { None };
                 }
             }
         }
@@ -3894,7 +3874,7 @@ impl AppWindow {
             lead.model.as_deref(),
             lead.effort.as_deref(),
         );
-        if program == "claude" {
+        let auth_code = if program == "claude" {
             let app = std::env::current_exe()
                 .map_err(|error| format!("Couldn't find this kompitum-app's path: {error}"))?;
             let settings_file = crate::lead::write_claude_settings(
@@ -3904,7 +3884,11 @@ impl AppWindow {
             )?;
             argv.insert(1, "--settings".into());
             argv.insert(2, settings_file.to_string_lossy().into_owned());
-        }
+            // Exit code only; never keep stdout or stderr. A spawn error starts hidden.
+            Some(crate::lead::claude_auth_status_code(&crate::core_bin::path()))
+        } else {
+            None
+        };
         let started = self.start_lead_tab(&folder, &program, &argv, window)?;
         let terminal = started["terminal"]
             .as_str()
@@ -3914,6 +3898,19 @@ impl AppWindow {
         if let Some(pane) = self.model.pane_of(&terminal) {
             self.swapped.remove(&pane);
             self.model.focus_pane(&pane);
+        }
+        if let Some(result) = auth_code {
+            match result {
+                Ok(code) => {
+                    let session = self.lead_sessions.entry(terminal.clone()).or_default();
+                    crate::lead::apply_auth_status(&mut session.conversation, code);
+                }
+                Err(error) => {
+                    tracing::warn!("couldn't run claude auth status before lead.open: {error}");
+                }
+            }
+            self.apply_lead_terminal_layout(&terminal);
+            self.publish_lead(cx);
         }
         if choice.is_resume_or_continue() {
             self.watch_lead_resume(
@@ -4100,6 +4097,20 @@ impl AppWindow {
             ) {
                 mods::set_shared("lead.streams".into(), streams);
             }
+            if from_lead {
+                let skipped = {
+                    let session = self.lead_sessions.entry(terminal.clone()).or_default();
+                    crate::lead::apply_transcript_path(
+                        session,
+                        input.get("transcript_path").and_then(Value::as_str),
+                    )
+                };
+                if skipped > 0 {
+                    tracing::debug!(skipped, "skipped unknown transcript line types");
+                }
+                self.apply_lead_terminal_layout(&terminal);
+                self.publish_lead(cx);
+            }
             if let Some(reply) = reply {
                 let _ = reply.send(json!({}));
             }
@@ -4123,6 +4134,15 @@ impl AppWindow {
             self.hold_ask(crate::lead::Ask { id, terminal, kind, input }, reply, cx);
             return;
         }
+        let folded = if from_lead {
+            let session = self.lead_sessions.entry(terminal.clone()).or_default();
+            crate::lead::apply_hook_event(session, event, &input)
+        } else {
+            false
+        };
+        if folded {
+            self.apply_lead_terminal_layout(&terminal);
+        }
         let state = match event {
             "UserPromptSubmit" => Some(crate::lead::State::Working),
             "Stop" | "Notification" => Some(crate::lead::State::Waiting),
@@ -4130,8 +4150,11 @@ impl AppWindow {
         };
         if let Some(state) = state {
             self.set_lead_state(&terminal, Some(state), cx);
+        } else if folded {
+            self.publish_lead(cx);
         }
         if let Some(reply) = reply {
+            // Never return displayContent; MessageDisplay and the other async hooks get {}.
             let _ = reply.send(json!({}));
         }
     }
@@ -4216,14 +4239,38 @@ impl AppWindow {
     /// Tells the composer about every lead terminal's state and ask.
     fn publish_lead(&mut self, cx: &mut Context<Self>) {
         let mut all = serde_json::Map::new();
+        let mut items = serde_json::Map::new();
         for (terminal, session) in &self.lead_sessions {
-            all.insert(terminal.clone(), serde_json::to_value(session).unwrap_or(Value::Null));
+            all.insert(terminal.clone(), crate::lead::published_session(session));
+            items.insert(
+                terminal.clone(),
+                serde_json::to_value(&session.conversation.items).unwrap_or(json!([])),
+            );
         }
         self.fit_composers();
         cx.notify();
-        if mods::publish_lead(Value::Object(all)) {
+        let lead_changed = mods::publish_lead(Value::Object(all));
+        let items_changed = mods::publish_lead_items(Value::Object(items));
+        if lead_changed || items_changed {
             self.refresh_snapshot_mods(cx);
         }
+    }
+
+    /// Hide or show the lead's terminal pane; it stays attached either way.
+    fn apply_lead_terminal_layout(&mut self, terminal: &str) {
+        let shown = self
+            .lead_sessions
+            .get(terminal)
+            .is_some_and(|s| s.conversation.terminal == crate::lead::TerminalVis::Shown);
+        if let Some(pane) = self.model.pane_of(terminal) {
+            for tab in self.model.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()) {
+                if let Some(node) = tab.root.find_mut(&pane) {
+                    node.hidden = !shown;
+                    break;
+                }
+            }
+        }
+        self.fit_composers();
     }
 
     /// A space with its first tab and terminal, shown at once.
@@ -5665,16 +5712,31 @@ impl AppWindow {
                 .detach();
                 self.reply = Some(json!({ "started": true }));
             }
-            "lead.type" => {
+            "lead.terminal" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
-                let on = a.get("on").and_then(Value::as_bool).unwrap_or(true);
-                let Some(pane) = self.model.pane_of(&terminal) else {
+                if self.model.pane_of(&terminal).is_none() && !self.live.contains_key(&terminal) {
                     return self.fail(format!("no pane shows the lead's terminal {terminal:?}"));
-                };
-                self.lead_sessions.entry(terminal.clone()).or_default().typing = on;
-                match self.composer_pane(&terminal) {
-                    Some(composer) if !on => self.focus_block(&composer, window, cx),
-                    _ => self.run("pane.focus", json!({ "pane": pane }), window, cx),
+                }
+                let show = a.get("show").and_then(Value::as_bool);
+                {
+                    let session = self.lead_sessions.entry(terminal.clone()).or_default();
+                    session.conversation = crate::lead::fold(
+                        std::mem::take(&mut session.conversation),
+                        &crate::lead::Event::Toggle { show },
+                    );
+                }
+                self.apply_lead_terminal_layout(&terminal);
+                match self.lead_sessions.get(&terminal).map(|s| s.conversation.terminal) {
+                    Some(crate::lead::TerminalVis::Shown) => {
+                        if let Some(pane) = self.model.pane_of(&terminal) {
+                            self.run("pane.focus", json!({ "pane": pane }), window, cx);
+                        }
+                    }
+                    _ => {
+                        if let Some(composer) = self.composer_pane(&terminal) {
+                            self.focus_block(&composer, window, cx);
+                        }
+                    }
                 }
                 self.publish_lead(cx);
             }
@@ -8437,15 +8499,6 @@ fn composer_height(asking: Option<crate::lead::AskKind>, wanted: Option<f32>) ->
     }
 }
 
-/// The text a key types, when it only types: no Ctrl, Alt or Cmd (Windows' AltGr, Ctrl+Alt, types too).
-fn typed_text(k: &gpui::Keystroke) -> Option<String> {
-    let m = &k.modifiers;
-    if m.platform || m.function || (m.control != m.alt) {
-        return None;
-    }
-    k.key_char.clone().filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
-}
-
 /// `kom` first in the argv of a tab on this computer (`machine: ""`) is the core the app runs: a new
 /// terminal's PATH can lead to another one.
 fn local_core(argv: Option<Vec<String>>, machine: Option<&str>, core: &std::path::Path) -> Option<Vec<String>> {
@@ -8666,11 +8719,9 @@ impl Render for AppWindow {
                     }
                 }
             }))
-            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
                 if ev.keystroke.key == "escape" && this.pane_drag.is_some() {
                     this.cancel_pane_drag(cx);
-                    cx.stop_propagation();
-                } else if this.type_into_composer(ev, window, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -8783,20 +8834,28 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn only_typing_moves_to_the_composer() {
-        let key = |spec: &str, typed: Option<&str>| {
-            let mut k = gpui::Keystroke::parse(spec).unwrap();
-            k.key_char = typed.map(str::to_owned);
-            super::typed_text(&k)
-        };
-        assert_eq!(key("a", Some("a")).as_deref(), Some("a"));
-        assert_eq!(key("shift-a", Some("A")).as_deref(), Some("A"));
-        assert_eq!(key("ctrl-alt-q", Some("@")).as_deref(), Some("@"), "AltGr types");
-        assert_eq!(key("ctrl-c", None), None, "a shortcut stays with the terminal");
-        assert_eq!(key("alt-b", Some("b")), None);
-        assert_eq!(key("enter", Some("\r")), None, "Enter answers the program's own menus");
-        assert_eq!(key("escape", None), None);
-        assert_eq!(key("up", None), None);
+    fn a_hidden_lead_terminal_stays_listed_so_it_stays_attached() {
+        let mut root: crate::layout::Node = serde_json::from_value(json!({
+            "id": "tab",
+            "type": "column",
+            "children": [
+                {"id": "term", "type": "block", "content": {"terminal": "t1"}},
+                {"id": "composer", "type": "block", "content": {"mod": "composer", "props": {"terminal": "t1"}}}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(root.terminals().iter().map(|n| n.id.as_str()).collect::<Vec<_>>(), ["term"]);
+        root.find_mut("term").unwrap().hidden = true;
+        assert_eq!(
+            root.terminals().iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            ["term"],
+            "walk() includes hidden terminals, so sync() keeps them attached"
+        );
+        assert!(
+            !root.visible_blocks().iter().any(|n| n.id == "term"),
+            "a hidden terminal is not drawn"
+        );
+        assert!(root.visible_blocks().iter().any(|n| n.id == "composer"));
     }
 
     #[test]

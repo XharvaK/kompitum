@@ -311,6 +311,13 @@ export interface LeadAsk {
   input: any;
 }
 
+/** One row the chat-view panel draws. */
+export type ConversationItem =
+  | { kind: "owner"; id: string; text: string }
+  | { kind: "assistant"; id: string; text: string; done: boolean }
+  | { kind: "tool"; id: string; name: string; summary: string; state: "running" | "done" | "failed"; result?: string }
+  | { kind: "notice"; id: string; text: string };
+
 /** The lead terminal's state and open ask, from Claude Code's hooks; null when
  *  no hook has reported one (a lead that isn't Claude, or the very first
  *  moment). A copy without props().terminal reads the live terminal labelled
@@ -318,9 +325,19 @@ export interface LeadAsk {
 export function lead(): {
   state: "working" | "asking" | "waiting" | null;
   ask: LeadAsk | null;
-  /** The Owner types in the terminal itself (lead.type); otherwise typing there comes to the composer. */
-  typing?: boolean;
+  /** Whether the lead's terminal pane is drawn. */
+  terminal: "hidden" | "shown";
+  /** Why the terminal is shown, and how it hides; null when it is hidden. */
+  reveal: "login" | "auto" | "manual" | null;
+  /** One-line note for an automatic reveal, drawn above the composer box. */
+  reveal_why?: string | null;
+  /** Version rises when items change; length is how many items there are. */
+  conversation: { version: number; length: number };
 } | null;
+
+/** Conversation items from index `from` (0-based). The panel asks only for
+ *  what's new when `lead().conversation.version` changes. Live. */
+export function conversation(from?: number): ConversationItem[];
 
 /** Actual terminal/pane focus. `space` and `tab` are the current window context.
  *  Clicking a visible layout terminal block, or pane.focus {terminal}, focuses that block:

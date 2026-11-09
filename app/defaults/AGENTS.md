@@ -618,8 +618,8 @@ The main ones:
 - Agents: `agent.next`, `agent.prev`, `agent.focus {terminal}`, `lead.open`
   (focus the lead and put the composer under it, starting it when needed),
   `lead.setup` (add Kompitum's MCP tools and kom skill to the `claude` lead),
-  `lead.type {terminal, on?}` (typing on the lead's terminal goes to its composer; on: the Owner types in the
-  terminal itself, as the composer's "Type in terminal" switch does; on false: back to the composer),
+  `lead.terminal {terminal, show?}` (show or hide the lead's terminal by hand; omitted `show` toggles it; a
+  reveal by hand stays until this hides it),
   `lead.fit {terminal, px}` (the composer's height for its text, 80 to 320 px, while the lead isn't asking),
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
@@ -989,7 +989,11 @@ All of it is in `kompitum.d.ts`. In short:
   the first read even if it fails, and offline machines are unavailable),
   `agents()` (status, app, space, tab, pinned, focused; "done" turns "idle"
   once someone looks at it on any Kompitum client), `terminals()`
-  (every core terminal), `focused()`, `layout()`, `theme()` (every color by
+  (every core terminal), `lead()` (the lead terminal's state, open ask, whether
+  its terminal is `hidden` or `shown`, why it was revealed, and `conversation:
+  { version, length }`; a copy without `props().terminal` reads the live terminal
+  labelled `lead`), `conversation(from)` (the conversation items from index
+  `from`, so the panel asks only for what's new), `focused()`, `layout()`, `theme()` (every color by
   name: background (the terminals', cards), canvas (behind cards), chrome
   (sidebars, bars), surface, popover, raised, hover, selected, border,
   input (a stronger border), foreground, muted, dim, accent, accent_fill

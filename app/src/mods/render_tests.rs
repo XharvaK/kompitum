@@ -155,6 +155,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let usage_json = values.remove("usageJson");
     let vault_missing = values.remove("vaultMissing");
     let thread_json = values.remove("threadJson");
+    let conversation_items = values.remove("conversation").unwrap_or(json!([]));
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
         if name == "person" {
@@ -162,6 +163,16 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         }
         module = module.function(name, move |_| Ok(to_host(&value)));
     }
+    module = module.function("conversation", move |a| {
+        let from = a
+            .get(0)
+            .and_then(HostValue::as_number)
+            .filter(|n| n.is_finite() && *n >= 0.0)
+            .unwrap_or(0.0) as usize;
+        let items = conversation_items.as_array().cloned().unwrap_or_default();
+        let from = from.min(items.len());
+        Ok(to_host(&Value::Array(items[from..].to_vec())))
+    });
     let shared = calls.clone();
     module = module.function("shared", move |a| {
         Ok(shared

@@ -4,7 +4,7 @@
 
 use super::*;
 
-/// One box: no placeholder, "+" to attach, the switch to type in the terminal, the lead's model, round Send;
+/// One box: no placeholder, "+" to attach, the lead's model, round Send;
 /// no plan ring and no mail button.
 #[gpui::test]
 fn the_composer_is_one_box_with_attach_model_and_send(cx: &mut TestAppContext) {
@@ -13,7 +13,7 @@ fn the_composer_is_one_box_with_attach_model_and_send(cx: &mut TestAppContext) {
     let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("knownAgents".into(), agent_catalog());
     let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
-    for id in ["composer-box", "composer-attach", "composer-type", "composer-model", "composer-send"] {
+    for id in ["composer-box", "composer-attach", "composer-model", "composer-send"] {
         assert!(tree.contains(id), "{id}: {tree}");
     }
     for gone in ["Message the lead", "composer-plan", "composer-mail"] {

@@ -751,6 +751,8 @@ pub struct Snapshot {
     pub terminals: Value,
     /// The lead's state and ask by terminal address.
     pub lead: Value,
+    /// Conversation items by terminal address, for `conversation(from)`.
+    pub lead_items: Value,
     pub focused: Value,
     /// Floating blocks by id: { edge, align, vertical }.
     pub floats: Value,
@@ -769,6 +771,7 @@ impl Default for Snapshot {
             panes: json!([]),
             terminals: json!([]),
             lead: json!({}),
+            lead_items: json!({}),
             focused: Value::Null,
             floats: json!({}),
             window: Value::Null,
@@ -819,6 +822,9 @@ pub fn publish_terminals(v: Value) -> bool {
 }
 pub fn publish_lead(v: Value) -> bool {
     publish("lead", |s| (std::mem::replace(&mut s.lead, v.clone()), v))
+}
+pub fn publish_lead_items(v: Value) -> bool {
+    publish("lead_items", |s| (std::mem::replace(&mut s.lead_items, v.clone()), v))
 }
 pub fn terminal_address(word: &str, source: &str) -> Option<String> {
     SNAPSHOT.with(|s| {
@@ -1464,6 +1470,53 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 }))
             }
         })
+        .function("conversation", {
+            let terminal = props.get("terminal").and_then(Value::as_str).map(str::to_owned);
+            let reads = reads.clone();
+            move |args| {
+                let from = args
+                    .get(0)
+                    .and_then(HostValue::as_number)
+                    .filter(|n| n.is_finite() && *n >= 0.0)
+                    .unwrap_or(0.0) as usize;
+                let terminal = match &terminal {
+                    Some(terminal) => Some(terminal.clone()),
+                    None => {
+                        REVISIONS.with_borrow(|r| reads.borrow_mut().record("terminals", r));
+                        SNAPSHOT.with(|s| {
+                            let s = s.borrow();
+                            s.terminals
+                                .as_array()?
+                                .iter()
+                                .find(|t| {
+                                    t["state"].as_str() == Some("live")
+                                        && t["labels"]
+                                            .get("lead")
+                                            .and_then(Value::as_str)
+                                            .is_some_and(|lead| !lead.is_empty())
+                                })?
+                                .get("address")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        })
+                    }
+                };
+                let Some(terminal) = terminal else {
+                    return Ok(HostValue::Array(Vec::new()));
+                };
+                REVISIONS.with_borrow(|r| reads.borrow_mut().record("lead_items", r));
+                let items = SNAPSHOT.with(|s| {
+                    s.borrow()
+                        .lead_items
+                        .get(&terminal)
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default()
+                });
+                let from = from.min(items.len());
+                Ok(to_host(&Value::Array(items[from..].to_vec())))
+            }
+        })
         .function("focused", reader(reads.clone(), "focused", |s| &s.focused))
         .function("layout", reader(reads.clone(), "layout", |s| &s.layout))
         .function("layouts", |_| Ok(to_host(&json!(crate::window::layout_names()))))
@@ -1839,6 +1892,43 @@ mod tests {
             assert!(
                 own.call("lead", &arguments).unwrap().is_null(),
                 "a copy with its own terminal hears only that terminal"
+            );
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn conversation_from_returns_items_for_that_terminal() {
+        std::thread::spawn(|| {
+            publish_lead_items(json!({
+                "t1": [
+                    {"kind": "owner", "id": "owner-1", "text": "Hello"},
+                    {"kind": "assistant", "id": "assistant-1", "text": "Hi.", "done": true}
+                ]
+            }));
+            let arguments = gpui_shell::HostArguments::new([HostValue::Number(1.0)]);
+            let host = module(
+                Instance {
+                    name: "composer".into(),
+                    props: json!({"terminal": "t1"}),
+                },
+                3,
+            );
+            let value = host.call("conversation", &arguments).unwrap();
+            let items = value.as_array().expect("items");
+            assert_eq!(items.len(), 1, "{value:?}");
+            assert_eq!(items[0].get("id").and_then(HostValue::as_str), Some("assistant-1"));
+            let empty = module(
+                Instance {
+                    name: "composer".into(),
+                    props: json!({"terminal": "t-missing"}),
+                },
+                4,
+            );
+            assert_eq!(
+                empty.call("conversation", &gpui_shell::HostArguments::new([])).unwrap().as_array().map(|a| a.len()),
+                Some(0)
             );
         })
         .join()
