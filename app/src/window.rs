@@ -2426,6 +2426,7 @@ impl AppWindow {
         program_of(
             rec.and_then(|r| r.get("report")).unwrap_or(&Value::Null),
             rec.and_then(running_argv),
+            rec.and_then(lead_label),
         )
     }
 
@@ -2979,7 +2980,8 @@ impl AppWindow {
                 }
             });
             obj.insert("status".into(), word);
-            obj.insert("program".into(), program_of(&report, running_argv(obj)));
+            let lead = lead_label(obj).map(str::to_owned);
+            obj.insert("program".into(), program_of(&report, running_argv(obj), lead.as_deref()));
             obj.insert("report".into(), report);
             // As the panes show it: a spinning title would change every listing.
             if let Some(title) = obj
@@ -8349,8 +8351,15 @@ fn adoptable(record: &Value, space: &str, tab: Option<&str>, machine: Option<&st
         && labeled_tab == tab.map(|t| crate::mirror::local(t, machine))
 }
 
-fn program_of(report: &Value, argv: Option<&Value>) -> Value {
-    let app = report.get("app").and_then(Value::as_str);
+/// The program a lead's terminal was started for (its `lead` label).
+fn lead_label(rec: &serde_json::Map<String, Value>) -> Option<&str> {
+    rec.get("labels")?.get("lead")?.as_str().filter(|program| !program.is_empty())
+}
+
+/// What a terminal runs: the agent its report names, else the lead it was started as (the lead runs inside a
+/// shell that stays, so until its first report the foreground can be that shell), else its foreground program.
+fn program_of(report: &Value, argv: Option<&Value>, lead: Option<&str>) -> Value {
+    let app = report.get("app").and_then(Value::as_str).or(lead);
     let argv: Vec<String> = argv
         .and_then(Value::as_array)
         .into_iter()
@@ -8788,6 +8797,15 @@ mod tests {
         assert_eq!(key("enter", Some("\r")), None, "Enter answers the program's own menus");
         assert_eq!(key("escape", None), None);
         assert_eq!(key("up", None), None);
+    }
+
+    #[test]
+    fn the_lead_shows_as_its_program_before_its_first_report() {
+        let shell = json!(["powershell.exe", "-NoLogo"]);
+        let before = super::program_of(&serde_json::Value::Null, Some(&shell), Some("claude"));
+        assert_eq!(before["key"], "claude", "{before}");
+        let other = super::program_of(&serde_json::Value::Null, Some(&shell), None);
+        assert_ne!(other["key"], "claude", "a plain shell stays a shell: {other}");
     }
 
     #[test]

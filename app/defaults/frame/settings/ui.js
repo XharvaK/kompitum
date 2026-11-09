@@ -96,7 +96,7 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .cursor_pointer()
     .hover((s) => s.bg(t.hover))
     .when(Boolean(picked?.icon), (el) => el.child(itemIcon(picked, 15, t)))
-    .child(div().min_w(0).truncate().text_size(13).text_color(picked ? t.foreground : t.muted)
+    .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(picked ? t.foreground : t.muted)
       .when(Boolean(picked?.font), (el) => el.font_family(picked.font))
       .child(picked?.label ?? empty))
     .child(svg(CHEVRON).size(12).flex_none().text_color(t.dim));

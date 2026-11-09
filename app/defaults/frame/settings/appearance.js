@@ -91,7 +91,7 @@ function fontMenu(view, which) {
 function fontDropdown(view, t, cx, which, def) {
   const saved = view.person?.[which] ?? "";
   const names = fonts();
-  const items = [{ value: "", label: `Kompitum's default (${def})`, font: def }];
+  const items = [{ value: "", label: def, detail: "Kompitum's default", font: def }];
   if (saved && !names.includes(saved)) items.push({ value: saved, label: saved, font: saved });
   for (const name of names) items.push({ value: name, label: name, font: name });
   return dropdown(t, `st-f-${which}`, {
