@@ -97,7 +97,7 @@ export default class Dialog {
         cx.notify();
         cx.timer.after(1600, () => {
           this.close();
-          run("window.close", {});
+          run("app.quit", {});
         });
       });
     } else {

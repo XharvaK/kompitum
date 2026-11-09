@@ -697,11 +697,21 @@ impl AppWindow {
         }));
         let closing = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
-            // macOS: the red button hides the app instead, so alerts keep ringing;
-            // the Dock icon or a new launch brings it back, Cmd+Q quits.
-            if cfg!(target_os = "macos") {
-                cx.hide();
-                return false;
+            match crate::tray::close_action(crate::tray::system(), crate::tray::present()) {
+                // macOS: the red button hides the app instead, so alerts keep ringing;
+                // the Dock icon or a new launch brings it back, Cmd+Q quits.
+                crate::tray::CloseAction::HideApp => {
+                    cx.hide();
+                    return false;
+                }
+                // Windows with the tray: the window leaves the taskbar, the app
+                // and its mods keep running, and Alt+F4 lands here too.
+                crate::tray::CloseAction::HideToTray => {
+                    crate::place::save(window, cx);
+                    crate::tray::hide(window);
+                    return false;
+                }
+                crate::tray::CloseAction::Close => {}
             }
             let _ = closing.update(cx, |this, cx| {
                 this.drain_documents(window, cx);
@@ -5268,10 +5278,32 @@ impl AppWindow {
             Request::OpenOverlay { id, spec } => self.open_overlay(id, spec, window, cx),
             Request::CloseOverlay { id } => self.close_overlay(&id, window, cx),
             Request::Refresh => self.refresh_mods(cx),
+            Request::Show => self.show_from_tray(window, cx),
+            Request::Quit => self.quit_from_tray(window, cx),
             Request::Control { cmd, reply } => {
                 let _ = reply.send(self.control(cmd, window, cx));
             }
         }
+    }
+
+    /// The tray's click or "Open Kompitum": the window comes back where it was.
+    fn show_from_tray(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::tray::show(window);
+        cx.activate(true);
+        window.activate_window();
+    }
+
+    /// The tray's Exit: what the close button does, then the app goes.
+    fn quit_from_tray(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.drain_documents(window, cx);
+        self.close_mods_now(
+            std::time::Instant::now() + Duration::from_millis(250),
+            window,
+            cx,
+        );
+        crate::place::save(window, cx);
+        crate::tray::stop();
+        cx.quit();
     }
 
     fn control(&mut self, cmd: Value, window: &mut Window, cx: &mut Context<Self>) -> Value {
@@ -5288,10 +5320,10 @@ impl AppWindow {
         if cmd.get("commands").is_some() {
             return crate::commands::listing();
         }
-        // Kompitum was launched again: this window comes to the front instead.
+        // Kompitum was launched again: this window comes to the front instead,
+        // out of the tray if it was there.
         if cmd.get("raise").is_some() {
-            cx.activate(true);
-            window.activate_window();
+            self.show_from_tray(window, cx);
             return json!({ "ok": true });
         }
         if cmd.get("ls").is_some() {

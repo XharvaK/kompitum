@@ -518,6 +518,10 @@ pub enum Request {
         id: String,
     },
     Refresh,
+    /// The tray asked for the main window: show it where it was.
+    Show,
+    /// The tray's Exit: close the app the way the window's close button does.
+    Quit,
     /// From `kompitum-app do` / `kompitum-app status` (control.rs); answer on `reply`.
     Control {
         cmd: Value,

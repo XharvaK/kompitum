@@ -555,7 +555,7 @@ No arguments.
 
 ## `window.close`
 
-Close the window (on Linux, quits).
+Close the window (on Windows, into the tray while it is there; on Linux, quits).
 
 No arguments.
 

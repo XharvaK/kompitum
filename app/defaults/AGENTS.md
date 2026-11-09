@@ -22,6 +22,8 @@ from the same parts you have.
   start a terminal, read its screen, send it text, wait for an agent
   (`kom --help`). The Kompitum app is one client of it.
 
+On Windows the window's X hides Kompitum to the tray and the tray's Exit closes it; agents keep running either way.
+
 `kompitum-app` controls this app; `kom` controls kompitum-core.
 
 ## What you can and can't do

@@ -38,6 +38,7 @@ mod spawn;
 mod sprites;
 mod telemetry;
 mod terminal;
+mod tray;
 mod update;
 mod update_notes;
 mod vt;
@@ -187,6 +188,8 @@ fn main() {
             mods::init(cx);
             // Not restarted for it: the update goes in when the app quits.
             cx.on_app_quit(|cx| {
+                // No dead icon stays behind, whichever way the app quits.
+                tray::stop();
                 let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
                 // Where the window was, for the next start (a quit never asks the window).
                 for w in cx.windows() {
@@ -239,6 +242,7 @@ pub fn open_main(
     requests: async_channel::Receiver<mods::Request>,
     cx: &mut App,
 ) {
+    tray::start();
     let (window_bounds, display_id) = place::initial(cx);
     let options = WindowOptions {
         window_bounds: Some(window_bounds),

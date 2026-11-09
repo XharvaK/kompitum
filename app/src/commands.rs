@@ -335,7 +335,7 @@ pub const COMMANDS: &[Command] = &[
     cmd("app.hide", &[], "Hide the app (macOS)."),
     cmd("app.hide_others", &[], "Hide other apps (macOS)."),
     cmd("app.show_all", &[], "Show all apps (macOS)."),
-    cmd("window.close", &[], "Close the window (on Linux, quits)."),
+    cmd("window.close", &[], "Close the window (on Windows, into the tray while it is there; on Linux, quits)."),
     cmd("window.minimize", &[], "Minimize the window."),
     cmd("window.maximize", &[], "Maximize the window, or back."),
 ];

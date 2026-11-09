@@ -197,6 +197,14 @@ impl AppWindow {
 
     pub(super) fn window_command(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
         match name {
+            // The drawn X: on Windows with the tray it hides there, as the system's close does.
+            "window.close"
+                if crate::tray::close_action(crate::tray::system(), crate::tray::present())
+                    == crate::tray::CloseAction::HideToTray =>
+            {
+                crate::place::save(window, cx);
+                crate::tray::hide(window);
+            }
             "window.close" => {
                 self.drain_documents(window, cx);
                 self.close_mods_now(std::time::Instant::now() + Duration::from_millis(250), window, cx);
