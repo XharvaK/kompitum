@@ -4,7 +4,7 @@
 // The app's own mod: rewritten from the binary on every start.
 
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, Textarea, TextareaState } from "gpui-base";
+import { v_flex, h_flex, Textarea, TextareaState, TextView } from "gpui-base";
 import { kom, readTextFile, home, props, closeOverlay, theme } from "kompitum";
 
 const OUTSIDE = "The vault is outside your home folder, so the mailbox can't read its notes.";
@@ -76,9 +76,16 @@ function stamp(value) {
   return `${day(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-// Text runs in a div do not break on newlines; one child per line does.
-function lines(value) {
-  return String(value ?? "").replace(/\r\n/g, "\n").split("\n").map((line) => div().w_full().child(line || " "));
+// A note is Markdown under a front matter block. The body starts after the
+// closing `---` and the blank line that follows it, as the vault reads it.
+function bodyOf(raw) {
+  const normal = String(raw ?? "").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n");
+  if (!normal.startsWith("---\n")) return normal;
+  const end = normal.indexOf("\n---", 3);
+  if (end < 0) return normal;
+  const after = normal.slice(end + 4);
+  if (after && !after.startsWith("\n")) return normal;
+  return after.replace(/^\n\n?/, "");
 }
 
 // The vault addresses a note to `all` to the Owner too.
@@ -87,6 +94,13 @@ const forOwner = (note) => ["owner", "all"].includes(text(note?.to));
 function readByOwner(note) {
   const reads = Array.isArray(note?.read_by) ? note.read_by : [];
   return reads.some((r) => r && r.agent === "owner");
+}
+
+// A note with no recipient has only its sender; never a dangling arrow.
+function route(note) {
+  const from = text(note?.from);
+  const to = text(note?.to);
+  return to ? `${from} → ${to}` : from;
 }
 
 export default class Mailbox extends View {
@@ -350,70 +364,140 @@ export default class Mailbox extends View {
     });
   }
 
-  button(t, id, label, onClick) {
+  // Quiet footer actions, and the one filled action for the note.
+  textButton(t, id, label, onClick) {
+    return div()
+      .id(id)
+      .px(10)
+      .py(5)
+      .rounded(7)
+      .cursor_pointer()
+      .text_size(12.5)
+      .text_color(t.muted)
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .on_click(onClick)
+      .child(label);
+  }
+
+  primaryButton(t, id, label, onClick) {
     return div()
       .id(id)
       .px(12)
       .py(5)
       .rounded(7)
-      .border_1()
-      .border_color(t.border)
-      .bg(t.raised)
       .cursor_pointer()
+      .bg(t.accent_fill)
+      .text_color(t.accent_foreground)
       .text_size(12.5)
-      .text_color(t.foreground)
-      .hover((s) => s.bg(t.hover))
+      .font_medium()
+      .hover((s) => s.opacity(0.9))
       .on_click(onClick)
       .child(label);
   }
 
-  tabButton(t, id, label) {
-    const on = this.tab === id;
+  tabs(t) {
+    const items = [["needs", "Needs you"]];
+    if (this.all !== null) items.push(["all", "All notes"]);
     return h_flex()
-      .id(`mail-tab-${id}`)
-      .flex_1()
-      .h(28)
-      .items_center()
-      .justify_center()
-      .rounded(6)
-      .cursor_pointer()
-      .text_size(12)
-      .font_medium()
-      .when(on, (el) => el.bg(t.raised).text_color(t.foreground))
-      .when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover)))
-      .on_click((_e, cx) => {
-        this.tab = id;
-        this.answering = false;
-        if (!this.rows().some((n) => text(n.path) === text(this.selected?.path))) this.selected = null;
-        this.handle.focus();
-        cx.notify();
-      })
-      .child(label);
+      .id("mail-tabs")
+      .self_start()
+      .p(2)
+      .gap(2)
+      .rounded(8)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.background)
+      .children(
+        items.map(([id, label]) => {
+          const on = this.tab === id;
+          return div()
+            .id(`mail-tab-${id}`)
+            .px(12)
+            .py(4)
+            .rounded(6)
+            .cursor_pointer()
+            .text_size(13)
+            .when(on, (el) => el.bg(t.raised).text_color(t.foreground).font_medium())
+            .when(!on, (el) => el.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
+            .on_click((_e, cx) => {
+              this.tab = id;
+              this.answering = false;
+              if (!this.rows().some((n) => text(n.path) === text(this.selected?.path))) this.selected = null;
+              this.handle.focus();
+              cx.notify();
+            })
+            .child(label);
+        }),
+      );
   }
 
   row(t, note, index) {
     const selected = text(note.path) === text(this.selected?.path);
-    const unread = forOwner(note) && !readByOwner(note);
+    const waits = forOwner(note) && !readByOwner(note);
     return v_flex()
       .id(`mail-row-${index}`)
       .w_full()
       .flex_none()
-      .p(9)
-      .gap(3)
-      .rounded(7)
+      .px(10)
+      .py(12)
+      .gap(4)
+      .rounded(8)
       .cursor_pointer()
-      .when(selected, (el) => el.bg(t.raised))
+      .when(selected, (el) => el.bg(t.selected))
       .when(!selected, (el) => el.hover((s) => s.bg(t.hover)))
       .on_click((_e, cx) => this.select(note, cx))
       .child(
         h_flex()
+          .w_full()
           .gap(6)
           .items_center()
-          .when(unread, (el) => el.child(div().w(6).h(6).flex_none().rounded(3).bg(t.accent)))
-          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(`${text(note.from)} → ${text(note.to)}`))
-          .child(div().flex_none().text_size(10.5).text_color(t.dim).child(ago(note.date))),
+          .child(div().flex_1().min_w(0).truncate().text_size(11.5).text_color(t.dim).child(route(note)))
+          .child(div().flex_none().text_size(11.5).text_color(t.dim).child(ago(note.date))),
       )
-      .child(div().w_full().truncate().text_size(12.5).text_color(t.foreground).child(text(note.title) || base(note.path) || "Note"));
+      .child(
+        h_flex()
+          .w_full()
+          .gap(6)
+          .items_center()
+          .when(waits, (el) => el.child(div().w(6).h(6).flex_none().rounded(3).bg(t.accent)))
+          .child(div().flex_1().min_w(0).truncate().text_size(13.5).text_color(t.foreground).child(text(note.title) || base(note.path) || "Note")),
+      );
+  }
+
+  bodyPane(t) {
+    const markdown = bodyOf(this.body);
+    const empty = !markdown.trim();
+    return div()
+      .id("mail-body")
+      .flex_1()
+      .min_h(0)
+      .px(24)
+      .py(20)
+      .overflow_y_scrollbar()
+      .when(Boolean(this.bodyError), (el) =>
+        el.child(
+          div()
+            .max_w(680)
+            .text_size(13)
+            .line_height("20px")
+            .text_color(this.bodyError === OUTSIDE ? t.muted : t.blocked)
+            .child(this.bodyError),
+        ),
+      )
+      .when(!this.bodyError && this.body === null, (el) =>
+        el.child(div().text_size(13).text_color(t.muted).child("Reading the note…")),
+      )
+      .when(!this.bodyError && this.body !== null, (el) =>
+        el.child(
+          v_flex()
+            .w_full()
+            .max_w(680)
+            .when(empty, (col) => col.child(div().text_size(14).text_color(t.dim).child("This note has no text.")))
+            .when(!empty, (col) =>
+              col.child(TextView.markdown("mail-body-text", markdown).text_size(14).text_color(t.foreground).selectable(true)),
+            ),
+        ),
+      );
   }
 
   notePane(t, cx) {
@@ -425,11 +509,11 @@ export default class Mailbox extends View {
         .min_h(0)
         .items_center()
         .justify_center()
-        .child(div().text_size(12.5).text_color(t.muted).child(this.loaded ? "Select a note." : "Loading notes…"));
+        .child(div().text_size(13).text_color(t.dim).child(this.loaded ? "Pick a note to read it." : "Loading notes…"));
     }
     const owner = forOwner(note);
     const kind = text(note.kind) || "note";
-    const file = [String(this.vault).replace(/[\\/]+$/, ""), text(note.path)].filter(Boolean).join("/");
+    const meta = [route(note), kind, stamp(note.date)].filter(Boolean).join(" · ");
     return v_flex()
       .flex_1()
       .min_w(0)
@@ -437,50 +521,53 @@ export default class Mailbox extends View {
       .child(
         v_flex()
           .flex_none()
-          .p(16)
+          .px(24)
+          .pt(20)
+          .pb(14)
           .gap(5)
           .border_b(1)
           .border_color(t.border)
-          .child(
-            h_flex()
-              .gap(8)
-              .items_center()
-              .child(div().flex_1().min_w(0).truncate().text_size(16).font_semibold().text_color(t.foreground).child(text(note.title) || base(note.path) || "Note"))
-              .when(owner, (el) => el.child(this.button(t, "mail-answer", "Answer", (_e, cx) => this.answerNote(cx))))
-              .when(owner, (el) => el.child(this.button(t, "mail-close", "Close", (_e, cx) => this.closeNote(cx)))),
-          )
-          .child(div().text_size(11.5).text_color(t.muted).child(`${text(note.from)} → ${text(note.to)} · ${kind} · ${stamp(note.date)}`))
-          .when(Boolean(file), (el) => el.child(div().text_size(10.5).text_color(t.dim).truncate().child(file)))
-          .when(Boolean(this.actionError), (el) => el.child(div().id("mail-error").text_size(11.5).text_color(t.blocked).child(this.actionError))),
+          .child(div().w_full().max_w(680).truncate().text_size(18).font_semibold().text_color(t.foreground).child(text(note.title) || base(note.path) || "Note"))
+          .child(div().w_full().max_w(680).truncate().text_size(12).text_color(t.dim).child(meta)),
       )
-      .child(
-        div()
-          .id("mail-body")
-          .flex_1()
-          .min_h(0)
-          .p(16)
-          .overflow_y_scrollbar()
-          .when(Boolean(this.bodyError), (el) => el.child(div().text_size(12.5).line_height("19px").text_color(this.bodyError === OUTSIDE ? t.muted : t.blocked).child(this.bodyError)))
-          .when(!this.bodyError && this.body === null, (el) => el.child(div().text_size(12.5).text_color(t.muted).child("Reading the note…")))
-          .when(!this.bodyError && this.body !== null, (el) =>
-            el.child(v_flex().w_full().text_size(13).line_height("20px").text_color(t.foreground).children(lines(this.body))),
-          ),
-      )
-      .when(this.answering, (el) =>
+      .child(this.bodyPane(t))
+      .when(owner || this.answering || Boolean(this.actionError), (el) =>
         el.child(
           v_flex()
             .flex_none()
-            .gap(8)
-            .p(12)
             .border_t(1)
             .border_color(t.border)
-            .child(div().text_size(11.5).text_color(t.muted).child(`Answer ${text(note.from) || "the sender"}`))
-            .child(Textarea.new(this.answerState).h(96).w_full().px(10).py(8).rounded(7).border_1().border_color(t.input).bg(t.background).text_size(13).text_color(t.foreground))
+            .when(this.answering, (panel) =>
+              panel.child(
+                v_flex()
+                  .gap(8)
+                  .px(16)
+                  .pt(12)
+                  .child(div().text_size(12).text_color(t.muted).child(`Answer ${text(note.from) || "the sender"}`))
+                  .child(Textarea.new(this.answerState).h(96).w_full().px(10).py(8).rounded(7).border_1().border_color(t.input).bg(t.background).text_size(13).text_color(t.foreground)),
+              ),
+            )
             .child(
               h_flex()
+                .flex_none()
+                .px(16)
+                .py(10)
                 .gap(8)
-                .child(this.button(t, "mail-send", this.busy ? "Sending…" : "Send", (_e, cx) => this.send(cx)))
-                .child(this.button(t, "mail-cancel", "Cancel", (_e, cx) => { this.answering = false; this.handle.focus(); cx.notify(); })),
+                .items_center()
+                .when(Boolean(this.actionError), (bar) =>
+                  bar.child(div().id("mail-error").flex_1().min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.actionError).child(this.actionError)),
+                )
+                .child(div().flex_1())
+                .when(!this.answering && owner, (bar) =>
+                  bar
+                    .child(this.textButton(t, "mail-close", "Close", (_e, cx) => this.closeNote(cx)))
+                    .child(this.primaryButton(t, "mail-answer", "Answer", (_e, cx) => this.answerNote(cx))),
+                )
+                .when(this.answering, (bar) =>
+                  bar
+                    .child(this.textButton(t, "mail-cancel", "Cancel", (_e, cx) => { this.answering = false; this.handle.focus(); cx.notify(); }))
+                    .child(this.primaryButton(t, "mail-send", this.busy ? "Sending…" : "Send", (_e, cx) => this.send(cx))),
+                ),
             ),
         ),
       );
@@ -507,7 +594,7 @@ export default class Mailbox extends View {
       })
       .child(
         v_flex()
-          .w(260)
+          .w(300)
           .flex_none()
           .h_full()
           .min_h(0)
@@ -515,15 +602,12 @@ export default class Mailbox extends View {
           .border_color(t.border)
           .child(
             h_flex()
-              .h(42)
               .flex_none()
-              .px(8)
-              .gap(4)
-              .items_center()
+              .px(10)
+              .py(8)
               .border_b(1)
               .border_color(t.border)
-              .child(this.tabButton(t, "needs", "Needs you"))
-              .when(this.all !== null, (el) => el.child(this.tabButton(t, "all", "All notes"))),
+              .child(this.tabs(t)),
           )
           .when(this.problems.length > 0, (el) =>
             el.child(
@@ -543,12 +627,12 @@ export default class Mailbox extends View {
               .id("mail-rows")
               .flex_1()
               .min_h(0)
-              .p(6)
+              .p(8)
               .gap(2)
               .overflow_y_scrollbar()
               .when(this.loading && !this.loaded, (el) => el.child(div().p(8).text_size(11.5).text_color(t.muted).child("Loading notes…")))
               .children(rows.map((note, i) => this.row(t, note, i)))
-              .when(this.loaded && rows.length === 0, (el) => el.child(div().p(8).text_size(11.5).text_color(t.muted).child(this.tab === "needs" ? "Nothing needs you." : "No notes yet."))),
+              .when(this.loaded && rows.length === 0, (el) => el.child(div().p(8).text_size(12.5).text_color(t.dim).child("Nothing here yet."))),
           ),
       )
       .child(this.notePane(t, cx));
