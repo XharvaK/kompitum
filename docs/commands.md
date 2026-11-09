@@ -884,20 +884,23 @@ Options:
 ## kom vault
 
 ```text
-Notes between agents in the shared vault: read, post, mark, find
+Messages between agents, and my own memory, in the shared vault: read, post, mark, find, remember
 
 Usage: kom vault [OPTIONS] <COMMAND>
 
 Commands:
-  open     The messages open for me, newest first
-  read     Read one note by its vault path; this also leaves a read mark
-  find     Search the vault: every word must be in the note; the filters narrow it
-  post     Write a message into my own folder, then commit and push it
-  mark     Set the status of one of my own notes: open, answered or superseded
-  done     Close a note for me with no reply, leaving a done mark
-  thread   Every message between me and another agent, both ways, oldest first
-  changes  The messages added since the last commit this reader saw
-  help     Print this message or the help of the given subcommand(s)
+  open      The messages open for me, newest first
+  read      Read one note by its vault path; this also leaves a read mark
+  find      Search the vault: every word must be in the note; the filters narrow it
+  post      Write a message into my own folder, then commit and push it
+  mark      Set the status of one of my own notes: open, answered or superseded
+  done      Close a note for me with no reply, leaving a done mark
+  thread    Every message between me and another agent, both ways, oldest first
+  changes   The messages added since the last commit this reader saw
+  remember  Write one memory note into my own memory folder, then commit and push it
+  forget    Mark one of my memory notes superseded, with why, then commit and push it
+  memory    What I wake with: standing memories in full, then one line per other memory
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
       --json  JSON output even in a terminal
@@ -955,6 +958,23 @@ Options:
   -h, --help         Print help
 ```
 
+## kom vault forget
+
+```text
+Mark one of my memory notes superseded, with why, then commit and push it
+
+Usage: kom vault forget [OPTIONS] --why <TEXT> <PATH>
+
+Arguments:
+  <PATH>  One of my own memory notes
+
+Options:
+      --json        JSON output even in a terminal
+      --why <TEXT>  Why it no longer holds; kept in the note
+      --as <AGENT>  Act as this agent, overriding KOMPITUM_AGENT
+  -h, --help        Print help
+```
+
 ## kom vault mark
 
 ```text
@@ -970,6 +990,22 @@ Options:
       --as <AGENT>  Act as this agent, overriding KOMPITUM_AGENT
       --json        JSON output even in a terminal
   -h, --help        Print help
+```
+
+## kom vault memory
+
+```text
+What I wake with: standing memories in full, then one line per other memory
+
+Usage: kom vault memory [OPTIONS]
+
+Options:
+      --json         JSON output even in a terminal
+      --project <P>  The standing memories, General, and this project only
+      --due          The memories due for review instead of the packet, oldest first
+      --hook         Print Claude Code's session-start hook JSON and always exit 0
+      --as <AGENT>   Act as this agent, overriding KOMPITUM_AGENT
+  -h, --help         Print help
 ```
 
 ## kom vault open
@@ -1019,6 +1055,27 @@ Options:
       --as <AGENT>  Act as this agent, overriding KOMPITUM_AGENT
       --json        JSON output even in a terminal
   -h, --help        Print help
+```
+
+## kom vault remember
+
+```text
+Write one memory note into my own memory folder, then commit and push it
+
+Usage: kom vault remember [OPTIONS] --title <LINE>
+
+Options:
+      --json                 JSON output even in a terminal
+      --title <LINE>         One line naming the memory; at most 120 characters
+      --body <TEXT>          The memory itself, in Markdown; at most 4000 characters
+      --body-file <FILE>     The body's file, or - for standard input
+      --project <P>          The project the memory belongs to
+      --standing             A rule that holds in every session; the packet shows it in full
+      --review-after <DATE>  When this memory goes stale (YYYY-MM-DD)
+      --replace <PATH>       Rewrite one of my own memory notes in place
+      --new                  Write even when a close title already exists
+      --as <AGENT>           Act as this agent, overriding KOMPITUM_AGENT
+  -h, --help                 Print help
 ```
 
 ## kom vault thread

@@ -473,15 +473,128 @@ fn as_overrides_the_reader_and_the_writer() {
 }
 
 #[test]
-fn a_worker_may_look_but_not_write() {
+fn a_memory_round_trips_and_the_packet_loads_it() {
     let f = Fixture::new();
-    let mut cmd = f.cmd("opus");
-    cmd.env("KOMPITUM_WORKER", "1");
-    let out = cmd
-        .args(["vault", "post", "--to", "manager", "--kind", "report", "--title", "T", "--body", "B"])
+    let written = f.json(
+        "opus",
+        &[
+            "vault",
+            "remember",
+            "--title",
+            "Vault memory lives in git",
+            "--body",
+            "One fact.",
+            "--project",
+            "myapp",
+            "--standing",
+        ],
+    );
+    let path = written["path"].as_str().unwrap().to_string();
+    assert!(path.starts_with("opus/memory/") && path.ends_with("vault-memory-lives-in-git.md"), "{path}");
+    assert_eq!(written["pushed"], true, "{written}");
+    let text = std::fs::read_to_string(f.opus.join(&path)).unwrap();
+    assert!(text.contains("kind: memory"), "{text}");
+    assert!(text.contains("standing: true"), "{text}");
+
+    let packet = f.out("opus", &["vault", "memory"]);
+    assert!(packet.status.success(), "{}", String::from_utf8_lossy(&packet.stderr));
+    let packet = String::from_utf8(packet.stdout).unwrap();
+    assert!(packet.contains("## Standing"), "{packet}");
+    assert!(packet.contains("Vault memory lives in git"), "{packet}");
+
+    let other = f.out("manager", &["vault", "memory"]);
+    assert!(other.status.success(), "{}", String::from_utf8_lossy(&other.stderr));
+    let other = String::from_utf8(other.stdout).unwrap();
+    assert!(!other.contains("Vault memory lives in git"), "{other}");
+    let found = f.json("manager", &["vault", "find", "--kind", "memory", "Vault"]);
+    assert_eq!(found["notes"][0]["path"], path);
+
+    let hook = f.out("opus", &["vault", "memory", "--hook"]);
+    assert!(hook.status.success());
+    let hook: Value = serde_json::from_slice(&hook.stdout).unwrap();
+    assert_eq!(hook["hookSpecificOutput"]["hookEventName"], "SessionStart");
+    let context = hook["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    assert!(context.contains("Vault memory lives in git"), "{context}");
+
+    let marked = f.failed("opus", &["vault", "mark", &path, "answered"], None);
+    assert!(marked["error"]["message"].as_str().unwrap().contains("is a memory"), "{marked}");
+
+    let forgot = f.json("opus", &["vault", "forget", &path, "--why", "Moved to another note."]);
+    assert_eq!(forgot["pushed"], true, "{forgot}");
+    let packet = f.out("opus", &["vault", "memory"]);
+    assert!(packet.status.success(), "{}", String::from_utf8_lossy(&packet.stderr));
+    let packet = String::from_utf8(packet.stdout).unwrap();
+    assert!(!packet.contains("Vault memory lives in git"), "{packet}");
+    let text = std::fs::read_to_string(f.opus.join(&path)).unwrap();
+    assert!(text.contains("status: superseded"), "{text}");
+    assert!(text.contains("why: Moved to another note."), "{text}");
+}
+
+#[test]
+fn a_close_memory_is_refused_until_new_or_replace() {
+    let f = Fixture::new();
+    let first = f.json("opus", &["vault", "remember", "--title", "Vault memory lives in git", "--body", "One fact."]);
+    let path = first["path"].as_str().unwrap().to_string();
+    let error = f.failed(
+        "opus",
+        &["vault", "remember", "--title", "Memory lives in the vault", "--body", "A near copy."],
+        None,
+    );
+    let message = error["error"]["message"].as_str().unwrap();
+    assert!(message.contains(&path), "{message}");
+    assert!(message.contains("Rewrite one with --replace <path>, or pass --new to keep both."), "{message}");
+    let kept = f.json(
+        "opus",
+        &["vault", "remember", "--title", "Memory lives in the vault", "--body", "A near copy, kept.", "--new"],
+    );
+    assert!(kept["path"].as_str().unwrap().starts_with("opus/memory/"), "{kept}");
+    let replaced = f.json(
+        "opus",
+        &[
+            "vault",
+            "remember",
+            "--title",
+            "Vault memory lives in git",
+            "--body",
+            "One fact, rewritten.",
+            "--replace",
+            &path,
+        ],
+    );
+    assert_eq!(replaced["path"], path.as_str(), "{replaced}");
+    let text = std::fs::read_to_string(f.opus.join(&path)).unwrap();
+    assert!(text.contains("One fact, rewritten."), "{text}");
+}
+
+#[test]
+fn the_memory_hook_says_a_failure_and_still_exits_zero() {
+    let f = Fixture::new();
+    let out = f
+        .cmd("opus")
+        .env("KOMPITUM_VAULT", f.root.join("not-a-vault"))
+        .args(["vault", "memory", "--hook"])
         .output()
         .unwrap();
-    assert!(!out.status.success());
-    let error: Value = serde_json::from_slice(&out.stderr).unwrap();
-    assert_eq!(error["error"]["kind"], "worker_refused");
+    assert!(out.status.success(), "a hook always exits 0");
+    let hook: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(hook["hookSpecificOutput"]["hookEventName"], "SessionStart");
+    let context = hook["hookSpecificOutput"]["additionalContext"].as_str().unwrap();
+    assert!(context.starts_with("Kompitum couldn't load your memory: "), "{context}");
+}
+
+#[test]
+fn a_worker_may_look_but_not_write() {
+    let f = Fixture::new();
+    for args in [
+        vec!["vault", "post", "--to", "manager", "--kind", "report", "--title", "T", "--body", "B"],
+        vec!["vault", "remember", "--title", "T", "--body", "B"],
+        vec!["vault", "forget", "opus/memory/x.md", "--why", "No."],
+    ] {
+        let mut cmd = f.cmd("opus");
+        cmd.env("KOMPITUM_WORKER", "1");
+        let out = cmd.args(&args).output().unwrap();
+        assert!(!out.status.success(), "{args:?}");
+        let error: Value = serde_json::from_slice(&out.stderr).unwrap();
+        assert_eq!(error["error"]["kind"], "worker_refused", "{args:?}");
+    }
 }

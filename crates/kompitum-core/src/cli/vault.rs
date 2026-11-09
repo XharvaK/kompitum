@@ -2,7 +2,7 @@
 //! The vault runs here, in this process, as the Python Kompitum does.
 
 use super::*;
-use crate::vault::{Message, Report, Vault};
+use crate::vault::{MemoryDraft, Message, Report, Vault};
 
 #[derive(Subcommand)]
 pub(crate) enum VaultCmd {
@@ -22,6 +22,12 @@ pub(crate) enum VaultCmd {
     Thread(ThreadArgs),
     /// The messages added since the last commit this reader saw.
     Changes(AsArgs),
+    /// Write one memory note into my own memory folder, then commit and push it.
+    Remember(RememberArgs),
+    /// Mark one of my memory notes superseded, with why, then commit and push it.
+    Forget(ForgetArgs),
+    /// What I wake with: standing memories in full, then one line per other memory.
+    Memory(MemoryArgs),
 }
 
 #[derive(clap::Args)]
@@ -121,13 +127,74 @@ pub(crate) struct ThreadArgs {
     pub as_agent: AsArgs,
 }
 
+#[derive(clap::Args)]
+pub(crate) struct RememberArgs {
+    /// One line naming the memory; at most 120 characters.
+    #[arg(long, value_name = "LINE")]
+    pub title: String,
+    /// The memory itself, in Markdown; at most 4000 characters.
+    #[arg(long, value_name = "TEXT", conflicts_with = "body_file", required_unless_present = "body_file")]
+    pub body: Option<String>,
+    /// The body's file, or - for standard input.
+    #[arg(long = "body-file", value_name = "FILE", conflicts_with = "body")]
+    pub body_file: Option<String>,
+    /// The project the memory belongs to.
+    #[arg(long, value_name = "P")]
+    pub project: Option<String>,
+    /// A rule that holds in every session; the packet shows it in full.
+    #[arg(long)]
+    pub standing: bool,
+    /// When this memory goes stale (YYYY-MM-DD).
+    #[arg(long = "review-after", value_name = "DATE")]
+    pub review_after: Option<String>,
+    /// Rewrite one of my own memory notes in place.
+    #[arg(long, value_name = "PATH")]
+    pub replace: Option<String>,
+    /// Write even when a close title already exists.
+    #[arg(long)]
+    pub new: bool,
+    #[command(flatten)]
+    pub as_agent: AsArgs,
+}
+
+#[derive(clap::Args)]
+pub(crate) struct ForgetArgs {
+    /// One of my own memory notes.
+    pub path: String,
+    /// Why it no longer holds; kept in the note.
+    #[arg(long, value_name = "TEXT")]
+    pub why: String,
+    #[command(flatten)]
+    pub as_agent: AsArgs,
+}
+
+#[derive(clap::Args)]
+pub(crate) struct MemoryArgs {
+    /// The standing memories, General, and this project only.
+    #[arg(long, value_name = "P")]
+    pub project: Option<String>,
+    /// The memories due for review instead of the packet, oldest first.
+    #[arg(long)]
+    pub due: bool,
+    /// Print Claude Code's session-start hook JSON and always exit 0.
+    #[arg(long)]
+    pub hook: bool,
+    #[command(flatten)]
+    pub as_agent: AsArgs,
+}
+
 /// The `kom vault` verbs a worker may run: only those that look.
 pub(crate) fn vault_as_a_worker(action: &VaultCmd) -> Result<(), RpcError> {
     match action {
-        VaultCmd::Open(_) | VaultCmd::Read(_) | VaultCmd::Find(_) | VaultCmd::Thread(_) | VaultCmd::Changes(_) => {
-            Ok(())
+        VaultCmd::Open(_)
+        | VaultCmd::Read(_)
+        | VaultCmd::Find(_)
+        | VaultCmd::Thread(_)
+        | VaultCmd::Changes(_)
+        | VaultCmd::Memory(_) => Ok(()),
+        VaultCmd::Post(_) | VaultCmd::Mark(_) | VaultCmd::Done(_) | VaultCmd::Remember(_) | VaultCmd::Forget(_) => {
+            Err(worker_refused())
         }
-        VaultCmd::Post(_) | VaultCmd::Mark(_) | VaultCmd::Done(_) => Err(worker_refused()),
     }
 }
 
@@ -191,6 +258,36 @@ pub(crate) fn vault_cmd(action: VaultCmd, asked: bool) -> Result<Option<Out>, Rp
         VaultCmd::Changes(a) => {
             let report = vault(&a.name)?.changes()?;
             Out { json: report.json(), human: changes_human(&report) }
+        }
+        VaultCmd::Remember(a) => {
+            let body = match (&a.body, &a.body_file) {
+                (Some(body), _) => body.clone(),
+                (_, Some(file)) => read_body(file)?,
+                (None, None) => String::new(),
+            };
+            let written = vault(&a.as_agent.name)?.remember(MemoryDraft {
+                title: a.title,
+                body,
+                project: a.project,
+                standing: a.standing,
+                review_after: a.review_after,
+                replace: a.replace,
+                new: a.new,
+            })?;
+            Out { json: written.json(), human: written.said }
+        }
+        VaultCmd::Forget(a) => {
+            let written = vault(&a.as_agent.name)?.forget(&a.path, &a.why)?;
+            Out { json: written.json(), human: written.said }
+        }
+        VaultCmd::Memory(a) => {
+            let report = vault(&a.as_agent.name).and_then(|v| v.memory(a.project.as_deref(), a.due));
+            if a.hook {
+                hook_out(report)
+            } else {
+                let report = report?;
+                Out { json: report.json(), human: report.text }
+            }
         }
     }))
 }
@@ -283,4 +380,94 @@ fn changes_human(report: &Report) -> String {
     lines.extend(report.notes.iter().map(Message::line));
     lines.retain(|line| !line.is_empty());
     lines.join("\n")
+}
+
+/// The session-start hook's answer. It never fails: a broken vault becomes the
+/// words in `additionalContext`, so Claude still starts.
+fn hook_out(packet: Result<crate::vault::MemoryReport, RpcError>) -> Out {
+    let text = match packet {
+        Ok(report) => report.text,
+        Err(error) => format!("Kompitum couldn't load your memory: {}", error.message),
+    };
+    let json = json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": text}});
+    Out { json, human: hook_json(&text) }
+}
+
+fn hook_json(text: &str) -> String {
+    let text = serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into());
+    format!("{{\"hookSpecificOutput\": {{\"hookEventName\": \"SessionStart\", \"additionalContext\": {text}}}}}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn as_args() -> AsArgs {
+        AsArgs { name: None }
+    }
+
+    fn remember() -> VaultCmd {
+        VaultCmd::Remember(RememberArgs {
+            title: "A title".into(),
+            body: Some("A body.".into()),
+            body_file: None,
+            project: None,
+            standing: false,
+            review_after: None,
+            replace: None,
+            new: false,
+            as_agent: as_args(),
+        })
+    }
+
+    fn forget() -> VaultCmd {
+        VaultCmd::Forget(ForgetArgs {
+            path: "opus/memory/a.md".into(),
+            why: "No longer true.".into(),
+            as_agent: as_args(),
+        })
+    }
+
+    fn memory() -> VaultCmd {
+        VaultCmd::Memory(MemoryArgs { project: None, due: false, hook: false, as_agent: as_args() })
+    }
+
+    #[test]
+    fn a_worker_may_read_memory_but_not_remember_or_forget() {
+        assert!(vault_as_a_worker(&memory()).is_ok());
+        assert_eq!(vault_as_a_worker(&remember()).unwrap_err().kind, "worker_refused");
+        assert_eq!(vault_as_a_worker(&forget()).unwrap_err().kind, "worker_refused");
+    }
+
+    #[test]
+    fn the_hook_wraps_the_packet_and_a_failure_in_plain_words() {
+        let out = hook_out(Ok(crate::vault::MemoryReport {
+            agent: "opus".into(),
+            text: "# Your memory (opus, 0 notes)".into(),
+            problems: Vec::new(),
+        }));
+        assert_eq!(
+            out.human,
+            "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \
+             \"additionalContext\": \"# Your memory (opus, 0 notes)\"}}"
+        );
+        let parsed: Value = serde_json::from_str(&out.human).unwrap();
+        assert_eq!(parsed["hookSpecificOutput"]["hookEventName"], "SessionStart");
+        assert_eq!(parsed["hookSpecificOutput"]["additionalContext"], "# Your memory (opus, 0 notes)");
+
+        let failed = hook_out(Err(RpcError::new("config", "No Git vault at C:/nowhere.", "")));
+        assert!(
+            failed.human.starts_with(
+                "{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \
+             \"Kompitum couldn't load your memory: No Git vault at C:/nowhere.\"}}"
+            ),
+            "{}",
+            failed.human
+        );
+        let parsed: Value = serde_json::from_str(&failed.human).unwrap();
+        assert_eq!(
+            parsed["hookSpecificOutput"]["additionalContext"],
+            "Kompitum couldn't load your memory: No Git vault at C:/nowhere."
+        );
+    }
 }

@@ -95,7 +95,7 @@ enum Cmd {
     Workers(WorkersArgs),
     /// Worker runs: one row per accepted or discarded task, with what it cost.
     Ledger(LedgerArgs),
-    /// Notes between agents in the shared vault: read, post, mark, find.
+    /// Messages between agents, and my own memory, in the shared vault: read, post, mark, find, remember.
     Vault {
         #[command(subcommand)]
         action: VaultCmd,

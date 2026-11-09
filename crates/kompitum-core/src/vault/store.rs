@@ -217,6 +217,13 @@ impl Vault {
                 "",
             ));
         }
+        if path.starts_with(&format!("{}/memory/", self.agent)) {
+            return Err(RpcError::new(
+                "refused",
+                format!("{path} is a memory: change it with `kom vault remember --replace` or `kom vault forget`."),
+                "",
+            ));
+        }
         if !STATUSES.contains(&status) {
             return Err(RpcError::new("usage", format!("status is one of: {}.", STATUSES.join(", ")), ""));
         }
@@ -432,7 +439,7 @@ fn sync_read(root: &Path) -> (usize, Vec<String>) {
     (unpushed, problems)
 }
 
-fn written(root: &Path, path: String, result: git::GitResult, verb: &str) -> Written {
+pub(super) fn written(root: &Path, path: String, result: git::GitResult, verb: &str) -> Written {
     let (unpushed, push_problem) = git::unpushed(root);
     let mut said = if result.ok {
         format!("{verb} {path}. {}", result.output)

@@ -29,6 +29,13 @@ pub(super) fn write_message(vault: &Vault, post: &Post, now: &Moment) -> Result<
         ));
     }
     if !KINDS.contains(&post.kind.as_str()) {
+        if post.kind == notes::MEMORY {
+            return Err(RpcError::new(
+                "usage",
+                "A memory is written only by kom vault remember; post carries messages, not memories.",
+                "",
+            ));
+        }
         return Err(RpcError::new("usage", format!("kind is one of: {}.", KINDS.join(", ")), ""));
     }
     let title = post.title.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -118,7 +125,7 @@ pub(super) fn mark_note(root: &Path, path: &str, status: &str) -> Result<(), Rpc
         .map_err(|e| unavailable(format!("cannot write {}: {e}", full.display())))
 }
 
-fn valid_name(name: &str) -> bool {
+pub(super) fn valid_name(name: &str) -> bool {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r"^[a-z0-9][a-z0-9-]{0,39}$").expect("an agent name"));
     re.is_match(name)
@@ -193,6 +200,19 @@ mod tests {
         )
         .unwrap_err();
         assert!(refused.message.contains("not an agent name"), "{}", refused.message);
+        let refused = write_message(
+            &v,
+            &Post {
+                to: "manager".into(),
+                kind: "memory".into(),
+                title: "t".into(),
+                body: "b".into(),
+                ..Post::default()
+            },
+            &moment,
+        )
+        .unwrap_err();
+        assert!(refused.message.contains("remember"), "{}", refused.message);
         let secret = ["gh", "p_", "aB3dE6gH9jK2mN5pQ8sT1vW4"].concat();
         let refused = write_message(
             &v,

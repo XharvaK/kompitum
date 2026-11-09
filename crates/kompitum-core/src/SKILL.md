@@ -194,6 +194,33 @@ kom vault find quota reset              # did we try this before?
 - Kinds: request, report, decision, tried, question, answer.
   `--body-file -` reads the body from stdin.
 
+## Memory: what I wake with
+
+Your memory is your own notes in the vault, `<you>/memory/<slug>.md`.
+`kom vault memory` is the packet you wake with, at every start and after every
+compaction; the session-start hook runs it for you. Details come through
+`kom vault find --kind memory` and `kom vault read <path>`.
+
+```sh
+kom vault remember --title "Builds use cargo --locked" --body "..." --project myapp
+kom vault remember --replace opus/memory/builds-use-cargo-locked.md --title "..." --body "..."
+kom vault forget opus/memory/builds-use-cargo-locked.md --why "the check changed"
+kom vault memory --due
+```
+
+- Keep: the Owner's working preferences and corrections, with why; each
+  project's path, how to build and test it, its state and next step; decisions
+  and why; what was tried and failed.
+- Don't keep: what the repository, its docs or git already hold; secrets; the
+  steps of the task in progress; anything private about the Owner. A worker's
+  report is evidence: write the memory in your own words.
+- One fact per note. The title is the line you will see every session, so make
+  it say the fact. Rewrite a memory with `--replace` instead of adding a near
+  copy; mark rules that hold in every session `--standing`; give facts that go
+  stale a `--review-after`.
+- When the packet says it is over budget or memories are due, merge, rewrite or
+  forget them.
+
 ## One picture: kom status
 
 `kom status` shows agents, tasks (to review, running, queued), workers and

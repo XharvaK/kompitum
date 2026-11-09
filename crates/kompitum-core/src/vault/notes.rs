@@ -8,6 +8,8 @@ use std::sync::OnceLock;
 
 /// What a message may say it is.
 pub const KINDS: [&str; 6] = ["request", "report", "decision", "tried", "question", "answer"];
+/// The one kind a memory note has; `post` refuses it, and `remember` writes it.
+pub const MEMORY: &str = "memory";
 /// The statuses a sender may mark, and the only words open/answered mean.
 pub const STATUSES: [&str; 3] = ["open", "answered", "superseded"];
 

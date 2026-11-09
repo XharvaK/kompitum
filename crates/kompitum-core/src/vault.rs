@@ -6,6 +6,7 @@ mod clock;
 mod git;
 mod listing;
 mod marks;
+mod memory;
 mod notes;
 mod pen;
 mod privacy;
@@ -13,5 +14,6 @@ mod store;
 
 pub use listing::read_text_of;
 pub use marks::{Done, ReadBy};
+pub use memory::{MemoryDraft, MemoryReport};
 pub use notes::{KINDS, STATUSES};
 pub use store::{Message, Post, Query, Report, Vault, Written, older_than_a_week};

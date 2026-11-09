@@ -49,11 +49,34 @@ impl Moment {
         format!("{year:04}-{month:02}-{day:02}_{hour:02}{minute:02}")
     }
 
+    /// Today's date as a memory's `review_after` writes it: `2026-11-09`.
+    pub fn date(&self) -> String {
+        let (year, month, day, _, _, _) = self.local();
+        format!("{year:04}-{month:02}-{day:02}")
+    }
+
     fn offset_text(&self) -> String {
         let sign = if self.offset_min >= 0 { '+' } else { '-' };
         let absolute = self.offset_min.unsigned_abs();
         format!("{sign}{:02}:{:02}", absolute / 60, absolute % 60)
     }
+}
+
+/// Whether `text` is a real `YYYY-MM-DD` date.
+pub fn valid_date(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return false;
+    }
+    if !bytes.iter().enumerate().all(|(at, byte)| at == 4 || at == 7 || byte.is_ascii_digit()) {
+        return false;
+    }
+    let number = |from: usize, to: usize| text[from..to].parse::<u32>().unwrap_or(0);
+    let (year, month, day) = (number(0, 4) as i32, number(5, 7), number(8, 10));
+    if month == 0 || day == 0 {
+        return false;
+    }
+    civil_from_days(days_from_civil(year, month, day)) == (year, month, day)
 }
 
 /// Whether a note's `YYYY-MM-DD…` stamp is more than `days` before today.
@@ -163,5 +186,16 @@ mod tests {
         assert!(older_than(Some(&stamp(today - 8)), 7));
         assert!(!older_than(Some(&stamp(today - 7)), 7));
         assert!(!older_than(None, 7));
+    }
+
+    #[test]
+    fn dates_are_real_and_written_plainly() {
+        assert_eq!(Moment::at(0, 180).date(), "1970-01-01");
+        for good in ["2026-11-09", "2024-02-29", "1970-01-01"] {
+            assert!(valid_date(good), "{good}");
+        }
+        for bad in ["2026-2-09", "2026-13-01", "2026-02-30", "2025-02-29", "2026-11-09T00:00", "today"] {
+            assert!(!valid_date(bad), "{bad}");
+        }
     }
 }
