@@ -2170,7 +2170,7 @@ fn flex_element(
     // toolbar, a composite whose keyboard focus stays on its container.
     let focus = tracked_focus(runtime, &behavior, "div");
     let identity = element_id(id, behavior.key.clone());
-    let stateful = element.id(identity.clone());
+    let stateful = named_debug_selector(element.id(identity.clone()), &identity);
     let stateful = with_gpui_focus(stateful, &behavior, focus.as_ref());
     let stateful = with_input_handlers(stateful, &behavior, runtime);
     let stateful = components::dock::with_commands(stateful, &behavior, runtime, cx);
@@ -2446,6 +2446,17 @@ fn warn_ignored_key(behavior: &Behavior, component: &str) {
             "id(\"{key}\") is ignored on a {component}: it is already identified by the id \
              passed to {component}.new(...)"
         );
+    }
+}
+
+/// Lets visual tests look up a script `.id(...)` through `debug_bounds`.
+fn named_debug_selector<E: InteractiveElement>(element: E, identity: &gpui::ElementId) -> E {
+    match identity {
+        gpui::ElementId::Name(name) => {
+            let selector = name.to_string();
+            element.debug_selector(move || selector)
+        }
+        _ => element,
     }
 }
 

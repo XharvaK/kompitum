@@ -240,6 +240,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                         .clone()
                         .map_or(Value::Null, |person| Value::String(person.to_string())),
                 ),
+                "writeTextFile" if first == "/fixture/app/settings.json" => Some(Value::Null),
                 "readTextFile" if first == "/fixture/.ssh/config" => Some(Value::Null),
                 "readTextFile" if first.as_str().is_some_and(|p| p.starts_with("/fixture/vault/")) => {
                     Some(json!("# Fixture note\n\nA body from the vault.\n"))
@@ -854,7 +855,13 @@ fn the_composer_header_names_the_lead_and_its_status(cx: &mut TestAppContext) {
         );
         values.insert("lead".into(), json!({"state": state, "ask": null}));
         let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
-        assert!(tree.contains("Claude · Haiku · low effort"), "{state}: {tree}");
+        assert!(tree.contains("Haiku"), "{state}: {tree}");
+        assert!(tree.contains("Low"), "{state}: {tree}");
+        assert!(!tree.contains("low effort"), "{state}: {tree}");
+        assert!(
+            tree.contains("The lead's model and reasoning, for its next start"),
+            "{state}: {tree}"
+        );
         for word in ["Working", "Waiting for you", "Your turn"] {
             assert_eq!(tree.contains(word), expected == Some(word), "{state}/{word}: {tree}");
         }
@@ -867,7 +874,8 @@ fn the_composer_header_names_the_lead_and_its_status(cx: &mut TestAppContext) {
     );
     values.insert("lead".into(), json!({"state": "working", "ask": null}));
     let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
-    assert!(tree.contains("Claude · Haiku · careful"), "{tree}");
+    assert!(tree.contains("Haiku"), "{tree}");
+    assert!(tree.contains("Careful"), "{tree}");
     assert!(!tree.contains("careful effort"), "{tree}");
 }
 
@@ -1378,6 +1386,61 @@ fn composer_run_effects_after_keys(
     let calls = calls.borrow();
     assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
     calls.effects.iter().filter(|(name, _)| name == "run").map(|(_, args)| args.clone()).collect()
+}
+
+
+/// Mounts the composer, runs `setup`, clicks each id, and says whether each
+/// of `want` is laid out afterwards.
+fn composer_laid_out_after_clicks(
+    cx: &mut TestAppContext,
+    person: Value,
+    setup: &str,
+    clicks: &[&'static str],
+    want: &[&'static str],
+) -> Vec<(String, bool)> {
+    use gpui::{Modifiers, MouseButton};
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    values.insert("person".into(), person);
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-picker.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    for id in clicks {
+        let at = visual
+            .debug_bounds(id)
+            .unwrap_or_else(|| panic!("{id} is laid out"))
+            .center();
+        visual.simulate_mouse_move(at, None, Modifiers::default());
+        visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        visual.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    let found = want
+        .iter()
+        .map(|id| ((*id).to_string(), visual.debug_bounds(id).is_some()))
+        .collect();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    found
 }
 
 /// A mod's localStorage write lands on the executor; one that lands after the
