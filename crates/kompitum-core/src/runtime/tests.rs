@@ -203,12 +203,22 @@ fn a_blocked_registry_write_does_not_hold_the_core_lock() {
     });
     let returned = done.recv_timeout(Duration::from_millis(250)).is_ok();
     let unlocked = core.state.try_lock().is_ok();
-    // Always release the blocked write, even when checking the old synchronous implementation.
-    let reader = std::fs::File::open(&tmp).unwrap();
+    // File::open on a FIFO waits forever if no writer comes. The write must
+    // open this tmp name; wait briefly, then unblock any waiter.
+    let opened = tmp.clone();
+    let (ready, saw) = mpsc::channel();
+    let opener = std::thread::spawn(move || {
+        let reader = std::fs::File::open(&opened);
+        let _ = ready.send(reader.is_ok());
+        reader
+    });
+    let writer_opened = saw.recv_timeout(Duration::from_millis(400)).unwrap_or(false);
+    let _ = std::fs::OpenOptions::new().write(true).open(&tmp);
+    let _ = opener.join();
     worker.join().unwrap();
     drop(core);
-    drop(reader);
     remove_root(&root);
+    assert!(writer_opened, "the registry write should open the tmp file the test blocked");
     assert!(returned && unlocked, "saving to a stalled disk must leave output and input free to take the core lock");
 }
 
