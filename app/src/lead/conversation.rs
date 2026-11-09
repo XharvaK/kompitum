@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// Commands that open one of Claude's own menus when sent with no argument.
 pub const PICKER_COMMANDS: &[&str] = &[
@@ -35,6 +36,22 @@ pub struct Conversation {
     /// The one-line note an automatic reveal shows above the composer box.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reveal_why: Option<String>,
+    /// Assistant messages by `message_id`. Not saved: a resumed lead reads its transcript.
+    #[serde(skip)]
+    messages: BTreeMap<String, Message>,
+}
+
+/// One assistant message while its batches arrive. Batches can come out of order,
+/// since each hook runs on its own, so they are kept by index until they join up.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Message {
+    /// The id of the `Item::Assistant` it draws into.
+    item: String,
+    batches: BTreeMap<u64, String>,
+    /// The index of the batch marked final, once it has arrived.
+    last: Option<u64>,
+    /// Set by `Stop`, which ends every message even when its last batch is late.
+    stopped: bool,
 }
 
 /// What `lead()` publishes about the conversation, without the items.
@@ -105,7 +122,10 @@ pub enum Event {
         prompt: String,
     },
     MessageDisplay {
-        text: String,
+        message_id: String,
+        index: u64,
+        last: bool,
+        delta: String,
     },
     PreToolUse {
         id: String,
@@ -115,12 +135,18 @@ pub enum Event {
     PostToolUse {
         id: String,
         name: String,
+        input: Value,
         result: String,
-        failed: bool,
+    },
+    PostToolUseFailure {
+        id: String,
+        name: String,
+        input: Value,
+        result: String,
     },
     Stop,
     StopFailure {
-        matcher: Option<String>,
+        error: Option<String>,
     },
     Notification {
         kind: String,
@@ -190,16 +216,27 @@ impl Conversation {
 pub fn fold(mut conversation: Conversation, event: &Event) -> Conversation {
     match event {
         Event::UserPromptSubmit { prompt } => on_submit(&mut conversation, prompt),
-        Event::MessageDisplay { text } => on_display(&mut conversation, text),
+        Event::MessageDisplay {
+            message_id,
+            index,
+            last,
+            delta,
+        } => on_display(&mut conversation, message_id, *index, *last, delta),
         Event::PreToolUse { id, name, input } => on_pre_tool(&mut conversation, id, name, input),
         Event::PostToolUse {
             id,
             name,
+            input,
             result,
-            failed,
-        } => on_post_tool(&mut conversation, id, name, result, *failed),
+        } => on_tool_end(&mut conversation, id, name, input, result, ToolState::Done),
+        Event::PostToolUseFailure {
+            id,
+            name,
+            input,
+            result,
+        } => on_tool_end(&mut conversation, id, name, input, result, ToolState::Failed),
         Event::Stop => on_stop(&mut conversation),
-        Event::StopFailure { matcher } => on_stop_failure(&mut conversation, matcher.as_deref()),
+        Event::StopFailure { error } => on_stop_failure(&mut conversation, error.as_deref()),
         Event::Notification { kind } => on_notification(&mut conversation, kind),
         Event::Elicitation => {
             if conversation.reveal != Some(Reveal::Manual) {
@@ -208,6 +245,7 @@ pub fn fold(mut conversation: Conversation, event: &Event) -> Conversation {
         }
         Event::History { items } => {
             conversation.items = items.clone();
+            conversation.messages.clear();
             conversation.next_id = conversation.next_id.max(items.len() as u64);
             conversation.touched();
         }
@@ -231,15 +269,12 @@ pub fn event_from_hook(event: &str, input: &Value) -> Option<Event> {
         "UserPromptSubmit" => Some(Event::UserPromptSubmit {
             prompt: string_field(input, "prompt"),
         }),
-        "MessageDisplay" => {
-            let text = first_string(input, &["delta", "text"]);
-            let text = if text.is_empty() {
-                input.get("message").and_then(Value::as_str).unwrap_or("").to_owned()
-            } else {
-                text
-            };
-            Some(Event::MessageDisplay { text })
-        }
+        "MessageDisplay" => Some(Event::MessageDisplay {
+            message_id: string_field(input, "message_id"),
+            index: input.get("index").and_then(Value::as_u64).unwrap_or(0),
+            last: input.get("final").and_then(Value::as_bool).unwrap_or(false),
+            delta: string_field(input, "delta"),
+        }),
         "PreToolUse" => {
             let name = string_field(input, "tool_name");
             if name == "AskUserQuestion" {
@@ -259,16 +294,37 @@ pub fn event_from_hook(event: &str, input: &Value) -> Option<Event> {
             Some(Event::PostToolUse {
                 id: tool_id(input),
                 name,
+                input: tool_input(input),
                 result: tool_result(input),
-                failed: tool_failed(input),
+            })
+        }
+        "PostToolUseFailure" => {
+            let name = string_field(input, "tool_name");
+            if name == "AskUserQuestion" {
+                return None;
+            }
+            // An interrupt has no error worth showing; the first line of an error is the same text as its result.
+            let result = if input.get("is_interrupt").and_then(Value::as_bool).unwrap_or(false) {
+                "Stopped.".to_owned()
+            } else {
+                string_field(input, "error")
+            };
+            Some(Event::PostToolUseFailure {
+                id: tool_id(input),
+                name,
+                input: tool_input(input),
+                result,
             })
         }
         "Stop" => Some(Event::Stop),
-        "StopFailure" => Some(Event::StopFailure {
-            matcher: stop_failure_matcher(input),
-        }),
+        "StopFailure" => {
+            let error = string_field(input, "error");
+            Some(Event::StopFailure {
+                error: (!error.is_empty()).then_some(error),
+            })
+        }
         "Notification" => Some(Event::Notification {
-            kind: first_string(input, &["notification_type", "matcher", "type"]),
+            kind: string_field(input, "notification_type"),
         }),
         "Elicitation" => Some(Event::Elicitation),
         _ => None,
@@ -337,29 +393,59 @@ fn on_submit(conversation: &mut Conversation, prompt: &str) {
     }
 }
 
-fn on_display(conversation: &mut Conversation, text: &str) {
-    if text.is_empty() {
+/// One batch of an assistant message. The item's text is the batches joined in index
+/// order up to the first gap, so a late batch never lands ahead of an earlier one.
+fn on_display(conversation: &mut Conversation, message_id: &str, index: u64, last: bool, delta: &str) {
+    if !conversation.messages.contains_key(message_id) {
+        let id = conversation.next("assistant");
+        conversation.items.push(Item::Assistant {
+            id: id.clone(),
+            text: String::new(),
+            done: false,
+        });
+        conversation.messages.insert(
+            message_id.to_owned(),
+            Message {
+                item: id,
+                ..Message::default()
+            },
+        );
+    }
+    let Some(message) = conversation.messages.get_mut(message_id) else {
         return;
+    };
+    message.batches.insert(index, delta.to_owned());
+    if last {
+        message.last = Some(index);
     }
-    match conversation.items.last_mut() {
-        Some(Item::Assistant { text: body, done, .. }) if !*done => {
-            body.push_str(text);
-            conversation.touched();
-        }
-        _ => {
-            let id = conversation.next("assistant");
-            conversation.items.push(Item::Assistant {
-                id,
-                text: text.to_owned(),
-                done: false,
-            });
-            conversation.touched();
-        }
+    let (text, done) = assembled(message);
+    let item_id = message.item.clone();
+    if let Some(Item::Assistant {
+        text: body,
+        done: have_done,
+        ..
+    }) = conversation.items.iter_mut().find(|item| matches!(item, Item::Assistant { id, .. } if *id == item_id))
+    {
+        *body = text;
+        *have_done = done;
     }
+    conversation.touched();
+}
+
+/// The text of the batches from index 0 up to the first missing one, and whether the
+/// final batch and every batch below it have arrived.
+fn assembled(message: &Message) -> (String, bool) {
+    let mut text = String::new();
+    let mut index = 0;
+    while let Some(part) = message.batches.get(&index) {
+        text.push_str(part);
+        index += 1;
+    }
+    let complete = message.last.is_some_and(|last| index > last);
+    (text, complete || message.stopped)
 }
 
 fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Value) {
-    let summary = tool_summary(name, input);
     if let Some(Item::Tool {
         name: have,
         summary: have_summary,
@@ -367,10 +453,12 @@ fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Va
         ..
     }) = tool_mut(conversation, id)
     {
-        *have = name.to_owned();
-        *have_summary = summary;
-        *state = ToolState::Running;
-        conversation.touched();
+        // A Pre that arrives after its Post or Failure must not start the tool again.
+        if *state == ToolState::Running {
+            *have = name.to_owned();
+            *have_summary = tool_summary(name, input);
+            conversation.touched();
+        }
         return;
     }
     let id = if id.is_empty() {
@@ -381,16 +469,25 @@ fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Va
     conversation.items.push(Item::Tool {
         id,
         name: name.to_owned(),
-        summary,
+        summary: tool_summary(name, input),
         state: ToolState::Running,
         result: None,
     });
     conversation.touched();
 }
 
-fn on_post_tool(conversation: &mut Conversation, id: &str, name: &str, result: &str, failed: bool) {
-    let state = if failed { ToolState::Failed } else { ToolState::Done };
+/// A tool's end, from its Post or its Failure. The Pre may not have arrived yet, so
+/// the item is made here when it is missing.
+fn on_tool_end(
+    conversation: &mut Conversation,
+    id: &str,
+    name: &str,
+    input: &Value,
+    result: &str,
+    state: ToolState,
+) {
     let clipped = clip_result(result);
+    let result = if clipped.is_empty() { None } else { Some(clipped) };
     if let Some(Item::Tool {
         state: have,
         result: have_result,
@@ -398,36 +495,31 @@ fn on_post_tool(conversation: &mut Conversation, id: &str, name: &str, result: &
     }) = tool_mut(conversation, id)
     {
         *have = state;
-        *have_result = if clipped.is_empty() {
-            None
-        } else {
-            Some(clipped)
-        };
+        *have_result = result;
         conversation.touched();
         return;
     }
-    if let Some(Item::Tool {
-        state: have,
-        result: have_result,
-        ..
-    }) = conversation.items.iter_mut().rev().find(|item| {
-        matches!(
-            item,
-            Item::Tool {
-                name: have_name,
-                state: ToolState::Running,
-                ..
-            } if have_name == name
-        )
-    }) {
-        *have = state;
-        *have_result = if clipped.is_empty() {
-            None
-        } else {
-            Some(clipped)
-        };
-        conversation.touched();
-        return;
+    // Without an id, the running tool of this name is the one that ended.
+    if id.is_empty() {
+        if let Some(Item::Tool {
+            state: have,
+            result: have_result,
+            ..
+        }) = conversation.items.iter_mut().rev().find(|item| {
+            matches!(
+                item,
+                Item::Tool {
+                    name: have_name,
+                    state: ToolState::Running,
+                    ..
+                } if have_name == name
+            )
+        }) {
+            *have = state;
+            *have_result = result;
+            conversation.touched();
+            return;
+        }
     }
     let id = if id.is_empty() {
         conversation.next("tool")
@@ -437,13 +529,9 @@ fn on_post_tool(conversation: &mut Conversation, id: &str, name: &str, result: &
     conversation.items.push(Item::Tool {
         id,
         name: name.to_owned(),
-        summary: tool_summary(name, &Value::Null),
+        summary: tool_summary(name, input),
         state,
-        result: if clipped.is_empty() {
-            None
-        } else {
-            Some(clipped)
-        },
+        result,
     });
     conversation.touched();
 }
@@ -457,20 +545,31 @@ fn on_stop(conversation: &mut Conversation) {
     }
 }
 
-fn on_stop_failure(conversation: &mut Conversation, matcher: Option<&str>) {
+fn on_stop_failure(conversation: &mut Conversation, error: Option<&str>) {
     let _ = finish_assistant(conversation);
-    let text = match matcher {
-        Some(matcher) if !matcher.is_empty() => {
-            format!("The turn stopped: {}.", matcher.replace('_', " "))
-        }
-        _ => "The turn stopped.".into(),
-    };
     let id = conversation.next("notice");
-    conversation.items.push(Item::Notice { id, text });
+    conversation.items.push(Item::Notice {
+        id,
+        text: stop_failure_text(error),
+    });
     conversation.touched();
-    if matcher == Some("authentication_failed") {
+    if error == Some("authentication_failed") {
         conversation.show(Reveal::Login, Some("Claude needs you to sign in.".into()));
     }
+}
+
+/// The notice for a turn that stopped on an error, in the app's own words.
+fn stop_failure_text(error: Option<&str>) -> String {
+    let words = match error {
+        Some("rate_limit") => "rate limit".into(),
+        Some("overloaded") => "Claude is overloaded".into(),
+        Some("authentication_failed") => "sign-in failed".into(),
+        Some("billing_error") => "a billing problem".into(),
+        Some("max_output_tokens") => "the reply hit its length limit".into(),
+        Some(other) if !other.is_empty() => other.replace('_', " "),
+        _ => return "The turn stopped.".into(),
+    };
+    format!("The turn stopped: {words}.")
 }
 
 fn on_notification(conversation: &mut Conversation, kind: &str) {
@@ -485,6 +584,15 @@ fn on_notification(conversation: &mut Conversation, kind: &str) {
             if conversation.reveal == Some(Reveal::Login) {
                 conversation.hide();
             }
+        }
+        // Sign-in worked but could not be saved: the login reveal stays, so the Owner can act on it.
+        "auth_storage_failure" => {
+            let id = conversation.next("notice");
+            conversation.items.push(Item::Notice {
+                id,
+                text: "Signed in, but the sign-in couldn't be saved.".into(),
+            });
+            conversation.touched();
         }
         "elicitation_dialog" | "elicitation_url_dialog" => {
             if conversation.reveal != Some(Reveal::Manual) {
@@ -519,6 +627,9 @@ fn on_toggle(conversation: &mut Conversation, show: Option<bool>) {
 
 fn finish_assistant(conversation: &mut Conversation) -> bool {
     let mut changed = false;
+    for message in conversation.messages.values_mut() {
+        message.stopped = true;
+    }
     for item in &mut conversation.items {
         if let Item::Assistant { done, .. } = item {
             if !*done {
@@ -647,47 +758,40 @@ fn tool_id(input: &Value) -> String {
     first_string(input, &["tool_use_id", "id"])
 }
 
+fn tool_input(input: &Value) -> Value {
+    input.get("tool_input").cloned().unwrap_or(Value::Null)
+}
+
+/// A tool's result text from its `tool_response`, which each tool shapes itself. A
+/// Bash response carries `stdout` and `stderr`; an MCP one carries `content`. Anything
+/// else has no text to show, and is not dumped as JSON.
 fn tool_result(input: &Value) -> String {
-    if let Some(text) = input.get("tool_response").and_then(value_text) {
-        return text;
-    }
-    if let Some(text) = input.get("tool_output").and_then(value_text) {
-        return text;
-    }
-    String::new()
-}
-
-fn value_text(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => Some(text.clone()),
-        Value::Object(map) => map
-            .get("content")
-            .and_then(value_text)
-            .or_else(|| map.get("text").and_then(Value::as_str).map(str::to_owned)),
-        Value::Array(parts) => {
-            let text = parts.iter().filter_map(value_text).collect::<Vec<_>>().join("");
-            if text.is_empty() { None } else { Some(text) }
+    match input.get("tool_response") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Object(map)) => {
+            let streams: Vec<&str> = ["stdout", "stderr"]
+                .iter()
+                .filter_map(|key| map.get(*key).and_then(Value::as_str))
+                .map(str::trim_end)
+                .filter(|text| !text.is_empty())
+                .collect();
+            if streams.is_empty() {
+                content_text(map.get("content"))
+            } else {
+                streams.join("\n")
+            }
         }
-        _ => None,
+        _ => String::new(),
     }
 }
 
-fn tool_failed(input: &Value) -> bool {
-    input.get("is_error").and_then(Value::as_bool).unwrap_or(false)
-        || input
-            .get("tool_response")
-            .and_then(|value| value.get("is_error"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-}
-
-fn stop_failure_matcher(input: &Value) -> Option<String> {
-    for key in ["matcher", "reason", "error_type", "subtype", "error"] {
-        if let Some(text) = input.get(key).and_then(Value::as_str).filter(|text| !text.is_empty()) {
-            return Some(text.to_owned());
-        }
+/// Text from a `content` value: a string, or an array whose text parts join by lines.
+fn content_text(content: Option<&Value>) -> String {
+    match content {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(parts)) => parts.iter().filter_map(part_text).collect::<Vec<_>>().join("\n"),
+        _ => String::new(),
     }
-    None
 }
 
 fn line_type(value: &Value) -> Option<&str> {
@@ -792,11 +896,10 @@ fn append_assistant(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String
 
 fn apply_tool_result(items: &mut Vec<Item>, part: &Value) {
     let id = part.get("tool_use_id").and_then(Value::as_str).unwrap_or("");
-    let result = part
-        .get("content")
-        .and_then(value_text)
-        .or_else(|| part.get("text").and_then(Value::as_str).map(str::to_owned))
-        .unwrap_or_default();
+    let result = match part.get("content") {
+        Some(content) => content_text(Some(content)),
+        None => part.get("text").and_then(Value::as_str).unwrap_or("").to_owned(),
+    };
     let failed = part.get("is_error").and_then(Value::as_bool).unwrap_or(false);
     let state = if failed { ToolState::Failed } else { ToolState::Done };
     let clipped = clip_result(&result);
@@ -822,404 +925,5 @@ fn part_text(part: &Value) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn owner_text(item: &Item) -> &str {
-        match item {
-            Item::Owner { text, .. } => text,
-            _ => panic!("expected owner, got {item:?}"),
-        }
-    }
-
-    fn assistant(item: &Item) -> (&str, bool) {
-        match item {
-            Item::Assistant { text, done, .. } => (text, *done),
-            _ => panic!("expected assistant, got {item:?}"),
-        }
-    }
-
-    fn tool(item: &Item) -> (&str, &str, ToolState, Option<&str>) {
-        match item {
-            Item::Tool {
-                name,
-                summary,
-                state,
-                result,
-                ..
-            } => (name, summary, *state, result.as_deref()),
-            _ => panic!("expected tool, got {item:?}"),
-        }
-    }
-
-    fn notice(item: &Item) -> &str {
-        match item {
-            Item::Notice { text, .. } => text,
-            _ => panic!("expected notice, got {item:?}"),
-        }
-    }
-
-    #[test]
-    fn a_turn_with_three_text_batches_and_two_tools() {
-        let mut c = Conversation::default();
-        c = fold(
-            c,
-            &Event::UserPromptSubmit {
-                prompt: "Look at lead.rs and test it".into(),
-            },
-        );
-        c = fold(
-            c,
-            &Event::MessageDisplay {
-                text: "I'll read".into(),
-            },
-        );
-        c = fold(
-            c,
-            &Event::MessageDisplay {
-                text: " the file.\n".into(),
-            },
-        );
-        c = fold(
-            c,
-            &Event::PreToolUse {
-                id: "u1".into(),
-                name: "Read".into(),
-                input: json!({"file_path": "app/src/lead.rs"}),
-            },
-        );
-        c = fold(
-            c,
-            &Event::PostToolUse {
-                id: "u1".into(),
-                name: "Read".into(),
-                result: "pub fn fold".into(),
-                failed: false,
-            },
-        );
-        c = fold(
-            c,
-            &Event::PreToolUse {
-                id: "u2".into(),
-                name: "Bash".into(),
-                input: json!({"command": "cargo test"}),
-            },
-        );
-        c = fold(
-            c,
-            &Event::PostToolUse {
-                id: "u2".into(),
-                name: "Bash".into(),
-                result: "ok\n".repeat(20),
-                failed: false,
-            },
-        );
-        c = fold(
-            c,
-            &Event::MessageDisplay {
-                text: "Done.".into(),
-            },
-        );
-        c = fold(c, &Event::Stop);
-
-        assert_eq!(c.items.len(), 5, "{:?}", c.items);
-        assert_eq!(owner_text(&c.items[0]), "Look at lead.rs and test it");
-        assert_eq!(assistant(&c.items[1]), ("I'll read the file.\n", true));
-        assert_eq!(
-            tool(&c.items[2]),
-            ("Read", "Read app/src/lead.rs", ToolState::Done, Some("pub fn fold"))
-        );
-        let (name, summary, state, result) = tool(&c.items[3]);
-        assert_eq!((name, summary, state), ("Bash", "Ran `cargo test`", ToolState::Done));
-        assert_eq!(result.unwrap().lines().count(), 12);
-        assert_eq!(assistant(&c.items[4]), ("Done.", true));
-    }
-
-    #[test]
-    fn a_failed_tool_is_marked_failed() {
-        let mut c = Conversation::default();
-        c = fold(
-            c,
-            &Event::PreToolUse {
-                id: "u1".into(),
-                name: "Bash".into(),
-                input: json!({"command": "false"}),
-            },
-        );
-        c = fold(
-            c,
-            &Event::PostToolUse {
-                id: "u1".into(),
-                name: "Bash".into(),
-                result: "exit 1".into(),
-                failed: true,
-            },
-        );
-        assert_eq!(
-            tool(&c.items[0]),
-            ("Bash", "Ran `false`", ToolState::Failed, Some("exit 1"))
-        );
-    }
-
-    #[test]
-    fn stop_failure_adds_a_notice_from_its_matcher() {
-        let c = fold(
-            Conversation::default(),
-            &Event::StopFailure {
-                matcher: Some("rate_limit".into()),
-            },
-        );
-        assert_eq!(notice(&c.items[0]), "The turn stopped: rate limit.");
-        assert_eq!(c.terminal, TerminalVis::Hidden);
-        assert_eq!(c.reveal, None);
-    }
-
-    #[test]
-    fn a_resume_from_a_transcript_skips_unknown_line_types() {
-        let text = r#"
-{"type":"user","message":{"role":"user","content":"Hello"}}
-{"type":"file-history-snapshot","messageId":"x"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there."},{"type":"tool_use","id":"u1","name":"Read","input":{"file_path":"app/src/lead.rs"}}]}}
-{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"u1","content":"use serde;"}]}}
-{"type":"progress","data":{}}
-not json
-"#;
-        let loaded = items_from_transcript(text);
-        assert_eq!(loaded.skipped, 3, "{loaded:?}");
-        assert_eq!(loaded.items.len(), 3, "{:?}", loaded.items);
-        assert_eq!(owner_text(&loaded.items[0]), "Hello");
-        assert_eq!(assistant(&loaded.items[1]), ("Hi there.", true));
-        assert_eq!(
-            tool(&loaded.items[2]),
-            ("Read", "Read app/src/lead.rs", ToolState::Done, Some("use serde;"))
-        );
-    }
-
-    #[test]
-    fn history_replaces_the_items() {
-        let items = vec![Item::Owner {
-            id: "owner-1".into(),
-            text: "Hello".into(),
-        }];
-        let c = fold(
-            Conversation::default(),
-            &Event::History {
-                items: items.clone(),
-            },
-        );
-        assert_eq!(c.items, items);
-        assert!(c.version > 0);
-    }
-
-    #[test]
-    fn an_unreadable_transcript_is_a_notice() {
-        let c = fold(Conversation::default(), &Event::HistoryUnread);
-        assert_eq!(notice(&c.items[0]), "Couldn't read the conversation history.");
-    }
-
-    #[test]
-    fn a_nonzero_auth_status_starts_with_the_terminal_shown_for_login() {
-        assert_eq!(
-            reveal_after_auth_status(1),
-            (TerminalVis::Shown, Some(Reveal::Login))
-        );
-        assert_eq!(reveal_after_auth_status(0), (TerminalVis::Hidden, None));
-    }
-
-    #[test]
-    fn authentication_failed_reveals_the_terminal_for_login() {
-        let c = fold(
-            Conversation::default(),
-            &Event::StopFailure {
-                matcher: Some("authentication_failed".into()),
-            },
-        );
-        assert_eq!(c.terminal, TerminalVis::Shown);
-        assert_eq!(c.reveal, Some(Reveal::Login));
-        assert_eq!(c.reveal_why.as_deref(), Some("Claude needs you to sign in."));
-        assert_eq!(notice(&c.items[0]), "The turn stopped: authentication failed.");
-    }
-
-    #[test]
-    fn elicitation_reveals_the_terminal() {
-        let c = fold(Conversation::default(), &Event::Elicitation);
-        assert_eq!(c.terminal, TerminalVis::Shown);
-        assert_eq!(c.reveal, Some(Reveal::Auto));
-    }
-
-    #[test]
-    fn notification_elicitation_dialog_reveals_the_terminal() {
-        let c = fold(
-            Conversation::default(),
-            &Event::Notification {
-                kind: "elicitation_dialog".into(),
-            },
-        );
-        assert_eq!((c.terminal, c.reveal), (TerminalVis::Shown, Some(Reveal::Auto)));
-    }
-
-    #[test]
-    fn notification_elicitation_url_dialog_reveals_the_terminal() {
-        let c = fold(
-            Conversation::default(),
-            &Event::Notification {
-                kind: "elicitation_url_dialog".into(),
-            },
-        );
-        assert_eq!((c.terminal, c.reveal), (TerminalVis::Shown, Some(Reveal::Auto)));
-    }
-
-    #[test]
-    fn notification_agent_needs_input_reveals_the_terminal() {
-        let c = fold(
-            Conversation::default(),
-            &Event::Notification {
-                kind: "agent_needs_input".into(),
-            },
-        );
-        assert_eq!((c.terminal, c.reveal), (TerminalVis::Shown, Some(Reveal::Auto)));
-    }
-
-    #[test]
-    fn notification_quota_auto_resume_stale_reveals_the_terminal() {
-        let c = fold(
-            Conversation::default(),
-            &Event::Notification {
-                kind: "quota_auto_resume_stale".into(),
-            },
-        );
-        assert_eq!((c.terminal, c.reveal), (TerminalVis::Shown, Some(Reveal::Auto)));
-    }
-
-    #[test]
-    fn a_bare_picker_command_reveals_the_terminal() {
-        let c = fold(
-            Conversation::default(),
-            &Event::UserPromptSubmit {
-                prompt: "/model".into(),
-            },
-        );
-        assert_eq!(c.terminal, TerminalVis::Shown);
-        assert_eq!(c.reveal, Some(Reveal::Auto));
-        assert_eq!(
-            c.reveal_why.as_deref(),
-            Some("Claude is showing its /model menu.")
-        );
-        assert_eq!(owner_text(&c.items[0]), "/model");
-    }
-
-    #[test]
-    fn a_picker_command_with_an_argument_does_not_reveal() {
-        let c = fold(
-            Conversation::default(),
-            &Event::UserPromptSubmit {
-                prompt: "/model opus".into(),
-            },
-        );
-        assert_eq!(c.terminal, TerminalVis::Hidden);
-        assert_eq!(c.reveal, None);
-    }
-
-    #[test]
-    fn permission_plan_and_question_hooks_do_not_become_conversation_events() {
-        assert_eq!(
-            event_from_hook("PermissionRequest", &json!({"tool_name": "Bash"})),
-            None
-        );
-        assert_eq!(
-            event_from_hook(
-                "PermissionRequest",
-                &json!({"tool_name": "ExitPlanMode"})
-            ),
-            None
-        );
-        assert_eq!(
-            event_from_hook(
-                "PreToolUse",
-                &json!({"tool_name": "AskUserQuestion", "tool_input": {}})
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn auth_success_hides_a_login_reveal() {
-        let mut c = fold(
-            Conversation::default(),
-            &Event::StopFailure {
-                matcher: Some("authentication_failed".into()),
-            },
-        );
-        c = fold(
-            c,
-            &Event::Notification {
-                kind: "auth_success".into(),
-            },
-        );
-        assert_eq!(c.terminal, TerminalVis::Hidden);
-        assert_eq!(c.reveal, None);
-        assert_eq!(notice(&c.items[1]), "Signed in.");
-    }
-
-    #[test]
-    fn sending_hides_an_automatic_reveal() {
-        let mut c = fold(Conversation::default(), &Event::Elicitation);
-        c = fold(
-            c,
-            &Event::UserPromptSubmit {
-                prompt: "go on".into(),
-            },
-        );
-        assert_eq!(c.terminal, TerminalVis::Hidden);
-        assert_eq!(c.reveal, None);
-        assert_eq!(owner_text(&c.items[0]), "go on");
-    }
-
-    #[test]
-    fn stop_hides_an_automatic_reveal() {
-        let mut c = fold(Conversation::default(), &Event::Elicitation);
-        c = fold(c, &Event::Stop);
-        assert_eq!(c.terminal, TerminalVis::Hidden);
-        assert_eq!(c.reveal, None);
-    }
-
-    #[test]
-    fn a_manual_reveal_stays_until_the_toggle_hides_it() {
-        let mut c = fold(Conversation::default(), &Event::Toggle { show: Some(true) });
-        assert_eq!((c.terminal, c.reveal), (TerminalVis::Shown, Some(Reveal::Manual)));
-        c = fold(
-            c,
-            &Event::UserPromptSubmit {
-                prompt: "hello".into(),
-            },
-        );
-        assert_eq!((c.terminal, c.reveal), (TerminalVis::Shown, Some(Reveal::Manual)));
-        c = fold(c, &Event::Stop);
-        assert_eq!((c.terminal, c.reveal), (TerminalVis::Shown, Some(Reveal::Manual)));
-        c = fold(c, &Event::Toggle { show: Some(false) });
-        assert_eq!((c.terminal, c.reveal), (TerminalVis::Hidden, None));
-    }
-
-    #[test]
-    fn conversation_from_returns_only_new_items() {
-        let mut c = Conversation::default();
-        c = fold(
-            c,
-            &Event::UserPromptSubmit {
-                prompt: "one".into(),
-            },
-        );
-        c = fold(
-            c,
-            &Event::UserPromptSubmit {
-                prompt: "two".into(),
-            },
-        );
-        assert_eq!(c.meta().length, 2);
-        assert!(c.meta().version > 0);
-        assert_eq!(c.items_from(1).len(), 1);
-        assert_eq!(owner_text(&c.items_from(1)[0]), "two");
-        assert!(c.items_from(2).is_empty());
-    }
-}
+#[path = "conversation/tests.rs"]
+mod tests;

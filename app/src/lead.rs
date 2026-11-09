@@ -310,6 +310,10 @@ pub fn claude_settings(app: &Path, core: &Path, home: &Path) -> Value {
         "PostToolUse".into(),
         json!([{ "hooks": [async_hook("PostToolUse")] }]),
     );
+    hooks.insert(
+        "PostToolUseFailure".into(),
+        json!([{ "hooks": [async_hook("PostToolUseFailure")] }]),
+    );
     let mut display = async_hook("MessageDisplay");
     display["timeout"] = json!(10);
     hooks.insert("MessageDisplay".into(), json!([{ "hooks": [display] }]));
@@ -323,6 +327,7 @@ pub fn claude_settings(app: &Path, core: &Path, home: &Path) -> Value {
         "agent_needs_input",
         "quota_auto_resume_stale",
         "auth_success",
+        "auth_storage_failure",
     ]
     .into_iter()
     .map(|matcher| {
@@ -1139,6 +1144,11 @@ mod tests {
         assert!(post[0].get("matcher").is_none());
         assert_eq!(post[0]["hooks"], json!([async_command("PostToolUse")]));
 
+        let failed = entries("PostToolUseFailure");
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert!(failed[0].get("matcher").is_none(), "every tool, no matcher");
+        assert_eq!(failed[0]["hooks"], json!([async_command("PostToolUseFailure")]));
+
         for event in ["UserPromptSubmit", "Stop", "StopFailure", "Elicitation"] {
             let list = entries(event);
             assert_eq!(list.len(), 1, "{event}");
@@ -1158,6 +1168,7 @@ mod tests {
             "agent_needs_input",
             "quota_auto_resume_stale",
             "auth_success",
+            "auth_storage_failure",
         ] {
             assert!(
                 matchers.contains(&matcher),
@@ -1421,7 +1432,12 @@ mod tests {
         );
         session.conversation = fold(
             session.conversation,
-            &Event::MessageDisplay { text: "Hi.".into() },
+            &Event::MessageDisplay {
+                message_id: "m1".into(),
+                index: 0,
+                last: true,
+                delta: "Hi.".into(),
+            },
         );
         let value = published_session(&session);
         assert_eq!(value["state"], json!("working"));
@@ -1439,18 +1455,18 @@ mod tests {
         assert!(apply_hook_event(
             &mut session,
             "MessageDisplay",
-            &json!({"delta": "Hi"})
+            &json!({"message_id": "m1", "index": 0, "final": false, "delta": "Hi"})
         ));
         assert!(apply_hook_event(
             &mut session,
             "MessageDisplay",
-            &json!({"delta": " there."})
+            &json!({"message_id": "m1", "index": 1, "final": true, "delta": " there."})
         ));
         assert_eq!(session.conversation.items.len(), 1);
         match &session.conversation.items[0] {
             Item::Assistant { text, done, .. } => {
                 assert_eq!(text, "Hi there.");
-                assert!(!*done);
+                assert!(*done, "the final batch ends the message");
             }
             other => panic!("{other:?}"),
         }
