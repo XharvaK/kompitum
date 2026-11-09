@@ -51,12 +51,15 @@ pub struct Sessions {
 }
 
 /// What `lead.streams` holds for one program: the folder its conversation is
-/// in, and its id where the CLI takes one.
+/// in, its id where the CLI takes one, and the transcript file that holds it
+/// (from SessionStart), so a restarted app can read the conversation back.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Stream {
     pub folder: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -118,14 +121,18 @@ pub fn stream_after_choice(choice: &Choice, folder: &str, stream: Option<&Stream
         Choice::New { id } => Stream {
             folder: folder.to_owned(),
             session: Some(id.clone()),
+            transcript: None,
         },
         Choice::Plain => Stream {
             folder: folder.to_owned(),
             session: None,
+            transcript: None,
         },
+        // A resumed conversation keeps its transcript until its SessionStart names one.
         Choice::Resume { .. } | Choice::Continue => Stream {
             folder: folder.to_owned(),
             session: stream.and_then(|s| s.session.clone()),
+            transcript: stream.and_then(|s| s.transcript.clone()),
         },
     }
 }
@@ -538,6 +545,10 @@ pub struct Session {
     /// The conversation the panel draws, and whether the terminal is shown.
     #[serde(default)]
     pub conversation: Conversation,
+    /// Whether this window has read the lead's transcript into the conversation (at a restart or a
+    /// SessionStart). Not saved: a new window reads it again once.
+    #[serde(skip)]
+    pub history_read: bool,
 }
 
 /// The kind of ask a blocking hook makes, or None for an event that is not one.
@@ -733,8 +744,8 @@ fn question_output(ask: &Ask, answers: &Map<String, Value>) -> Value {
     })
 }
 
-/// A SessionStart from the lead's own terminal records the id and folder the
-/// app should resume. Anything else changes nothing.
+/// A SessionStart from the lead's own terminal records the id, folder and
+/// transcript path the app should resume. Anything else changes nothing.
 pub fn record_session_start(
     streams: &mut Value,
     from_lead: bool,
@@ -742,6 +753,7 @@ pub fn record_session_start(
     event: &str,
     session_id: Option<&str>,
     folder: &str,
+    transcript: Option<&str>,
 ) -> bool {
     let Some(id) = session_id.map(str::trim).filter(|id| !id.is_empty()) else {
         return false;
@@ -749,6 +761,7 @@ pub fn record_session_start(
     if !from_lead || !program_is_claude || event != "SessionStart" {
         return false;
     }
+    let transcript = transcript.map(str::trim).filter(|path| !path.is_empty());
     if !streams.is_object() {
         *streams = json!({});
     }
@@ -760,11 +773,16 @@ pub fn record_session_start(
     let stream = entry.as_object_mut().expect("made an object");
     if stream.get("session").and_then(Value::as_str) == Some(id)
         && stream.get("folder").and_then(Value::as_str) == Some(folder)
+        && stream.get("transcript").and_then(Value::as_str) == transcript
     {
         return false;
     }
     stream.insert("folder".into(), json!(folder));
     stream.insert("session".into(), json!(id));
+    match transcript {
+        Some(path) => stream.insert("transcript".into(), json!(path)),
+        None => stream.remove("transcript"),
+    };
     true
 }
 
@@ -867,6 +885,7 @@ mod tests {
         let stream = Stream {
             folder: "/home/me".into(),
             session: Some("old".into()),
+            transcript: None,
         };
         assert_eq!(
             choose(&entry, Some(&stream), "/home/me", "fresh"),
@@ -889,14 +908,16 @@ mod tests {
             stream_of(&records, "claude"),
             Some(Stream {
                 folder: "/home/me".into(),
-                session: Some("old".into())
+                session: Some("old".into()),
+                transcript: None,
             })
         );
         assert_eq!(
             stream_of(&records, "codex"),
             Some(Stream {
                 folder: "/home/me".into(),
-                session: None
+                session: None,
+                transcript: None,
             })
         );
         assert_eq!(stream_of(&records, "grok"), None);
@@ -915,14 +936,16 @@ mod tests {
             stream_after_choice(&Choice::New { id: "new".into() }, "/home/me", Some(&stream)),
             Stream {
                 folder: "/home/me".into(),
-                session: Some("new".into())
+                session: Some("new".into()),
+                transcript: None,
             }
         );
         assert_eq!(
             stream_after_choice(&Choice::Plain, "/home/me", Some(&stream)),
             Stream {
                 folder: "/home/me".into(),
-                session: None
+                session: None,
+                transcript: None,
             }
         );
         assert_eq!(
@@ -1315,7 +1338,8 @@ mod tests {
             true,
             "SessionStart",
             Some("new-session"),
-            "/home/me"
+            "/home/me",
+            None
         ));
         assert_eq!(
             streams,
@@ -1327,7 +1351,8 @@ mod tests {
             true,
             "SessionStart",
             Some("new-session"),
-            "/home/me"
+            "/home/me",
+            None
         ));
         let mut fresh = json!({});
         assert!(record_session_start(
@@ -1336,7 +1361,8 @@ mod tests {
             true,
             "SessionStart",
             Some("one"),
-            "/home/me"
+            "/home/me",
+            None
         ));
         assert_eq!(
             fresh,
@@ -1349,7 +1375,8 @@ mod tests {
             true,
             "SessionStart",
             Some("two"),
-            "/home/work"
+            "/home/work",
+            None
         ));
         assert_eq!(
             fresh,
@@ -1361,7 +1388,8 @@ mod tests {
             true,
             "SessionStart",
             Some("three"),
-            "/home/me"
+            "/home/me",
+            None
         ));
         assert!(!record_session_start(
             &mut fresh,
@@ -1369,7 +1397,8 @@ mod tests {
             false,
             "SessionStart",
             Some("three"),
-            "/home/me"
+            "/home/me",
+            None
         ));
         assert!(!record_session_start(
             &mut fresh,
@@ -1377,7 +1406,8 @@ mod tests {
             true,
             "Stop",
             Some("three"),
-            "/home/me"
+            "/home/me",
+            None
         ));
         assert_eq!(
             fresh,
@@ -1493,6 +1523,56 @@ mod tests {
             &json!({"tool_name": "AskUserQuestion"})
         ));
         assert!(session.conversation.items.is_empty());
+    }
+
+    #[test]
+    fn a_session_start_records_its_transcript_path_beside_the_session() {
+        let mut streams = json!({});
+        assert!(record_session_start(
+            &mut streams,
+            true,
+            true,
+            "SessionStart",
+            Some("s1"),
+            "/home/me",
+            Some("/home/me/.claude/projects/s1.jsonl"),
+        ));
+        assert_eq!(
+            stream_of(&streams, "claude"),
+            Some(Stream {
+                folder: "/home/me".into(),
+                session: Some("s1".into()),
+                transcript: Some("/home/me/.claude/projects/s1.jsonl".into()),
+            })
+        );
+        assert!(
+            !record_session_start(
+                &mut streams,
+                true,
+                true,
+                "SessionStart",
+                Some("s1"),
+                "/home/me",
+                Some("/home/me/.claude/projects/s1.jsonl"),
+            ),
+            "the same session, folder and transcript change nothing"
+        );
+        assert!(
+            record_session_start(
+                &mut streams,
+                true,
+                true,
+                "SessionStart",
+                Some("s1"),
+                "/home/me",
+                Some("/home/me/.claude/projects/moved.jsonl"),
+            ),
+            "a new transcript path is recorded"
+        );
+        assert_eq!(
+            stream_of(&streams, "claude").and_then(|stream| stream.transcript).as_deref(),
+            Some("/home/me/.claude/projects/moved.jsonl")
+        );
     }
 
     #[test]

@@ -3000,6 +3000,7 @@ impl AppWindow {
         self.pane_changes.retain(|addr, change| {
             *change != PaneChange::Killed || self.live.contains_key(addr)
         });
+        self.load_lead_history(cx);
         // A new sub-agent changes only this list; mods that show teams need to redraw.
         let terminals_changed = mods::publish_terminals(list);
         self.tend_terminals(true, window, cx);
@@ -4116,6 +4117,43 @@ impl AppWindow {
         );
     }
 
+    /// Reads a lead's transcript into its conversation and marks it read in this window.
+    /// Returns how many unknown line types were skipped.
+    fn read_lead_history(&mut self, terminal: &str, transcript: Option<&str>) -> u32 {
+        let session = self.lead_sessions.entry(terminal.to_owned()).or_default();
+        session.history_read = true;
+        crate::lead::apply_transcript_path(session, transcript)
+    }
+
+    /// A live lead this window hasn't read the conversation of (the app restarted with the lead running):
+    /// the transcript its record names becomes the panel's items. Read once per lead, never over a
+    /// conversation that is already open.
+    fn load_lead_history(&mut self, cx: &mut Context<Self>) {
+        if !self.live.values().any(|record| record.pointer("/labels/lead").is_some()) {
+            return;
+        }
+        let person = settings::load_person().ok();
+        let program = person
+            .and_then(|person| person.lead)
+            .and_then(|lead| lead.program)
+            .filter(|program| !program.is_empty())
+            .unwrap_or_else(|| "claude".into());
+        let Some(terminal) = self.lead_terminal(&program) else {
+            return;
+        };
+        if self.lead_sessions.get(&terminal).is_some_and(|session| session.history_read) {
+            return;
+        }
+        let streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
+        let transcript = crate::lead::stream_of(&streams, &program).and_then(|stream| stream.transcript);
+        let skipped = self.read_lead_history(&terminal, transcript.as_deref());
+        if skipped > 0 {
+            tracing::debug!(skipped, "skipped unknown transcript line types");
+        }
+        self.apply_lead_terminal_layout(&terminal);
+        self.publish_lead(cx);
+    }
+
     /// `lead.hook`: Claude's hooks. SessionStart records the conversation to
     /// resume; async events set the lead's state; a blocking event becomes an
     /// ask whose reply waits for the Owner.
@@ -4134,6 +4172,7 @@ impl AppWindow {
         let from_lead = self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program));
         if event == "SessionStart" {
             let mut streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
+            let transcript = input.get("transcript_path").and_then(Value::as_str);
             if crate::lead::record_session_start(
                 &mut streams,
                 from_lead,
@@ -4141,17 +4180,12 @@ impl AppWindow {
                 event,
                 input.get("session_id").and_then(Value::as_str),
                 &folder,
+                transcript,
             ) {
                 mods::set_shared("lead.streams".into(), streams);
             }
             if from_lead {
-                let skipped = {
-                    let session = self.lead_sessions.entry(terminal.clone()).or_default();
-                    crate::lead::apply_transcript_path(
-                        session,
-                        input.get("transcript_path").and_then(Value::as_str),
-                    )
-                };
+                let skipped = self.read_lead_history(&terminal, transcript);
                 if skipped > 0 {
                     tracing::debug!(skipped, "skipped unknown transcript line types");
                 }
@@ -10359,6 +10393,56 @@ export default class Probe extends View {
             "it must make a space and try to start the tab, not say there is no space: {reply}"
         );
         assert!(!error.contains("no space yet"), "{reply}");
+    }
+
+    #[test]
+    fn a_restarted_lead_loads_its_conversation_from_the_transcript() {
+        in_own_process("lead_restart_history");
+    }
+
+    /// After a restart the lead is live, but this window has no conversation for it: the transcript its
+    /// record names becomes the panel's items, once. A later listing leaves the conversation alone.
+    #[gpui::test]
+    fn lead_restart_history(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_restart_history") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        let dir = crate::mods::app_dir().join("restart-history");
+        std::fs::create_dir_all(&dir).unwrap();
+        let transcript = dir.join("session.jsonl");
+        std::fs::write(
+            &transcript,
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Hello\"}}\n",
+        )
+        .unwrap();
+        // The record the app wrote before it quit: the lead's session and its transcript.
+        crate::mods::set_shared(
+            "lead.streams".into(),
+            json!({"claude": {"folder": "/tmp", "session": "s1", "transcript": transcript.to_str().unwrap()}}),
+        );
+        let listing = json!({"terminals": [{"address": "t1", "state": "live", "labels": {"lead": "claude"}}]});
+        view.update_in(cx, |this, window, cx| {
+            assert!(this.lead_sessions.is_empty());
+            this.terminals_listed(listing.clone(), window, cx);
+            let items = &this.lead_sessions["t1"].conversation.items;
+            assert_eq!(items.len(), 1, "{items:?}");
+            assert!(
+                matches!(&items[0], crate::lead::Item::Owner { text, .. } if text == "Hello"),
+                "{items:?}"
+            );
+            // Read once: a later listing does not read the transcript again.
+            std::fs::write(&transcript, "").unwrap();
+            this.terminals_listed(listing, window, cx);
+            assert_eq!(this.lead_sessions["t1"].conversation.items.len(), 1);
+        });
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
