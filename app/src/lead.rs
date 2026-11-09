@@ -171,13 +171,13 @@ pub fn argv(
     out
 }
 
-/// A terminal is the lead when it is live, carries the lead label with the
-/// lead's program key, and isn't back at a shell: a terminal whose agent ended
-/// is not the lead, so `lead.open` starts a new one.
+/// A terminal is the lead when it is live and carries the lead label with the
+/// lead's program key: a terminal that ended is not the lead, so `lead.open`
+/// starts a new one. Its program isn't checked: on Windows the core sees the
+/// lead's wrapper shell, and that wrapper ends with the lead.
 pub fn is_lead_record(record: &Value, program: &str) -> bool {
     record.get("state").and_then(Value::as_str) == Some("live")
         && record.pointer("/labels/lead").and_then(Value::as_str) == Some(program)
-        && record.pointer("/program/shell").and_then(Value::as_bool) != Some(true)
 }
 
 /// Nanoseconds since the Unix epoch, the clock a fresh id mixes in.
@@ -899,14 +899,14 @@ mod tests {
         assert!(!is_lead_record(&unlabelled, "claude"));
         let old_label = json!({"state": "live", "labels": {"lead": "1"}});
         assert!(!is_lead_record(&old_label, "claude"));
-        let back_at_its_shell = json!({
+        let in_its_wrapper = json!({
             "state": "live",
             "labels": {"lead": "claude"},
             "program": {"key": "shell", "shell": true},
         });
         assert!(
-            !is_lead_record(&back_at_its_shell, "claude"),
-            "a lead whose agent ended into its shell is not the lead"
+            is_lead_record(&in_its_wrapper, "claude"),
+            "on Windows the core sees the lead's wrapper shell"
         );
     }
 
