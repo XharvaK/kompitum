@@ -145,6 +145,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let known_agents = values.remove("knownAgents");
     let workers_json = values.remove("workersJson");
     let status_json = values.remove("statusJson");
+    let vault_missing = values.remove("vaultMissing");
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
         if name == "person" {
@@ -218,6 +219,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let person = person.clone();
         let workers_json = workers_json.clone();
         let status_json = status_json.clone();
+        let vault_missing = vault_missing.clone();
         module = module.async_function(name, move |a| {
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
             let reply = match name {
@@ -244,6 +246,11 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     Some(json!({"code":0,"stdout":"","stderr":""}))
                 }
                 // The mailbox: one note that needs the Owner, one between agents.
+                "kom" if first == json!(["vault", "open", "--json", "--as", "owner"]) && vault_missing.is_some() => Some(json!({
+                    "code": 1,
+                    "stdout": json!({"error": {"message": "No Git vault at /fixture/vault."}}).to_string(),
+                    "stderr": ""
+                })),
                 "kom" if first == json!(["vault", "open", "--json", "--as", "owner"]) => Some(json!({
                     "code": 0,
                     "stdout": vault_report(vec![vault_owner_note()], 2, vec!["fixture: a note's mark file is damaged"]),
@@ -1403,10 +1410,9 @@ fn option_key_settings_are_only_shown_on_macos(cx: &mut TestAppContext) {
                 "{platform}: {tree}"
             );
         }
-        assert_eq!(
+        assert!(
             tree.contains("st-s-keyboard"),
-            platform == "macos",
-            "{platform}: {tree}"
+            "{platform}: Keyboard must be in the nav: {tree}"
         );
     }
 }
@@ -1658,6 +1664,178 @@ fn settings_general_draws_the_home_folder_row(cx: &mut TestAppContext) {
     assert!(tree.contains("Show again"), "{tree}");
 }
 
+#[gpui::test]
+fn settings_nav_lists_every_section_and_an_unknown_one_opens_appearance(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("appearance");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    for id in [
+        "general",
+        "appearance",
+        "agents",
+        "vault",
+        "connect",
+        "notifications",
+        "machines",
+        "keyboard",
+        "about",
+    ] {
+        assert!(tree.contains(&format!("st-s-{id}")), "missing {id}: {tree}");
+    }
+    assert!(tree.contains("st-close"), "{tree}");
+    assert!(tree.contains("st-feedback"), "{tree}");
+    assert!(tree.contains("Send feedback"), "{tree}");
+
+    let mut p = props();
+    p["section"] = json!("no-such-section");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("st-zoom"), "unknown sections open Appearance: {tree}");
+    assert!(tree.contains("st-s-appearance"), "{tree}");
+}
+
+#[gpui::test]
+fn appearance_draws_theme_colours_and_layout_rows(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("appearance");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("current", "current"),
+        Some("this.themeOpen = true;"),
+    )
+    .unwrap();
+    assert!(tree.contains("Theme"), "{tree}");
+    assert!(tree.contains("Colours"), "{tree}");
+    assert!(tree.contains("Layout"), "{tree}");
+    assert!(tree.contains("st-colours-graphite"), "{tree}");
+    for layout in ["main", "desk", "win98", "terminals"] {
+        assert!(tree.contains(&format!("st-layout-{layout}")), "missing {layout}: {tree}");
+    }
+    assert!(!tree.contains("Everything: terminals, panels, text."), "{tree}");
+}
+
+#[gpui::test]
+fn about_combines_the_versions_and_says_how_updates_arrive(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for (app, sentence) in [
+        ("current", "Checks for new versions of the app and its core every hour."),
+        ("source", "Built from source; updates come from your checkout."),
+    ] {
+        let mut p = props();
+        p["section"] = json!("about");
+        let tree = describe(
+            cx,
+            &staged,
+            "frame/settings",
+            true,
+            p,
+            updates(app, "current"),
+            None,
+        )
+        .unwrap();
+        assert!(tree.contains("Kompitum 0.1.0 · core 0.1.5"), "{tree}");
+        assert!(tree.contains(sentence), "{tree}");
+        assert!(!tree.contains("KOMPITUM-CORE"), "{tree}");
+    }
+}
+
+#[gpui::test]
+fn vault_says_not_set_without_a_vault(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("vault");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("vaultMissing".into(), json!(true));
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    assert!(tree.contains("Notes your agents leave each other, kept in Git."), "{tree}");
+    assert!(tree.contains("Not set"), "{tree}");
+    assert!(tree.contains("Couldn't update"), "{tree}");
+    assert!(tree.contains("st-vault-retry"), "{tree}");
+    assert!(tree.contains("No Git vault at /fixture/vault."), "{tree}");
+    assert!(!tree.contains("Unknown"), "{tree}");
+    assert!(!tree.contains("Reading…"), "{tree}");
+}
+
+#[gpui::test]
+fn connect_opens_with_one_line_and_hides_how_it_works(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let found = json!({"program": "C:\\Program Files\\Grok Bot\\grokbot.exe", "icon": null});
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(found.clone(), Value::Null),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Bring another agent into Kompitum."), "{tree}");
+    assert!(tree.contains("How it works"), "{tree}");
+    assert!(!tree.contains("Connect copies a prompt for them"), "{tree}");
+    assert!(tree.contains("st-c-connect-grokbot"), "{tree}");
+    assert!(tree.contains("st-c-prompt-grokbot"), "{tree}");
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(found, Value::Null),
+        Some("this.connect.showHow = true;"),
+    )
+    .unwrap();
+    assert!(
+        tree.contains("Connect copies a prompt for them; they show as connected once their Joined note reaches the vault"),
+        "{tree}"
+    );
+}
+
+#[gpui::test]
+fn shortcuts_sheet_uses_titles_and_collapses_numbered_rows(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe(
+        cx,
+        &staged,
+        "mods/help",
+        true,
+        props(),
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Keyboard shortcuts"), "{tree}");
+    assert!(tree.contains("Alt"), "{tree}");
+    assert!(tree.contains("Go to space 1–9"), "{tree}");
+    assert!(tree.contains("Go to tab 1–9"), "{tree}");
+    assert!(!tree.contains("space select 1"), "{tree}");
+}
+
 fn agent_catalog() -> Value {
     json!([
         {
@@ -1838,6 +2016,8 @@ fn agent_plans_show_claude_limits_and_exhaustion(cx: &mut TestAppContext) {
     .unwrap();
     assert!(tree.contains("5H 42% · resets"), "{tree}");
     assert!(tree.contains("Week 61% · resets"), "{tree}");
+    assert!(tree.contains("st-plan-command-code-go"), "{tree}");
+    assert!(tree.contains("st-plan-opencode-go"), "{tree}");
     let status = json!({
         "tasks": {"review": [], "running": [], "queued": []},
         "claude": {
@@ -1849,7 +2029,7 @@ fn agent_plans_show_claude_limits_and_exhaustion(cx: &mut TestAppContext) {
         cx,
         &staged,
         "frame/settings",
-        agents_values(agent_catalog(), workers, status),
+        agents_values(agent_catalog(), workers.clone(), status.clone()),
         None,
     )
     .unwrap();
@@ -1934,7 +2114,7 @@ fn agent_lead_pickers_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
         cx,
         &staged,
         "frame/settings",
-        agents_values(agent_catalog(), workers, status),
+        agents_values(agent_catalog(), workers.clone(), status.clone()),
         None,
     )
     .unwrap();
@@ -1942,6 +2122,16 @@ fn agent_lead_pickers_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
     assert!(tree.contains("st-lead-cli-opencode"), "{tree}");
     assert!(tree.contains("st-lead-model"), "{tree}");
     assert!(tree.contains("Default"), "{tree}");
+    assert!(tree.contains("st-lead-effort"), "{tree}");
+    assert!(!tree.contains("st-lead-effort-low"), "the reasoning menu stays closed: {tree}");
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        agents_values(agent_catalog(), workers.clone(), status.clone()),
+        Some("this.agentPage.effortOpen = true;"),
+    )
+    .unwrap();
     assert!(tree.contains("st-lead-effort-low"), "{tree}");
     assert!(tree.contains("st-lead-effort-max"), "{tree}");
 }
@@ -2440,7 +2630,7 @@ fn the_notifications_section_draws_the_popup_toggles(cx: &mut TestAppContext) {
         None,
     )
     .unwrap();
-    assert!(tree.contains("POP-UPS"), "{tree}");
+    assert!(tree.contains("Pop-ups"), "{tree}");
     assert!(tree.contains("Notes between agents"), "{tree}");
     assert!(tree.contains("Quiet while a game is fullscreen"), "{tree}");
     assert!(tree.contains("st-notes-between-agents"), "{tree}");

@@ -58,6 +58,7 @@ export function initConnect(view, cx) {
     error: null,
     message: null,
     showPrompt: false,
+    showHow: false,
     loading: false,
   };
   for (const system of SYSTEMS) {
@@ -184,6 +185,13 @@ function connectSystem(view, system, cx) {
   }, cx);
 }
 
+function showPromptButton(view, t, id, cx) {
+  return view.textButton(t, id, "Show the prompt", (_e, cx) => {
+    view.connect.showPrompt = !view.connect.showPrompt;
+    cx.notify();
+  });
+}
+
 function systemRow(view, t, system, cx) {
   const saved = view.person?.connect?.[system.id] ?? {};
   const icon = system.app.icon
@@ -196,15 +204,21 @@ function systemRow(view, t, system, cx) {
       .items_center()
       .child(div().w(7).h(7).rounded(4).bg(t.ansi2))
       .child(div().text_size(12.5).text_color(t.muted).child(`Connected as ${saved.agent}`))
-      .child(view.button(t, `st-c-open-${system.id}`, "Open", () => openLink(`${system.scheme}://`)));
+      .child(view.button(t, `st-c-open-${system.id}`, "Open", () => openLink(`${system.scheme}://`)))
+      .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
   } else if (saved.since) {
-    state = div().text_size(12.5).text_color(t.muted).child(`Copied. Paste it into ${system.name}.`);
+    state = h_flex()
+      .gap(8)
+      .items_center()
+      .child(div().text_size(12.5).text_color(t.muted).child(`Copied. Paste it into ${system.name}.`))
+      .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
   } else {
     state = h_flex()
       .gap(8)
       .items_center()
       .child(div().text_size(12.5).text_color(t.dim).child("Not connected"))
-      .child(view.button(t, `st-c-connect-${system.id}`, "Connect", (_e, cx) => connectSystem(view, system, cx)));
+      .child(view.primaryButton(t, `st-c-connect-${system.id}`, "Connect", (_e, cx) => connectSystem(view, system, cx)))
+      .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
   }
   return h_flex()
     .id(`st-c-${system.id}`)
@@ -259,32 +273,28 @@ export function connectPage(view, t, cx) {
   const connect = view.connect;
   return v_flex()
     .w_full()
-    .child(view.heading(t, "Connect"))
+    .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim).child("Bring another agent into Kompitum."))
     .child(
-      div()
-        .pb(8)
-        .text_size(12.5)
-        .line_height("18px")
-        .text_color(t.dim)
-        .child("Bring other agent systems into Kompitum. Connect copies a prompt for them; they show as connected once their Joined note reaches the vault."),
+      h_flex()
+        .id("st-c-how")
+        .gap(6)
+        .items_center()
+        .py(2)
+        .cursor_pointer()
+        .on_click((_e, cx) => {
+          connect.showHow = !connect.showHow;
+          cx.notify();
+        })
+        .child(div().text_size(11.5).text_color(t.dim).child(connect.showHow ? "\u25be" : "\u25b8"))
+        .child(div().text_size(12.5).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child("How it works")),
+    )
+    .when(connect.showHow, (el) =>
+      el.child(div().pt(4).pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
+        .child("Connect copies a prompt for them; they show as connected once their Joined note reaches the vault")),
     )
     .children(connect.found.map((system) => systemRow(view, t, system, cx)))
     .child(otherRow(view, t, cx))
     .when(Boolean(connect.error), (el) => el.child(div().py(10).text_size(12.5).text_color(t.blocked).child(connect.error)))
     .when(Boolean(connect.message), (el) => el.child(div().py(10).text_size(12.5).text_color(t.muted).child(connect.message)))
-    .child(
-      h_flex()
-        .id("st-c-prompt")
-        .pt(14)
-        .gap(10)
-        .items_center()
-        .child(
-          view.toggle(t, "st-c-prompt-toggle", connect.showPrompt, (_e, cx) => {
-            connect.showPrompt = !connect.showPrompt;
-            cx.notify();
-          }),
-        )
-        .child(div().text_size(13).text_color(t.foreground).child("Show the prompt")),
-    )
     .when(connect.showPrompt, (el) => el.child(promptBox(view, t)));
 }

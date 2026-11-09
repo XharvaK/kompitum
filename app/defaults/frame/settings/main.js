@@ -2,10 +2,11 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
-import { kom, run, theme, fonts, updates, settings, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared } from "kompitum";
+import { kom, run, theme, updates, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared } from "kompitum";
 import { loadVault, vaultSection } from "./vault.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
-import { agentsPage, loadAgents } from "./agents.js";
+import { agentsPage, loadAgents, ensureAgents } from "./agents.js";
+import { appearancePage } from "./appearance.js";
 import { generalPage } from "./general.js";
 
 const I = (name) => `frame/settings/${name}.svg`;
@@ -18,7 +19,7 @@ const SECTIONS = [
   { id: "connect", title: "Connect", icon: "link" },
   { id: "notifications", title: "Notifications", icon: "bell" },
   { id: "machines", title: "Machines", icon: "server" },
-  ...(window()?.platform === "macos" ? [{ id: "keyboard", title: "Keyboard", icon: "keyboard" }] : []),
+  { id: "keyboard", title: "Keyboard", icon: "keyboard" },
   { id: "about", title: "About", icon: "info" },
 ];
 
@@ -27,14 +28,16 @@ const SECTIONS = [
 const SEARCH = [
   { section: "general", key: "folder", title: "Home folder", words: "lead starts projects user drive working directory" },
   { section: "general", key: "welcome", title: "Welcome", words: "show again onboarding first start setup" },
-  { section: "appearance", key: "appearance", title: "Appearance", words: "light dark system theme" },
+  { section: "appearance", key: "theme", title: "Theme", words: "light dark system appearance" },
+  { section: "appearance", key: "colours", title: "Colours", words: "theme palette colors schemes" },
+  { section: "appearance", key: "layout", title: "Layout", words: "window shape desk control" },
   { section: "appearance", key: "zoom", title: "Zoom", words: "size scale bigger smaller interface" },
   { section: "appearance", key: "font", title: "Terminal font", words: "typeface monospace ligatures" },
   { section: "appearance", key: "ui_font", title: "Interface font", words: "typeface panels" },
   { section: "agents", key: "plans", title: "Plans", words: "usage limits subscription quota resets claude command code opencode grok" },
   { section: "agents", key: "lead", title: "CLI", words: "lead agent program claude command code opencode grok" },
   { section: "agents", key: "lead_model", title: "Model", words: "provider models list other" },
-  { section: "agents", key: "lead_effort", title: "Reasoning", words: "effort levels low medium high xhigh max" },
+  { section: "agents", key: "lead_model", title: "Reasoning", words: "effort levels low medium high xhigh max" },
   { section: "agents", key: "workers", title: "Workers", words: "order add remove drag subagents claude sonnet haiku" },
   { section: "agents", key: "clis", title: "CLI versions", words: "update version releases" },
   { section: "vault", key: "Folder", title: "Vault folder", words: "notes git mailbox" },
@@ -55,22 +58,14 @@ const SEARCH = [
 // Sections that were named differently before; old links still open their page.
 const RENAMED_SECTIONS = { look: "appearance", alerts: "notifications" };
 
-const APPEARANCES = [
-  [null, "System"],
-  ["light", "Light"],
-  ["dark", "Dark"],
-];
-
-// What the app uses when settings.json names no font (settings.rs).
-const DEFAULT_FONT = "Google Sans Code";
-const DEFAULT_UI_FONT = "Google Sans Flex";
-
 export default class Settings extends View {
   init(_props, cx) {
     const asked = props()?.section;
     const wanted = RENAMED_SECTIONS[asked] ?? asked;
     this.section = SECTIONS.some((s) => s.id === wanted) ? wanted : "appearance";
     this.picking = null; // "font" | "ui_font" while its list is open
+    this.themeOpen = false;
+    ensureAgents(this);
     this.filter = "";
     this.search = "";
     this.highlight = null; // { section, key } while a search result's row is lit
@@ -130,6 +125,10 @@ export default class Settings extends View {
         await this.loadMachines();
         cx.notify();
       });
+    });
+    // "Up to date · 2 min ago" keeps its distance from now while the page is open.
+    cx.timer.every(30000, (cx) => {
+      if (this.section === "vault" && this.vault && !this.vaultLoading) cx.notify();
     });
     initConnect(this, cx);
   }
@@ -200,6 +199,7 @@ export default class Settings extends View {
   openMatch(match, cx) {
     this.section = match.section;
     this.picking = null;
+    this.themeOpen = false;
     this.machineEdit = null;
     const at = Date.now();
     this.highlight = { section: match.section, key: match.key, at };
@@ -208,6 +208,8 @@ export default class Settings extends View {
     this.handle.focus();
     if (match.section === "machines") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
     if (match.section === "agents") loadAgents(this, cx, true);
+    if (match.section === "vault") loadVault(this, cx);
+    if (match.section === "connect" && this.connect.vault === null) loadConnect(this, cx);
     cx.timer.after(1500, (cx) => {
       if (this.highlight?.at === at) {
         this.highlight = null;
@@ -224,7 +226,7 @@ export default class Settings extends View {
   // Pieces ---------------------------------------------------------------
 
   heading(t, text) {
-    return div().pt(6).pb(8).text_size(12).font_semibold().text_color(t.dim).child(text.toUpperCase());
+    return div().pt(6).pb(8).text_size(12).font_semibold().text_color(t.dim).child(text);
   }
 
   // One setting: what it is on the left, the control on the right. `key` names
@@ -267,32 +269,63 @@ export default class Settings extends View {
       .child(label);
   }
 
-  // − value +
-  stepper(t, id, value, onMinus, onPlus) {
-    const b = (k, label, f) =>
-      div()
-        .id(`${id}-${k}`)
-        .w(28)
-        .h(28)
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .text_size(15)
-        .text_color(t.muted)
-        .hover((s) => s.bg(t.hover).text_color(t.foreground))
-        .on_click(f)
-        .child(label);
-    return h_flex()
-      .items_center()
+  // A quiet link for an action that must not compete with the page's controls.
+  textButton(t, id, label, onClick) {
+    return div()
+      .id(id)
+      .px(6)
+      .py(4)
+      .rounded(6)
+      .cursor_pointer()
+      .text_size(13)
+      .text_color(t.muted)
+      .hover((s) => s.text_color(t.foreground))
+      .on_click(onClick)
+      .child(label);
+  }
+
+  // One primary action, filled the way the theme fills an on switch.
+  primaryButton(t, id, label, onClick) {
+    return div()
+      .id(id)
+      .px(12)
+      .py(5)
       .rounded(7)
+      .cursor_pointer()
+      .bg(t.accent_fill)
+      .text_color(t.accent_foreground)
+      .text_size(13)
+      .font_semibold()
+      .hover((s) => s.opacity(0.9))
+      .on_click(onClick)
+      .child(label);
+  }
+
+  // A segmented control: the chosen segment is filled, the rest stay quiet.
+  segmented(t, id, items, selected, onPick) {
+    return h_flex()
+      .p(2)
+      .gap(2)
+      .rounded(8)
       .border_1()
       .border_color(t.border)
-      .bg(t.raised)
-      .overflow_hidden()
-      .child(b("minus", "\u2212", onMinus))
-      .child(div().w(54).text_size(13).text_color(t.foreground).flex().justify_center().child(value))
-      .child(b("plus", "+", onPlus));
+      .bg(t.background)
+      .children(
+        items.map(([value, label]) => {
+          const on = value === selected;
+          return div()
+            .id(`${id}-${value}`)
+            .px(12)
+            .py(4)
+            .rounded(6)
+            .text_size(13)
+            .cursor_pointer()
+            .when(on, (el) => el.bg(t.accent_fill).text_color(t.accent_foreground).font_semibold())
+            .when(!on, (el) => el.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
+            .on_click((_e, cx) => onPick(value, cx))
+            .child(label);
+        }),
+      );
   }
 
   toggle(t, id, on, onClick) {
@@ -312,159 +345,6 @@ export default class Settings extends View {
 
   // Look -----------------------------------------------------------------
 
-  appearancePicker(t, cx) {
-    const now = this.person.appearance ?? null;
-    return h_flex()
-      .p(2)
-      .gap(2)
-      .rounded(8)
-      .border_1()
-      .border_color(t.border)
-      .bg(t.background)
-      .children(
-        APPEARANCES.map(([value, label]) =>
-          div()
-            .id(`st-ap-${label}`)
-            .px(12)
-            .py(4)
-            .rounded(6)
-            .text_size(13)
-            .cursor_pointer()
-            .when(now === value, (el) => el.bg(t.raised).text_color(t.foreground).border_1().border_color(t.border))
-            .when(now !== value, (el) => el.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
-            .on_click((_e, cx) =>
-              this.change((p) => {
-                if (value === null) delete p.appearance;
-                else p.appearance = value;
-              }, cx),
-            )
-            .child(label),
-        ),
-      );
-  }
-
-  // The font in use, written in itself; a click opens the list.
-  fontButton(t, which, family) {
-    const open = this.picking === which;
-    return div()
-      .id(`st-f-${which}`)
-      .w(220)
-      .px(12)
-      .py(6)
-      .rounded(7)
-      .border_1()
-      .border_color(open ? t.accent : t.border)
-      .bg(t.raised)
-      .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => {
-        this.picking = open ? null : which;
-        this.filter = "";
-        this.fontInput.set_value("");
-        if (this.picking) this.fontInput.focus();
-        else this.handle.focus();
-        cx.notify();
-      })
-      .child(div().font_family(family).text_size(13.5).text_color(t.foreground).child(family));
-  }
-
-  fontList(t, which, def) {
-    const q = this.filter.toLowerCase();
-    const matches = fonts().filter((f) => f.toLowerCase().includes(q)).slice(0, 200);
-    const choose = (name, cx) => {
-      this.change((p) => {
-        if (name === null) delete p[which];
-        else p[which] = name;
-      }, cx);
-      this.picking = null;
-      this.handle.focus();
-      cx.notify();
-    };
-    const item = (id, label, family, onClick) =>
-      div()
-        .id(id)
-        .px(10)
-        .py(5)
-        .rounded(6)
-        .cursor_pointer()
-        .hover((s) => s.bg(t.hover))
-        .on_click(onClick)
-        .child(div().font_family(family).text_size(13.5).text_color(t.foreground).child(label));
-    return v_flex()
-      .w_full()
-      .mb(8)
-      .rounded(8)
-      .border_1()
-      .border_color(t.border)
-      .bg(t.background)
-      // Let the child's native scroll run before stopping the page's wheel event.
-      .on_scroll_wheel((_e, cx) => cx.stop_propagation())
-      .child(
-        div()
-          .px(12)
-          .py(8)
-          .border_b(1)
-          .border_color(t.border)
-          .text_size(13)
-          .child(Input.new(this.fontInput).h(28).text_color(t.foreground)),
-      )
-      .child(
-        div()
-          .id(`st-fl-${which}`)
-          .h(200)
-          .p(4)
-          .overflow_y_scrollbar()
-          .when(!q, (el) => el.child(item(`st-fd-${which}`, `Default (${def})`, def, (_e, cx) => choose(null, cx))))
-          .children(matches.map((f, i) => item(`st-fi-${which}-${i}`, f, f, (_e, cx) => choose(f, cx)))),
-      );
-  }
-
-  look(t, cx) {
-    const s = settings();
-    const p = this.person;
-    const own = (key, composed, def) => (p[key] ?? def) !== composed;
-    const size = (key, value, d, cx) => this.change((q) => (q[key] = Math.max(8, Math.min(32, (q[key] ?? value) + d))), cx);
-    const fontRow = (which, sizeKey, title, family, def, sizeNow) =>
-      v_flex()
-        .w_full()
-        .child(
-          this.row(
-            t,
-            title,
-            own(which, family, def) ? "This layout sets its own; yours shows in the others." : null,
-            h_flex()
-              .gap(8)
-              .items_center()
-              .child(this.fontButton(t, which, family))
-              // The panels' text follows zoom: they size their rows to it.
-              .when(Boolean(sizeKey), (el) => el.child(this.stepper(t, `st-${sizeKey}`, `${Math.round(sizeNow)}`, (_e, cx) => size(sizeKey, sizeNow, -1, cx), (_e, cx) => size(sizeKey, sizeNow, 1, cx)))),
-            which,
-          ),
-        )
-        .when(this.picking === which, (el) => el.child(this.fontList(t, which, def)));
-    return v_flex()
-      .w_full()
-      .child(this.heading(t, "Appearance"))
-      .child(this.row(t, "", "Light or dark, or as your system is now.", this.appearancePicker(t, cx), "appearance"))
-      .child(div().h(18))
-      .child(this.heading(t, "Size and fonts"))
-      .child(
-        this.row(
-          t,
-          "Zoom",
-          "Everything: terminals, panels, text.",
-          h_flex()
-            .gap(8)
-            .items_center()
-            .child(this.stepper(t, "st-zoom", `${Math.round(s.zoom * 100)}%`, () => run("app.zoom_out"), () => run("app.zoom_in")))
-            .child(this.button(t, "st-zoom-reset", "Reset", () => run("app.zoom_reset"))),
-          "zoom",
-        ),
-      )
-      .child(fontRow("font", "font_size", "Terminal font", s.font_family, DEFAULT_FONT, s.font_size))
-      .child(fontRow("ui_font", null, "Interface font", s.ui_font_family, DEFAULT_UI_FONT));
-  }
-
   keyboard(t) {
     const choices = [
       ["auto", "Automatic (Alt on US keyboards)"],
@@ -476,8 +356,14 @@ export default class Settings extends View {
     return v_flex()
       .w_full()
       .child(this.heading(t, "Option key"))
-      .child(div().pb(12).text_size(13).text_color(t.dim).child("Use Option for terminal shortcuts or to type accents and special characters."))
-      .children(choices.map(([value, label]) => {
+      .when(window()?.platform === "macos", (el) =>
+        el.child(div().pb(12).text_size(13).text_color(t.dim).child("Use Option for terminal shortcuts or to type accents and special characters.")),
+      )
+      .when(window()?.platform !== "macos", (el) =>
+        el.child(div().pb(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Option-key settings are for macOS.")),
+      )
+      .when(window()?.platform === "macos", (el) =>
+        el.children(choices.map(([value, label]) => {
         const on = (this.person.option_as_alt ?? "auto") === value;
         return h_flex()
           .id(`st-option-${value}`)
@@ -492,7 +378,7 @@ export default class Settings extends View {
           .on_click((_e, cx) => this.change((p) => { p.option_as_alt = value; }, cx))
           .child(div().text_color(on ? t.accent : t.muted).child(on ? "◉" : "○"))
           .child(div().text_size(14).text_color(t.foreground).child(label));
-      }));
+        })));
   }
 
   // Machines -------------------------------------------------------------
@@ -612,7 +498,6 @@ export default class Settings extends View {
   machines(t) {
     const version = updates().core.version;
     return v_flex().w_full()
-      .child(this.heading(t, "Machines"))
       .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim).child("Your computers, reached over ssh. Their terminals keep running when you disconnect."))
       .child(this.row(t, "This computer", `Connected · ${version ? `kom ${version}` : "kom version unknown"}`, div().w(7).h(7).rounded(4).bg(t.ansi2), "this"))
       .children((this.machineList ?? []).map((m) => this.machineRow(t, m, version)))
@@ -681,8 +566,9 @@ export default class Settings extends View {
               });
     const primary = (id, label, f) =>
       div().id(id).px(12).py(5).rounded(7).cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).text_size(13).font_semibold().hover((s) => s.opacity(0.9)).on_click(f).child(label);
-    const app = !u.app.updates
-      ? ["A build from source: it updates with git, not here.", null]
+    const source = !u.app.updates;
+    const app = source
+      ? [null, null]
       : u.app.ready
         ? [`${u.app.ready} is ready. Restart to switch now; it also switches when you quit.`, primary("st-app-update", "Restart to update", () => run("app.update"))]
         : [result, check("st-check-app")];
@@ -700,14 +586,41 @@ export default class Settings extends View {
               : ["Not checked: a build from source looks for no updates.", null];
     return v_flex()
       .w_full()
-      .child(this.heading(t, "Kompitum"))
-      .child(this.row(t, `Kompitum ${u.app.version}`, app[0], h_flex().gap(8).flex_none()
-        .child(this.button(t, "st-whats-new", "What's new", () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
-        .when(Boolean(app[1]), (el) => el.child(app[1])), "app"))
-      .child(div().h(18))
-      .child(this.heading(t, "kompitum-core"))
-      .child(this.row(t, `kompitum-core ${c.version ?? ""}`, core[0], core[1] ?? div(), "core"))
-      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum looks for both every hour and tells you in the corner. kompitum-core runs your terminals, so they keep running through its updates."))
+      .child(
+        v_flex()
+          .w_full()
+          .py(12)
+          .gap(9)
+          .border_b(1)
+          .border_color(t.border)
+          .child(div().text_size(14).text_color(t.foreground).child(`Kompitum ${u.app.version} · core ${c.version ?? ""}`))
+          .child(div().text_size(12.5).line_height("18px").text_color(t.dim)
+            .child(source ? "Built from source; updates come from your checkout." : "Checks for new versions of the app and its core every hour."))
+          .child(
+            h_flex()
+              .w_full()
+              .gap(8)
+              .items_center()
+              .flex_wrap()
+              .when(this.lit("app"), (el) => el.bg(t.selected).rounded(7))
+              .child(div().text_size(12.5).text_color(t.dim).child("App"))
+              .when(Boolean(app[0]), (el) => el.child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(t.muted).child(app[0])))
+              .child(div().flex_1())
+              .child(this.button(t, "st-whats-new", "What's new", () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
+              .when(Boolean(app[1]), (el) => el.child(app[1])),
+          )
+          .child(
+            h_flex()
+              .w_full()
+              .gap(8)
+              .items_center()
+              .flex_wrap()
+              .when(this.lit("core"), (el) => el.bg(t.selected).rounded(7))
+              .child(div().text_size(12.5).text_color(t.dim).child("Core"))
+              .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(t.muted).child(core[0]))
+              .when(Boolean(core[1]), (el) => el.child(core[1])),
+          ),
+      )
       .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum sends nothing: no usage data, no crash reports. Send feedback opens an issue on GitHub."))
       .child(div().text_size(12.5).line_height("18px").text_color(t.dim).child("Built on herdr (Apache 2.0)."));
   }
@@ -728,9 +641,8 @@ export default class Settings extends View {
       .gap(2)
       .border_r(1)
       .border_color(t.border)
-      .child(div().px(10).pt(6).pb(12).text_size(16).font_semibold().text_color(t.foreground).child("Settings"))
       .child(
-        div().px(6).pb(10).child(
+        div().px(6).py(4).pb(10).child(
           Input.new(this.searchInput)
             .w_full()
             .h(30)
@@ -791,6 +703,7 @@ export default class Settings extends View {
             .on_click((_e, cx) => {
               this.section = s.id;
               this.picking = null;
+              this.themeOpen = false;
               this.machineEdit = null;
               this.highlight = null;
               this.handle.focus();
@@ -805,13 +718,12 @@ export default class Settings extends View {
             .when(s.id === "about" && waiting, (el) => el.child(div().w(7).h(7).rounded(4).bg(t.accent)));
         }),
       ));
-    return h_flex()
+    return v_flex()
       .id("settings")
       .track_focus(this.handle)
       .w_full()
       .h(620)
       .min_h(0)
-      .items_start()
       .on_key_down((e, cx) => {
         const k = e.key;
         if (this.machineEdit) {
@@ -825,54 +737,87 @@ export default class Settings extends View {
         if (k === "escape") {
           if (this.search) this.clearSearch(cx);
           else if (this.picking) this.picking = null;
+          else if (this.themeOpen) this.themeOpen = false;
           else return this.close();
           this.handle.focus();
         } else return;
         cx.stop_propagation();
         cx.notify();
       })
-      .child(nav.h_full().child(div().flex_1()).child(this.button(t, "st-feedback", "Send feedback", () => { closeOverlay(props()?.overlay); run("app.feedback"); })))
       .child(
-        // A bar that always shows: the pages are taller than the dialog and
-        // people should see that they scroll.
-        div()
-          .relative()
-          .flex_1()
-          .min_w(0)
-          .h_full()
+        h_flex()
+          .flex_none()
+          .h(44)
+          .px(16)
+          .items_center()
+          .border_b(1)
+          .border_color(t.border)
+          .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Settings"))
+          .child(div().flex_1())
           .child(
             div()
-              .id("st-body")
-              .size_full()
-              .overflow_y_scroll()
-              // Padding inside, not on the scroll area: there it counts as
-              // content and a page that fits still shows a bar.
+              .id("st-close")
+              .w(26)
+              .h(26)
+              .rounded(7)
+              .flex()
+              .items_center()
+              .justify_center()
+              .text_color(t.muted)
+              .cursor_pointer()
+              .hover((s) => s.bg(t.hover).text_color(t.foreground))
+              .on_click(() => this.close())
+              .child(svg("mods/workspace-chrome/x.svg").size(14)),
+          ),
+      )
+      .child(
+        h_flex()
+          .flex_1()
+          .min_h(0)
+          .items_start()
+          .child(nav.h_full().child(div().flex_1()).child(this.textButton(t, "st-feedback", "Send feedback", () => { closeOverlay(props()?.overlay); run("app.feedback"); })))
+          .child(
+            // A bar that always shows: the pages are taller than the dialog and
+            // people should see that they scroll.
+            div()
+              .relative()
+              .flex_1()
+              .min_w(0)
+              .h_full()
               .child(
                 div()
-                  .px(28)
-                  .py(22)
+                  .id("st-body")
+                  .size_full()
+                  .overflow_y_scroll()
+                  // Padding inside, not on the scroll area: there it counts as
+                  // content and a page that fits still shows a bar.
                   .child(
-                    this.section === "general"
-                      ? generalPage(this, t, cx)
-                      : this.section === "appearance"
-                        ? this.look(t, cx)
-                      : this.section === "agents"
-                        ? agentsPage(this, t, cx)
-                      : this.section === "keyboard"
-                        ? this.keyboard(t)
-                      : this.section === "machines"
-                        ? this.machines(t)
-                      : this.section === "vault"
-                        ? vaultSection(this, t, cx)
-                      : this.section === "connect"
-                        ? connectPage(this, t, cx)
-                      : this.section === "notifications"
-                        ? this.alerts(t)
-                        : this.about(t),
+                    div()
+                      .px(28)
+                      .py(22)
+                      .child(
+                        this.section === "general"
+                          ? generalPage(this, t, cx)
+                          : this.section === "appearance"
+                            ? appearancePage(this, t, cx)
+                          : this.section === "agents"
+                            ? agentsPage(this, t, cx)
+                          : this.section === "keyboard"
+                            ? this.keyboard(t)
+                          : this.section === "machines"
+                            ? this.machines(t)
+                          : this.section === "vault"
+                            ? vaultSection(this, t, cx)
+                          : this.section === "connect"
+                            ? connectPage(this, t, cx)
+                          : this.section === "notifications"
+                            ? this.alerts(t)
+                            : this.about(t),
+                      ),
                   ),
-              ),
-          )
-          .child(Scrollbar.vertical("st-body").mode("always").absolute().inset_0()),
+              )
+              .child(Scrollbar.vertical("st-body").mode("always").absolute().inset_0()),
+          ),
       );
   }
 }

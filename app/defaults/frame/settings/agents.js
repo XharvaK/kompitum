@@ -41,6 +41,7 @@ export function ensureAgents(view) {
     usageAt: {},
     listModels: {},
     modelOpen: false,
+    effortOpen: false,
     otherModel: false,
     addOpen: false,
     add: {},
@@ -260,19 +261,17 @@ function planRow(view, t, cx, s, entry) {
   const head = h_flex().gap(8).items_center()
     .child(programIcon(entry, 16, t))
     .child(div().text_size(14).text_color(t.foreground).child(entry.name ?? entry.key));
-  if (!plan) {
-    const choices = h_flex().gap(6).flex_wrap()
-      .children((entry.plans ?? []).map((p) =>
-        view.button(t, `st-plan-${entry.key}-${p.id}`, p.label, (_e, cx) => {
-          view.change((person) => {
-            person.plans = { ...(person.plans ?? {}), [entry.key]: p.id };
-          }, cx);
-        })));
-    return v_flex().w_full().py(12).gap(8).border_b(1).border_color(t.border)
-      .child(head)
-      .child(div().text_size(12.5).text_color(t.dim).child("Pick this CLI's plan."))
-      .child(choices);
-  }
+  const choices = view.segmented(
+    t,
+    `st-plan-${entry.key}`,
+    (entry.plans ?? []).map((p) => [p.id, p.label]),
+    selected,
+    (id, cx) => {
+      view.change((person) => {
+        person.plans = { ...(person.plans ?? {}), [entry.key]: id };
+      }, cx);
+    },
+  );
   const external = s.usage[entry.key];
   const error = s.usageError[entry.key];
   const others = workers
@@ -281,9 +280,11 @@ function planRow(view, t, cx, s, entry) {
     .filter(Boolean);
   return v_flex().w_full().py(12).gap(8).border_b(1).border_color(t.border)
     .child(head)
-    .children(planWindows(s, entry, plan, external, workers, t))
+    .when((entry.plans ?? []).length > 0, (el) => el.child(choices))
+    .when(!plan, (el) => el.child(div().text_size(12.5).text_color(t.dim).child("Pick this CLI's plan.")))
+    .when(Boolean(plan), (el) => el.children(planWindows(s, entry, plan, external, workers, t)))
     .children(others.map((sentence) => div().text_size(12.5).line_height("18px").text_color(t.working).child(sentence)))
-    .when(Boolean(error), (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.dim)
+    .when(Boolean(plan && error), (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.dim)
       .child(`${entry.name ?? entry.key} can't report its plan yet (${error}), so these are Kompitum's own estimates.`)));
 }
 
@@ -377,7 +378,7 @@ function modelPicker(view, t, cx, entry) {
   }
   const list = v_flex().w_full().gap(4);
   for (const [provider, items] of groups) {
-    list.child(div().pt(4).text_size(11).font_semibold().text_color(t.dim).child(provider.toUpperCase()));
+    list.child(div().pt(4).text_size(11).font_semibold().text_color(t.dim).child(provider.charAt(0).toUpperCase() + provider.slice(1)));
     for (const model of items) {
       list.child(div().id(`st-lead-model-${model.id}`).px(10).py(6).rounded(6).cursor_pointer().text_size(13).text_color(t.foreground)
         .hover((el) => el.bg(t.hover))
@@ -387,7 +388,7 @@ function modelPicker(view, t, cx, entry) {
   }
   const live = s.listModels[entry.key];
   if (entry.list_models?.length) {
-    list.child(div().pt(4).text_size(11).font_semibold().text_color(t.dim).child("FROM THE CLI"));
+    list.child(div().pt(4).text_size(11).font_semibold().text_color(t.dim).child("From the CLI"));
     if (!live || live.loading) list.child(div().text_size(12.5).text_color(t.dim).child("Reading models…"));
     else if (live.error) list.child(div().text_size(12.5).text_color(t.blocked).child(live.error));
     else {
@@ -423,6 +424,37 @@ function modelPicker(view, t, cx, entry) {
   return list;
 }
 
+function cap(word) {
+  return String(word ?? "").replace(/^./, (c) => c.toUpperCase());
+}
+
+function effortPicker(view, t, cx, entry, selected) {
+  return v_flex()
+    .w_full()
+    .gap(4)
+    .children(
+      (entry.efforts ?? []).map((level) =>
+        div()
+          .id(`st-lead-effort-${level}`)
+          .px(10)
+          .py(6)
+          .rounded(6)
+          .cursor_pointer()
+          .text_size(13)
+          .text_color(t.foreground)
+          .when(level === selected, (el) => el.bg(t.selected))
+          .hover((s) => s.bg(t.hover))
+          .on_click((_e, cx) => {
+            const state = ensureAgents(view);
+            state.effortOpen = false;
+            saveLead(view, { effort: level }, cx);
+            cx.notify();
+          })
+          .child(cap(level)),
+      ),
+    );
+}
+
 function leadSection(view, t, cx, s) {
   const list = leadPrograms(s);
   if (!list.length) {
@@ -436,40 +468,62 @@ function leadSection(view, t, cx, s) {
   const model = lead.model ?? defaultModel(entry);
   const effort = lead.effort;
   const sState = ensureAgents(view);
-  const cliRow = h_flex().w_full().gap(8).flex_wrap()
-    .children(list.map((item) =>
-      chip(t, `st-lead-cli-${item.key}`, item.name ?? item.key, item.key === entry.key, (_e, cx) => {
-        const next = defaultModel(item);
-        const keep = (item.efforts ?? []).includes(effort) ? effort : null;
-        saveLead(view, { program: item.key, model: next, effort: keep }, cx);
-        sState.modelOpen = false;
-        sState.otherModel = false;
-        cx.notify();
-      })));
-  const modelRow = h_flex().w_full().gap(8).items_center()
-    .child(div().id("st-lead-model").px(12).py(6).rounded(7).border_1().border_color(sState.modelOpen ? t.accent : t.border).bg(t.raised)
-      .cursor_pointer().text_size(13).text_color(t.foreground)
+  const cliRow = view.segmented(
+    t,
+    "st-lead-cli",
+    list.map((item) => [item.key, item.name ?? item.key]),
+    entry.key,
+    (key, cx) => {
+      const item = list.find((candidate) => candidate.key === key);
+      if (!item) return;
+      const next = defaultModel(item);
+      const keep = (item.efforts ?? []).includes(effort) ? effort : null;
+      saveLead(view, { program: item.key, model: next, effort: keep }, cx);
+      sState.modelOpen = false;
+      sState.effortOpen = false;
+      sState.otherModel = false;
+      cx.notify();
+    },
+  );
+  const menuButton = (id, label, open, onClick) =>
+    div()
+      .id(id)
+      .px(12)
+      .py(6)
+      .rounded(7)
+      .border_1()
+      .border_color(open ? t.accent : t.border)
+      .bg(t.raised)
+      .cursor_pointer()
+      .text_size(13)
+      .text_color(t.foreground)
       .hover((el) => el.bg(t.hover))
-      .on_click((_e, cx) => {
-        sState.modelOpen = !sState.modelOpen;
-        if (sState.modelOpen) loadModelList(view, cx, entry);
+      .on_click(onClick)
+      .child(label);
+  const modelMenu = menuButton("st-lead-model", model ? modelLabel(entry, model) : "Its own default", sState.modelOpen, (_e, cx) => {
+    sState.modelOpen = !sState.modelOpen;
+    sState.effortOpen = false;
+    if (sState.modelOpen) loadModelList(view, cx, entry);
+    cx.notify();
+  });
+  const effortMenu = entry.efforts?.length
+    ? menuButton("st-lead-effort", effort ? cap(effort) : "Its own default", sState.effortOpen, (_e, cx) => {
+        sState.effortOpen = !sState.effortOpen;
+        sState.modelOpen = false;
         cx.notify();
       })
-      .child(model ? modelLabel(entry, model) : "Its own default"))
-    .when(Boolean(lead.model && modelLabel(entry, model) !== model), (el) => el.child(div().text_size(12).text_color(t.dim).child(model)));
-  const effortRow = entry.efforts?.length
-    ? h_flex().w_full().gap(6).flex_wrap().children(entry.efforts.map((level) =>
-        chip(t, `st-lead-effort-${level}`, level, level === effort, (_e, cx) => {
-          saveLead(view, { effort: level }, cx);
-          cx.notify();
-        })))
     : null;
+  const menus = h_flex()
+    .gap(10)
+    .items_center()
+    .child(v_flex().gap(3).child(div().text_size(11).text_color(t.dim).child("Model")).child(modelMenu))
+    .when(Boolean(effortMenu), (el) => el.child(v_flex().gap(3).child(div().text_size(11).text_color(t.dim).child("Reasoning")).child(effortMenu)));
   return v_flex().w_full()
     .child(view.heading(t, "Lead"))
     .child(view.row(t, "CLI", "Pick the CLI, then its model and reasoning.", cliRow, "lead"))
-    .child(view.row(t, "Model", null, modelRow, "lead_model"))
+    .child(view.row(t, "Model and reasoning", null, menus, "lead_model"))
     .when(Boolean(sState.modelOpen), (el) => el.child(modelPicker(view, t, cx, entry)))
-    .when(Boolean(effortRow), (el) => el.child(view.row(t, "Reasoning", null, effortRow, "lead_effort")))
+    .when(Boolean(sState.effortOpen), (el) => el.child(effortPicker(view, t, cx, entry, effort)))
     .child(div().pt(8).text_size(12.5).text_color(t.dim).child("Applies to your next conversation."));
 }
 
@@ -672,7 +726,7 @@ function addPanel(view, t, cx, s) {
   const parts = [];
   if (builtin.length) {
     parts.push(v_flex().gap(4)
-      .child(div().text_size(11).font_semibold().text_color(t.dim).child("BUILT-IN WORKERS"))
+      .child(div().text_size(11).font_semibold().text_color(t.dim).child("Built-in workers"))
       .children(builtin.map((worker) => h_flex().gap(8).items_center().py(4)
         .child(div().flex_1().text_size(13).text_color(t.foreground).child(worker.label))
         .child(view.button(t, `st-add-builtin-${worker.key}`, "Add", (_e, cx) => komCall(view, ["workers", "--order", [...order, worker.key].join(",")], cx))))));
@@ -705,7 +759,7 @@ function addPanel(view, t, cx, s) {
     const choices = [["sonnet", "Claude Code with Sonnet"], ["haiku", "Claude Code with Haiku"]].filter(([name]) => !subs.has(name));
     if (choices.length) {
       parts.push(v_flex().gap(4)
-        .child(div().text_size(11).font_semibold().text_color(t.dim).child("CLAUDE SUBAGENTS"))
+        .child(div().text_size(11).font_semibold().text_color(t.dim).child("Claude subagents"))
         .children(choices.map(([name, label]) => h_flex().gap(8).items_center().py(4)
           .child(div().flex_1().text_size(13).text_color(t.foreground).child(label))
           .child(view.button(t, `st-add-subagent-${name}`, "Add", (_e, cx) => {
@@ -775,7 +829,7 @@ export function agentsPage(view, t, cx) {
       div().pb(8).text_size(12.5).line_height("18px").text_color(t.blocked).child(error))))
     .child(v_flex().w_full().when(view.lit("plans"), (el) => el.bg(t.selected).rounded(7))
       .child(view.heading(t, "Plans"))
-      .child(div().pb(6).text_size(12.5).text_color(t.dim).child("What's left on each subscription; no money, just the share used."))
+      .child(div().pb(6).text_size(12.5).text_color(t.dim).child("How much of each plan is used."))
       .child(claudeRow(t, s.status?.claude, s.known))
       .children(planEntries(s).map((entry) => planRow(view, t, cx, s, entry))))
     .child(div().h(18))

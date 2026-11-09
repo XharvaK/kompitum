@@ -26,9 +26,18 @@ function errorText(result) {
   return firstLine(result?.stderr) || firstLine(result?.stdout) || `kom exited ${result?.code ?? "?"}`;
 }
 
+function ago(at) {
+  if (!at) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} min ago`;
+}
+
 export function loadVault(view, cx) {
   if (view.vaultLoading) return;
   view.vaultLoading = true;
+  cx.notify();
   cx.spawn(async (cx) => {
     try {
       const result = await kom(["vault", "open", "--json", "--as", "owner"]);
@@ -37,6 +46,7 @@ export function loadVault(view, cx) {
       if (!data || typeof data !== "object") throw new Error("The vault did not answer an object.");
       view.vault = data;
       view.vaultError = null;
+      view.vaultCheckedAt = Date.now();
     } catch (e) {
       view.vaultError = firstLine(e?.message ?? e) || "The vault couldn't be read.";
     } finally {
@@ -53,17 +63,36 @@ export function vaultSection(view, t, cx) {
   const needs = Array.isArray(vault?.notes) ? vault.notes.length : 0;
   const problems = Array.isArray(vault?.problems) ? vault.problems.map(problemText).filter(Boolean) : [];
   const value = (label) => div().max_w(480).min_w(0).truncate().text_size(12.5).text_color(t.muted).child(label);
-  const state = vault ? (unpushed > 0 ? `${unpushed} ${unpushed === 1 ? "note" : "notes"} not sent yet` : "Up to date") : "Reading…";
+  const placeholder = () => div().w(110).h(9).rounded(5).bg(t.hover);
+  const folderControl = folder ? value(folder) : vault || view.vaultError ? value("Not set") : placeholder();
+  let state;
+  if (!vault && !view.vaultError) {
+    state = placeholder();
+  } else if (view.vaultLoading) {
+    state = div().text_size(12.5).text_color(t.muted).child("Checking\u2026");
+  } else if (view.vaultError) {
+    state = v_flex()
+      .items_end()
+      .gap(3)
+      .child(
+        h_flex()
+          .gap(4)
+          .items_center()
+          .child(div().text_size(12.5).text_color(t.muted).child("Couldn't update"))
+          .child(view.textButton(t, "st-vault-retry", "Retry", (_e, cx) => loadVault(view, cx))),
+      )
+      .child(div().max_w(360).text_size(11.5).line_height("16px").text_color(t.dim).child(view.vaultError));
+  } else if (unpushed > 0) {
+    state = value(`${unpushed} ${unpushed === 1 ? "note" : "notes"} not sent yet`);
+  } else {
+    state = value(`Up to date${view.vaultCheckedAt ? ` \u00b7 ${ago(view.vaultCheckedAt)}` : ""}`);
+  }
   return v_flex()
     .w_full()
-    .child(view.heading(t, "Vault"))
     .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
-      .child("The shared Git folder where agents leave each other notes. The Owner is owner."))
-    .when(Boolean(view.vaultError), (el) =>
-      el.child(div().id("st-vault-error").pb(10).text_size(12.5).text_color(t.blocked).child(view.vaultError)),
-    )
-    .child(view.row(t, "Folder", null, value(folder || "Unknown")))
-    .child(view.row(t, "State", null, value(state)))
+      .child("Notes your agents leave each other, kept in Git."))
+    .child(view.row(t, "Folder", null, folderControl))
+    .child(view.row(t, "State", null, state))
     .children(problems.map((problem, i) =>
       div().id(`st-vault-problem-${i}`).pb(6).text_size(12.5).line_height("18px").text_color(t.blocked).child(problem),
     ))

@@ -263,8 +263,8 @@ Properties any node can have:
   Windows' shipped tab bar and system strip use vector window icons, with a
   restore icon when maximized, rather than font glyphs.
 - Root only: `"preview": "layouts/<name>.svg"` (or png): a picture of the
-  layout. Settings offers no layout or theme choice for now; switch with
-  `layout.switch` and `app.theme`.
+  layout. Settings › Appearance shows the layouts as preview tiles and the
+  themes as a menu; both run `layout.switch` and `app.theme`.
 - Root only: `"terminal_menu": "my-menu"` chooses the mod for terminal
   right-clicks (including Shift+right-click). Omit it for the shipped `menu`;
   an unknown mod logs a warning and falls back to `menu`. Clone a shipped

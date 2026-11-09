@@ -98,9 +98,28 @@ function keyOf(e, bound) {
   return k ? k.keys : null;
 }
 
-// "ctrl-shift-p" -> ["ctrl", "shift", "p"]; "ctrl--" -> ["ctrl", "-"].
+// "ctrl-shift-p" -> ["Ctrl", "Shift", "P"]; "ctrl--" -> ["Ctrl", "-"].
+const KEY_NAMES = {
+  ctrl: "Ctrl",
+  shift: "Shift",
+  alt: "Alt",
+  cmd: "Cmd",
+  pagedown: "Page Down",
+  pageup: "Page Up",
+  backspace: "Backspace",
+  insert: "Insert",
+  enter: "Enter",
+  tab: "Tab",
+  escape: "Esc",
+  left: "Left",
+  right: "Right",
+  up: "Up",
+  down: "Down",
+};
+
 function keyParts(k) {
-  return k.endsWith("--") ? [...k.slice(0, -2).split("-"), "-"] : k.split("-");
+  const raw = k.endsWith("--") ? [...k.slice(0, -2).split("-"), "-"] : k.split("-");
+  return raw.map((p) => KEY_NAMES[p] ?? (/^f\d+$/.test(p) ? p.toUpperCase() : p.length === 1 ? p.toUpperCase() : p.charAt(0).toUpperCase() + p.slice(1)));
 }
 
 // Fuzzy score of `q` in `text`, with the matched positions; null: no match.

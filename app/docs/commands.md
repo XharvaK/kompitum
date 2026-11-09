@@ -473,7 +473,7 @@ No arguments.
 
 ## `app.settings`
 
-Open the settings (section: look, alerts, about).
+Open the settings (section: general, appearance, agents, vault, connect, notifications, machines, keyboard, about).
 
 | Argument | Required |
 |---|---|

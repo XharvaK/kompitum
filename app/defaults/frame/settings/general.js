@@ -18,6 +18,7 @@ export function generalPage(view, t, cx) {
   const folder = view.person?.lead?.folder || home();
   return v_flex()
     .w_full()
+    .child(view.heading(t, "Onboarding"))
     .child(
       view.row(
         t,
