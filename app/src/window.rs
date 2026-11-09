@@ -709,6 +709,8 @@ pub struct AppWindow {
     /// Hook connections that closed before their request reached the app.
     closed_hooks: HashSet<String>,
     listed_once: bool,
+    /// The lead starts on launch, once, when nothing runs it yet (off in tests).
+    start_lead: bool,
     /// Live folders by address (from the shell process).
     cwds: HashMap<String, String>,
     /// When each terminal's repo and branch were last read, and what it was doing.
@@ -836,6 +838,7 @@ impl AppWindow {
             lead_asks: HashMap::new(),
             closed_hooks: HashSet::new(),
             listed_once: false,
+            start_lead: !cfg!(test),
             cwds: HashMap::new(),
             folders_checked: HashMap::new(),
             born: RefCell::new(HashMap::new()),
@@ -3063,6 +3066,20 @@ impl AppWindow {
             self.tell_term(&t.view, &t.address, cx);
         }
         self.listed_once = true;
+        // The lead starts on launch with the last picked CLI, once this computer's layout is read and the
+        // first listing shows it isn't running already.
+        if self.start_lead && self.documents.get("").is_some_and(|slot| slot.available) {
+            self.start_lead = false;
+            let program = settings::load_person()
+                .ok()
+                .and_then(|person| person.lead)
+                .and_then(|lead| lead.program)
+                .filter(|program| !program.is_empty())
+                .unwrap_or_else(|| "claude".into());
+            if self.lead_terminal(&program).is_none() {
+                self.run("lead.open", json!({}), window, cx);
+            }
+        }
         if changed {
             self.sync(window, cx);
         } else if listed {
