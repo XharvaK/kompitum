@@ -126,6 +126,7 @@ fn cmd_at(exe: &Path, session: &str, root: &Path) -> Command {
         .env("COMSPEC", real_cmd())
         .env_remove("KOMPITUM_COMSPEC")
         .env_remove("KOMPITUM_TERMINAL_ID")
+        .env_remove("KOMPITUM_TERMINAL_SOCKET")
         .env_remove("KOMPITUM_SCOPE")
         .env_remove("KOMPITUM_SOCKET")
         // A worker's own suite starts kom too: the mark is the worker's, not ours.
