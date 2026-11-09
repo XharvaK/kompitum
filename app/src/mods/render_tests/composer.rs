@@ -227,7 +227,7 @@ fn composer_live_run_after_clicks(
     calls
         .effects
         .iter()
-        .filter(|(name, _)| name == "run" || name == "kom")
+        .filter(|(name, _)| name == "run" || name == "kom" || name == "pickFiles")
         .map(|(_, args)| args.clone())
         .collect()
 }
@@ -260,10 +260,10 @@ fn each_conversation_item_kind_draws(cx: &mut TestAppContext) {
         "Read app/src/lead.rs",
         "composer-item-n1",
         "Signed in.",
-        "lead-terminal",
     ] {
         assert!(tree.contains(needle), "missing {needle}: {tree}");
     }
+    assert!(!tree.contains("lead-terminal"), "{tree}");
     assert!(!tree.contains("Ask the lead anything."), "{tree}");
 }
 
@@ -290,32 +290,88 @@ fn finished_tools_fold_into_one_line(cx: &mut TestAppContext) {
     assert!(!tree.contains("Ran `cargo test`"), "{tree}");
 }
 
-/// The terminal toggle is on the panel and runs lead.terminal.
+/// No terminal toggle: the conversation has no button to show Claude's terminal (the automatic reveals stay).
 #[gpui::test]
-fn the_terminal_toggle_shows_and_runs_lead_terminal(cx: &mut TestAppContext) {
+fn the_conversation_has_no_terminal_toggle(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let items = json!([]);
     let tree = describe_settled(
         cx,
         &staged,
         "mods/composer",
-        conversation_values(items.clone(), "hidden", Value::Null, None),
+        conversation_values(json!([]), "hidden", Value::Null, None),
         None,
     )
     .unwrap();
-    assert!(tree.contains("lead-terminal"), "{tree}");
+    assert!(!tree.contains("lead-terminal"), "{tree}");
     assert!(tree.contains("Ask the lead anything."), "{tree}");
+}
+
+/// "+" opens the system's file picker on a click: its handler takes the click's own context.
+#[gpui::test]
+fn the_attach_button_opens_the_file_picker_on_a_click(cx: &mut TestAppContext) {
     let effects = composer_live_run_after_clicks(
         cx,
-        conversation_values(items, "hidden", Value::Null, None),
+        conversation_values(json!([]), "hidden", Value::Null, None),
         "",
-        &["lead-terminal"],
+        &["composer-attach"],
     );
     assert!(
-        effects.iter().any(|args| args.first() == Some(&json!("lead.terminal"))),
-        "the toggle should run lead.terminal: {effects:?}"
+        effects.iter().any(|args| args.first() == Some(&json!("pickFiles"))),
+        "+ should open the file picker: {effects:?}"
     );
+}
+
+/// Send on a click sends the typed words.
+#[gpui::test]
+fn send_on_a_click_sends_the_typed_words(cx: &mut TestAppContext) {
+    let effects = composer_live_run_after_clicks(
+        cx,
+        conversation_values(json!([]), "hidden", Value::Null, None),
+        "this.text.set_value('hello');",
+        &["composer-send"],
+    );
+    assert!(
+        effects.iter().any(|args| args.first() == Some(&json!(["send", "t1", "hello"]))),
+        "Send should send the typed words: {effects:?}"
+    );
+}
+
+/// The setup that opens the effort card as the picker does. The catalog is handed over first: the first load
+/// hasn't run when a setup runs, and the slider needs the levels.
+fn effort_card_setup() -> String {
+    format!(
+        "this.agents = {}; this.modelOpen = true; this.pickerView = 'effort'; this.ensureEffortSlider(this.leadProgram());",
+        agent_catalog()
+    )
+}
+
+/// The effort card explains the saved level in one line under its word, and offers the reset.
+#[gpui::test]
+fn the_effort_card_explains_the_saved_level(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_tree(
+        cx,
+        composer_person(Some("sonnet"), Some("high")),
+        Some(effort_card_setup().as_str()),
+    );
+    assert!(tree.contains("Thinks it through."), "{tree}");
+    assert!(tree.contains("composer-effort-reset"), "{tree}");
+    assert!(tree.contains("Use Claude Code's own setting"), "{tree}");
+}
+
+/// With no level saved the card says Default and that Claude Code's own setting applies; no reset.
+#[gpui::test]
+fn the_effort_card_says_default_when_none_is_saved(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_tree(
+        cx,
+        composer_person(Some("sonnet"), None),
+        Some(effort_card_setup().as_str()),
+    );
+    assert!(tree.contains("Default"), "{tree}");
+    assert!(tree.contains("Claude Code's own setting."), "{tree}");
+    assert!(!tree.contains("composer-effort-reset"), "{tree}");
 }
 
 /// Sending a bare /model is still kom send; the hook's auto reveal draws the note.
@@ -337,7 +393,7 @@ fn a_bare_model_send_reveals(cx: &mut TestAppContext) {
         None,
     )
     .unwrap();
-    assert!(tree.contains("lead-terminal"), "{tree}");
+    assert!(!tree.contains("lead-terminal"), "{tree}");
     assert!(tree.contains("composer-reveal-note"), "{tree}");
     assert!(tree.contains("Claude is showing its /model menu."), "{tree}");
     assert!(
@@ -392,4 +448,39 @@ fn a_long_conversation_stays_on_its_newest_item(cx: &mut TestAppContext) {
         newest.bottom() <= list.bottom() + slack && newest.bottom() > list.top(),
         "the newest item must be in view: item {newest:?}, list {list:?}"
     );
+}
+
+/// The box shares the conversation's column: at most 760 px, centred, and never closer than the 20 px gutter.
+#[gpui::test]
+fn the_box_and_the_conversation_share_one_centred_column(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let items = json!([{"kind": "notice", "id": "n0", "text": "Signed in."}]);
+    let values = conversation_values(items, "hidden", Value::Null, None);
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-column.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", "");
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let list = visual
+        .debug_bounds("composer-conversation")
+        .expect("the conversation list is laid out");
+    let box_ = visual.debug_bounds("composer-box").expect("the box is laid out");
+    let slack = gpui::px(1.0);
+    assert!(box_.size.width <= gpui::px(760.0) + slack, "the column is at most 760 px: {box_:?}");
+    let left = box_.left() - list.left();
+    let right = list.right() - box_.right();
+    assert!((left - right).abs() <= slack, "the box is centred: left {left:?}, right {right:?}");
+    assert!(left >= gpui::px(20.0) - slack, "a 20 px gutter at least: {left:?}");
 }

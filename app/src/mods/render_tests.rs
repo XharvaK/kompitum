@@ -227,7 +227,12 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     });
     module = module.function("pasteImage", |_| Ok(HostValue::Null));
     module = module.async_function("pickFolder", |_| Ok(async { Ok(HostValue::Null) }));
-    module = module.async_function("pickFiles", |_| Ok(async { Ok(HostValue::Array(Vec::new())) }));
+    // Recorded as a call of its own, so a test can see that "+" opened the picker.
+    let picked = calls.clone();
+    module = module.async_function("pickFiles", move |_| {
+        picked.borrow_mut().effects.push(("pickFiles".into(), vec![json!("pickFiles")]));
+        Ok(async { Ok(HostValue::Array(Vec::new())) })
+    });
     module = module.async_function("leadSetup", |_| {
         Ok(async { Ok(to_host(&json!({"mcp": "present", "skill": "present"}))) })
     });
@@ -874,7 +879,7 @@ fn the_composer_header_names_the_lead_and_its_status(cx: &mut TestAppContext) {
     for (state, expected) in [
         (json!("working"), Some("Working")),
         (json!("asking"), Some("Waiting for you")),
-        (json!("waiting"), Some("Your turn")),
+        (json!("waiting"), None),
         (Value::Null, None),
     ] {
         let mut values = fixture(true, props(), updates("current", "current"));

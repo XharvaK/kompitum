@@ -88,6 +88,13 @@ function leadName(entry, key) {
 }
 
 const EFFORT_WORDS = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
+const EFFORT_LINES = {
+  low: "Quick answers, least thinking.",
+  medium: "Balanced speed and depth.",
+  high: "Thinks it through.",
+  xhigh: "Thinks longer on hard problems.",
+  max: "Thinks as long as it needs.",
+};
 
 function cap(text) {
   const value = String(text ?? "");
@@ -99,21 +106,27 @@ function effortWord(effort) {
   return EFFORT_WORDS[effort] ?? cap(effort);
 }
 
+// The one line under the level's word: what the level does, or what having no saved level means.
+function effortLine(effort) {
+  if (!effort) return "Claude Code's own setting.";
+  return EFFORT_LINES[effort] ?? "";
+}
+
 function effortIds(entry) {
   return (entry?.efforts ?? [])
     .map((level) => (typeof level === "string" ? level : level?.id))
     .filter(Boolean);
 }
 
+// The box says only what the lead is doing now: working, or waiting on the Owner's answer. Idle says nothing.
 function leadStatus(state) {
   if (state === "working") return "Working";
   if (state === "asking") return "Waiting for you";
-  if (state === "waiting") return "Your turn";
   return null;
 }
 
 function statusColor(t, state) {
-  return state === "asking" ? t.working : state === "waiting" ? t.done : t.accent;
+  return state === "asking" ? t.working : t.accent;
 }
 
 function repeatsLabel(label, description) {
@@ -635,7 +648,7 @@ export default class Composer extends View {
           .text_color(t.dim)
           .cursor_pointer()
           .hover((style) => style.bg(t.hover).text_color(t.foreground))
-          .on_click(() => this.removeChip(index, cx))
+          .on_click((_e, cx) => this.removeChip(index, cx))
           .child("×"),
       );
   }
@@ -759,6 +772,7 @@ export default class Composer extends View {
       }));
   }
 
+  // A slim slider: a 24 px hit area around a 6 px track, a fill in the accent, an 18 px thumb with a ring.
   effortSliderEl(t, entry) {
     const levels = effortIds(entry);
     if (!this.effortSlider || levels.length === 0) return null;
@@ -766,42 +780,86 @@ export default class Composer extends View {
     const filledThrough = this.effortTouched && preview && levels.includes(preview)
       ? levels.indexOf(preview)
       : null;
+    // The track's bar sits 9 px down the 24 px track, so the fill and the thumb's centre line up with it.
     let indicator = SliderIndicator.new(this.effortSlider)
       .absolute()
-      .top(0)
+      .top(9)
       .left(0)
       .w_full()
-      .h(30)
-      .rounded(15);
+      .h(6)
+      .rounded(3);
     if (this.effortTouched) {
       indicator = indicator
-        .range_style((fill) => fill.rounded(15).bg(t.accent))
+        .range_style((fill) => fill.rounded(3).bg(t.accent))
         .child(
           SliderThumb.new(this.effortSlider)
-            .size(24)
-            .rounded(12)
-            .bg(t.accent_foreground)
+            .size(18)
+            .rounded(9)
+            .bg(t.foreground)
             .border_1()
             .border_color(t.border)
-            .mt(3)
-            .ml(-12),
+            .mt(-6)
+            .ml(-9),
         );
     }
     return Slider.new(this.effortSlider)
       .id("composer-effort-slider")
       .w_full()
-      .h(30)
-      .mt(10)
+      .h(24)
+      .mt(8)
       .child(
         SliderTrack.new(this.effortSlider)
           .relative()
           .w_full()
-          .h(30)
-          .rounded(15)
-          .bg(t.hover)
+          .h(24)
+          .child(div().absolute().top(9).left(0).w_full().h(6).rounded(3).bg(t.hover))
           .child(this.effortDots(t, levels.length, filledThrough))
           .child(indicator),
       );
+  }
+
+  // A level picked by its word or by the slider's release: saved now in the picker, held until Start in the first pick.
+  pickLevel(level, cx) {
+    const index = effortIds(this.leadProgram()).indexOf(level);
+    if (index < 0) return;
+    this.effortTouched = true;
+    this.effortPreview = level;
+    this.effortSlider?.set_value(index);
+    if (this.saveEffortOnRelease) this.saveLead({ effort: level }, cx);
+    cx.notify();
+  }
+
+  // The levels' short words under the slider, spread to its ends; the current one is in the foreground.
+  effortLevelWords(t, levels, preview) {
+    const current = preview && levels.includes(preview) ? preview : null;
+    return h_flex()
+      .id("composer-effort-levels")
+      .w_full()
+      .mt(6)
+      .justify_between()
+      .children(levels.map((level) =>
+        div()
+          .id(`composer-effort-level-${level}`)
+          .text_size(11)
+          .cursor_pointer()
+          .text_color(level === current ? t.foreground : t.dim)
+          .hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => this.pickLevel(level, cx))
+          .child(EFFORT_WORDS[level] ?? cap(level))));
+  }
+
+  // The level's word, its one line, the slider and the levels' words. The model picker's card and the first pick share it.
+  effortBody(t, entry, lead) {
+    const levels = effortIds(entry);
+    const preview = this.effortPreview ?? lead.effort ?? null;
+    let body = v_flex()
+      .w_full()
+      .gap(2)
+      .child(div().text_size(17).font_semibold().text_color(t.foreground).child(effortWord(preview) ?? "Default"))
+      .child(div().text_size(12.5).text_color(t.dim).child(effortLine(preview)));
+    const slider = this.effortSliderEl(t, entry);
+    if (slider) body = body.child(slider).child(this.effortLevelWords(t, levels, preview));
+    return body;
   }
 
   modelsView(t, entry, lead) {
@@ -825,56 +883,50 @@ export default class Composer extends View {
         .child("For the lead's next start. Type /model to switch now."));
   }
 
+  // The effort card: a top row (back to the models, and the reset when a level is saved), then the body.
   effortView(t, entry, lead) {
-    const preview = this.effortPreview ?? lead.effort ?? null;
-    const word = effortWord(preview);
     return v_flex()
       .id("composer-effort")
-      .relative()
       .w_full()
-      .items_center()
+      .gap(10)
       .child(
-        div()
-          .text_size(15)
-          .font_semibold()
-          .text_color(word ? t.accent : t.muted)
-          .child(word ?? "Its own default"),
-      )
-      .when(Boolean(lead.effort), (el) => el.child(
         h_flex()
-          .id("composer-effort-reset")
-          .absolute()
-          .top(0)
-          .right(0)
-          .w(24)
+          .w_full()
           .h(24)
           .items_center()
-          .justify_center()
-          .rounded(6)
-          .cursor_pointer()
-          .text_color(t.muted)
-          .hover((s) => s.bg(t.hover).text_color(t.foreground))
-          .tooltip("Use its own default")
-          .on_click((_e, cx) => this.resetEffort(cx))
-          .child(svg("mods/composer/rotate-ccw.svg").size(14)),
-      ))
-      .child(
-        h_flex()
-          .id("composer-effort-model")
-          .gap(4)
-          .items_center()
-          .cursor_pointer()
-          .text_size(12.5)
-          .text_color(t.muted)
-          .hover((s) => s.text_color(t.foreground))
-          .on_click((_e, cx) => {
-            this.pickerView = "models";
-            cx.notify();
-          })
-          .child(lead.model ? modelLabel(entry, lead.model) : "")
-          .child("›"),
+          .justify_between()
+          .child(
+            h_flex()
+              .id("composer-effort-model")
+              .items_center()
+              .cursor_pointer()
+              .text_size(12.5)
+              .text_color(t.muted)
+              .hover((s) => s.text_color(t.foreground))
+              .on_click((_e, cx) => {
+                this.pickerView = "models";
+                cx.notify();
+              })
+              .child("‹ ")
+              .child(lead.model ? modelLabel(entry, lead.model) : ""),
+          )
+          .when(Boolean(lead.effort), (el) => el.child(
+            h_flex()
+              .id("composer-effort-reset")
+              .w(24)
+              .h(24)
+              .items_center()
+              .justify_center()
+              .rounded(6)
+              .cursor_pointer()
+              .text_color(t.muted)
+              .hover((s) => s.bg(t.hover).text_color(t.foreground))
+              .tooltip("Use Claude Code's own setting")
+              .on_click((_e, cx) => this.resetEffort(cx))
+              .child(svg("mods/composer/rotate-ccw.svg").size(14)),
+          )),
       )
-      .child(this.effortSliderEl(t, entry));
+      .child(this.effortBody(t, entry, lead));
   }
 
   // The lead's model and reasoning: models first, then Codex-style effort.
@@ -900,14 +952,15 @@ export default class Composer extends View {
       trigger = trigger.child(div().text_size(12.5).text_color(t.muted).child("Choose a model"));
     }
     trigger = trigger.child(svg("mods/workspace-chrome/chevron-down.svg").size(11).text_color(t.dim));
+    const effort = this.pickerView === "effort" && effortIds(entry).length > 0;
+    // The effort card is 280 wide with 16 px padding; the models list stays 260 wide with 6.
     const content = v_flex()
-      .w(260)
-      .p(6)
-      .rounded(12)
+      .when(effort, (el) => el.w(280).p(16).rounded(14))
+      .when(!effort, (el) => el.w(260).p(6).rounded(12))
       .border_1()
       .border_color(t.border)
       .bg(t.popover)
-      .child(this.pickerView === "effort" && effortIds(entry).length > 0
+      .child(effort
         ? this.effortView(t, entry, lead)
         : this.modelsView(t, entry, lead));
     return Popover.new("composer-model-menu")
@@ -947,7 +1000,7 @@ export default class Composer extends View {
       .tooltip(this.sending ? "Sending…" : "Send (Enter)")
       .when(ready, (el) => el.bg(t.foreground).hover((s) => s.opacity(0.85)))
       .when(!ready, (el) => el.border_1().border_color(t.input))
-      .on_click(() => this.send(cx))
+      .on_click((_e, cx) => this.send(cx))
       .child(svg("mods/composer/arrow-up.svg").size(16).text_color(ready ? t.background : t.dim));
     const plus = h_flex()
       .id("composer-attach")
@@ -961,20 +1014,19 @@ export default class Composer extends View {
       .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
       .tooltip("Attach files")
-      .on_click(() => this.attach(cx))
+      .on_click((_e, cx) => this.attach(cx))
       .child(svg("mods/composer/plus.svg").size(16));
     const note = this.error
       ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(this.error)
       : this.state ? this.statusWord(t) : null;
-    return div()
-      .when(panel, (el) => el.w_full().flex_none())
-      .when(!panel, (el) => el.size_full())
-      .p(10)
-      .bg(t.background)
-      .child(
-        v_flex()
+    const frame = div()
+      .when(panel, (el) => el.w_full().flex_none().px(20).py(10))
+      .when(!panel, (el) => el.size_full().p(10))
+      .bg(t.background);
+    // Under the conversation the box shares its column: at most 760 px wide, centred.
+    const box = v_flex()
           .id("composer-box")
-          .when(panel, (el) => el.w_full())
+          .when(panel, (el) => el.w_full().max_w(760))
           .when(!panel, (el) => el.size_full())
           .px(12)
           .pt(10)
@@ -1004,8 +1056,8 @@ export default class Composer extends View {
               .child(div().flex_1())
               .when(!first, (el) => el.child(this.modelChip(t)))
               .when(!first && !this.ask, (el) => el.child(send)),
-          ),
-      );
+          );
+    return frame.child(panel ? h_flex().w_full().justify_center().child(box) : box);
   }
 
   startLabel() {
@@ -1019,8 +1071,6 @@ export default class Composer extends View {
     const entry = this.leadProgram();
     const models = entry?.models ?? [];
     const picked = this.firstModel;
-    const preview = this.effortPreview ?? this.person?.lead?.effort ?? null;
-    const word = effortWord(preview);
     const start = h_flex()
       .id("composer-first-start")
       .h(32)
@@ -1061,15 +1111,7 @@ export default class Composer extends View {
           .child(div().text_size(13.5).font_medium().text_color(t.foreground).child(model.label ?? model.id))
           .when(Boolean(model.hint), (el) =>
             el.child(div().text_size(12).text_color(t.dim).child(model.hint)))))
-      .when(effortIds(entry).length > 0, (el) => el
-        .child(
-          div()
-            .text_size(15)
-            .font_semibold()
-            .text_color(word ? t.accent : t.muted)
-            .child(word ?? "Its own default"),
-        )
-        .child(this.effortSliderEl(t, entry)))
+      .when(effortIds(entry).length > 0, (el) => el.child(this.effortBody(t, entry, this.person?.lead ?? {})))
       .child(button);
   }
 
@@ -1159,8 +1201,8 @@ export default class Composer extends View {
           .bg(t.surface)
           .child(Input.new(this.noteInput).w_full().text_size(12.5).text_color(t.foreground)),
       )
-      .child(this.cardButton("composer-note-cancel", "Cancel", () => this.closeNote(cx), t))
-      .child(this.cardButton("composer-note-send", "Send", () => this.sendNote(cx), t, { filled: true }));
+      .child(this.cardButton("composer-note-cancel", "Cancel", (_e, cx) => this.closeNote(cx), t))
+      .child(this.cardButton("composer-note-send", "Send", (_e, cx) => this.sendNote(cx), t, { filled: true }));
   }
 
   permissionCard(t, cx, ask) {
@@ -1187,18 +1229,18 @@ export default class Composer extends View {
     }
     if (ask.input?.cwd) head.child(div().text_size(11.5).text_color(t.dim).child(`Runs in ${ask.input.cwd}`));
     const buttons = h_flex().w_full().gap(6).items_center()
-      .child(this.cardButton("composer-allow", "Allow", () => this.answer(ask, { action: "allow" }, cx), t, { filled: true }))
+      .child(this.cardButton("composer-allow", "Allow", (_e, cx) => this.answer(ask, { action: "allow" }, cx), t, { filled: true }))
       .when(suggestions.length > 0, (el) => el.child(
         this.cardButton(
           "composer-allow-always",
           allowAlwaysLabel(ask),
-          () => this.answer(ask, { action: "allow_always" }, cx),
+          (_e, cx) => this.answer(ask, { action: "allow_always" }, cx),
           t,
           { tooltip: permissionDestination(ask) ?? "where Claude keeps its rules" },
         ),
       ))
       .child(div().flex_1())
-      .child(this.textButton("composer-deny", "Deny", () => this.openNote("deny", cx), t));
+      .child(this.textButton("composer-deny", "Deny", (_e, cx) => this.openNote("deny", cx), t));
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.blocked).bg(t.surface)
       .child(head)
       .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
@@ -1210,8 +1252,8 @@ export default class Composer extends View {
   planCard(t, cx, ask) {
     const plan = planText(ask);
     const buttons = h_flex().w_full().gap(6).items_center()
-      .child(this.cardButton("composer-approve", "Approve", () => this.answer(ask, { action: "approve" }, cx), t, { filled: true }))
-      .child(this.cardButton("composer-keep-planning", "Change the plan…", () => this.openNote("keep_planning", cx), t));
+      .child(this.cardButton("composer-approve", "Approve", (_e, cx) => this.answer(ask, { action: "approve" }, cx), t, { filled: true }))
+      .child(this.cardButton("composer-keep-planning", "Change the plan…", (_e, cx) => this.openNote("keep_planning", cx), t));
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
       .child(
         h_flex()
@@ -1260,7 +1302,7 @@ export default class Composer extends View {
               .bg(picked ? t.selected : t.raised)
               .cursor_pointer()
               .hover((style) => style.bg(t.hover))
-              .on_click(() => this.toggleOption(question, label, cx))
+              .on_click((_e, cx) => this.toggleOption(question, label, cx))
               .child(div().text_size(12.5).font_medium().text_color(t.foreground).child(`${optionIndex + 1}. ${label}`))
               .when(
                 Boolean(option.description) && !repeatsLabel(label, option.description),
@@ -1293,7 +1335,7 @@ export default class Composer extends View {
       .text_color(t.accent_foreground)
       .cursor_pointer()
       .hover((style) => style.opacity(0.88))
-      .on_click(() => this.sendAnswers(ask, cx));
+      .on_click((_e, cx) => this.sendAnswers(ask, cx));
   }
 
   terminalAnswerLink(ask, t, cx) {
@@ -1304,7 +1346,7 @@ export default class Composer extends View {
       .text_size(11.5)
       .text_color(t.dim)
       .hover((style) => style.text_color(t.foreground))
-      .on_click(() => this.answerInTerminal(ask, cx))
+      .on_click((_e, cx) => this.answerInTerminal(ask, cx))
       .child("or answer in the terminal");
   }
 
@@ -1341,24 +1383,6 @@ export default class Composer extends View {
 
   terminalShown() {
     return leadOf()?.terminal === "shown";
-  }
-
-  terminalToggle(t) {
-    const shown = this.terminalShown();
-    return h_flex()
-      .id("lead-terminal")
-      .w(28)
-      .h(28)
-      .flex_none()
-      .items_center()
-      .justify_center()
-      .rounded(7)
-      .text_color(shown ? t.foreground : t.muted)
-      .bg(shown ? t.selected : t.background)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .tooltip(shown ? "Back to the conversation" : "Show Claude's terminal")
-      .on_click(() => run("lead.terminal", { terminal: this.terminal }))
-      .child(svg("mods/workspace-chrome/terminal.svg").size(16));
   }
 
   revealNote(t) {
@@ -1459,7 +1483,7 @@ export default class Composer extends View {
           .gap(6)
           .items_center()
           .cursor_pointer()
-          .on_click(() => {
+          .on_click((_e, cx) => {
             this.openTools[item.id] = !open;
             cx.notify();
           })
@@ -1500,7 +1524,7 @@ export default class Composer extends View {
         .gap(6)
         .items_center()
         .cursor_pointer()
-        .on_click(() => {
+        .on_click((_e, cx) => {
           this.openToolGroups[group.start] = true;
           cx.notify();
         })
@@ -1538,8 +1562,8 @@ export default class Composer extends View {
 
   conversationPanel(t, cx) {
     // The padding sits on an inner column: on the scroll area itself it would count as content to scroll past.
-    // The top leaves room for the terminal toggle that floats over the panel's corner.
-    const column = v_flex().w_full().px(20).pt(48).pb(16).gap(14);
+    // The conversation and the box share one column: at most 760 px, centred, with 20 px gutters when narrower.
+    const column = v_flex().w_full().max_w(760).px(20).pt(16).pb(16).gap(14);
     if (this.items.length === 0) {
       column.child(this.conversationEmpty(t));
     } else {
@@ -1552,7 +1576,7 @@ export default class Composer extends View {
       .id("composer-conversation")
       .flex_1()
       .min_h(0)
-      .child(column)
+      .child(h_flex().w_full().justify_center().child(column))
       .overflow_y_scroll()
       .track_scroll(this.scroll)
       .on_scroll_wheel((event, cx) => {
@@ -1568,7 +1592,6 @@ export default class Composer extends View {
       .relative()
       .child(list)
       .child(Scrollbar.vertical("composer-conversation").absolute().inset_0())
-      .child(div().absolute().top(12).right(16).child(this.terminalToggle(t)))
       .when(!this.stickToBottom, (el) =>
         el.child(
           h_flex()
@@ -1585,7 +1608,7 @@ export default class Composer extends View {
             .text_size(12)
             .text_color(t.foreground)
             .cursor_pointer()
-            .on_click(() => {
+            .on_click((_e, cx) => {
               this.stickToBottom = true;
               this.scroll.scroll_to_end();
               cx.notify();
@@ -1634,15 +1657,6 @@ export default class Composer extends View {
     }
     if (this.terminalShown()) {
       return root
-        .child(
-          h_flex()
-            .id("composer-shown-chrome")
-            .w_full()
-            .px(16)
-            .pt(10)
-            .justify_end()
-            .child(this.terminalToggle(t)),
-        )
         .when(Boolean(this.revealNote(t)), (el) => el.child(this.revealNote(t)))
         .child(this.bar(t, cx));
     }
