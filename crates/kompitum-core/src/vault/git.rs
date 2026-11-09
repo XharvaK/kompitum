@@ -362,11 +362,25 @@ pub fn added_since(dir: &Path, seen: &str) -> Result<Vec<String>, String> {
     Ok(paths)
 }
 
-/// Commits ahead of the upstream branch. One push is tried; what is still only
-/// here comes back with the count and the reason.
+/// Commits ahead of the upstream branch. One push is tried under the vault
+/// lock; what is still only here comes back with the count and the reason.
 pub fn unpushed(dir: &Path) -> (usize, Option<String>) {
-    let ahead = run(dir, &["rev-list", "--count", "@{upstream}..HEAD"], TIMEOUT);
-    let count: usize = if ahead.ok { ahead.output.trim().parse().unwrap_or(0) } else { 0 };
+    match take(dir) {
+        Ok(_lock) => unpushed_under_lock(dir),
+        Err(error) => {
+            let count = ahead_count(dir);
+            if count == 0 {
+                (0, None)
+            } else {
+                (count, Some(format!("the vault has {count} unpushed note(s): {error}")))
+            }
+        }
+    }
+}
+
+/// The same check and push, when the caller already holds the vault lock.
+pub fn unpushed_under_lock(dir: &Path) -> (usize, Option<String>) {
+    let count = ahead_count(dir);
     if count == 0 {
         return (0, None);
     }
@@ -375,6 +389,11 @@ pub fn unpushed(dir: &Path) -> (usize, Option<String>) {
         return (0, None);
     }
     (count, Some(format!("the vault has {count} unpushed note(s): {}", pushed.error)))
+}
+
+fn ahead_count(dir: &Path) -> usize {
+    let ahead = run(dir, &["rev-list", "--count", "@{upstream}..HEAD"], TIMEOUT);
+    if ahead.ok { ahead.output.trim().parse().unwrap_or(0) } else { 0 }
 }
 
 /// The paths `git status` names, one per line, with renames resolved to the new one.
