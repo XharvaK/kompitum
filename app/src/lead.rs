@@ -1338,9 +1338,134 @@ mod tests {
             ask_kind("PreToolUse", &json!({"tool_name": "AskUserQuestion", "tool_input": {}})),
             Some(AskKind::Question)
         );
-        assert_eq!(ask_kind("PreToolUse", &json!({"tool_name": "Bash"})), Some(AskKind::Permission));
+        assert_eq!(
+            ask_kind("PreToolUse", &json!({"tool_name": "Bash"})),
+            None,
+            "a regular tool is drawn in the conversation; it is not a permission card"
+        );
         assert_eq!(ask_kind("Stop", &json!({})), None);
         assert_eq!(ask_kind("UserPromptSubmit", &json!({})), None);
+    }
+
+    #[test]
+    fn published_session_gives_conversation_meta_not_the_items() {
+        let mut session = Session::default();
+        session.state = Some(State::Working);
+        session.conversation = fold(
+            session.conversation,
+            &Event::UserPromptSubmit {
+                prompt: "Hello".into(),
+            },
+        );
+        session.conversation = fold(
+            session.conversation,
+            &Event::MessageDisplay { text: "Hi.".into() },
+        );
+        let value = published_session(&session);
+        assert_eq!(value["state"], json!("working"));
+        assert_eq!(value["terminal"], json!("hidden"));
+        assert_eq!(value["reveal"], Value::Null);
+        assert_eq!(value["conversation"]["length"], json!(2));
+        assert!(value["conversation"]["version"].as_u64().unwrap() > 0);
+        assert!(value.get("items").is_none(), "{value}");
+        assert!(value.get("conversation").and_then(|c| c.get("items")).is_none(), "{value}");
+    }
+
+    #[test]
+    fn a_message_display_hook_grows_the_assistant_item() {
+        let mut session = Session::default();
+        assert!(apply_hook_event(
+            &mut session,
+            "MessageDisplay",
+            &json!({"delta": "Hi"})
+        ));
+        assert!(apply_hook_event(
+            &mut session,
+            "MessageDisplay",
+            &json!({"delta": " there."})
+        ));
+        assert_eq!(session.conversation.items.len(), 1);
+        match &session.conversation.items[0] {
+            Item::Assistant { text, done, .. } => {
+                assert_eq!(text, "Hi there.");
+                assert!(!*done);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(apply_hook_event(&mut session, "Stop", &json!({})));
+        match &session.conversation.items[0] {
+            Item::Assistant { done, .. } => assert!(*done),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn permission_and_question_hooks_do_not_fold() {
+        let mut session = Session::default();
+        assert!(!apply_hook_event(
+            &mut session,
+            "PermissionRequest",
+            &json!({"tool_name": "Bash"})
+        ));
+        assert!(!apply_hook_event(
+            &mut session,
+            "PreToolUse",
+            &json!({"tool_name": "AskUserQuestion"})
+        ));
+        assert!(session.conversation.items.is_empty());
+    }
+
+    #[test]
+    fn a_transcript_file_loads_and_a_missing_one_is_a_notice() {
+        let dir = std::env::temp_dir().join(format!(
+            "kompitum-transcript-{}-{}",
+            std::process::id(),
+            now_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("session.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"type":"user","message":{"role":"user","content":"Hello"}}
+{"type":"file-history-snapshot"}
+"#,
+        )
+        .unwrap();
+        let mut session = Session::default();
+        let skipped = apply_transcript_path(&mut session, Some(path.to_str().unwrap()));
+        assert_eq!(skipped, 1);
+        assert_eq!(session.conversation.items.len(), 1);
+        match &session.conversation.items[0] {
+            Item::Owner { text, .. } => assert_eq!(text, "Hello"),
+            other => panic!("{other:?}"),
+        }
+        let mut missing = Session::default();
+        assert_eq!(
+            apply_transcript_path(&mut missing, Some(dir.join("nope.jsonl").to_str().unwrap())),
+            0
+        );
+        match &missing.conversation.items[0] {
+            Item::Notice { text, .. } => assert_eq!(text, "Couldn't read the conversation history."),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(apply_transcript_path(&mut Session::default(), None), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_nonzero_auth_status_sets_a_login_reveal_on_the_session() {
+        let mut conversation = Conversation::default();
+        apply_auth_status(&mut conversation, 1);
+        assert_eq!(conversation.terminal, TerminalVis::Shown);
+        assert_eq!(conversation.reveal, Some(Reveal::Login));
+        assert_eq!(
+            conversation.reveal_why.as_deref(),
+            Some("Claude needs you to sign in.")
+        );
+        apply_auth_status(&mut conversation, 0);
+        assert_eq!(conversation.terminal, TerminalVis::Hidden);
+        assert_eq!(conversation.reveal, None);
+        assert_eq!(conversation.reveal_why, None);
     }
 
     #[test]
