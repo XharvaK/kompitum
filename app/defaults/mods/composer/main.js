@@ -930,7 +930,9 @@ export default class Composer extends View {
 
   // One floating box: files, the text (no placeholder), then "+", the lead's status, its model and Send.
   // While the lead asks, its card sits above the text in the same box.
-  bar(t, cx) {
+  // `panel`: under the conversation the box is as tall as its text (an ask's card scrolls past 360 px); in its own
+  // pane (under a shown terminal, or the first pick) it fills the pane.
+  bar(t, cx, panel = false) {
     const first = this.needsFirstPick();
     const ready = !this.sending && Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0;
     const send = h_flex()
@@ -965,13 +967,15 @@ export default class Composer extends View {
       ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(this.error)
       : this.state ? this.statusWord(t) : null;
     return div()
-      .size_full()
+      .when(panel, (el) => el.w_full().flex_none())
+      .when(!panel, (el) => el.size_full())
       .p(10)
       .bg(t.background)
       .child(
         v_flex()
           .id("composer-box")
-          .size_full()
+          .when(panel, (el) => el.w_full())
+          .when(!panel, (el) => el.size_full())
           .px(12)
           .pt(10)
           .pb(8)
@@ -984,8 +988,12 @@ export default class Composer extends View {
             el.child(h_flex().gap(6).flex_wrap().children(this.chips.map((chip, index) => this.chip(t, cx, chip, index)))))
           .when(first, (el) => el.child(this.firstPickCard(t, cx)))
           .when(!first && Boolean(this.ask), (el) =>
-            el.child(v_flex().id("composer-asks").flex_1().min_h(0).overflow_y_scrollbar().child(this.card(t, cx))))
-          .when(!first && !this.ask, (el) => el.child(div().flex_1().min_h(0).child(Textarea.new(this.text).w_full())))
+            el.child(v_flex().id("composer-asks")
+              .when(panel, (asks) => asks.max_h(360))
+              .when(!panel, (asks) => asks.flex_1().min_h(0))
+              .overflow_y_scrollbar().child(this.card(t, cx))))
+          .when(!first && !this.ask, (el) =>
+            el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full())))
           .child(
             h_flex()
               .w_full()
@@ -1346,7 +1354,7 @@ export default class Composer extends View {
       .justify_center()
       .rounded(7)
       .text_color(shown ? t.foreground : t.muted)
-      .when(shown, (el) => el.bg(t.selected))
+      .bg(shown ? t.selected : t.background)
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
       .tooltip(shown ? "Back to the conversation" : "Show Claude's terminal")
       .on_click(() => run("lead.terminal", { terminal: this.terminal }))
@@ -1373,9 +1381,10 @@ export default class Composer extends View {
     let i = 0;
     while (i < this.items.length) {
       const item = this.items[i];
-      if (item?.kind === "tool" && item.state !== "running") {
+      // Only finished tools fold; a failed one keeps its own line, so its x stays in sight.
+      if (item?.kind === "tool" && item.state === "done") {
         let j = i;
-        while (j < this.items.length && this.items[j]?.kind === "tool" && this.items[j].state !== "running") j += 1;
+        while (j < this.items.length && this.items[j]?.kind === "tool" && this.items[j].state === "done") j += 1;
         if (j - i >= 2) {
           groups.push({ type: "tools", items: this.items.slice(i, j), start: i });
           i = j;
@@ -1528,14 +1537,22 @@ export default class Composer extends View {
   }
 
   conversationPanel(t, cx) {
+    // The padding sits on an inner column: on the scroll area itself it would count as content to scroll past.
+    // The top leaves room for the terminal toggle that floats over the panel's corner.
+    const column = v_flex().w_full().px(20).pt(48).pb(16).gap(14);
+    if (this.items.length === 0) {
+      column.child(this.conversationEmpty(t));
+    } else {
+      for (const group of this.conversationGroups()) {
+        if (group.type === "tools") column.child(this.toolsGroup(t, group, cx));
+        else column.child(this.drawItem(t, group.item, cx));
+      }
+    }
     const list = v_flex()
       .id("composer-conversation")
       .flex_1()
       .min_h(0)
-      .px(20)
-      .pt(16)
-      .pb(16)
-      .gap(14)
+      .child(column)
       .overflow_y_scroll()
       .track_scroll(this.scroll)
       .on_scroll_wheel((event, cx) => {
@@ -1544,14 +1561,6 @@ export default class Composer extends View {
           cx.notify();
         }
       });
-    if (this.items.length === 0) {
-      list.child(this.conversationEmpty(t));
-    } else {
-      for (const group of this.conversationGroups()) {
-        if (group.type === "tools") list.child(this.toolsGroup(t, group, cx));
-        else list.child(this.drawItem(t, group.item, cx));
-      }
-    }
     return div()
       .id("composer-panel")
       .flex_1()
@@ -1637,7 +1646,7 @@ export default class Composer extends View {
         .when(Boolean(this.revealNote(t)), (el) => el.child(this.revealNote(t)))
         .child(this.bar(t, cx));
     }
-    return root.child(this.conversationPanel(t, cx)).child(this.bar(t, cx));
+    return root.child(this.conversationPanel(t, cx)).child(this.bar(t, cx, true));
   }
 
   // The pane grows with the text, up to six lines; the window holds the height (lead.fit).
