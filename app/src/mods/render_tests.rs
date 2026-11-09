@@ -783,8 +783,8 @@ fn the_lead_chip_shows_its_model_and_opens_the_lead(cx: &mut TestAppContext) {
     );
 }
 
-/// The composer draws its box under a live lead, and one line with Open when
-/// no lead terminal is alive.
+/// The composer draws its box under a live lead, and the first-pick card when
+/// no lead terminal is alive and no model is saved.
 #[gpui::test]
 fn the_composer_renders_with_and_without_a_lead(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -792,18 +792,22 @@ fn the_composer_renders_with_and_without_a_lead(cx: &mut TestAppContext) {
     let mut with = fixture(true, props(), updates("current", "current"));
     with.insert("knownAgents".into(), agent_catalog());
     let tree = describe_settled(cx, &staged, "mods/composer", with, None).unwrap();
-    assert!(tree.contains("Claude"), "{tree}");
     assert!(tree.contains("composer-send"), "{tree}");
+    assert!(tree.contains("Choose a model"), "{tree}");
     assert!(!tree.contains("The lead isn't running"), "{tree}");
+    assert!(!tree.contains("composer-first"), "{tree}");
 
     let mut without = fixture(false, props(), updates("current", "current"));
     without.insert("knownAgents".into(), agent_catalog());
     let tree = describe_settled(cx, &staged, "mods/composer", without, None).unwrap();
-    assert!(tree.contains("The lead isn't running"), "{tree}");
-    assert!(tree.contains("composer-open"), "{tree}");
+    assert!(tree.contains("composer-first"), "{tree}");
+    assert!(tree.contains("Which model should the lead use?"), "{tree}");
+    assert!(!tree.contains("The lead isn't running"), "{tree}");
+    assert!(!tree.contains("composer-open"), "{tree}");
 }
 
-/// A listed terminal that has ended is not the lead: the composer shows Open.
+/// A listed terminal that has ended is not the lead: with no saved model, the
+/// composer asks which one to use.
 #[gpui::test]
 fn the_composer_needs_a_live_lead(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -812,8 +816,10 @@ fn the_composer_needs_a_live_lead(cx: &mut TestAppContext) {
     values.insert("knownAgents".into(), agent_catalog());
     values.get_mut("terminals").unwrap()[0]["state"] = json!("exited");
     let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
-    assert!(tree.contains("The lead isn't running"), "{tree}");
-    assert!(tree.contains("composer-open"), "{tree}");
+    assert!(tree.contains("composer-first"), "{tree}");
+    assert!(tree.contains("Which model should the lead use?"), "{tree}");
+    assert!(!tree.contains("The lead isn't running"), "{tree}");
+    assert!(!tree.contains("composer-open"), "{tree}");
 }
 
 /// Under a lead that isn't running, the button starts that lead, model and all.
