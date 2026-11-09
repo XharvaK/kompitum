@@ -1,8 +1,8 @@
-// Settings › General: the folder the lead starts in, and the welcome again.
+// Settings › General: the folder the lead starts in.
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { home, pickFolder, run, closeOverlay, props } from "kompitum";
+import { home, pickFolder } from "kompitum";
 
 function chooseFolder(view, cx) {
   cx.spawn(async (cx) => {
@@ -31,18 +31,6 @@ export function generalPage(view, t, cx) {
           .child(div().max_w(340).truncate().text_size(13).text_color(t.muted).child(folder))
           .child(view.button(t, "st-general-folder", "Choose\u2026", (_e, cx) => chooseFolder(view, cx))),
         "folder",
-      ),
-    )
-    .child(
-      view.row(
-        t,
-        "Welcome",
-        null,
-        view.button(t, "st-general-welcome", "Show again", () => {
-          closeOverlay(props().overlay);
-          run("app.welcome");
-        }),
-        "welcome",
       ),
     );
 }

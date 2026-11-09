@@ -152,6 +152,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let known_agents = values.remove("knownAgents");
     let workers_json = values.remove("workersJson");
     let status_json = values.remove("statusJson");
+    let usage_json = values.remove("usageJson");
     let vault_missing = values.remove("vaultMissing");
     let thread_json = values.remove("threadJson");
     let mut module = HostModule::new("kompitum");
@@ -228,6 +229,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let person = person.clone();
         let workers_json = workers_json.clone();
         let status_json = status_json.clone();
+        let usage_json = usage_json.clone();
         let vault_missing = vault_missing.clone();
         let thread_json = thread_json.clone();
         module = module.async_function(name, move |a| {
@@ -255,6 +257,23 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                 "kom" if first.as_array().and_then(|a| a.first()).and_then(Value::as_str) == Some("exec") => {
                     Some(json!({"code":0,"stdout":"","stderr":""}))
                 }
+                // A worker CLI's own usage report; OpenCode nests its meters under data.go.
+                "exec" if first == "opencode" => Some(json!({
+                    "code": 0,
+                    "stdout": usage_json.clone().unwrap_or_else(|| json!({
+                        "location": {},
+                        "data": {
+                            "workspace": {},
+                            "go": {
+                                "rolling": {"percent": 0, "limited": false, "resetsAt": 1794256628000i64},
+                                "weekly": {"percent": 19, "limited": false, "resetsAt": 1794256628000i64},
+                                "monthly": {"percent": 96, "limited": false, "resetsAt": 1794256628000i64}
+                            },
+                            "budgets": []
+                        }
+                    })).to_string(),
+                    "stderr": ""
+                })),
                 // The mailbox: one note that needs the Owner, one between agents.
                 "kom" if first == json!(["vault", "open", "--json", "--as", "owner"]) && vault_missing.is_some() => Some(json!({
                     "code": 1,
@@ -1714,9 +1733,10 @@ fn option_key_settings_are_only_shown_on_macos(cx: &mut TestAppContext) {
                 "{platform}: {tree}"
             );
         }
-        assert!(
+        assert_eq!(
             tree.contains("st-s-keyboard"),
-            "{platform}: Keyboard must be in the nav: {tree}"
+            platform == "macos",
+            "{platform}: Keyboard is a macOS page: {tree}"
         );
     }
 }
@@ -2008,8 +2028,10 @@ fn settings_general_draws_the_home_folder_row(cx: &mut TestAppContext) {
     assert!(tree.contains("Home folder"), "{tree}");
     assert!(tree.contains("/fixture/projects"), "{tree}");
     assert!(tree.contains("st-general-folder"), "{tree}");
-    assert!(tree.contains("st-general-welcome"), "{tree}");
-    assert!(tree.contains("Show again"), "{tree}");
+    assert!(
+        !tree.contains("st-general-welcome"),
+        "Welcome moved to About: {tree}"
+    );
 }
 
 #[gpui::test]
@@ -2036,11 +2058,14 @@ fn settings_nav_lists_every_section_and_an_unknown_one_opens_appearance(cx: &mut
         "connect",
         "notifications",
         "machines",
-        "keyboard",
         "about",
     ] {
         assert!(tree.contains(&format!("st-s-{id}")), "missing {id}: {tree}");
     }
+    assert!(
+        !tree.contains("st-s-keyboard"),
+        "Keyboard is a macOS page: {tree}"
+    );
     assert!(tree.contains("st-close"), "{tree}");
     assert!(tree.contains("st-feedback"), "{tree}");
     assert!(tree.contains("Send feedback"), "{tree}");
@@ -2074,39 +2099,6 @@ fn appearance_has_no_layout_or_colour_pickers(cx: &mut TestAppContext) {
     assert!(tree.contains("st-layout-reset"), "{tree}");
     assert!(!tree.contains("Colours"), "{tree}");
     assert!(!tree.contains("st-layout-desk"), "{tree}");
-}
-
-/// A picked plan pill is raised, in the foreground colour; the control hugs its pills instead of
-/// stretching like an input.
-#[gpui::test]
-fn agent_plan_pills_show_the_pick(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let workers = agent_workers(
-        json!(["cc", "go"]),
-        json!([
-            agent_worker("cc", "Command Code", "command_code", "commandcode/deepseek/deepseek-v4.1-flash#max", "ready", "", 0),
-            agent_worker("go", "opencode Go", "opencode", "opencode-go/deepseek-v4.1-flash#max", "ready", "", 0)
-        ]),
-    );
-    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
-    let mut values = agents_values(agent_catalog(), workers, status);
-    values.insert("person".into(), json!({"plans": {"opencode": "go", "command-code": "go"}}));
-    let theme = values["theme"].clone();
-    let raised = theme["raised"].as_str().unwrap();
-    let foreground = theme["foreground"].as_str().unwrap();
-    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
-    let pill = tree
-        .lines()
-        .find(|line| line.contains("st-plan-opencode-go"))
-        .unwrap_or_else(|| panic!("no picked plan: {tree}"));
-    assert!(pill.contains(raised), "picked fill: {pill}");
-    assert!(pill.contains(foreground), "picked text colour: {pill}");
-    let control = tree
-        .lines()
-        .find(|line| line.contains(":id[Str(\"st-plan-command-code\")]"))
-        .unwrap_or_else(|| panic!("no pill control: {tree}"));
-    assert!(control.contains(".self_start"), "a lone pill hugs its content: {control}");
 }
 
 #[gpui::test]
@@ -2343,7 +2335,7 @@ fn setting_search_finds_rows_and_says_when_nothing_matches(cx: &mut TestAppConte
 }
 
 #[gpui::test]
-fn agent_plans_show_claude_limits_and_exhaustion(cx: &mut TestAppContext) {
+fn agent_usage_shows_claude_limits_under_the_lead(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let workers = agent_workers(
@@ -2376,18 +2368,13 @@ fn agent_plans_show_claude_limits_and_exhaustion(cx: &mut TestAppContext) {
             "seven_day_used_percentage": 61.0, "seven_day_resets_at": 4102444800u64
         }
     });
-    let tree = describe_settled(
-        cx,
-        &staged,
-        "frame/settings",
-        agents_values(agent_catalog(), workers.clone(), status),
-        None,
-    )
-    .unwrap();
-    assert!(tree.contains("5H 42% · resets"), "{tree}");
-    assert!(tree.contains("Week 61% · resets"), "{tree}");
-    assert!(tree.contains("st-plan-command-code-go"), "{tree}");
-    assert!(tree.contains("st-plan-opencode-go"), "{tree}");
+    let values = agents_values(agent_catalog(), workers.clone(), status);
+    let theme = values["theme"].clone();
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    assert!(tree.contains("5H 42%"), "{tree}");
+    assert!(tree.contains("Week 61%"), "{tree}");
+    assert!(!tree.contains("· resets"), "no estimates or resets: {tree}");
+    assert!(!tree.contains("st-plan-"), "the plans are gone: {tree}");
     let status = json!({
         "tasks": {"review": [], "running": [], "queued": []},
         "claude": {
@@ -2399,11 +2386,23 @@ fn agent_plans_show_claude_limits_and_exhaustion(cx: &mut TestAppContext) {
         cx,
         &staged,
         "frame/settings",
-        agents_values(agent_catalog(), workers.clone(), status.clone()),
+        agents_values(agent_catalog(), workers, status),
         None,
     )
     .unwrap();
-    assert!(tree.contains("5H exhausted · resets"), "{tree}");
+    assert!(tree.contains("5H 100%"), "{tree}");
+    assert!(tree.contains("Week 61%"), "{tree}");
+    let blocked = theme["blocked"].as_str().unwrap();
+    let lines: Vec<&str> = tree.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.contains("text \"5H 100%\""))
+        .unwrap_or_else(|| panic!("no limited meter: {tree}"));
+    assert!(
+        lines[at - 1].contains(blocked),
+        "a limited meter is blocked: {}",
+        lines[at - 1]
+    );
 }
 
 #[gpui::test]

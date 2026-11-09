@@ -1,13 +1,13 @@
-// The Agents page: plans, the lead, and the workers the core tries in order.
-// Reads the CLI catalog from programs.json (through knownAgents) and the
-// core's own `kom workers --json` and `kom status --json`.
+// The Agents page: the lead, the usage each CLI reports, and the workers the
+// core tries in order. Reads the CLI catalog from programs.json (through
+// knownAgents) and the core's own `kom workers --json` and `kom status --json`.
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { kom, exec, knownAgents, window } from "kompitum";
 
 const BUILTIN = new Set(["cc", "codex", "go", "free"]);
-const PLANS_EVERY_MS = 60000;
+const USAGE_EVERY_MS = 60000;
 const DETAIL_LIMIT = 32;
 
 function errorText(error) {
@@ -82,26 +82,52 @@ export function loadAgents(view, cx, forceUsage = false) {
   });
 }
 
-// The CLI's own report wins over Kompitum's estimate. Asked when the page
-// opens, then at most once a minute.
+// The CLI's own usage report, asked when the page opens, then at most once a
+// minute. Only a worker CLI's report is drawn, on its worker row.
 async function loadUsage(view, cx, s, force) {
   const now = Date.now();
   for (const entry of s.known ?? []) {
-    if (!entry.usage?.length || !planEntries(s).some((p) => p.key === entry.key)) continue;
-    if (!force && now - (s.usageAt[entry.key] ?? 0) < PLANS_EVERY_MS) continue;
+    if (!entry.usage?.length) continue;
+    if (!(s.workers?.workers ?? []).some((worker) => worker.cli === entry.worker)) continue;
+    if (!force && now - (s.usageAt[entry.key] ?? 0) < USAGE_EVERY_MS) continue;
     s.usageAt[entry.key] = now;
     try {
       const r = await execCli(entry, entry.usage);
-      if (r.code !== 0) throw new Error(firstLine(r.stderr || r.stdout) || `exit ${r.code}`);
+      if (r.code !== 0) throw new Error("its usage report couldn't be read");
       const meters = parseUsage(r.stdout);
-      if (!meters) throw new Error(firstLine(r.stdout) || "its report has no usage meters");
+      if (!meters) throw new Error("its usage report has no meters");
       s.usage[entry.key] = meters;
       delete s.usageError[entry.key];
-    } catch (error) {
+    } catch {
       delete s.usage[entry.key];
-      s.usageError[entry.key] = firstLine(errorText(error));
+      // Only that it failed is kept: a CLI's raw report never reaches the screen.
+      s.usageError[entry.key] = true;
     }
   }
+}
+
+// One quiet line of the meters a CLI reports, or null when it reports none.
+// 80% and over is working; 100% (or the report's own limited flag) is blocked.
+function usageMeters(t, meters) {
+  const parts = [];
+  for (const [label, meter] of [["5H", meters?.rolling], ["Week", meters?.weekly], ["Month", meters?.monthly]]) {
+    const percent = meter?.percent;
+    if (percent == null || !Number.isFinite(Number(percent))) continue;
+    const used = Math.round(Number(percent));
+    const color = meter.limited || used >= 100 ? t.blocked : used >= 80 ? t.working : t.dim;
+    if (parts.length) parts.push(div().text_color(t.dim).child(" \u00b7 "));
+    parts.push(div().text_color(color).child(`${label} ${used}%`));
+  }
+  return parts.length ? h_flex().text_size(12).text_color(t.dim).children(parts) : null;
+}
+
+// Claude's own status report, drawn under the Lead section.
+function claudeMeters(t, claude) {
+  if (!claude) return null;
+  return usageMeters(t, {
+    rolling: { percent: claude.five_hour_used_percentage },
+    weekly: { percent: claude.seven_day_used_percentage },
+  });
 }
 
 function parseUsage(text) {
@@ -117,10 +143,16 @@ function parseUsage(text) {
     }
   }
   if (!data || typeof data !== "object") return null;
-  const candidates = [data, data.go, data.usage, data.go?.usage, data.usage?.go];
-  const meters = candidates.find((c) => c && typeof c === "object" && (c.rolling || c.weekly || c.monthly));
+  const report = data.data;
+  const candidates = [
+    data, data.go, data.usage, data.go?.usage, data.usage?.go,
+    report, report?.go, report?.usage, report?.go?.usage, report?.usage?.go,
+  ];
+  // A meter counts only when it says something: a percent, or that it is limited.
+  const says = (m) => m && typeof m === "object" && ((m.percent != null && Number.isFinite(Number(m.percent))) || m.limited === true);
+  const meters = candidates.find((c) => c && typeof c === "object" && [c.rolling, c.weekly, c.monthly].some(says));
   if (!meters) return null;
-  const one = (m) => (m && typeof m === "object" ? { percent: Number(m.percent), resetsAt: m.resetsAt } : null);
+  const one = (m) => (m && typeof m === "object" ? { percent: m.percent == null ? null : Number(m.percent), limited: m.limited === true } : null);
   return { rolling: one(meters.rolling), weekly: one(meters.weekly), monthly: one(meters.monthly) };
 }
 
@@ -138,34 +170,10 @@ function programFor(s, cli) {
   return (s.known ?? []).find((entry) => entry.worker === cli) ?? null;
 }
 
-function workersFor(s, entry) {
-  return (s.workers?.workers ?? []).filter((worker) => worker.cli === entry.worker);
-}
-
-function orderedWorkers(s, entry) {
-  const all = workersFor(s, entry);
-  const byKey = new Map(all.map((w) => [w.key, w]));
-  return (s.workers?.order ?? []).map((key) => byKey.get(key)).filter(Boolean);
-}
-
-function planEntries(s) {
-  const seen = new Set();
-  const entries = [];
-  for (const key of s.workers?.order ?? []) {
-    const worker = (s.workers?.workers ?? []).find((w) => w.key === key);
-    const entry = worker ? programFor(s, worker.cli) : null;
-    if (entry?.plans?.length && !seen.has(entry.key)) {
-      seen.add(entry.key);
-      entries.push(entry);
-    }
-  }
-  return entries;
-}
-
 const WINDOWS = [
-  { label: "5H", spend: "five_hours", report: "rolling", block: "5-hour", clock: true },
-  { label: "Week", spend: "week", report: "weekly", block: "weekly", clock: false },
-  { label: "Month", spend: "month", report: "monthly", block: "monthly", clock: false },
+  { label: "5H", block: "5-hour", clock: true },
+  { label: "Week", block: "weekly", clock: false },
+  { label: "Month", block: "monthly", clock: false },
 ];
 
 function two(n) {
@@ -190,102 +198,6 @@ function resetWords(ms, clock) {
   const days = Math.round((midnight(when) - midnight(now)) / 86400000);
   if (Math.abs(days) < 7) return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][when.getDay()];
   return `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][when.getMonth()]} ${when.getDate()}`;
-}
-
-function meter(t, label, percent, reset, { approx = false, exhausted = false } = {}) {
-  const used = Number(percent);
-  const has = Number.isFinite(used);
-  const spent = has && used >= 100;
-  const text = has
-    ? `${label} ${spent ? "exhausted" : `${approx ? "≈" : ""}${Math.min(99, Math.round(used))}%`}${reset ? ` · resets ${reset}` : ""}`
-    : `${label}${reset ? ` · resets ${reset}` : ""}`;
-  const row = v_flex().gap(4).child(div().text_size(12.5).text_color(spent || exhausted ? t.working : t.muted).child(text));
-  if (has) {
-    const width = 170 * Math.max(2, Math.min(100, used)) / 100;
-    row.child(div().w(170).h(3).rounded(2).bg(t.hover).child(div().w(width).h(3).rounded(2).bg(spent || exhausted ? t.working : t.accent)));
-  }
-  return row;
-}
-
-function planLimit(plan, model, label) {
-  if (plan?.models) return plan.models?.[model]?.[label];
-  return plan?.windows?.[label];
-}
-
-function planWindows(s, entry, plan, external, workers, t) {
-  const first = orderedWorkers(s, entry)[0] ?? workers[0];
-  const model = first ? routeModel(first.route) : null;
-  const out = [];
-  for (const window of WINDOWS) {
-    const blocked = workers.find((w) => w.state === "out" && w.window === window.block);
-    if (blocked) {
-      out.push(meter(t, window.label, 100, resetWords(blocked.until_ms, window.clock), { exhausted: true }));
-      continue;
-    }
-    const report = external?.[window.report];
-    if (Number.isFinite(Number(report?.percent))) {
-      out.push(meter(t, window.label, report.percent, resetWords(report.resetsAt, window.clock)));
-      continue;
-    }
-    const limit = planLimit(plan, model, window.label);
-    if (!Number.isFinite(Number(limit)) || Number(limit) <= 0) continue;
-    const spent = workers.reduce((sum, worker) => sum + Number(worker.spend?.[window.spend]?.cost_usd ?? 0), 0);
-    out.push(meter(t, window.label, (spent / Number(limit)) * 100, null, { approx: true }));
-  }
-  return out;
-}
-
-function claudeRow(t, claude, known) {
-  const entry = (known ?? []).find((a) => a.key === "claude") ?? { icon: "icons/claude.svg", tint: false };
-  const windows = [];
-  if (claude) {
-    const five = claude.five_hour_used_percentage;
-    const fiveAt = resetWords(claude.five_hour_resets_at, true);
-    if (five != null || fiveAt) windows.push(meter(t, "5H", five, fiveAt));
-    const week = claude.seven_day_used_percentage;
-    const weekAt = resetWords(claude.seven_day_resets_at, false);
-    if (week != null || weekAt) windows.push(meter(t, "Week", week, weekAt));
-  }
-  return v_flex().w_full().py(12).gap(8).border_b(1).border_color(t.border)
-    .child(h_flex().gap(8).items_center()
-      .child(programIcon(entry, 16, t))
-      .child(div().text_size(14).text_color(t.foreground).child("Claude Code")))
-    .when(windows.length > 0, (el) => el.children(windows))
-    .when(windows.length === 0, (el) => el.child(div().text_size(12.5).text_color(t.dim).child("Claude Code hasn't reported its plan yet.")));
-}
-
-function planRow(view, t, cx, s, entry) {
-  const selected = view.person?.plans?.[entry.key];
-  const plan = (entry.plans ?? []).find((p) => p.id === selected);
-  const workers = workersFor(s, entry);
-  const head = h_flex().gap(8).items_center()
-    .child(programIcon(entry, 16, t))
-    .child(div().text_size(14).text_color(t.foreground).child(entry.name ?? entry.key));
-  const choices = view.segmented(
-    t,
-    `st-plan-${entry.key}`,
-    (entry.plans ?? []).map((p) => [p.id, p.label]),
-    selected,
-    (id, cx) => {
-      view.change((person) => {
-        person.plans = { ...(person.plans ?? {}), [entry.key]: id };
-      }, cx);
-    },
-  );
-  const external = s.usage[entry.key];
-  const error = s.usageError[entry.key];
-  const others = workers
-    .filter((worker) => worker.state === "out" && !WINDOWS.some((window) => window.block === worker.window))
-    .map((worker) => worker.sentence)
-    .filter(Boolean);
-  return v_flex().w_full().py(12).gap(8).border_b(1).border_color(t.border)
-    .child(head)
-    .when((entry.plans ?? []).length > 0, (el) => el.child(choices))
-    .when(!plan, (el) => el.child(div().text_size(12.5).text_color(t.dim).child("Pick this CLI's plan.")))
-    .when(Boolean(plan), (el) => el.children(planWindows(s, entry, plan, external, workers, t)))
-    .children(others.map((sentence) => div().text_size(12.5).line_height("18px").text_color(t.working).child(sentence)))
-    .when(Boolean(plan && error), (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.dim)
-      .child(`${entry.name ?? entry.key} can't report its plan yet (${error}), so these are Kompitum's own estimates.`)));
 }
 
 function programIcon(entry, size, t) {
@@ -538,11 +450,14 @@ function leadSection(view, t, cx, s) {
       })
     : null;
   const card = (child) => div().w_full().mt(6).p(4).rounded(10).border_1().border_color(t.border).bg(t.surface).child(child);
+  // Claude reports its own limits; they belong under the lead only while Claude is the lead.
+  const usage = entry.key === "claude" ? claudeMeters(t, s.status?.claude) : null;
   return v_flex().w_full()
     .child(view.heading(t, "Lead"))
     .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
       .child("The agent you talk to. It plans, asks you, and hands work to the workers below."))
     .child(cliList)
+    .when(Boolean(usage), (el) => el.child(div().pt(6).child(usage)))
     .child(view.row(t, "Model", null, modelMenu, "lead_model"))
     .when(Boolean(sState.modelOpen), (el) => el.child(card(modelPicker(view, t, cx, entry))))
     .when(Boolean(effortMenu), (el) => el.child(view.row(t, "Reasoning", null, effortMenu, "lead_model")))
@@ -573,6 +488,10 @@ function workerRow(view, t, cx, s, worker, index) {
   const entry = programFor(s, worker.cli) ?? { name: worker.label, icon: null };
   const model = routeModel(worker.route);
   const state = workerState(t, worker);
+  const reported = entry.key ? usageMeters(t, s.usage[entry.key]) : null;
+  const usage = reported ?? (entry.key && s.usageError[entry.key]
+    ? div().text_size(12).text_color(t.dim).child(`${entry.name ?? entry.key}'s usage report couldn't be read.`)
+    : null);
   const from = s.drag?.from;
   const row = v_flex()
     .id(`st-worker-${worker.key}`)
@@ -611,6 +530,7 @@ function workerRow(view, t, cx, s, worker, index) {
       .child(keyButton(t, `st-worker-up-${worker.key}`, "↑", (_e, cx) => workerStep(view, index, -1, cx)))
       .child(keyButton(t, `st-worker-down-${worker.key}`, "↓", (_e, cx) => workerStep(view, index, 1, cx)))
       .when(!BUILTIN.has(worker.key), (el) => el.child(keyButton(t, `st-worker-remove-${worker.key}`, "×", (_e, cx) => removeWorker(view, worker, cx)))));
+  if (usage) row.child(usage);
   return row;
 }
 
@@ -852,11 +772,5 @@ export function agentsPage(view, t, cx) {
       div().pb(8).text_size(12.5).line_height("18px").text_color(t.blocked).child(error))))
     .child(leadSection(view, t, cx, s))
     .child(div().h(24))
-    .child(workersSection(view, t, cx, s))
-    .child(div().h(24))
-    .child(v_flex().w_full().when(view.lit("plans"), (el) => el.bg(t.selected).rounded(7))
-      .child(view.heading(t, "Plans"))
-      .child(div().pb(6).text_size(12.5).text_color(t.dim).child("How much of each plan is used."))
-      .child(claudeRow(t, s.status?.claude, s.known))
-      .children(planEntries(s).map((entry) => planRow(view, t, cx, s, entry))));
+    .child(workersSection(view, t, cx, s));
 }

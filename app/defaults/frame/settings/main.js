@@ -23,17 +23,22 @@ const SECTIONS = [
   { id: "about", title: "About", icon: "info" },
 ];
 
+const macos = () => window()?.platform === "macos";
+
+// Keyboard holds only macOS's Option key, so other systems never show it.
+function liveSections() {
+  return macos() ? SECTIONS : SECTIONS.filter((s) => s.id !== "keyboard");
+}
+
 // What the search field finds: one entry per row the sections draw, so search
 // never reads the drawn tree. `key` matches the row's highlight key.
 const SEARCH = [
   { section: "general", key: "folder", title: "Home folder", words: "lead starts projects user drive working directory" },
-  { section: "general", key: "welcome", title: "Welcome", words: "show again onboarding first start setup" },
   { section: "appearance", key: "theme", title: "Theme", words: "light dark system appearance" },
   { section: "appearance", key: "layout", title: "Window", words: "layout reset desk window shape back" },
   { section: "appearance", key: "zoom", title: "Zoom", words: "size scale bigger smaller interface" },
   { section: "appearance", key: "font", title: "Terminal font", words: "typeface monospace ligatures" },
   { section: "appearance", key: "ui_font", title: "Interface font", words: "typeface panels" },
-  { section: "agents", key: "plans", title: "Plans", words: "usage limits subscription quota resets claude command code opencode grok" },
   { section: "agents", key: "lead", title: "CLI", words: "lead agent program claude command code opencode grok" },
   { section: "agents", key: "lead_model", title: "Model", words: "provider models list other" },
   { section: "agents", key: "lead_model", title: "Reasoning", words: "effort levels low medium high xhigh max" },
@@ -50,6 +55,7 @@ const SEARCH = [
   { section: "machines", key: "this", title: "This computer", words: "local version kom" },
   { section: "machines", key: "add", title: "Add a machine", words: "ssh remote host" },
   { section: "keyboard", key: "option", title: "Option key", words: "alt macos accents keyboard" },
+  { section: "about", key: "welcome", title: "Welcome", words: "show again onboarding first start setup" },
   { section: "about", key: "app", title: "Kompitum", words: "version update what's new release" },
   { section: "about", key: "core", title: "kompitum-core", words: "version update core terminals" },
 ];
@@ -105,7 +111,7 @@ export default class Settings extends View {
       if (this.section === "agents") loadAgents(this, cx);
       cx.notify();
     });
-    // While the Agents page is open, its plans, workers and lead stay current.
+    // While the Agents page is open, its usage, workers and lead stay current.
     cx.timer.every(5000, (cx) => {
       if (this.section !== "agents") return;
       loadAgents(this, cx);
@@ -172,7 +178,7 @@ export default class Settings extends View {
   searchMatches() {
     const words = this.search.trim().toLowerCase().split(/\s+/).filter(Boolean);
     if (!words.length) return [];
-    const live = new Set(SECTIONS.map((s) => s.id));
+    const live = new Set(liveSections().map((s) => s.id));
     return SEARCH.filter((e) => live.has(e.section)).filter((e) => {
       const text = `${e.title} ${e.words}`.toLowerCase();
       return words.every((w) => text.includes(w));
@@ -219,7 +225,12 @@ export default class Settings extends View {
   }
 
   lit(key) {
-    return Boolean(this.highlight) && this.highlight.section === this.section && this.highlight.key === key;
+    return Boolean(this.highlight) && this.highlight.section === this.sectionNow() && this.highlight.key === key;
+  }
+
+  // Opening Keyboard on a system without it lands on General.
+  sectionNow() {
+    return this.section === "keyboard" && !macos() ? "general" : this.section;
   }
 
   // Pieces ---------------------------------------------------------------
@@ -298,35 +309,6 @@ export default class Settings extends View {
       .hover((s) => s.opacity(0.9))
       .on_click(onClick)
       .child(label);
-  }
-
-  // A segmented control: the chosen segment is raised, the rest stay quiet.
-  segmented(t, id, items, selected, onPick) {
-    return h_flex()
-      .id(id)
-      .self_start()
-      .p(2)
-      .gap(2)
-      .rounded(8)
-      .border_1()
-      .border_color(t.border)
-      .bg(t.background)
-      .children(
-        items.map(([value, label]) => {
-          const on = value === selected;
-          return div()
-            .id(`${id}-${value}`)
-            .px(12)
-            .py(4)
-            .rounded(6)
-            .text_size(13)
-            .cursor_pointer()
-            .when(on, (el) => el.bg(t.raised).text_color(t.foreground).font_medium())
-            .when(!on, (el) => el.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
-            .on_click((_e, cx) => onPick(value, cx))
-            .child(label);
-        }),
-      );
   }
 
   toggle(t, id, on, onClick) {
@@ -622,6 +604,18 @@ export default class Settings extends View {
               .when(Boolean(core[1]), (el) => el.child(core[1])),
           ),
       )
+      .child(
+        this.row(
+          t,
+          "Welcome",
+          null,
+          this.button(t, "st-general-welcome", "Show again", () => {
+            closeOverlay(props().overlay);
+            run("app.welcome");
+          }),
+          "welcome",
+        ),
+      )
       .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum sends nothing: no usage data, no crash reports. Send feedback opens an issue on GitHub."))
       .child(div().text_size(12.5).line_height("18px").text_color(t.dim).child("Built on herdr (Apache 2.0)."));
   }
@@ -632,6 +626,7 @@ export default class Settings extends View {
   render(cx) {
     const t = theme();
     const u = updates();
+    const section = this.sectionNow();
     const waiting = Boolean(u.app.ready || (u.core.ready && !u.core.managed));
     const query = this.search.trim();
     const matches = query ? this.searchMatches() : [];
@@ -660,7 +655,7 @@ export default class Settings extends View {
         el.children(
           matches.length
             ? matches.map((m, i) => {
-                const section = SECTIONS.find((s) => s.id === m.section);
+                const target = SECTIONS.find((s) => s.id === m.section);
                 return h_flex()
                   .id(`st-search-${i}`)
                   .px(10)
@@ -669,7 +664,7 @@ export default class Settings extends View {
                   .cursor_pointer()
                   .hover((st) => st.bg(t.raised))
                   .on_click((_e, cx) => this.openMatch(m, cx))
-                  .child(div().text_size(12.5).text_color(t.muted).child(`${section?.title ?? m.section} › ${m.title}`));
+                  .child(div().text_size(12.5).text_color(t.muted).child(`${target?.title ?? m.section} › ${m.title}`));
               })
             : [
                 div().px(10).py(6).text_size(12.5).line_height("18px").text_color(t.dim).child(`No setting matches "${query}".`),
@@ -689,8 +684,8 @@ export default class Settings extends View {
         ),
       )
       .when(!query, (el) => el.children(
-        SECTIONS.map((s) => {
-          const on = s.id === this.section;
+        liveSections().map((s) => {
+          const on = s.id === section;
           return h_flex()
             .id(`st-s-${s.id}`)
             .gap(10)
@@ -797,21 +792,21 @@ export default class Settings extends View {
                       .px(28)
                       .py(22)
                       .child(
-                        this.section === "general"
+                        section === "general"
                           ? generalPage(this, t, cx)
-                          : this.section === "appearance"
+                          : section === "appearance"
                             ? appearancePage(this, t, cx)
-                          : this.section === "agents"
+                          : section === "agents"
                             ? agentsPage(this, t, cx)
-                          : this.section === "keyboard"
+                          : section === "keyboard"
                             ? this.keyboard(t)
-                          : this.section === "machines"
+                          : section === "machines"
                             ? this.machines(t)
-                          : this.section === "vault"
+                          : section === "vault"
                             ? vaultSection(this, t, cx)
-                          : this.section === "connect"
+                          : section === "connect"
                             ? connectPage(this, t, cx)
-                          : this.section === "notifications"
+                          : section === "notifications"
                             ? this.alerts(t)
                             : this.about(t),
                       ),
