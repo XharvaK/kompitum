@@ -218,3 +218,115 @@ fn unreadable_usage_report_says_only_that(cx: &mut TestAppContext) {
         "raw output stays off screen: {tree}"
     );
 }
+
+fn lead_values(program: &str) -> BTreeMap<String, Value> {
+    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
+    let mut values = agents_values(
+        agent_catalog(),
+        agent_workers(json!([]), json!([])),
+        status,
+    );
+    values.insert("person".into(), json!({"lead": {"program": program}}));
+    values
+}
+
+#[gpui::test]
+fn lead_closed_shows_only_the_chosen_cli(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        lead_values("opencode"),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("st-lead-cli"), "{tree}");
+    assert!(
+        tree.contains("OpenCode"),
+        "the chosen CLI's name is in the trigger: {tree}"
+    );
+    assert!(
+        !tree.contains("st-lead-cli-claude"),
+        "another CLI's row is absent: {tree}"
+    );
+    assert!(
+        !tree.contains("st-lead-cli-command-code"),
+        "another CLI's row is absent: {tree}"
+    );
+}
+
+#[gpui::test]
+fn lead_opened_lists_every_cli(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        lead_values("opencode"),
+        Some("this.agentPage.leadCli.open = true;"),
+    )
+    .unwrap();
+    for key in ["claude", "command-code", "opencode"] {
+        assert!(
+            tree.contains(&format!("st-lead-cli-{key}")),
+            "missing the {key} row: {tree}"
+        );
+    }
+}
+
+#[gpui::test]
+fn font_dropdown_search_narrows_the_list(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("appearance");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("person".into(), json!({}));
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        values,
+        Some("this.fontMenus = { font: { open: true, query: 'sans' } };"),
+    )
+    .unwrap();
+    assert!(tree.contains("st-f-font-Sans"), "{tree}");
+    assert!(
+        !tree.contains("st-f-font-Monospace"),
+        "only matching fonts are drawn: {tree}"
+    );
+}
+
+#[gpui::test]
+fn a_typed_model_id_can_be_used(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        lead_values("opencode"),
+        Some("this.agentPage.leadModel.open = true; this.agentPage.leadModel.query = 'my/model-9';"),
+    )
+    .unwrap();
+    assert!(tree.contains("st-lead-model-my/model-9"), "{tree}");
+    assert!(tree.contains("Use this model id"), "{tree}");
+}
+
+#[gpui::test]
+fn a_model_list_that_fails_says_so(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        lead_values("opencode"),
+        Some("this.agentPage.listModels.opencode = { loading: false, lines: [], error: 'not signed in' };"),
+    )
+    .unwrap();
+    assert!(tree.contains("models: not signed in"), "{tree}");
+}

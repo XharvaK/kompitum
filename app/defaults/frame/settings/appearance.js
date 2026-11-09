@@ -1,8 +1,9 @@
 // Settings › Appearance: light or dark, the window's reset, zoom and fonts.
 
 import { div } from "gpui-kit";
-import { v_flex, h_flex, Input } from "gpui-base";
+import { v_flex, h_flex } from "gpui-base";
 import { run, fonts, settings, shared } from "kompitum";
+import { dropdown } from "./ui.js";
 
 const APPEARANCES = [
   [null, "System"],
@@ -82,79 +83,32 @@ function layoutReset(view, t) {
   });
 }
 
-function fontButton(view, t, which, family) {
-  const open = view.picking === which;
-  return div()
-    .id(`st-f-${which}`)
-    .w(220)
-    .px(12)
-    .py(6)
-    .rounded(7)
-    .border_1()
-    .border_color(open ? t.accent : t.border)
-    .bg(t.raised)
-    .cursor_pointer()
-    .hover((s) => s.bg(t.hover))
-    .on_click((_e, cx) => {
-      view.picking = open ? null : which;
-      view.filter = "";
-      view.fontInput.set_value("");
-      if (view.picking) view.fontInput.focus();
-      else view.handle.focus();
-      cx.notify();
-    })
-    .child(div().font_family(family).text_size(13.5).text_color(t.foreground).child(family));
+function fontMenu(view, which) {
+  view.fontMenus ??= {};
+  return (view.fontMenus[which] ??= {});
 }
 
-function fontList(view, t, which, def) {
-  const q = view.filter.toLowerCase();
-  const matches = fonts().filter((f) => f.toLowerCase().includes(q)).slice(0, 200);
-  const choose = (name, cx) => {
-    view.change((p) => {
-      if (name === null) delete p[which];
-      else p[which] = name;
-    }, cx);
-    view.picking = null;
-    view.handle.focus();
-    cx.notify();
-  };
-  const item = (id, label, family, onClick) =>
-    div()
-      .id(id)
-      .px(10)
-      .py(5)
-      .rounded(6)
-      .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
-      .on_click(onClick)
-      .child(div().font_family(family).text_size(13.5).text_color(t.foreground).child(label));
-  return v_flex()
-    .w_full()
-    .mb(8)
-    .rounded(8)
-    .border_1()
-    .border_color(t.border)
-    .bg(t.background)
-    // Let the child's native scroll run before stopping the page's wheel event.
-    .on_scroll_wheel((_e, cx) => cx.stop_propagation())
-    .child(
-      div()
-        .px(12)
-        .py(8)
-        .border_b(1)
-        .border_color(t.border)
-        .text_size(13)
-        .child(Input.new(view.fontInput).h(28).text_color(t.foreground)),
-    )
-    .child(
-      div()
-        .id(`st-fl-${which}`)
-        .h(200)
-        .p(4)
-        .overflow_y_scrollbar()
-        .when(!q, (el) => el.child(item(`st-fd-${which}`, `Default (${def})`, def, (_e, cx) => choose(null, cx))))
-        .children(matches.map((f, i) => item(`st-fi-${which}-${i}`, f, f, (_e, cx) => choose(f, cx)))),
-    );
+function fontDropdown(view, t, cx, which, def) {
+  const saved = view.person?.[which] ?? "";
+  const names = fonts();
+  const items = [{ value: "", label: `Kompitum's default (${def})`, font: def }];
+  if (saved && !names.includes(saved)) items.push({ value: saved, label: saved, font: saved });
+  for (const name of names) items.push({ value: name, label: name, font: name });
+  return dropdown(t, `st-f-${which}`, {
+    items,
+    value: saved,
+    onPick: (name, cx) => {
+      view.change((p) => {
+        if (name === "") delete p[which];
+        else p[which] = name;
+      }, cx);
+      view.handle.focus();
+    },
+    state: fontMenu(view, which),
+    search: true,
+    width: 260,
+    limit: 200,
+  });
 }
 
 export function appearancePage(view, t, cx) {
@@ -173,13 +127,12 @@ export function appearancePage(view, t, cx) {
           h_flex()
             .gap(8)
             .items_center()
-            .child(fontButton(view, t, which, family))
+            .child(fontDropdown(view, t, cx, which, def))
             // The panels' text follows zoom: they size their rows to it.
             .when(Boolean(sizeKey), (el) => el.child(stepper(t, `st-${sizeKey}`, `${Math.round(sizeNow)}`, (_e, cx) => size(sizeKey, sizeNow, -1, cx), (_e, cx) => size(sizeKey, sizeNow, 1, cx)))),
           which,
         ),
-      )
-      .when(view.picking === which, (el) => el.child(fontList(view, t, which, def)));
+      );
   return v_flex()
     .w_full()
     .child(view.row(t, "Theme", null, appearancePicker(view, t, cx), "theme"))

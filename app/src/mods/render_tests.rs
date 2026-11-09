@@ -1498,26 +1498,28 @@ fn windows_tab_buttons_use_matching_vector_icons(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn font_pickers_contain_scroll_on_the_wrapper(cx: &mut TestAppContext) {
+fn font_dropdowns_scroll_their_lists(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     for which in ["font", "ui_font"] {
         let mut p = props();
         p["section"] = json!("appearance");
-        let tree = describe(
+        let mut values = fixture(true, p, updates("current", "current"));
+        values.insert("person".into(), json!({}));
+        let tree = describe_settled(
             cx,
             &staged,
             "frame/settings",
-            true,
-            p,
-            updates("current", "current"),
-            Some(&format!("this.picking = '{which}';")),
+            values,
+            Some(&format!(
+                "this.fontMenus = {{ {which}: {{ open: true }} }};"
+            )),
         )
         .unwrap();
         let scroll = tree
             .lines()
-            .find(|line| line.contains(&format!("st-fl-{which}")))
-            .unwrap();
+            .find(|line| line.contains(&format!("st-f-{which}-list")))
+            .unwrap_or_else(|| panic!("no {which} list: {tree}"));
         assert!(scroll.contains("overflow_y_scrollbar"), "{tree}");
         assert!(
             !scroll.contains("on_scroll_wheel"),
@@ -2452,7 +2454,7 @@ fn agent_workers_follow_the_core_order_and_show_out_windows(cx: &mut TestAppCont
 }
 
 #[gpui::test]
-fn agent_lead_pickers_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
+fn agent_lead_dropdowns_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let workers = agent_workers(
@@ -2487,20 +2489,29 @@ fn agent_lead_pickers_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
         None,
     )
     .unwrap();
-    assert!(tree.contains("st-lead-cli-claude"), "{tree}");
-    assert!(tree.contains("st-lead-cli-opencode"), "{tree}");
+    assert!(tree.contains("st-lead-cli"), "{tree}");
+    assert!(tree.contains("Claude Code"), "the chosen CLI is shown: {tree}");
+    assert!(
+        !tree.contains("st-lead-cli-opencode"),
+        "the list stays closed: {tree}"
+    );
     assert!(tree.contains("st-lead-model"), "{tree}");
-    assert!(tree.contains("Default"), "{tree}");
+    assert!(tree.contains("Its own default"), "{tree}");
     assert!(tree.contains("st-lead-effort"), "{tree}");
-    assert!(!tree.contains("st-lead-effort-low"), "the reasoning menu stays closed: {tree}");
+    assert!(
+        !tree.contains("st-lead-effort-low"),
+        "the reasoning list stays closed: {tree}"
+    );
     let tree = describe_settled(
         cx,
         &staged,
         "frame/settings",
         agents_values(agent_catalog(), workers.clone(), status.clone()),
-        Some("this.agentPage.effortOpen = true;"),
+        Some("this.agentPage.leadModel.open = true; this.agentPage.leadEffort.open = true;"),
     )
     .unwrap();
+    assert!(tree.contains("st-lead-model-default"), "{tree}");
+    assert!(tree.contains("st-lead-model-sonnet"), "{tree}");
     assert!(tree.contains("st-lead-effort-low"), "{tree}");
     assert!(tree.contains("st-lead-effort-max"), "{tree}");
 }

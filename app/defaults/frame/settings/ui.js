@@ -15,15 +15,16 @@ function itemIcon(item, size, t) {
 
 // A dropdown: a trigger that shows the pick and a floating list to choose from.
 // `items`: [{ value, label, icon?, tint?, detail?, font? }]. `state`: an object the caller keeps across renders
-// (it holds whether the list is open and the search field). `search`: a field over the list that filters it.
-export function dropdown(t, id, { items, value, onPick, state, search = false, width = 240, anchor = "top_right", empty = "Choose…" }) {
+// (it holds whether the list is open and the search field; `accent` puts the search highlight on the trigger).
+// `search`: a field over the list that filters it. `onOpen(cx)`: called when the list opens, for lists that load
+// on demand. `limit`: draw at most that many matching rows, then a dim line saying to type to narrow it.
+export function dropdown(t, id, { items, value, onPick, state, search = false, width = 240, anchor = "top_right", empty = "Choose…", onOpen = null, limit = 0 }) {
   const picked = items.find((item) => item.value === value);
-  if (search && !state.input) {
-    state.input = InputState.new({ placeholder: "Search" });
-    state.input.on("change", (_e, cx) => { state.query = state.input.value(); cx.notify(); });
-  }
   const query = (state.query ?? "").trim().toLowerCase();
-  const shown = query ? items.filter((item) => String(item.label).toLowerCase().includes(query)) : items;
+  const matching = query
+    ? items.filter((item) => `${item.label ?? ""} ${item.detail ?? ""}`.toLowerCase().includes(query))
+    : items;
+  const shown = limit > 0 ? matching.slice(0, limit) : matching;
   const close = (cx) => {
     state.open = false;
     state.query = "";
@@ -64,9 +65,10 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .p(4)
     .gap(1)
     .overflow_y_scrollbar()
-    .on_scroll_wheel((_e, cx) => cx.stop_propagation())
     .children(shown.map(row))
-    .when(shown.length === 0, (el) => el.child(div().px(8).py(6).text_size(12.5).text_color(t.dim).child("Nothing matches.")));
+    .when(matching.length === 0, (el) => el.child(div().px(8).py(6).text_size(12.5).text_color(t.dim).child("Nothing matches.")))
+    .when(limit > 0 && matching.length > limit, (el) =>
+      el.child(div().px(8).py(6).text_size(12.5).text_color(t.dim).child("Type to narrow the list.")));
   const content = v_flex()
     .w(width)
     .rounded(10)
@@ -74,7 +76,9 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .border_color(t.border)
     .bg(t.popover)
     .overflow_hidden()
-    .when(search, (el) =>
+    // The list scrolls natively first; its wrapper keeps the wheel from reaching the page under it.
+    .on_scroll_wheel((_e, cx) => cx.stop_propagation())
+    .when(search && Boolean(state.input), (el) =>
       el.child(div().px(10).py(6).border_b(1).border_color(t.border).child(Input.new(state.input).h(26).text_size(13).text_color(t.foreground))))
     .child(list);
   const trigger = h_flex()
@@ -87,25 +91,35 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .items_center()
     .rounded(8)
     .border_1()
-    .border_color(state.open ? t.accent : t.input)
+    .border_color(state.open || state.accent ? t.accent : t.input)
     .bg(t.raised)
     .cursor_pointer()
     .hover((s) => s.bg(t.hover))
     .when(Boolean(picked?.icon), (el) => el.child(itemIcon(picked, 15, t)))
-    .child(div().min_w(0).truncate().text_size(13).text_color(picked ? t.foreground : t.muted).child(picked?.label ?? empty))
+    .child(div().min_w(0).truncate().text_size(13).text_color(picked ? t.foreground : t.muted)
+      .when(Boolean(picked?.font), (el) => el.font_family(picked.font))
+      .child(picked?.label ?? empty))
     .child(svg(CHEVRON).size(12).flex_none().text_color(t.dim));
-  return Popover.new(`${id}-menu`)
+  const popover = Popover.new(`${id}-menu`)
     .anchor(anchor)
     .open(Boolean(state.open))
     .on_open_change((open, cx) => {
       if (open) {
         state.open = true;
+        // Retained state is created in an event handler, never in render.
+        if (search && !state.input) {
+          state.input = InputState.new({ placeholder: "Search" });
+          state.input.on("change", (_e, cx) => { state.query = state.input.value(); cx.notify(); });
+        }
         cx.notify();
         if (search) cx.timer.after(0, () => state.input?.focus());
+        onOpen?.(cx);
       } else close(cx);
     })
-    .trigger(trigger)
-    .content(content);
+    .trigger(trigger);
+  // Only fill the content slot while the list is open, so a closed dropdown is
+  // just its trigger (and its description holds no rows).
+  return state.open ? popover.content(content) : popover;
 }
 
 // A 28 px icon button: muted at rest, the foreground on hover, a tooltip naming it.

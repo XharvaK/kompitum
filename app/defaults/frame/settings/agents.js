@@ -3,8 +3,9 @@
 // knownAgents) and the core's own `kom workers --json` and `kom status --json`.
 
 import { div, svg, image } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex } from "gpui-base";
 import { kom, exec, knownAgents, window } from "kompitum";
+import { dropdown } from "./ui.js";
 
 const BUILTIN = new Set(["cc", "codex", "go", "free"]);
 const USAGE_EVERY_MS = 60000;
@@ -30,7 +31,7 @@ function execCli(entry, args) {
 }
 
 export function ensureAgents(view) {
-  view.agentPage ??= {
+  const s = (view.agentPage ??= {
     known: null,
     workers: null,
     status: null,
@@ -40,14 +41,17 @@ export function ensureAgents(view) {
     usageError: {},
     usageAt: {},
     listModels: {},
-    modelOpen: false,
-    effortOpen: false,
-    otherModel: false,
+    leadCli: {},
+    leadModel: {},
+    leadEffort: {},
     addOpen: false,
     add: {},
     drag: null,
-  };
-  return view.agentPage;
+  });
+  s.leadCli ??= {};
+  s.leadModel ??= {};
+  s.leadEffort ??= {};
+  return s;
 }
 
 export function loadAgents(view, cx, forceUsage = false) {
@@ -271,100 +275,18 @@ function modelLines(text) {
   for (const raw of String(text ?? "").split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || line.endsWith(":") || /^available models/i.test(line) || /^default model/i.test(line) || /^you are not authenticated/i.test(line)) continue;
-    const token = line.replace(/^[-*]\s*/, "").split(/\s+/)[0];
+    const words = line.replace(/^[-*]\s*/, "");
+    const token = words.split(/\s+/)[0];
     if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(token)) continue;
     if (!/[./-]/.test(token)) continue;
-    lines.push({ id: token, label: line.replace(/^[-*]\s*/, "") });
+    const rest = words.slice(token.length).trim();
+    lines.push(rest ? { id: token, label: rest, detail: token } : { id: token, label: token });
   }
   return lines;
 }
 
-function modelPicker(view, t, cx, entry) {
-  const s = ensureAgents(view);
-  const models = entry.models ?? [];
-  const groups = new Map();
-  for (const model of models) {
-    const provider = model.id.includes("/") ? model.id.split("/")[0] : "Other";
-    if (!groups.has(provider)) groups.set(provider, []);
-    groups.get(provider).push(model);
-  }
-  const list = v_flex().w_full().gap(4);
-  for (const [provider, items] of groups) {
-    list.child(div().pt(4).text_size(11).font_semibold().text_color(t.dim).child(provider.charAt(0).toUpperCase() + provider.slice(1)));
-    for (const model of items) {
-      list.child(div().id(`st-lead-model-${model.id}`).px(10).py(6).rounded(6).cursor_pointer().text_size(13).text_color(t.foreground)
-        .hover((el) => el.bg(t.hover))
-        .on_click((_e, cx) => { s.modelOpen = false; saveLead(view, { model: model.id }, cx); cx.notify(); })
-        .child(model.label));
-    }
-  }
-  const live = s.listModels[entry.key];
-  if (entry.list_models?.length) {
-    list.child(div().pt(4).text_size(11).font_semibold().text_color(t.dim).child("From the CLI"));
-    if (!live || live.loading) list.child(div().text_size(12.5).text_color(t.dim).child("Reading models…"));
-    else if (live.error) list.child(div().text_size(12.5).text_color(t.blocked).child(live.error));
-    else {
-      for (const model of live.lines) {
-        list.child(div().id(`st-lead-live-${model.id}`).px(10).py(6).rounded(6).cursor_pointer().text_size(13).text_color(t.foreground)
-          .hover((el) => el.bg(t.hover))
-          .on_click((_e, cx) => { s.modelOpen = false; saveLead(view, { model: model.id }, cx); cx.notify(); })
-          .child(model.label));
-      }
-    }
-  }
-  list.child(div().id("st-lead-other").px(10).py(6).rounded(6).cursor_pointer().text_size(13).text_color(t.muted)
-    .hover((el) => el.bg(t.hover))
-    .on_click((_e, cx) => {
-      s.otherModel = true;
-      s.otherInput ??= InputState.new({ placeholder: "Model id" });
-      s.otherInput.on("submit", (_e, cx) => {
-        const id = s.otherInput.value().trim();
-        if (id) saveLead(view, { model: id }, cx);
-        s.otherModel = false;
-        cx.notify();
-      });
-      s.otherInput.set_value("");
-      s.otherInput.focus();
-      cx.notify();
-    })
-    .child("Other…"));
-  if (s.otherModel) {
-    list.child(div().px(4).py(4).child(
-      Input.new(s.otherInput).w_full().h(30).px(9).rounded(7).border_1().border_color(t.input).bg(t.background).text_size(13).text_color(t.foreground),
-    ));
-  }
-  return list;
-}
-
 function cap(word) {
   return String(word ?? "").replace(/^./, (c) => c.toUpperCase());
-}
-
-function effortPicker(view, t, cx, entry, selected) {
-  return v_flex()
-    .w_full()
-    .gap(4)
-    .children(
-      (entry.efforts ?? []).map((level) =>
-        div()
-          .id(`st-lead-effort-${level}`)
-          .px(10)
-          .py(6)
-          .rounded(6)
-          .cursor_pointer()
-          .text_size(13)
-          .text_color(t.foreground)
-          .when(level === selected, (el) => el.bg(t.selected))
-          .hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => {
-            const state = ensureAgents(view);
-            state.effortOpen = false;
-            saveLead(view, { effort: level }, cx);
-            cx.notify();
-          })
-          .child(cap(level)),
-      ),
-    );
 }
 
 function leadSection(view, t, cx, s) {
@@ -377,91 +299,86 @@ function leadSection(view, t, cx, s) {
   const entry = leadProgram(view, s);
   if (!entry) return v_flex().w_full().child(view.heading(t, "Lead"));
   const lead = view.person?.lead ?? {};
-  const model = lead.model ?? defaultModel(entry);
   const effort = lead.effort;
   const sState = ensureAgents(view);
   const pick = (item, cx) => {
     const next = defaultModel(item);
     const keep = (item.efforts ?? []).includes(effort) ? effort : null;
     saveLead(view, { program: item.key, model: next, effort: keep }, cx);
-    sState.modelOpen = false;
-    sState.effortOpen = false;
-    sState.otherModel = false;
     cx.notify();
   };
-  // The CLIs that can lead, as one list you pick from: the chosen one has the check.
-  const cliList = v_flex()
-    .id("st-lead-cli")
-    .w_full()
-    .rounded(10)
-    .border_1()
-    .border_color(t.border)
-    .bg(t.surface)
-    .overflow_hidden()
-    .when(view.lit("lead"), (el) => el.border_color(t.accent))
-    .children(list.map((item, index) => {
-      const on = item.key === entry.key;
-      return h_flex()
-        .id(`st-lead-cli-${item.key}`)
-        .w_full()
-        .h(40)
-        .px(12)
-        .gap(10)
-        .items_center()
-        .cursor_pointer()
-        .when(index > 0, (el) => el.border_t(1).border_color(t.border))
-        .hover((el) => el.bg(t.hover))
-        .on_click((_e, cx) => pick(item, cx))
-        .child(programIcon(item, 16, t))
-        .child(div().flex_1().min_w(0).truncate().text_size(13.5).text_color(on ? t.foreground : t.muted)
-          .when(on, (el) => el.font_medium()).child(item.name ?? item.key))
-        .when(on, (el) => el.child(svg("frame/settings/check.svg").size(14).flex_none().text_color(t.accent)));
-    }));
-  const menuButton = (id, label, open, onClick) =>
-    h_flex()
-      .id(id)
-      .h(28)
-      .pl(10)
-      .pr(8)
-      .gap(6)
-      .items_center()
-      .rounded(7)
-      .border_1()
-      .border_color(open ? t.accent : t.input)
-      .bg(t.raised)
-      .cursor_pointer()
-      .text_size(13)
-      .text_color(t.foreground)
-      .hover((el) => el.bg(t.hover))
-      .on_click(onClick)
-      .child(label)
-      .child(svg("mods/workspace-chrome/chevron-down.svg").size(12).text_color(t.dim));
-  const modelMenu = menuButton("st-lead-model", model ? modelLabel(entry, model) : "Its own default", sState.modelOpen, (_e, cx) => {
-    sState.modelOpen = !sState.modelOpen;
-    sState.effortOpen = false;
-    if (sState.modelOpen) loadModelList(view, cx, entry);
-    cx.notify();
+  // The CLIs that can lead, as one dropdown: closed, only the chosen one shows.
+  sState.leadCli.accent = view.lit("lead");
+  const cliMenu = dropdown(t, "st-lead-cli", {
+    items: list.map((item) => ({ value: item.key, label: item.name ?? item.key, icon: item.icon, tint: item.tint })),
+    value: entry.key,
+    onPick: (key, cx) => {
+      const item = list.find((candidate) => candidate.key === key);
+      if (item) pick(item, cx);
+    },
+    state: sState.leadCli,
+    width: 300,
+  });
+  const live = s.listModels[entry.key];
+  const modelItems = [{ value: "", label: "Its own default" }];
+  const seen = new Set([""]);
+  for (const model of entry.models ?? []) {
+    if (seen.has(model.id)) continue;
+    seen.add(model.id);
+    modelItems.push({ value: model.id, label: model.label });
+  }
+  if (lead.model && !seen.has(lead.model)) {
+    seen.add(lead.model);
+    modelItems.push({ value: lead.model, label: modelLabel(entry, lead.model) });
+  }
+  for (const model of live?.lines ?? []) {
+    if (seen.has(model.id)) continue;
+    seen.add(model.id);
+    modelItems.push({ value: model.id, label: model.label, detail: model.detail });
+  }
+  // A model the lists don't name yet: what's typed in the search can be used as its id.
+  const typed = (sState.leadModel.query ?? "").trim();
+  if (typed && !seen.has(typed)) modelItems.push({ value: typed, label: typed, detail: "Use this model id" });
+  const modelNote = live?.loading
+    ? div().pt(4).text_size(12).text_color(t.dim).child(`Reading ${entry.name ?? entry.key}'s models…`)
+    : live?.error
+      ? div().pt(4).text_size(12).line_height("17px").text_color(t.blocked)
+        .child(`Couldn't read ${entry.name ?? entry.key}'s models: ${live.error}`)
+      : null;
+  const modelMenu = dropdown(t, "st-lead-model", {
+    items: modelItems,
+    value: lead.model ?? "",
+    onPick: (value, cx) => saveLead(view, { model: value }, cx),
+    state: sState.leadModel,
+    search: true,
+    width: 300,
+    onOpen: (cx) => loadModelList(view, cx, entry),
   });
   const effortMenu = entry.efforts?.length
-    ? menuButton("st-lead-effort", effort ? cap(effort) : "Its own default", sState.effortOpen, (_e, cx) => {
-        sState.effortOpen = !sState.effortOpen;
-        sState.modelOpen = false;
-        cx.notify();
+    ? dropdown(t, "st-lead-effort", {
+        items: [
+          { value: "", label: "Its own default" },
+          ...(entry.efforts ?? []).map((level) => ({ value: level, label: cap(level) })),
+          // A saved level this CLI no longer lists still shows as the pick.
+          ...(effort && !entry.efforts.includes(effort) ? [{ value: effort, label: cap(effort) }] : []),
+        ],
+        value: effort ?? "",
+        onPick: (value, cx) => saveLead(view, { effort: value }, cx),
+        state: sState.leadEffort,
+        width: 200,
       })
     : null;
-  const card = (child) => div().w_full().mt(6).p(4).rounded(10).border_1().border_color(t.border).bg(t.surface).child(child);
   // Claude reports its own limits; they belong under the lead only while Claude is the lead.
   const usage = entry.key === "claude" ? claudeMeters(t, s.status?.claude) : null;
   return v_flex().w_full()
     .child(view.heading(t, "Lead"))
     .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
       .child("The agent you talk to. It plans, asks you, and hands work to the workers below."))
-    .child(cliList)
+    .child(cliMenu)
     .when(Boolean(usage), (el) => el.child(div().pt(6).child(usage)))
     .child(view.row(t, "Model", null, modelMenu, "lead_model"))
-    .when(Boolean(sState.modelOpen), (el) => el.child(card(modelPicker(view, t, cx, entry))))
+    .when(Boolean(modelNote), (el) => el.child(modelNote))
     .when(Boolean(effortMenu), (el) => el.child(view.row(t, "Reasoning", null, effortMenu, "lead_model")))
-    .when(Boolean(sState.effortOpen), (el) => el.child(card(effortPicker(view, t, cx, entry, effort))))
     .child(div().pt(8).text_size(12).text_color(t.dim).child("Changes apply to the lead's next conversation."));
 }
 
