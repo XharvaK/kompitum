@@ -46,6 +46,9 @@ struct Entry {
     /// How its interactive command takes a model and a reasoning level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     flags: Option<Flags>,
+    /// How its interactive command starts, resumes or continues a conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<Session>,
     /// The reasoning levels, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     efforts: Vec<String>,
@@ -80,6 +83,17 @@ struct Flags {
     effort: Vec<String>,
 }
 
+/// The argv templates that start, resume or continue a CLI's conversation.
+#[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
+struct Session {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    new: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resume: Option<Vec<String>>,
+    #[serde(default, rename = "continue", skip_serializing_if = "Option::is_none")]
+    continuation: Option<Vec<String>>,
+}
+
 #[derive(Deserialize, Serialize, Default, Clone, Debug, PartialEq)]
 struct Model {
     id: String,
@@ -111,6 +125,7 @@ impl Entry {
             self.run = mine.run;
         }
         self.flags = mine.flags.or(self.flags.take());
+        self.session = mine.session.or(self.session.take());
         if !mine.efforts.is_empty() {
             self.efforts = mine.efforts;
         }
@@ -165,6 +180,9 @@ pub fn startable() -> Vec<Value> {
                 if let Some(flags) = &e.flags {
                     v["flags"] = json!(flags);
                 }
+                if let Some(session) = &e.session {
+                    v["session"] = json!(session);
+                }
                 if !e.efforts.is_empty() {
                     v["efforts"] = json!(e.efforts);
                 }
@@ -192,6 +210,20 @@ pub fn startable() -> Vec<Value> {
                 v
             })
             .collect()
+    })
+}
+
+/// One entry as the lead needs it: how to start it, its flags, and its session argv.
+/// None when the table has no such program.
+pub fn lead_spec(key: &str) -> Option<Value> {
+    TABLE.with(|t| {
+        let t = t.borrow();
+        let e = t.programs.get(key)?;
+        Some(json!({
+            "run": e.run,
+            "flags": e.flags,
+            "session": e.session,
+        }))
     })
 }
 
@@ -710,5 +742,53 @@ mod tests {
         assert!(
             opencode["plans"][0]["models"]["opencode-go/deepseek-v4.1-flash"]["5H"].is_number()
         );
+    }
+
+    #[test]
+    fn lead_programs_carry_their_session_argv() {
+        let table = t();
+        assert_eq!(
+            table.programs["claude"].session.as_ref().unwrap().new,
+            Some(vec!["--session-id".into(), "{id}".into()])
+        );
+        assert_eq!(
+            table.programs["claude"].session.as_ref().unwrap().resume,
+            Some(vec!["--resume".into(), "{id}".into()])
+        );
+        assert_eq!(
+            table.programs["opencode"].session.as_ref().unwrap().new,
+            Some(vec!["--session".into(), "{id}".into()])
+        );
+        assert_eq!(
+            table.programs["opencode"].session.as_ref().unwrap().resume,
+            Some(vec!["--session".into(), "{id}".into()])
+        );
+        assert_eq!(
+            table.programs["grok"].session.as_ref().unwrap().resume,
+            Some(vec!["--resume".into(), "{id}".into()])
+        );
+        assert_eq!(
+            table.programs["codex"]
+                .session
+                .as_ref()
+                .unwrap()
+                .continuation,
+            Some(vec!["resume".into(), "--last".into()])
+        );
+        assert_eq!(
+            table.programs["command-code"]
+                .session
+                .as_ref()
+                .unwrap()
+                .continuation,
+            Some(vec!["--continue".into()])
+        );
+        for key in ["claude", "opencode", "grok", "codex", "command-code"] {
+            assert!(!table.programs[key].run.is_empty(), "{key} has no run");
+        }
+        let spec = lead_spec("claude").unwrap();
+        assert_eq!(spec["session"]["new"], json!(["--session-id", "{id}"]));
+        assert_eq!(spec["run"], json!(["claude"]));
+        assert!(lead_spec("no-such-program").is_none());
     }
 }

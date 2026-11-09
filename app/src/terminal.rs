@@ -1285,6 +1285,26 @@ fn copied_files(item: &ClipboardItem) -> Option<Vec<std::path::PathBuf>> {
     })
 }
 
+/// The clipboard's image saved as a PNG under `dir`, for the composer's chip.
+pub(crate) fn image_png(item: &ClipboardItem, dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let image = item.entries().iter().find_map(|entry| match entry {
+        ClipboardEntry::Image(image) => Some(image),
+        _ => None,
+    })?;
+    let (format, bytes) = paste_image_bytes(image.format, &image.bytes)?;
+    if format != ImageFormat::Png {
+        return None;
+    }
+    std::fs::create_dir_all(dir).ok()?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    let path = dir.join(format!("paste-{stamp}.png"));
+    std::fs::write(&path, bytes.as_ref()).ok()?;
+    Some(path)
+}
+
 /// The clipboard's image saved to a file of its own, for its path to be pasted.
 fn image_file(item: &ClipboardItem) -> Option<std::path::PathBuf> {
     let image = item.entries().iter().find_map(|e| match e {

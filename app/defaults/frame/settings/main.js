@@ -2,7 +2,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
-import { kom, run, theme, fonts, updates, settings, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window } from "kompitum";
+import { kom, run, theme, fonts, updates, settings, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared } from "kompitum";
 import { loadVault, vaultSection } from "./vault.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
 import { agentsPage, loadAgents } from "./agents.js";
@@ -182,6 +182,15 @@ export default class Settings extends View {
     this.searchInput.set_value("");
     this.searchInput.focus();
     cx.notify();
+  }
+
+  // No setting matches: hand the words to the lead's composer, unsent.
+  askLead(cx) {
+    const text = this.search.trim();
+    if (!text) return;
+    setShared("composer.ask", { text, at: Date.now() });
+    closeOverlay(props().overlay);
+    run("lead.open");
   }
 
   openMatch(match, cx) {
@@ -745,7 +754,21 @@ export default class Settings extends View {
                   .on_click((_e, cx) => this.openMatch(m, cx))
                   .child(div().text_size(12.5).text_color(t.muted).child(`${section?.title ?? m.section} › ${m.title}`));
               })
-            : [div().px(10).py(6).text_size(12.5).line_height("18px").text_color(t.dim).child(`No setting matches "${query}".`)],
+            : [
+                div().px(10).py(6).text_size(12.5).line_height("18px").text_color(t.dim).child(`No setting matches "${query}".`),
+                h_flex()
+                  .id("st-ask-lead")
+                  .px(10)
+                  .py(7)
+                  .gap(7)
+                  .items_center()
+                  .rounded(7)
+                  .cursor_pointer()
+                  .hover((st) => st.bg(t.raised))
+                  .on_click((_e, cx) => this.askLead(cx))
+                  .child(svg(I("bot")).size(14).text_color(t.accent))
+                  .child(div().text_size(12.5).text_color(t.foreground).child("Ask the lead")),
+              ],
         ),
       )
       .when(!query, (el) => el.children(

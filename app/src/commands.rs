@@ -228,6 +228,11 @@ pub const COMMANDS: &[Command] = &[
     ),
     cmd("agent.prev", &[], "Show the previous agent."),
     cmd(
+        "lead.open",
+        &[],
+        "Open the lead: focus its terminal and put the composer under it, starting it in its home folder when it isn't running.",
+    ),
+    cmd(
         "layout.switch",
         &[opt("name")],
         "Show a layout (layouts/<name>.json), or the next one.",

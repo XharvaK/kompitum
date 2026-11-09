@@ -201,6 +201,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let list = known_agents.clone();
         Ok(async move { Ok(to_host(&list.unwrap_or(Value::Array(vec![])))) })
     });
+    module = module.function("pasteImage", |_| Ok(HostValue::Null));
     module = module.async_function("pickFolder", |_| Ok(async { Ok(HostValue::Null) }));
     for name in ["nextCommand", "watchFolder"] {
         module = module.async_function(name, |_| {
@@ -710,6 +711,26 @@ fn the_lead_overlay_draws_the_hand_off_with_a_way_out(cx: &mut TestAppContext) {
     assert!(tree.contains("Hand the lead to Manager"), "{tree}");
     assert!(tree.contains("lead-close"), "{tree}");
     assert!(!tree.contains("Lead · "), "the pill drew instead: {tree}");
+}
+
+/// The composer draws its box under a live lead, and one line with Open when
+/// no lead terminal is alive.
+#[gpui::test]
+fn the_composer_renders_with_and_without_a_lead(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut with = fixture(true, props(), updates("current", "current"));
+    with.insert("knownAgents".into(), agent_catalog());
+    let tree = describe_settled(cx, &staged, "mods/composer", with, None).unwrap();
+    assert!(tree.contains("Claude"), "{tree}");
+    assert!(tree.contains("composer-send"), "{tree}");
+    assert!(!tree.contains("The lead isn't running"), "{tree}");
+
+    let mut without = fixture(false, props(), updates("current", "current"));
+    without.insert("knownAgents".into(), agent_catalog());
+    let tree = describe_settled(cx, &staged, "mods/composer", without, None).unwrap();
+    assert!(tree.contains("The lead isn't running"), "{tree}");
+    assert!(tree.contains("composer-open"), "{tree}");
 }
 
 /// A mod's localStorage write lands on the executor; one that lands after the

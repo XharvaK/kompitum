@@ -1310,6 +1310,17 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             crate::sound::play(a.string(0)?);
             Ok(HostValue::Null)
         })
+        .function("pasteImage", |_| {
+            let path = gpui_shell::with_current_app(|cx| {
+                cx.read_from_clipboard().and_then(|item| {
+                    crate::terminal::image_png(&item, &app_dir().join("images"))
+                })
+            })
+            .flatten();
+            Ok(path
+                .map(|path| HostValue::Str(path.to_string_lossy().into_owned()))
+                .unwrap_or(HostValue::Null))
+        })
         .function("appLink", |a| {
             let scheme = a.string(0)?.to_owned();
             match crate::schemes::handler(&scheme) {

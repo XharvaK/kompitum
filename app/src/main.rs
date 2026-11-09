@@ -12,6 +12,7 @@ mod keys;
 mod kom;
 mod layout;
 mod layout_sync;
+mod lead;
 mod legacy;
 mod links;
 mod mail;
@@ -55,6 +56,7 @@ Usage:
   kompitum-app ls                     spaces, their tabs and terminals, in the open window
   kompitum-app do <command> [args]    run a command: --name api --argv '[\"pi\"]', or one JSON object
   kompitum-app feedback <text>        open a GitHub issue with this text, for you to submit
+  kompitum-app hook <event>           answer a Claude Code hook (JSON on stdin)
   kompitum-app commands               every command, its arguments, what it does
   kompitum-app status                 what the window shows, and any errors
   kompitum-app shot [file.png]        save the last window frame (default: kompitum-shot.png)
@@ -102,7 +104,7 @@ fn main() {
     }
     if matches!(
         args.get(1).map(String::as_str),
-        Some("do" | "status" | "ls" | "commands" | "feedback" | "shot")
+        Some("do" | "status" | "ls" | "commands" | "feedback" | "shot" | "hook")
     ) {
         std::process::exit(control::client(&args[1..]));
     }

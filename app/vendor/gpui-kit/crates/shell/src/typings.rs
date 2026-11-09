@@ -3126,6 +3126,8 @@ const BASE: &str = r#"  /** A row. */
     set_rows(rows: number): void;
     /** Grows with the content, between the two row counts. */
     set_auto_grow(min_rows: number, max_rows: number): void;
+    /** Plain Enter submits (`submit` with `shift: false`) and Shift+Enter adds a new line. */
+    set_submit_on_enter(submit: boolean): void;
     /** Wraps long lines instead of scrolling sideways. Default is on. */
     set_soft_wrap(wrap: boolean): void;
     /** Moves the keyboard onto the textarea. */

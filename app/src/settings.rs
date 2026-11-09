@@ -527,6 +527,9 @@ pub struct Connection {
 pub struct Lead {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub program: Option<String>,
+    /// The home folder the lead starts in; the user's home folder when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1281,6 +1284,7 @@ mod tests {
             .into(),
             lead: Some(Lead {
                 program: Some(String::new()),
+                folder: Some(String::new()),
                 model: Some(String::new()),
                 effort: Some(String::new()),
                 subagents: vec![String::new()],

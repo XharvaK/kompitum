@@ -6239,6 +6239,7 @@ globalThis.__gpui = (() => {
     set_value: setValue(handle, __textarea_set_value, __textarea_token_call),
     on: (event, handler) => __textarea_on(handle, String(event), handler),
     set_rows: (rows) => __textarea_set_rows(handle, oneBased(rows, "set_rows(rows)")),
+    set_submit_on_enter: (submit) => __textarea_set_submit_on_enter(handle, Boolean(submit)),
     set_auto_grow: (min_rows, max_rows) =>
       __textarea_set_auto_grow(
         handle,

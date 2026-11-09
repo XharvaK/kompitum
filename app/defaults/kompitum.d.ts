@@ -49,6 +49,17 @@ export interface AgentPlan {
   models?: Record<string, Record<string, number>>;
 }
 
+/** How a CLI starts, resumes or continues its conversation. The used template
+ *  goes right after the program, before the rest of `run`; `{id}` is its session id. */
+export interface AgentSession {
+  /** A new conversation with an id Kompitum picks. */
+  new?: string[];
+  /** Goes on with the conversation of that id. */
+  resume?: string[];
+  /** Goes on with the latest conversation in the folder, for a CLI that takes no id up front. */
+  continue?: string[];
+}
+
 /** The agents people can start from a menu (entries with `run` in programs.json), most picked
  *  first, and whether each is installed: asked of the shell agents start in (on another machine,
  *  `on`, its login/interactive shell when supported), at most once a minute per machine.
@@ -59,6 +70,7 @@ export function knownAgents(options?: { on?: string | null }): Promise<(Program 
   run: string[];
   installed: boolean;
   flags?: AgentFlags;
+  session?: AgentSession;
   efforts?: string[];
   models?: AgentModel[];
   list_models?: string[];
@@ -76,6 +88,10 @@ export function pickFolder(options?: { prompt?: string }): Promise<string | null
 /** Plays "done" or "blocked" (the attention sounds, or the files settings.json names), or an MP3
  *  file (absolute, or relative to ~/.config/kompitum-app). */
 export function playSound(sound: string): null;
+
+/** Saves the clipboard's image as a PNG under <app folder>/images/ and returns its path, or
+ *  null when the clipboard has no image (or one this build can't decode). */
+export function pasteImage(): string | null;
 
 /** The app that opens `<scheme>://` links on this computer, or null when nothing handles it.
  *  `icon` is a PNG in the app's cache (its path under the app home), or null; pass it to image(). Throws when the question fails. */
@@ -106,7 +122,8 @@ export function openLink(url: string): void;
  *   terminal.show {terminal?, pane?} (shown in the pane for now, in place of its own), terminal.copy, terminal.paste,
  *   terminal.right_click {to: "program" | "menu", terminal?} (right-clicks to a program that takes the mouse; Shift: the menu).
  *   terminal.scroll {lines | pages | to: "top" | "bottom", terminal?} (Kompitum's view of the history: negative goes up; pages may be fractional).
- * Agents: agent.next, agent.prev (the agents list's order), agent.focus {terminal} (sub-agents too).
+ * Agents: agent.next, agent.prev (the agents list's order), agent.focus {terminal} (sub-agents too),
+ *   lead.open (focus or start the lead, with the composer under it).
  * Layout (the shown layout's nodes by id): layout.toggle|show|hide {id}, layout.resize {id, px | weight},
  *   layout.select {stack, child}, layout.set {layout} (personal trees; shipped layouts: click/look fields only), layout.switch {name?} (no name: the next one).
  *   layout.clone {name, as?} duplicates and switches; mod.clone {name, as?} duplicates a mod.

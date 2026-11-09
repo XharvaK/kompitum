@@ -3245,6 +3245,7 @@ impl AppWindow {
     /// Starts a terminal for `space`, on `on` (another machine) or here. An
     /// empty `cwd`: the machine's home. With no argv, that machine's core
     /// picks its own shell.
+    #[allow(clippy::too_many_arguments)]
     fn spawn(
         &mut self,
         argv: Option<Vec<String>>,
@@ -3254,11 +3255,19 @@ impl AppWindow {
         ctx: &str,
         on: Option<&str>,
         size: Option<(u16, u16)>,
+        extra_labels: Option<Value>,
         window: &Window,
     ) -> Result<(String, String), String> {
         let argv = argv.unwrap_or_default();
         self.require_document(on)?;
-        let labels = json!({ "kompitum.space": crate::mirror::local(space, on), "kompitum.tab": crate::mirror::local(ctx, on), "kompitum.seen": "0" });
+        let mut labels = json!({ "kompitum.space": crate::mirror::local(space, on), "kompitum.tab": crate::mirror::local(ctx, on), "kompitum.seen": "0" });
+        if let Some(extra) = extra_labels
+            && let (Some(labels), Some(extra)) = (labels.as_object_mut(), extra.as_object())
+        {
+            for (key, value) in extra {
+                labels.insert(key.clone(), value.clone());
+            }
+        }
         let (addr, cwd) = run_following_folder(cwd, follow, on, |cwd| {
             match self.core.run(
                 argv.clone(),
@@ -3336,8 +3345,374 @@ impl AppWindow {
         })
     }
 
+    /// The live terminal labelled `lead` that still runs `program`, if the core
+    /// kept it.
+    fn lead_terminal(&self, program: &str) -> Option<String> {
+        self.live
+            .iter()
+            .find(|(address, record)| {
+                !self.closing_terminals.contains_key(*address)
+                    && crate::lead::is_lead_record(record, program)
+            })
+            .map(|(address, _)| address.clone())
+    }
+
+    /// Makes sure one composer copy sits under this terminal, in its own tab.
+    fn ensure_composer(&mut self, terminal: &str) -> Result<Value, String> {
+        let pane = self
+            .model
+            .pane_of(terminal)
+            .ok_or_else(|| format!("the lead's terminal {terminal:?} has no pane"))?;
+        let existing = self.model.tab_of(&pane).and_then(|tab| {
+            tab.root
+                .panes()
+                .into_iter()
+                .find(|node| {
+                    matches!(
+                        node.content(),
+                        Some(Content::Mod { name, props })
+                            if name == "composer"
+                                && props.get("terminal").and_then(Value::as_str) == Some(terminal)
+                    )
+                })
+                .map(|node| node.id.clone())
+        });
+        if let Some(pane) = existing {
+            return Ok(json!({ "pane": pane }));
+        }
+        self.split_mod(
+            Some(pane),
+            Axis::Column,
+            "composer".into(),
+            json!({ "terminal": terminal }),
+        )
+    }
+
+    /// The tab `lead.open` starts, through the same creators `tab.new` uses.
+    fn start_lead_tab(
+        &mut self,
+        folder: &str,
+        argv: &[String],
+        window: &Window,
+    ) -> Result<Value, String> {
+        let labels = Some(json!({ "lead": "1" }));
+        let argv = Some(argv.to_vec());
+        let local = self
+            .model
+            .active_space()
+            .filter(|space| space.machine.is_none())
+            .map(|space| space.id.clone())
+            .or_else(|| {
+                self.model
+                    .spaces
+                    .iter()
+                    .find(|space| space.machine.is_none())
+                    .map(|space| space.id.clone())
+            });
+        match local {
+            Some(space) => self.new_tab(
+                Some(space),
+                "Lead",
+                Some(folder.to_owned()),
+                argv,
+                None,
+                labels,
+                window,
+            ),
+            None => self.new_space(
+                "",
+                Some(folder.to_owned()),
+                Some("Lead"),
+                argv,
+                None,
+                None,
+                labels,
+                window,
+            ),
+        }
+    }
+
+    /// `lead.open`: find the kept lead by its label, or start it in its home
+    /// folder with the conversation the record says it should go on with.
+    fn lead_open(&mut self, window: &Window, cx: &mut Context<Self>) -> Result<Value, String> {
+        let person = settings::load_person().map_err(|error| format!("settings.json: {error}"))?;
+        let lead = person.lead.clone().unwrap_or_default();
+        let program = lead
+            .program
+            .as_deref()
+            .filter(|program| !program.is_empty())
+            .unwrap_or("claude")
+            .to_owned();
+        let folder = lead
+            .folder
+            .clone()
+            .filter(|folder| !folder.is_empty())
+            .unwrap_or_else(|| crate::mods::home().to_string_lossy().into_owned());
+        if let Some(terminal) = self.lead_terminal(&program) {
+            if let Some(pane) = self.model.pane_of(&terminal) {
+                self.focused_block = None;
+                self.model.focus_pane(&pane);
+                self.focused_pane = None;
+                self.agent = Some(terminal.clone());
+                self.ensure_composer(&terminal)?;
+                if let Some(pane) = self.model.pane_of(&terminal) {
+                    self.model.focus_pane(&pane);
+                }
+                return Ok(json!({ "terminal": terminal, "focused": true }));
+            }
+            return Err(format!(
+                "the lead's terminal {terminal:?} is alive but has no pane; keep it with terminal.keep"
+            ));
+        }
+        let spec = crate::programs::lead_spec(&program)
+            .ok_or_else(|| format!("lead.program: {program:?} is not a key in programs.json"))?;
+        let catalog: crate::lead::CatalogEntry =
+            serde_json::from_value(spec).map_err(|error| format!("programs.json: {error}"))?;
+        if catalog.run.is_empty() {
+            return Err(format!("programs.json: {program:?} has no run command"));
+        }
+        let streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
+        let stream = crate::lead::stream_of(&streams, &program);
+        let choice = crate::lead::choose(
+            &catalog,
+            stream.as_ref(),
+            &folder,
+            &crate::lead::fresh_id(crate::lead::now_nanos(), std::process::id(), &folder),
+        );
+        let mut all = match streams {
+            Value::Object(all) => all,
+            _ => serde_json::Map::new(),
+        };
+        let next = crate::lead::stream_after_choice(&choice, &folder, stream.as_ref());
+        all.insert(
+            program.clone(),
+            serde_json::to_value(next).unwrap_or(Value::Null),
+        );
+        mods::set_shared("lead.streams".into(), Value::Object(all));
+
+        let mut argv = crate::lead::argv(
+            &catalog,
+            &choice,
+            lead.model.as_deref(),
+            lead.effort.as_deref(),
+        );
+        if program == "claude" {
+            let app = std::env::current_exe()
+                .map_err(|error| format!("Couldn't find this kompitum-app's path: {error}"))?;
+            let settings_file = crate::lead::write_claude_settings(
+                &mods::app_dir(),
+                &app,
+                &crate::core_bin::path(),
+            )?;
+            argv.insert(1, "--settings".into());
+            argv.insert(2, settings_file.to_string_lossy().into_owned());
+        }
+        let started = self.start_lead_tab(&folder, &argv, window)?;
+        let terminal = started["terminal"]
+            .as_str()
+            .ok_or("the lead's tab returned no terminal")?
+            .to_owned();
+        self.ensure_composer(&terminal)?;
+        if let Some(pane) = self.model.pane_of(&terminal) {
+            self.model.focus_pane(&pane);
+        }
+        if choice.is_resume_or_continue() {
+            self.watch_lead_resume(
+                terminal.clone(),
+                program,
+                catalog,
+                folder,
+                lead.model,
+                lead.effort,
+                window,
+                cx,
+            );
+        }
+        Ok(started)
+    }
+
+    /// A resume or continue that ends within ten seconds with a non-zero exit
+    /// code gets one fresh start, then says so.
+    #[allow(clippy::too_many_arguments)]
+    fn watch_lead_resume(
+        &mut self,
+        terminal: String,
+        program: String,
+        catalog: crate::lead::CatalogEntry,
+        folder: String,
+        model: Option<String>,
+        effort: Option<String>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let core = self.core.clone();
+        let watched = terminal.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_secs(10))
+                .await;
+            let record = cx
+                .background_executor()
+                .spawn(async move {
+                    core.call("terminal.get", json!({ "terminal": watched }))
+                })
+                .await;
+            let Ok(record) = record else {
+                return;
+            };
+            if !crate::lead::retry_needed(&record, false) {
+                return;
+            }
+            let _ = this.update_in(cx, |this, window, cx| {
+                if this.lead_terminal(&program).is_some() {
+                    return;
+                }
+                let choice = if catalog
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.new.as_ref())
+                    .is_some()
+                {
+                    crate::lead::Choice::New {
+                        id: crate::lead::fresh_id(
+                            crate::lead::now_nanos(),
+                            std::process::id(),
+                            &folder,
+                        ),
+                    }
+                } else {
+                    crate::lead::Choice::Plain
+                };
+                let streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
+                let stream = crate::lead::stream_of(&streams, &program);
+                let mut all = match streams {
+                    Value::Object(all) => all,
+                    _ => serde_json::Map::new(),
+                };
+                let next = crate::lead::stream_after_choice(&choice, &folder, stream.as_ref());
+                all.insert(
+                    program.clone(),
+                    serde_json::to_value(next).unwrap_or(Value::Null),
+                );
+                mods::set_shared("lead.streams".into(), Value::Object(all));
+                let mut argv = crate::lead::argv(
+                    &catalog,
+                    &choice,
+                    model.as_deref(),
+                    effort.as_deref(),
+                );
+                if program == "claude" {
+                    let app = match std::env::current_exe() {
+                        Ok(app) => app,
+                        Err(error) => {
+                            return this.lead_failed(
+                                format!("Couldn't find this kompitum-app's path: {error}"),
+                                window,
+                                cx,
+                            );
+                        }
+                    };
+                    match crate::lead::write_claude_settings(
+                        &mods::app_dir(),
+                        &app,
+                        &crate::core_bin::path(),
+                    ) {
+                        Ok(path) => {
+                            argv.insert(1, "--settings".into());
+                            argv.insert(2, path.to_string_lossy().into_owned());
+                        }
+                        Err(error) => return this.lead_failed(error, window, cx),
+                    }
+                }
+                match this.start_lead_tab(&folder, &argv, window) {
+                    Ok(started) => {
+                        if let Some(terminal) = started["terminal"].as_str()
+                            && let Err(error) = this.ensure_composer(terminal)
+                        {
+                            tracing::warn!("cannot dock the composer after a retry: {error}");
+                        }
+                        if let Some(terminal) = started["terminal"].as_str()
+                            && let Some(pane) = this.model.pane_of(terminal)
+                        {
+                            this.model.focus_pane(&pane);
+                        }
+                        this.open_overlay(
+                            mods::new_overlay_id(),
+                            json!({
+                                "kind": "toast",
+                                "notification": {
+                                    "title": "The lead started a new conversation",
+                                    "body": "Couldn't go on with the last conversation, so the lead started a new one.",
+                                    "level": "warning",
+                                },
+                            }),
+                            window,
+                            cx,
+                        );
+                    }
+                    Err(error) => this.lead_failed(error, window, cx),
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn lead_failed(&mut self, error: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_overlay(
+            mods::new_overlay_id(),
+            json!({
+                "kind": "toast",
+                "notification": {
+                    "title": "The lead didn't start",
+                    "body": error,
+                    "level": "error",
+                },
+            }),
+            window,
+            cx,
+        );
+    }
+
+    /// `lead.hook`: Claude's SessionStart for the lead's own terminal records
+    /// the conversation the app should resume next time.
+    fn lead_hook(&mut self, args: &Value) -> Value {
+        let event = args
+            .get("event")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let terminal = args
+            .get("terminal")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let input = args.get("input").cloned().unwrap_or(Value::Null);
+        let from_lead = self
+            .live
+            .get(terminal)
+            .and_then(|record| record.pointer("/labels/lead"))
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty());
+        let program = settings::load_person()
+            .ok()
+            .and_then(|person| person.lead)
+            .and_then(|lead| lead.program)
+            .unwrap_or_else(|| "claude".into());
+        let mut streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
+        let session = input.get("session_id").and_then(Value::as_str);
+        if crate::lead::record_session_start(
+            &mut streams,
+            from_lead,
+            program == "claude",
+            event,
+            session,
+        ) {
+            mods::set_shared("lead.streams".into(), streams);
+        }
+        json!({})
+    }
+
     /// A space with its first tab and terminal, shown at once.
     /// `machine`: another machine (`kom machine ls`); its space starts in that machine's home.
+    #[allow(clippy::too_many_arguments)]
     fn new_space(
         &mut self,
         name: &str,
@@ -3346,6 +3721,7 @@ impl AppWindow {
         argv: Option<Vec<String>>,
         task: Option<&str>,
         machine: Option<String>,
+        labels: Option<Value>,
         window: &Window,
     ) -> Result<Value, String> {
         let follow = folder.is_none();
@@ -3375,6 +3751,7 @@ impl AppWindow {
             &ctx,
             on,
             size,
+            labels,
             window,
         )?;
         let ctx_name = ctx_name.map(str::trim).unwrap_or_default();
@@ -3391,6 +3768,7 @@ impl AppWindow {
     }
 
     /// A tab in a space (default: the shown one), shown at once.
+    #[allow(clippy::too_many_arguments)]
     fn new_tab(
         &mut self,
         space: Option<String>,
@@ -3398,6 +3776,7 @@ impl AppWindow {
         folder: Option<String>,
         argv: Option<Vec<String>>,
         task: Option<&str>,
+        labels: Option<Value>,
         window: &Window,
     ) -> Result<Value, String> {
         let space = space
@@ -3422,6 +3801,7 @@ impl AppWindow {
             &ctx,
             on.as_deref(),
             size,
+            labels,
             window,
         )?;
         self.model
@@ -3510,7 +3890,17 @@ impl AppWindow {
             .active_tab()
             .filter(|tab| tab.id == ctx)
             .and_then(|_| self.initial_size(&root, &new, window));
-        let (addr, _) = self.spawn(argv, cwd, follow, &space, &ctx, on.as_deref(), size, window)?;
+        let (addr, _) = self.spawn(
+            argv,
+            cwd,
+            follow,
+            &space,
+            &ctx,
+            on.as_deref(),
+            size,
+            None,
+            window,
+        )?;
         self.model.split(&target, axis, &new, &addr);
         Ok(json!({ "pane": new, "terminal": addr }))
     }
@@ -4103,6 +4493,7 @@ impl AppWindow {
                     Self::argv(a),
                     Self::arg(a, "task"),
                     Self::owned(a, "machine").filter(|m| !m.is_empty()),
+                    None,
                     window,
                 );
                 self.answer(r);
@@ -4206,6 +4597,7 @@ impl AppWindow {
                             Self::argv(a),
                             Self::arg(a, "task"),
                             None,
+                            None,
                             window,
                         )
                     }
@@ -4215,6 +4607,7 @@ impl AppWindow {
                         Self::owned(a, "folder"),
                         Self::argv(a),
                         Self::arg(a, "task"),
+                        None,
                         window,
                     ),
                 };
@@ -4448,7 +4841,15 @@ impl AppWindow {
                                     .map(|p| p.rsplit('/').next().unwrap_or(p).to_owned())
                             })
                             .unwrap_or_else(|| "shell".into());
-                        self.new_tab(None, &name, Self::owned(a, "folder"), argv, None, window)
+                        self.new_tab(
+                            None,
+                            &name,
+                            Self::owned(a, "folder"),
+                            argv,
+                            None,
+                            None,
+                            window,
+                        )
                     }
                 };
                 self.answer(r);
@@ -4578,6 +4979,10 @@ impl AppWindow {
                 }
             }
             // ---- agents
+            "lead.open" => {
+                let r = self.lead_open(window, cx);
+                self.answer(r);
+            }
             "agent.focus" => {
                 let t = Self::arg(a, "terminal").unwrap_or_default().to_owned();
                 if !self.live.contains_key(&t) {
@@ -5309,6 +5714,9 @@ impl AppWindow {
     fn control(&mut self, cmd: Value, window: &mut Window, cx: &mut Context<Self>) -> Value {
         if let Some(name) = cmd.get("do").and_then(Value::as_str) {
             let args = cmd.get("args").cloned().unwrap_or(Value::Null);
+            if name == "lead.hook" {
+                return self.lead_hook(&args);
+            }
             return self.run_as(name, args, false, window, cx);
         }
         if let Some(path) = cmd.get("shot").and_then(Value::as_str) {

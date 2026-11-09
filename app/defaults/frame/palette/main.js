@@ -45,6 +45,7 @@ const NAMED = [
   ["terminal.paste", {}, "Terminal", "Paste", "clipboard"],
   ["agent.next", {}, "Agent", "Next agent", ""],
   ["agent.prev", {}, "Agent", "Previous agent", ""],
+  ["lead.open", {}, "Agent", "Open the lead", "lead composer claude opus start"],
   ["window.minimize", {}, "Window", "Minimize window", ""],
   ["window.maximize", {}, "Window", "Maximize window", "restore"],
   ["window.close", {}, "Window", "Close window", "quit"],

@@ -4,7 +4,7 @@
 
 use crate::mods::{self, Request};
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -93,6 +93,11 @@ pub fn client(args: &[String]) -> i32 {
         );
         return 0;
     }
+    if let [verb, event] = args
+        && verb == "hook"
+    {
+        return hook(event);
+    }
     let cmd = match args {
         [verb, rest @ ..] if verb == "shot" && rest.len() <= 1 => {
             let path = PathBuf::from(
@@ -169,6 +174,43 @@ pub fn client(args: &[String]) -> i32 {
     if reply.get("error").is_some() { 1 } else { 0 }
 }
 
+/// `kompitum-app hook <event>`: a Claude Code hook's way to tell the app what
+/// happened. Every failure is silent and exits 0: a hook must never block Claude.
+fn hook(event: &str) -> i32 {
+    let mut text = String::new();
+    if std::io::stdin().read_to_string(&mut text).is_err() {
+        return 0;
+    }
+    let input: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    let Ok(terminal) = std::env::var("KOMPITUM_TERMINAL_ID") else {
+        return 0;
+    };
+    if terminal.trim().is_empty() {
+        return 0;
+    }
+    let Ok(mut stream) = UnixStream::connect(socket()) else {
+        return 0;
+    };
+    let cmd = json!({
+        "do": "lead.hook",
+        "args": { "event": event, "terminal": terminal, "input": input },
+    });
+    if stream.write_all(format!("{cmd}\n").as_bytes()).is_err() {
+        return 0;
+    }
+    // No timeout of its own: Claude's hook timeout ends it.
+    let mut line = String::new();
+    if BufReader::new(&stream).read_line(&mut line).is_err() {
+        return 0;
+    }
+    if let Ok(reply) = serde_json::from_str::<Value>(&line)
+        && let Some(output) = reply.get("output").filter(|value| !value.is_null())
+    {
+        println!("{}", serde_json::to_string(output).unwrap_or_default());
+    }
+    0
+}
+
 /// `--name api --argv '["pi"]'` (values that parse as JSON are JSON), or one JSON object.
 fn parse_args(rest: &[String]) -> Result<Value, String> {
     match rest {
@@ -228,6 +270,73 @@ pub fn save_shot(window: &gpui::Window, path: &std::path::Path) -> anyhow::Resul
 fn fail(message: &str) -> i32 {
     eprintln!("kompitum-app: {message}");
     2
+}
+
+#[cfg(test)]
+mod hook_tests {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    /// The app's ordinary binary: Cargo sets CARGO_BIN_EXE only for integration
+    /// tests, so a unit test looks beside its own test binary too.
+    fn app_binary() -> Option<std::path::PathBuf> {
+        if let Some(path) = option_env!("CARGO_BIN_EXE_kompitum-app") {
+            let path = std::path::PathBuf::from(path);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+        let test = std::env::current_exe().ok()?;
+        let debug = test.parent()?.parent()?;
+        ["kompitum-app.exe", "kompitum-app"]
+            .into_iter()
+            .map(|name| debug.join(name))
+            .find(|path| path.is_file())
+    }
+
+    #[test]
+    fn hook_with_no_window_exits_zero_and_prints_nothing() {
+        let Some(bin) = app_binary() else {
+            eprintln!("kompitum-app hook: no built binary beside the test executable; skipped");
+            return;
+        };
+        let home = std::env::temp_dir().join(format!(
+            "kompitum-hook-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default()
+        ));
+        let mut child = Command::new(bin)
+            .args(["hook", "SessionStart"])
+            .env("KOMPITUM_TERMINAL_ID", "t_test")
+            .env("KOMPITUM_APP_HOME", &home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("start kompitum-app hook");
+        child
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(br#"{"session_id":"s","hook_event_name":"SessionStart"}"#)
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        let _ = std::fs::remove_dir_all(&home);
+        assert!(
+            out.status.success(),
+            "hook exited {:?}: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            out.stdout.is_empty(),
+            "hook printed: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
 }
 
 #[cfg(all(test, unix))]
