@@ -277,6 +277,184 @@ fn lead_opened_lists_every_cli(cx: &mut TestAppContext) {
     }
 }
 
+/// An open list draws its highlight on one row, in the theme's hover colour, from the state the caller keeps.
+#[gpui::test]
+fn an_open_dropdown_marks_the_highlighted_row_with_the_hover_colour(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let values = lead_values("opencode");
+    let hover = values["theme"]["hover"].as_str().unwrap().to_string();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        values,
+        Some("this.agentPage.leadCli.open = true; this.agentPage.leadCli.hi = 1;"),
+    )
+    .unwrap();
+    for (key, lit) in [("claude", false), ("command-code", true), ("opencode", false)] {
+        let row = tree
+            .lines()
+            .find(|line| line.contains(&format!("st-lead-cli-{key}")))
+            .unwrap_or_else(|| panic!("no {key} row: {tree}"));
+        let base = row.replace(&format!(":hover(.bg[Str(\"{hover}\")])"), "");
+        assert_eq!(
+            base.contains(&format!(".bg[Str(\"{hover}\")]")),
+            lit,
+            "{key}: {row}"
+        );
+    }
+}
+
+/// Mounts Settings, clicks each id, optionally hovers one, sends `keys`, and
+/// returns the settings.json texts written plus whether each of `want` is laid
+/// out afterwards.
+fn settings_after_keys(
+    cx: &mut TestAppContext,
+    values: BTreeMap<String, Value>,
+    setup: &str,
+    clicks: &[&'static str],
+    hover: Option<&'static str>,
+    keys: &str,
+    want: &[&'static str],
+) -> (Vec<Value>, Vec<(String, bool)>) {
+    use gpui::{Modifiers, MouseButton};
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-dropdown.json"))
+        .with_capabilities(
+            Capabilities::new()
+                .storage(true)
+                .read_roots([staged.0.clone()]),
+        )
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("frame/settings", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    for id in clicks {
+        let at = visual
+            .debug_bounds(id)
+            .unwrap_or_else(|| panic!("{id} is laid out"))
+            .center();
+        visual.simulate_mouse_move(at, None, Modifiers::default());
+        visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        visual.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    if let Some(id) = hover {
+        let at = visual
+            .debug_bounds(id)
+            .unwrap_or_else(|| panic!("{id} is laid out"))
+            .center();
+        visual.simulate_mouse_move(at, None, Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    visual.simulate_keystrokes(keys);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let found = want
+        .iter()
+        .map(|id| ((*id).to_string(), visual.debug_bounds(id).is_some()))
+        .collect();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    let written = calls
+        .effects
+        .iter()
+        .filter(|(name, _)| name == "writeTextFile")
+        .filter_map(|(_, args)| args.get(1).cloned())
+        .collect();
+    (written, found)
+}
+
+fn written_settings(writes: &[Value]) -> Value {
+    let text = writes
+        .last()
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("settings.json was not written: {writes:?}"));
+    serde_json::from_str(text).unwrap()
+}
+
+/// Down moves the highlight to the next CLI, and Enter picks it.
+#[gpui::test]
+fn lead_dropdown_down_and_enter_pick_the_next_cli(cx: &mut TestAppContext) {
+    let (writes, found) = settings_after_keys(
+        cx,
+        lead_values("opencode"),
+        "",
+        &["st-lead-cli"],
+        None,
+        "down enter",
+        &["st-lead-cli-list", "st-lead-cli-claude"],
+    );
+    assert_eq!(found, vec![("st-lead-cli-list".into(), false), ("st-lead-cli-claude".into(), false)]);
+    assert_eq!(written_settings(&writes)["lead"]["program"], json!("command-code"));
+}
+
+/// Escape closes the list and leaves the lead as it was.
+#[gpui::test]
+fn lead_dropdown_escape_closes_without_picking(cx: &mut TestAppContext) {
+    let (writes, found) = settings_after_keys(
+        cx,
+        lead_values("opencode"),
+        "",
+        &["st-lead-cli"],
+        None,
+        "escape",
+        &["st-lead-cli-list", "st-lead-cli-claude"],
+    );
+    assert_eq!(found, vec![("st-lead-cli-list".into(), false), ("st-lead-cli-claude".into(), false)]);
+    assert!(writes.is_empty(), "nothing was picked: {writes:?}");
+}
+
+/// Hovering a row moves the highlight there, and Enter picks that row.
+#[gpui::test]
+fn lead_dropdown_hover_moves_the_highlight(cx: &mut TestAppContext) {
+    let (writes, _) = settings_after_keys(
+        cx,
+        lead_values("opencode"),
+        "",
+        &["st-lead-cli"],
+        Some("st-lead-cli-command-code"),
+        "enter",
+        &[],
+    );
+    assert_eq!(written_settings(&writes)["lead"]["program"], json!("command-code"));
+}
+
+/// With a search field, the arrow keys work while it has the focus.
+#[gpui::test]
+fn model_dropdown_arrows_work_while_the_search_field_has_focus(cx: &mut TestAppContext) {
+    let (writes, found) = settings_after_keys(
+        cx,
+        lead_values("claude"),
+        "",
+        &["st-lead-model"],
+        None,
+        "down enter",
+        &["st-lead-model-list"],
+    );
+    assert_eq!(found, vec![("st-lead-model-list".into(), false)]);
+    assert_eq!(written_settings(&writes)["lead"]["model"], json!("opus"));
+}
+
 #[gpui::test]
 fn agents_page_has_a_lead_folder_row(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);

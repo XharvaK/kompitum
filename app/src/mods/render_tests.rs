@@ -12,6 +12,7 @@ use std::{
 };
 
 // One file per area of the rework, so workers on different areas never share a file.
+mod cli_errors;
 mod composer;
 mod machines;
 mod mailbox;
@@ -156,7 +157,11 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let usage_json = values.remove("usageJson");
     let vault_missing = values.remove("vaultMissing");
     let vault_json = values.remove("vaultJson");
+    let vault_fail = values.remove("vaultFail");
     let thread_json = values.remove("threadJson");
+    let thread_fail = values.remove("threadFail");
+    let send_fail = values.remove("sendFail");
+    let machine_add_fail = values.remove("machineAddFail");
     let conversation_items = values.remove("conversation").unwrap_or(json!([]));
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
@@ -259,7 +264,11 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let usage_json = usage_json.clone();
         let vault_missing = vault_missing.clone();
         let vault_json = vault_json.clone();
+        let vault_fail = vault_fail.clone();
         let thread_json = thread_json.clone();
+        let thread_fail = thread_fail.clone();
+        let send_fail = send_fail.clone();
+        let machine_add_fail = machine_add_fail.clone();
         module = module.async_function(name, move |a| {
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
             let reply = match name {
@@ -310,6 +319,14 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     "stderr": ""
                 })),
                 // The mailbox: one note that needs the Owner, one between agents.
+                "kom" if first == json!(["vault", "open", "--json", "--as", "owner"]) && vault_fail.is_some() => {
+                    let text = vault_fail
+                        .as_ref()
+                        .and_then(Value::as_str)
+                        .unwrap_or("vault failed")
+                        .to_string();
+                    Some(json!({"code": 1, "stdout": "", "stderr": text}))
+                }
                 "kom" if first == json!(["vault", "open", "--json", "--as", "owner"]) && vault_missing.is_some() => Some(json!({
                     "code": 1,
                     "stdout": json!({"error": {"message": "No Git vault at /fixture/vault."}}).to_string(),
@@ -330,6 +347,14 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     "stdout": vault_report(vec![], 0, vec![]),
                     "stderr": ""
                 })),
+                // The mailbox's close: recorded, so a test can see whether Undo wrote it.
+                "kom" if first.as_array().is_some_and(|a| {
+                    a.first().and_then(Value::as_str) == Some("vault")
+                        && a.get(1).and_then(Value::as_str) == Some("done")
+                }) => {
+                    calls.borrow_mut().effects.push(("kom".into(), vec![first.clone()]));
+                    Some(json!({"code": 0, "stdout": "", "stderr": ""}))
+                }
                 "kom" if first == json!(["vault", "read", "manager/to/owner/2026-11-08-please-review.md", "--json", "--as", "owner"]) => Some(json!({
                     "code": 0,
                     "stdout": json!({
@@ -338,6 +363,21 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     }).to_string(),
                     "stderr": ""
                 })),
+                "kom"
+                    if machine_add_fail.is_some()
+                        && first.as_array().is_some_and(|a| {
+                            a.first().and_then(Value::as_str) == Some("machine")
+                                && a.get(1).and_then(Value::as_str) == Some("add")
+                                && a.last().and_then(Value::as_str) == Some("--json")
+                        }) =>
+                {
+                    let text = machine_add_fail
+                        .as_ref()
+                        .and_then(Value::as_str)
+                        .unwrap_or("machine add failed")
+                        .to_string();
+                    Some(json!({"code": 1, "stdout": "", "stderr": text}))
+                }
                 "kom" if first == json!(["machine", "add", "host", "--json"]) => {
                     Some(json!({"code":1,"stdout":"{\"error\":{\"kind\":\"host_key\",\"message\":\"unknown host key\"}}","stderr":""}))
                 }
@@ -377,9 +417,22 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                 // The composer's send: one recorded effect, so key tests can read it.
                 "kom" if first.as_array().and_then(|a| a.first()).and_then(Value::as_str) == Some("send") => {
                     calls.borrow_mut().effects.push(("kom".into(), vec![first.clone()]));
-                    Some(json!({"code":0,"stdout":"","stderr":""}))
+                    if let Some(error) = send_fail.clone() {
+                        let text = error.as_str().unwrap_or("send failed").to_string();
+                        Some(json!({"code": 1, "stdout": "", "stderr": text}))
+                    } else {
+                        Some(json!({"code":0,"stdout":"","stderr":""}))
+                    }
                 }
                 // The Line: one note from Manager.
+                "kom" if first == json!(["vault", "thread", "manager", "--json"]) && thread_fail.is_some() => {
+                    let text = thread_fail
+                        .as_ref()
+                        .and_then(Value::as_str)
+                        .unwrap_or("thread failed")
+                        .to_string();
+                    Some(json!({"code": 1, "stdout": "", "stderr": text}))
+                }
                 "kom" if first == json!(["vault", "thread", "manager", "--json"]) => Some(json!({"code":0,"stdout":thread_json.clone().map(|v| v.to_string()).unwrap_or_else(|| json!({
                     "agent": "opus",
                     "notes": [{"path": "manager/to/opus/2026-11-08-tests-pass.md", "from": "manager", "to": ["opus"], "title": "Tests pass", "date": "2026-11-08T09:00:00+03:00", "status": "open"}]

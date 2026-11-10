@@ -24,6 +24,7 @@ const SECTIONS = [
 ];
 
 const macos = () => window()?.platform === "macos";
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 
 // Keyboard holds only macOS's Option key, so other systems never show it.
 function liveSections() {
@@ -378,7 +379,7 @@ export default class Settings extends View {
       this.machineList = list.filter((m) => !m.temporary);
       this.machineError = null;
     } catch (e) {
-      this.machineError = String(e);
+      this.machineError = String(e?.message ?? e);
     } finally {
       this.machineLoading = false;
     }
@@ -406,7 +407,7 @@ export default class Settings extends View {
         if (action === "update") this.machineResults[machine] = { message, ok: true };
         else this.machineNotice = message;
       } catch (e) {
-        this.machineResults[machine] = { message: String(e), ok: false };
+        this.machineResults[machine] = { message: String(e?.message ?? e), ok: false };
       } finally {
         delete this.machineBusy[machine];
       }
@@ -475,7 +476,7 @@ export default class Settings extends View {
           .child(Input.new(this.renameInput).flex_1().min_w(0).h(32).px(10).rounded(7).border_1().border_color(this.renameFocused ? t.accent : t.input).bg(t.background).text_size(13).text_color(t.foreground))
           .child(cancel).child(this.button(t, `st-m-save-${m.name}`, "Save", (_e, cx) => this.machineAction(m.name, "rename", cx, edit.name)))));
     }
-    if (result) row.child(div().text_size(12.5).text_color(result.ok ? t.ansi2 : t.blocked).child(result.message));
+    if (result) row.child(div().text_size(12.5).text_color(result.ok ? t.ansi2 : t.blocked).tooltip(result.ok ? null : result.message).child(result.ok ? result.message : firstLine(result.message) || result.message));
     return row;
   }
 
@@ -487,7 +488,7 @@ export default class Settings extends View {
       .children((this.machineList ?? []).map((m) => this.machineRow(t, m, version)))
       .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12.5).text_color(t.dim).child("Reading machines…"))))
       .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(12.5).text_color(t.dim).child("No other machines yet.")))
-      .when(Boolean(this.machineError), (el) => el.child(div().py(10).text_size(12.5).text_color(t.blocked).child(this.machineError)))
+      .when(Boolean(this.machineError), (el) => el.child(div().py(10).text_size(12.5).text_color(t.blocked).tooltip(this.machineError).child(firstLine(this.machineError) || this.machineError)))
       .when(Boolean(this.machineNotice), (el) => el.child(div().py(10).text_size(12.5).text_color(t.ansi2).child(this.machineNotice)))
       .child(this.row(t, "Add a machine", "Another computer, reached over ssh.", this.button(t, "st-m-add", "Add", () => run("mod.open", { name: "machine-add" })), "add"));
   }
@@ -601,7 +602,7 @@ export default class Settings extends View {
               .flex_wrap()
               .when(this.lit("core"), (el) => el.bg(t.selected).rounded(7))
               .child(div().text_size(12.5).text_color(t.dim).child("Core"))
-              .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(t.muted).child(core[0]))
+              .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(t.muted).tooltip(core[0]).child(firstLine(core[0]) || core[0]))
               .when(Boolean(core[1]), (el) => el.child(core[1])),
           ),
       )

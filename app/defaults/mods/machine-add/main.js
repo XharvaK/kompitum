@@ -14,6 +14,7 @@ const I = (name) => `mods/workspace-chrome/${name}.svg`;
 // The program that adds a machine: on this computer (`machine: ""`) the window
 // runs the core the app runs for `kom`, wherever the terminal's PATH points.
 const KOM = "kom";
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 
 // An Include's files, as ssh finds them: ~ is home, a relative path is
 // under ~/.ssh, and a pattern matches files (through sh; none where there's no sh).
@@ -270,7 +271,7 @@ export default class MachineAdd extends View {
       );
   }
 
-  // Anything else that went wrong: two lines at most, the whole text on hover.
+  // Anything else that went wrong: the first meaningful line, the whole text on hover.
   error(t, target) {
     const text = String(this.state[target]);
     return div()
@@ -281,7 +282,7 @@ export default class MachineAdd extends View {
       .overflow_hidden()
       .text_color(t.blocked)
       .tooltip(text)
-      .child(text);
+      .child(firstLine(text) || text);
   }
 
   reply(t, target) {

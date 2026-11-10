@@ -14,7 +14,7 @@ const pad = (n) => String(n).padStart(2, "0");
 const cap = (s) => (s ? String(s).replace(/^./, (c) => c.toUpperCase()) : "");
 const text = (v) => (typeof v === "string" ? v : "");
 const base = (p) => String(p ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
-const firstLine = (v) => String(v ?? "").trim().split(/\r?\n/).find(Boolean) ?? "";
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 
 function clock(d) {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -39,10 +39,10 @@ function errorText(result) {
   for (const out of [result?.stderr, result?.stdout]) {
     try {
       const message = JSON.parse(String(out ?? "")).error?.message;
-      if (message) return firstLine(message);
+      if (message) return String(message);
     } catch {}
   }
-  return firstLine(result?.stderr) || firstLine(result?.stdout) || `kom exited ${result?.code ?? "?"}`;
+  return String(result?.stderr || result?.stdout || "").trim() || `kom exited ${result?.code ?? "?"}`;
 }
 
 function problemText(problem) {
@@ -195,7 +195,7 @@ export default class Line extends View {
           }
         }
       } catch (e) {
-        if (seq === this.seq) this.error = firstLine(e?.message ?? e) || "thread failed";
+        if (seq === this.seq) this.error = String(e?.message ?? e ?? "").trim() || "thread failed";
       } finally {
         if (seq === this.seq) {
           this.loading = false;
@@ -340,20 +340,27 @@ export default class Line extends View {
           .on_click((_e, cx) => { this.details = !this.details; cx.notify(); })
           .child("Details"))))
       .when(this.details && details.length > 0, (el) => el.child(v_flex().px(12).pt(4).gap(2)
-        .children(details.map((problem) => div().text_size(11).text_color(t.dim).child(problemText(problem))))))
+        .children(details.map((problem) => {
+          const message = problemText(problem);
+          return div().text_size(11).text_color(t.dim).tooltip(message).child(firstLine(message) || message);
+        }))))
       .when(Boolean(this.error), (el) => el.child(h_flex().id("line-error").px(12).pt(6).gap(8).items_center()
-        .child(div().flex_1().min_w(0).text_size(11).text_color(t.muted).child(this.error))
+        .child(div().flex_1().min_w(0).text_size(11).text_color(t.muted).tooltip(this.error).child(firstLine(this.error) || this.error))
         .child(div().id("line-error-retry").text_size(11).text_color(t.accent).cursor_pointer()
           .hover((s) => s.text_color(t.foreground))
           .on_click((_e, cx) => this.retry(cx))
           .child("Retry"))))
-      .children(otherProblems.map((problem, i) => div()
-        .id(`line-problem-${i}`)
-        .px(12)
-        .pt(4)
-        .text_size(11)
-        .text_color(t.muted)
-        .child(problemText(problem))))
+      .children(otherProblems.map((problem, i) => {
+        const message = problemText(problem);
+        return div()
+          .id(`line-problem-${i}`)
+          .px(12)
+          .pt(4)
+          .text_size(11)
+          .text_color(t.muted)
+          .tooltip(message)
+          .child(firstLine(message) || message);
+      }))
       .child(v_flex().flex_1().min_h(0).relative()
         .when(this.notes.length === 0, (el) => el.p(12).child(div().text_size(12).text_color(t.muted)
           .child(this.error ? "No notes to show." : this.loaded ? "No notes yet." : "Loading notes…")))

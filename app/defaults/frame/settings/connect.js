@@ -45,6 +45,8 @@ function words(result) {
   return (result.stderr || result.stdout || "It didn't work.").trim() || "It didn't work.";
 }
 
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+
 function noteToOpus(note) {
   return note?.to === "opus" || (Array.isArray(note?.to) && note.to.includes("opus"));
 }
@@ -294,7 +296,7 @@ export function connectPage(view, t, cx) {
     )
     .children(connect.found.map((system) => systemRow(view, t, system, cx)))
     .child(otherRow(view, t, cx))
-    .when(Boolean(connect.error), (el) => el.child(div().py(10).text_size(12.5).text_color(t.blocked).child(connect.error)))
+    .when(Boolean(connect.error), (el) => el.child(div().py(10).text_size(12.5).text_color(t.blocked).tooltip(connect.error).child(firstLine(connect.error) || connect.error)))
     .when(Boolean(connect.message), (el) => el.child(div().py(10).text_size(12.5).text_color(t.muted).child(connect.message)))
     .when(connect.showPrompt, (el) => el.child(promptBox(view, t)));
 }

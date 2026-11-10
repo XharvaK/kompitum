@@ -13,6 +13,7 @@ const key = () => JSON.stringify(location());
 // the folder watch would see it, and every refresh would start the next one.
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
 const countLines = (text) => text ? text.split("\n").length - Number(text.endsWith("\n")) : 0;
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 
 // Numbers each diff line once, so a frame only draws the rows on screen.
 function diffRows(lines) {
@@ -105,7 +106,7 @@ export default class Changes extends View {
           try { await this.load(this.open, context); }
           catch { if (key() === context) this.setLines(["Cannot preview this diff (too large or unreadable)"]); }
         }
-      } catch (e) { if (key() === context) this.error = String(e); }
+      } catch (e) { if (key() === context) this.error = String(e?.message ?? e); }
       finally { this.loading = false; cx.notify(); }
     });
   }
@@ -142,7 +143,7 @@ export default class Changes extends View {
     const context = this.context;
     if (this.open) cx.spawn(async (cx) => {
       try { await this.load(path, context); }
-      catch (e) { if (key() === context && this.open === path) this.note = `Cannot preview this diff (too large or unreadable): ${e}`; }
+      catch (e) { if (key() === context && this.open === path) this.note = `Cannot preview this diff (too large or unreadable): ${e?.message ?? e}`; }
       cx.notify();
     });
     cx.notify();
@@ -159,7 +160,7 @@ export default class Changes extends View {
           if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
         }
         if (key() === context) { this.message = ""; this.input.set_value(""); }
-      } catch (e) { if (key() === context) this.note = `Commit failed: ${e}`; }
+      } catch (e) { if (key() === context) this.note = `Commit failed: ${e?.message ?? e}`; }
       finally { this.busy = false; this.refresh(cx); cx.notify(); }
     });
     cx.notify();
@@ -192,7 +193,7 @@ export default class Changes extends View {
           .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
           .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
-      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).child(this.error || (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
+      })).when(!this.files.length, (e) => e.child(div().p(8).text_color(t.dim).when(Boolean(this.error), (d) => d.tooltip(this.error)).child(this.error ? firstLine(this.error) || this.error : (this.loading ? "Loading changes…" : this.root ? "No uncommitted changes" : "No folder")))))
         .child(Scrollbar.vertical("changes-list").absolute().inset_0()))
       .when(this.limited, el => el.child(div().px(12).py(4).text_size(11).text_color(t.dim).child("Showing the first 1,000 changed files")))
       .child(div().flex_1().min_h(0).relative().font_family(settings().font_family ?? "Google Sans Code").text_size(11)
@@ -201,7 +202,7 @@ export default class Changes extends View {
             (range) => this.rows.slice(range.start, range.end).map((row) => this.diffRow(row, t))).size_full())))
         .child(Scrollbar.vertical("changes-diff").viewport_from_layout().absolute().inset_0())
         .when(!this.open && this.files.length > 0, (e) => e.child(div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes"))))
-      .when(Boolean(this.note), (e) => e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).child(this.note)))
+      .when(Boolean(this.note), (e) => e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).tooltip(this.note).child(firstLine(this.note) || this.note)))
       .child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
         .child(div().id("commit-message").flex_1().min_w(0).h(32).px(10).flex().items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.input).h_full().text_size(12).text_color(t.foreground)))
         .child(div().id("commit").h(32).px(14).flex().items_center().rounded(8).bg(enabled ? t.solid : t.raised).text_color(enabled ? t.solid_foreground : t.dim).text_size(12).when(enabled, (e) => e.cursor_pointer()).on_click((_e, cx) => this.commit(cx)).child(this.busy ? "Committing…" : "Commit")));

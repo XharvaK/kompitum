@@ -893,14 +893,17 @@ function workersSection(view, t, cx, s) {
     .child(h_flex().pt(10).child(view.button(t, "st-add-worker", "Add a worker", (_e, cx) => { s.addOpen = !s.addOpen; cx.notify(); })))
     .when(s.addOpen, (el) => el.child(addPanel(view, t, cx, s)))
     .when(clis.length > 0, (el) => el.child(v_flex().pt(12).gap(3).when(view.lit("clis"), (line) => line.bg(t.selected).rounded(7))
-      .children(clis.map((cli) => div().text_size(12.5).text_color(t.dim).child(cliLine(cli, Date.now()))))));
+      .children(clis.map((cli) => {
+        const line = cliLine(cli, Date.now());
+        return div().text_size(12.5).text_color(t.dim).tooltip(line).child(firstLine(line) || line);
+      }))));
 }
 
 export function agentsPage(view, t, cx) {
   const s = ensureAgents(view);
   return v_flex().w_full()
     .when(s.errors.length > 0, (el) => el.children(s.errors.map((error) =>
-      div().pb(8).text_size(12.5).line_height("18px").text_color(t.blocked).child(error))))
+      div().pb(8).text_size(12.5).line_height("18px").text_color(t.blocked).tooltip(error).child(firstLine(error) || error))))
     .child(leadSection(view, t, cx, s))
     .child(div().h(24))
     .child(workersSection(view, t, cx, s));
