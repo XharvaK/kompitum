@@ -165,6 +165,16 @@ fn start_stays_inert_until_a_model_row_is_clicked(cx: &mut TestAppContext) {
 }
 
 fn conversation_values(items: Value, terminal: &str, reveal: Value, why: Option<&str>) -> BTreeMap<String, Value> {
+    conversation_values_started(items, terminal, reveal, why, true)
+}
+
+fn conversation_values_started(
+    items: Value,
+    terminal: &str,
+    reveal: Value,
+    why: Option<&str>,
+    started: bool,
+) -> BTreeMap<String, Value> {
     let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("knownAgents".into(), agent_catalog());
     let length = items.as_array().map(|a| a.len()).unwrap_or(0);
@@ -174,6 +184,7 @@ fn conversation_values(items: Value, terminal: &str, reveal: Value, why: Option<
         json!({
             "state": "waiting",
             "ask": null,
+            "started": started,
             "terminal": terminal,
             "reveal": reveal,
             "reveal_why": why,
@@ -227,7 +238,13 @@ fn composer_live_run_after_clicks(
     calls
         .effects
         .iter()
-        .filter(|(name, _)| name == "run" || name == "kom" || name == "pickFiles")
+        .filter(|(name, _)| {
+            name == "run"
+                || name == "kom"
+                || name == "pickFiles"
+                || name == "pickFolder"
+                || name == "writeTextFile"
+        })
         .map(|(_, args)| args.clone())
         .collect()
 }
@@ -411,6 +428,97 @@ fn a_bare_model_send_reveals(cx: &mut TestAppContext) {
     assert!(
         sent.iter().any(|args| args.get(2).and_then(Value::as_str).is_some_and(|text| text.trim() == "/model")),
         "a bare /model still goes through kom send: {sent:?}"
+    );
+}
+
+/// The startup reveal draws the note, and a lead that has not had its SessionStart cannot send.
+fn startup_values(items: Value) -> BTreeMap<String, Value> {
+    conversation_values_started(
+        items,
+        "shown",
+        json!("startup"),
+        Some("Claude is asking something before it starts."),
+        false,
+    )
+}
+
+#[gpui::test]
+fn the_startup_reveal_draws_its_note(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        startup_values(json!([])),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("composer-reveal-note"), "{tree}");
+    assert!(
+        tree.contains("Claude is asking something before it starts."),
+        "{tree}"
+    );
+}
+
+#[gpui::test]
+fn a_lead_that_has_not_started_does_not_send(cx: &mut TestAppContext) {
+    let effects = composer_live_run_after_clicks(
+        cx,
+        startup_values(json!([])),
+        "this.text.set_value('hello');",
+        &["composer-send"],
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|args| args.first() == Some(&json!(["send", "t1", "hello"]))),
+        "Send must no-op before SessionStart: {effects:?}"
+    );
+}
+
+#[gpui::test]
+fn a_started_lead_with_no_reveal_draws_the_conversation(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let items = json!([{"kind": "owner", "id": "o1", "text": "Hello"}]);
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        conversation_values(items, "hidden", Value::Null, None),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("composer-item-o1"), "{tree}");
+    assert!(!tree.contains("composer-reveal-note"), "{tree}");
+    assert!(!tree.contains("Claude is asking something before it starts."), "{tree}");
+}
+
+#[gpui::test]
+fn a_missing_folder_asks_once_and_a_cancel_saves_nothing(cx: &mut TestAppContext) {
+    let mut values = conversation_values(json!([]), "hidden", Value::Null, None);
+    values.insert(
+        "person".into(),
+        json!({"lead": {"program": "claude", "model": "sonnet"}}),
+    );
+    let effects = composer_live_run_after_clicks(cx, values, "", &[]);
+    let asked = effects
+        .iter()
+        .filter(|args| args.first() == Some(&json!("pickFolder")))
+        .count();
+    assert_eq!(asked, 1, "the folder is asked for once: {effects:?}");
+    assert!(
+        !effects
+            .iter()
+            .any(|args| args.first() == Some(&json!("lead.open"))),
+        "a cancelled pick starts nothing: {effects:?}"
+    );
+    assert!(
+        !effects.iter().any(|args| {
+            args.first().and_then(Value::as_str) == Some("/fixture/app/settings.json")
+        }),
+        "a cancelled pick saves nothing: {effects:?}"
     );
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::lead::{apply_startup_reveal, hide_startup};
 use serde_json::json;
 
 fn owner_text(item: &Item) -> &str {
@@ -209,6 +210,42 @@ fn a_nonzero_auth_status_starts_with_the_terminal_shown_for_login() {
         (TerminalVis::Shown, Some(Reveal::Login))
     );
     assert_eq!(reveal_after_auth_status(0), (TerminalVis::Hidden, None));
+}
+
+#[test]
+fn apply_startup_reveal_shows_the_terminal_with_its_reason() {
+    let mut c = Conversation::default();
+    apply_startup_reveal(&mut c);
+    assert_eq!(c.terminal, TerminalVis::Shown);
+    assert_eq!(c.reveal, Some(Reveal::Startup));
+    assert_eq!(
+        c.reveal_why.as_deref(),
+        Some("Claude is asking something before it starts.")
+    );
+}
+
+#[test]
+fn hide_startup_clears_the_startup_reveal() {
+    let mut c = Conversation::default();
+    apply_startup_reveal(&mut c);
+    hide_startup(&mut c);
+    assert_eq!(c.terminal, TerminalVis::Hidden);
+    assert_eq!(c.reveal, None);
+    assert_eq!(c.reveal_why, None);
+}
+
+#[test]
+fn hide_startup_does_not_clear_a_login_reveal() {
+    let mut c = fold(
+        Conversation::default(),
+        &Event::StopFailure {
+            error: Some("authentication_failed".into()),
+        },
+    );
+    hide_startup(&mut c);
+    assert_eq!(c.terminal, TerminalVis::Shown);
+    assert_eq!(c.reveal, Some(Reveal::Login));
+    assert_eq!(c.reveal_why.as_deref(), Some("Claude needs you to sign in."));
 }
 
 #[test]

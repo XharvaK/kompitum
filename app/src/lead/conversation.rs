@@ -77,6 +77,7 @@ pub enum Reveal {
     Login,
     Auto,
     Manual,
+    Startup,
 }
 
 /// One row in the conversation.
@@ -190,7 +191,7 @@ impl Conversation {
         self.version += 1;
     }
 
-    fn hide(&mut self) {
+    pub(crate) fn hide(&mut self) {
         if self.terminal != TerminalVis::Hidden || self.reveal.is_some() || self.reveal_why.is_some()
         {
             self.terminal = TerminalVis::Hidden;
@@ -200,7 +201,7 @@ impl Conversation {
         }
     }
 
-    fn show(&mut self, reveal: Reveal, why: Option<String>) {
+    pub(crate) fn show(&mut self, reveal: Reveal, why: Option<String>) {
         let why_same = self.reveal_why == why;
         if self.terminal == TerminalVis::Shown && self.reveal == Some(reveal) && why_same {
             return;

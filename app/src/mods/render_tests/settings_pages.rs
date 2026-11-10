@@ -278,6 +278,27 @@ fn lead_opened_lists_every_cli(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn agents_page_has_a_lead_folder_row(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        lead_values("claude"),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Folder"), "{tree}");
+    assert!(tree.contains("st-lead-folder"), "{tree}");
+    assert!(tree.contains("Not set"), "{tree}");
+    assert!(
+        !tree.contains("/fixture"),
+        "the lead's folder never defaults to home: {tree}"
+    );
+}
+
+#[gpui::test]
 fn font_dropdown_search_narrows_the_list(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();

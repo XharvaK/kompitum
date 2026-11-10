@@ -226,7 +226,15 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         Ok(async move { Ok(to_host(&list.unwrap_or(Value::Array(vec![])))) })
     });
     module = module.function("pasteImage", |_| Ok(HostValue::Null));
-    module = module.async_function("pickFolder", |_| Ok(async { Ok(HostValue::Null) }));
+    // Recorded as a call of its own, so a test can see that the composer asked for a folder.
+    let picked_folder = calls.clone();
+    module = module.async_function("pickFolder", move |_| {
+        picked_folder
+            .borrow_mut()
+            .effects
+            .push(("pickFolder".into(), vec![json!("pickFolder")]));
+        Ok(async { Ok(HostValue::Null) })
+    });
     // Recorded as a call of its own, so a test can see that "+" opened the picker.
     let picked = calls.clone();
     module = module.async_function("pickFiles", move |_| {
@@ -258,7 +266,13 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                         .clone()
                         .map_or(Value::Null, |person| Value::String(person.to_string())),
                 ),
-                "writeTextFile" if first == "/fixture/app/settings.json" => Some(Value::Null),
+                "writeTextFile" if first == "/fixture/app/settings.json" => {
+                    calls.borrow_mut().effects.push((
+                        "writeTextFile".into(),
+                        (0..2).filter_map(|i| a.get(i).map(from_host)).collect(),
+                    ));
+                    Some(Value::Null)
+                }
                 "readTextFile" if first == "/fixture/.ssh/config" => Some(Value::Null),
                 "readTextFile" if first.as_str().is_some_and(|p| p.starts_with("/fixture/vault/")) => {
                     Some(json!("# Fixture note\n\nA body from the vault.\n"))
@@ -1287,7 +1301,7 @@ fn composer_sends_after_keys(cx: &mut TestAppContext, setup: &str, keys: &str) -
     let staged = Staged::new();
     let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("knownAgents".into(), agent_catalog());
-    values.insert("lead".into(), json!({"state": "working", "ask": null}));
+    values.insert("lead".into(), json!({"state": "working", "ask": null, "started": true}));
     let calls = Rc::new(RefCell::new(Calls::default()));
     let policy = Policy::new()
         .with_storage_path(staged.0.join("store-keys.json"))

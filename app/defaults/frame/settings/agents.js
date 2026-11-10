@@ -4,7 +4,7 @@
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { kom, exec, knownAgents, window } from "kompitum";
+import { kom, exec, knownAgents, pickFolder, window } from "kompitum";
 import { dropdown } from "./ui.js";
 
 const BUILTIN = new Set(["cc", "codex", "go", "free"]);
@@ -227,6 +227,16 @@ function saveLead(view, patch, cx) {
   }, cx);
 }
 
+function chooseFolder(view, cx) {
+  cx.spawn(async (cx) => {
+    const folder = await pickFolder({ prompt: "Choose" });
+    if (!folder) return; // a cancelled pick keeps the old choice
+    view.change((person) => {
+      person.lead = { ...(person.lead ?? {}), folder };
+    }, cx);
+  });
+}
+
 function leadPrograms(s) {
   return (s.known ?? []).filter((entry) => entry.installed && entry.flags?.model?.length);
 }
@@ -362,6 +372,18 @@ function leadSection(view, t, cx, s) {
     .child(view.row(t, "Model", null, modelMenu, "lead_model"))
     .when(Boolean(modelNote), (el) => el.child(modelNote))
     .when(Boolean(effortMenu), (el) => el.child(view.row(t, "Reasoning", null, effortMenu, "lead_model")))
+    .child(view.row(
+      t,
+      "Folder",
+      "Where the lead works. A new folder starts a new conversation.",
+      h_flex()
+        .flex_none()
+        .gap(8)
+        .items_center()
+        .child(div().max_w(340).truncate().text_size(13).text_color(t.muted).child(lead.folder || "Not set"))
+        .child(view.button(t, "st-lead-folder", "Choose\u2026", (_e, cx) => chooseFolder(view, cx))),
+      "folder",
+    ))
     .child(div().pt(8).text_size(12).text_color(t.dim).child("Changes apply to the lead's next conversation."));
 }
 
