@@ -3938,6 +3938,7 @@ impl AppWindow {
         // Only Claude asks its trust question before SessionStart; other lead programs have no hook to wait for.
         session.started = !checks_auth;
         if checks_auth {
+            mods::set_shared("lead.started".into(), json!(""));
             crate::lead::apply_startup_reveal(&mut session.conversation);
         }
         self.apply_lead_terminal_layout(&terminal);
@@ -3962,7 +3963,7 @@ impl AppWindow {
     }
 
     /// Runs `claude auth status` off the window's thread. A non-zero exit shows the
-    /// login reveal; zero changes nothing; an error is logged. Only the exit code is kept.
+    /// login reveal; zero changes nothing; an error is said in the panel. Only the exit code is kept.
     fn check_lead_auth(&mut self, terminal: String, window: &Window, cx: &mut Context<Self>) {
         let kom = crate::core_bin::path();
         cx.spawn_in(window, async move |this, cx| {
@@ -3980,6 +3981,15 @@ impl AppWindow {
                 }
                 Err(error) => {
                     tracing::warn!("couldn't run claude auth status for the lead: {error}");
+                    let session = this.lead_sessions.entry(terminal.clone()).or_default();
+                    let started = session.started;
+                    crate::lead::note_lead_check_failed(
+                        &mut session.conversation,
+                        started,
+                        format!("Couldn't check whether Claude is signed in: {error}"),
+                    );
+                    this.apply_lead_terminal_layout(&terminal);
+                    this.publish_lead(cx);
                 }
             });
         })
@@ -4012,8 +4022,23 @@ impl AppWindow {
                     core.call("terminal.get", json!({ "terminal": watched }))
                 })
                 .await;
-            let Ok(record) = record else {
-                return;
+            let record = match record {
+                Ok(record) => record,
+                Err(error) => {
+                    tracing::warn!("couldn't read the resumed lead's terminal: {error}");
+                    let _ = this.update_in(cx, |this, _window, cx| {
+                        let session = this.lead_sessions.entry(terminal.clone()).or_default();
+                        let started = session.started;
+                        crate::lead::note_lead_check_failed(
+                            &mut session.conversation,
+                            started,
+                            format!("Couldn't check whether the resumed conversation started: {error}"),
+                        );
+                        this.apply_lead_terminal_layout(&terminal);
+                        this.publish_lead(cx);
+                    });
+                    return;
+                }
             };
             if !crate::lead::retry_needed(&record, false) {
                 return;
@@ -4155,10 +4180,19 @@ impl AppWindow {
         if self.lead_sessions.get(&terminal).is_some_and(|session| session.history_read) {
             return;
         }
-        // A lead already running when this window opened is past its SessionStart: this window
-        // didn't see it, but the lead is ready for words.
+        // A lead already running when this window opened is started only when it is past its own
+        // SessionStart (the shared "lead.started" marker names it). One still at Claude's trust
+        // question gets the startup reveal, so words are not typed into that question. Other
+        // programs have no such question and count as started.
         if !self.lead_sessions.contains_key(&terminal) {
-            self.lead_sessions.entry(terminal.clone()).or_default().started = true;
+            let marker = mods::shared("lead.started");
+            let started = program != "claude"
+                || crate::lead::started_on_reattach(marker.as_ref().and_then(Value::as_str), &terminal);
+            let session = self.lead_sessions.entry(terminal.clone()).or_default();
+            session.started = started;
+            if !started {
+                crate::lead::apply_startup_reveal(&mut session.conversation);
+            }
         }
         let streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
         let transcript = crate::lead::stream_of(&streams, &program).and_then(|stream| stream.transcript);
@@ -4203,6 +4237,7 @@ impl AppWindow {
             if from_lead {
                 let session = self.lead_sessions.entry(terminal.clone()).or_default();
                 session.started = true;
+                mods::set_shared("lead.started".into(), json!(terminal));
                 crate::lead::hide_startup(&mut session.conversation);
                 let skipped = self.read_lead_history(&terminal, transcript);
                 if skipped > 0 {

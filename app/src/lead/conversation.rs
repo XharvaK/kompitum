@@ -182,12 +182,12 @@ impl Conversation {
         &self.items[from..]
     }
 
-    fn next(&mut self, kind: &str) -> String {
+    pub(crate) fn next(&mut self, kind: &str) -> String {
         self.next_id += 1;
         format!("{kind}-{}", self.next_id)
     }
 
-    fn touched(&mut self) {
+    pub(crate) fn touched(&mut self) {
         self.version += 1;
     }
 
