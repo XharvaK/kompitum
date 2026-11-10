@@ -409,6 +409,18 @@ fn the_state_file_is_written_whole_and_leaves_no_temp_file_behind() {
     assert_eq!(leftovers, 0);
 }
 
+/// The Python bell kept its state private to its user; so does this one, rewrite after rewrite.
+#[cfg(unix)]
+#[test]
+fn the_state_file_is_private_to_its_user() {
+    use std::os::unix::fs::PermissionsExt;
+    let state = fresh_state("private");
+    for _ in 0..2 {
+        write_state(&state, &State::new()).unwrap();
+        assert_eq!(std::fs::metadata(&state).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+}
+
 #[test]
 fn a_corrupt_state_file_is_an_error_once_and_is_survived() {
     let f = Fixture::new("corrupt");

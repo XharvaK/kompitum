@@ -293,11 +293,25 @@ fn read_state(file: &Path) -> (State, Option<String>) {
     }
 }
 
+/// Written whole and private to its user, as the Python bell's was: a private temp file renamed over it.
 fn write_state(file: &Path, state: &State) -> std::io::Result<()> {
     if let Some(folder) = file.parent() {
         std::fs::create_dir_all(folder)?;
     }
-    crate::paths::write_atomic(file, state_text(state).as_bytes())
+    let name = file.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let temp = file.with_file_name(format!("{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&temp);
+    let written = (|| {
+        let mut out = platform::create_private(&temp)?;
+        out.write_all(state_text(state).as_bytes())?;
+        out.sync_all()?;
+        drop(out);
+        std::fs::rename(&temp, file)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    written
 }
 
 // ---------------------------------------------------------------------------------------------------------------
