@@ -30,6 +30,7 @@ const RAIL_CELL = 32;
 const railCell = (el) => h_flex().flex_none().justify_center().child(el);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 // Changes made outside Kompitum (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
@@ -342,7 +343,7 @@ export default class Spaces extends View {
         .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? "This computer"))
           .when(!connected && !rebuilt, el => el.child(div().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " "))))
           .when(rebuilt, el => el.child(h_flex().flex_none().gap(3).items_center()
-            .child(div().max_w(140).truncate().child(repair?.error || "rebuilt ·"))
+            .child(div().max_w(140).truncate().child(firstLine(repair?.error) || repair?.error || "rebuilt ·"))
             .child(div().id(`machine-connect-${m}`).text_color(repair?.error ? t.blocked : t.muted)
               .hover(s => s.text_color(t.foreground))
               .tooltip(repair?.error || "This machine was rebuilt or replaced. Click to connect to the new one.")

@@ -20,6 +20,7 @@ const tilde = (path, userHome) => {
   return p.startsWith(h) ? `~${p.slice(h.length)}` : path;
 };
 const slug = (branch) => branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 const ago = (s) => {
   const d = Date.now() / 1000 - s;
   return d < 3600 ? `${Math.max(1, Math.round(d / 60))}m` : d < 86400 ? `${Math.round(d / 3600)}h` : d < 86400 * 60 ? `${Math.round(d / 86400)}d` : `${Math.round(d / 86400 / 30)}mo`;
@@ -149,7 +150,7 @@ export default class Worktree extends View {
         this.repo = repo;
         cx.notify();
         if (props().branch) await this.work(cx);
-      } catch (error) { this.repo = null; this.error = String(error); cx.notify(); }
+      } catch (error) { this.repo = null; this.error = String(error?.message ?? error); cx.notify(); }
     });
   }
 
@@ -173,7 +174,7 @@ export default class Worktree extends View {
     this.error = "";
     cx.notify();
     try { this.error = props().action === "remove" ? await this.remove() : await this.create(); }
-    catch (error) { this.error = String(error); }
+    catch (error) { this.error = String(error?.message ?? error); }
     this.busy = false;
     if (!this.error) this.close();
     cx.notify();
@@ -348,7 +349,7 @@ export default class Worktree extends View {
             .text_color(t.foreground),
         ),
       )
-      .when(Boolean(this.error), (el) => el.child(div().text_color(t.blocked).child(this.error)))
+      .when(Boolean(this.error), (el) => el.child(div().text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)))
       .child(div().flex_1())
       .child(
         h_flex()

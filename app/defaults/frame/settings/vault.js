@@ -94,7 +94,7 @@ export function vaultSection(view, t, cx) {
     .child(view.row(t, "Folder", null, folderControl))
     .child(view.row(t, "State", null, state))
     .children(problems.map((problem, i) =>
-      div().id(`st-vault-problem-${i}`).pb(6).text_size(12.5).line_height("18px").text_color(t.blocked).child(problem),
+      div().id(`st-vault-problem-${i}`).pb(6).text_size(12.5).line_height("18px").text_color(t.blocked).tooltip(problem).child(firstLine(problem) || problem),
     ))
     .child(view.row(t, "Needs you", null, value(`${needs} ${needs === 1 ? "note" : "notes"}`)))
     .child(h_flex().pt(16).child(view.button(t, "st-open-mailbox", "Open the mailbox", () => run("app.mailbox"))));

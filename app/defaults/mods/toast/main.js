@@ -7,6 +7,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { props, closeOverlay, run, theme } from "kompitum";
 
 const DOT = { error: "blocked", warning: "working", success: "done", info: "accent" };
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 
 export default class Toast extends View {
   render(cx) {
@@ -31,7 +32,7 @@ export default class Toast extends View {
           .flex_1()
           .overflow_hidden()
           .child(div().truncate().font_semibold().text_size(13).text_color(t.foreground).child(p.title ?? ""))
-          .when(Boolean(p.body), (el) => el.child(div().truncate().text_size(12).text_color(t.muted).child(p.body ?? ""))),
+          .when(Boolean(p.body), (el) => el.child(div().truncate().text_size(12).text_color(t.muted).tooltip(p.body).child(firstLine(p.body) || p.body))),
       );
   }
 }

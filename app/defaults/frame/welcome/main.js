@@ -32,6 +32,8 @@ function errorText(error) {
   return String(error?.message ?? error ?? "").trim();
 }
 
+const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+
 function mono() {
   return settings()?.font_family ?? "Google Sans Code";
 }
@@ -583,12 +585,12 @@ export default class Welcome extends View {
                 .child("Adds Kompitum's tools to Claude Code for all your projects, and teaches it the kom skill."),
             )
             .when(Boolean(this.setupError), (el) =>
-              el.child(div().text_size(12.5).line_height("18px").text_color(t.blocked).child(this.setupError)),
+              el.child(div().text_size(12.5).line_height("18px").text_color(t.blocked).tooltip(this.setupError).child(firstLine(this.setupError) || this.setupError)),
             ),
         ),
       )
       .when(Boolean(this.startError), (el) =>
-        el.child(div().text_size(12.5).line_height("18px").text_color(t.blocked).child(this.startError)),
+        el.child(div().text_size(12.5).line_height("18px").text_color(t.blocked).tooltip(this.startError).child(firstLine(this.startError) || this.startError)),
       );
   }
 
