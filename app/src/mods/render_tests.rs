@@ -155,6 +155,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let status_fail = values.remove("statusFail");
     let usage_json = values.remove("usageJson");
     let vault_missing = values.remove("vaultMissing");
+    let vault_json = values.remove("vaultJson");
     let thread_json = values.remove("threadJson");
     let conversation_items = values.remove("conversation").unwrap_or(json!([]));
     let mut module = HostModule::new("kompitum");
@@ -249,6 +250,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let status_fail = status_fail.clone();
         let usage_json = usage_json.clone();
         let vault_missing = vault_missing.clone();
+        let vault_json = vault_json.clone();
         let thread_json = thread_json.clone();
         module = module.async_function(name, move |a| {
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
@@ -301,7 +303,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                 })),
                 "kom" if first == json!(["vault", "open", "--json", "--as", "owner"]) => Some(json!({
                     "code": 0,
-                    "stdout": vault_report(vec![vault_owner_note()], 2, vec!["fixture: a note's mark file is damaged"]),
+                    "stdout": vault_json.clone().map(|v| v.to_string()).unwrap_or_else(|| vault_report(vec![vault_owner_note()], 2, vec!["fixture: a note's mark file is damaged"])),
                     "stderr": ""
                 })),
                 "kom" if first == json!(["vault", "find", "--json", "--limit", "50"]) => Some(json!({
