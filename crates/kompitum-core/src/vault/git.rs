@@ -255,7 +255,13 @@ fn pull_once(dir: &Path, timeout: Duration) -> GitResult {
     if remotes.output.trim().is_empty() {
         return GitResult { ok: true, output: String::new(), error: String::new() };
     }
-    run(dir, &["pull", "--rebase", "--quiet"], timeout)
+    let fetched = run_retrying_ref_lock(dir, &["fetch", "--quiet"], timeout);
+    if !fetched.ok {
+        return fetched;
+    }
+    // `@{upstream}`, not FETCH_HEAD: several pullers can fetch at once and
+    // leave FETCH_HEAD with more than one branch for merge.
+    run_retrying_ref_lock(dir, &["rebase", "--quiet", "@{upstream}"], timeout)
 }
 
 /// Run one git step, and once more after a pause if a ref lock refused it.
