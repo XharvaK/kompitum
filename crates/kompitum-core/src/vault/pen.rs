@@ -101,6 +101,8 @@ pub(super) fn write_message(vault: &Vault, post: &Post, now: &Moment) -> Result<
     meta.set("status", notes::Value::Text(status.to_string()));
 
     let folder = vault.root.join(&vault.agent).join("to").join(&post.to);
+    let rel_dir = format!("{}/to/{}", vault.agent, post.to);
+    super::listing::refuse_link(&vault.root, &rel_dir)?;
     std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
     let base = format!("{}_{}", now.file_stamp(), notes::slug(&title));
     let mut name = format!("{base}.md");
@@ -109,10 +111,12 @@ pub(super) fn write_message(vault: &Vault, post: &Post, now: &Moment) -> Result<
         name = format!("{base}-{number}.md");
         number += 1;
     }
+    let rel = format!("{}/to/{}/{}", vault.agent, post.to, name);
+    super::listing::refuse_link(&vault.root, &rel)?;
     let text = notes::format_note(&meta, &post.body);
     std::fs::write(folder.join(&name), text.as_bytes())
         .map_err(|e| unavailable(format!("cannot write {}: {e}", folder.join(&name).display())))?;
-    Ok(format!("{}/to/{}/{}", vault.agent, post.to, name))
+    Ok(rel)
 }
 
 pub(super) fn mark_note(root: &Path, path: &str, status: &str) -> Result<(), RpcError> {
@@ -296,5 +300,44 @@ mod tests {
         let refused = v.mark("opus/to/manager/a.md", "done").unwrap_err();
         assert!(refused.message.contains("status is one of"), "{}", refused.message);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn post_and_read_refuse_a_link_out_of_the_vault_and_write_nothing_outside() {
+        let root = scratch("link-post");
+        let outside = scratch("link-post-out");
+        std::os::unix::fs::symlink(&outside, root.join("opus")).unwrap();
+        let v = vault(&root);
+        let moment = clock::Moment::now();
+        let refused = write_message(
+            &v,
+            &Post {
+                to: "manager".into(),
+                kind: "report".into(),
+                title: "T".into(),
+                body: "B".into(),
+                ..Post::default()
+            },
+            &moment,
+        )
+        .unwrap_err();
+        assert!(refused.message.contains("refused:"), "{}", refused.message);
+        assert!(refused.message.contains("is a link out of the vault"), "{}", refused.message);
+        assert!(std::fs::read_dir(&outside).unwrap().next().is_none(), "wrote outside: {outside:?}");
+
+        let note_out = outside.join("secret.md");
+        std::fs::write(&note_out, "outer secret\n").unwrap();
+        let linked = scratch("link-read");
+        std::fs::create_dir_all(linked.join("eve/to/manager")).unwrap();
+        std::os::unix::fs::symlink(&note_out, linked.join("eve/to/manager/x.md")).unwrap();
+        let err = inside(&linked, "eve/to/manager/x.md").unwrap_err();
+        assert!(err.message.contains("refused:"), "{}", err.message);
+        assert!(err.message.contains("eve/to/manager/x.md"), "{}", err.message);
+        assert!(err.message.contains("is a link out of the vault"), "{}", err.message);
+        assert_eq!(std::fs::read_to_string(&note_out).unwrap(), "outer secret\n");
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
+        std::fs::remove_dir_all(linked).unwrap();
     }
 }

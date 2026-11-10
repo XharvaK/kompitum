@@ -144,8 +144,11 @@ pub fn append(root: &Path, agent: &str, mark: &Value) -> Result<String, String> 
     if agent.is_empty() || agent == "." || agent == ".." || agent.contains(['/', '\\', ':']) {
         return Err(format!("{agent:?} cannot name an agent's folder in the vault"));
     }
+    let rel = format!("{agent}/reads.jsonl");
+    super::listing::refuse_link(root, &rel).map_err(|error| error.message)?;
     let dir = root.join(agent);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot make {}: {e}", dir.display()))?;
+    super::listing::refuse_link(root, &rel).map_err(|error| error.message)?;
     let path = dir.join("reads.jsonl");
     let mut file = OpenOptions::new()
         .create(true)
@@ -218,5 +221,20 @@ mod tests {
         assert!(index.marked_by("a.md", "opus"));
         assert!(index.done_by("a.md", "opus"));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_refuses_a_symlinked_agent_folder_and_writes_nothing_outside() {
+        let root = scratch("link-append");
+        let outside = scratch("link-append-out");
+        std::os::unix::fs::symlink(&outside, root.join("opus")).unwrap();
+        let error = append(&root, "opus", &read_mark("a.md", "2026-11-05T09:10:00+03:00".into())).unwrap_err();
+        assert!(error.contains("refused:"), "{error}");
+        assert!(error.contains("opus/reads.jsonl"), "{error}");
+        assert!(error.contains("is a link out of the vault"), "{error}");
+        assert!(std::fs::read_dir(&outside).unwrap().next().is_none(), "wrote outside: {outside:?}");
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(outside).unwrap();
     }
 }

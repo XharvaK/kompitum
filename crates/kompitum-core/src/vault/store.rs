@@ -479,7 +479,7 @@ pub(super) fn with_lock<T>(
 }
 
 pub(super) fn written(root: &Path, path: String, result: git::GitResult, verb: &str) -> Written {
-    let (unpushed, push_problem) = git::unpushed(root);
+    let (unpushed, push_problem) = git::unpushed_under_lock(root);
     let mut said = if result.ok {
         format!("{verb} {path}. {}", result.output)
     } else {

@@ -177,6 +177,7 @@ async fn label_and_kill_reply_with_the_record_observed_before_flushing() {
 #[test]
 fn a_blocked_registry_write_does_not_hold_the_core_lock() {
     use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
     let root = PathBuf::from(format!("/var/tmp/kom-save-lock-{}", platform::random_hex()));
     let paths = Paths {
         state: root.join("state"),
@@ -191,10 +192,16 @@ fn a_blocked_registry_write_does_not_hold_the_core_lock() {
         assert!(Instant::now() < deadline, "startup registry was not written");
         std::thread::sleep(Duration::from_millis(1));
     }
-    let tmp = core.paths.state.join("terminals.tmp");
-    let name = std::ffi::CString::new(tmp.as_os_str().as_bytes()).unwrap();
-    // Opening this temporary file for writing waits for a reader, like a stalled disk.
-    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    // write_atomic writes {name}.{pid}.{n}.tmp, and n is process-wide, so plant
+    // a range of names. A FIFO the write does not open stays unused.
+    let pid = std::process::id();
+    let mut fifos = Vec::new();
+    for n in 0..8192u64 {
+        let tmp = core.paths.state.join(format!("terminals.json.{pid}.{n}.tmp"));
+        let name = std::ffi::CString::new(tmp.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0, "fifo {n}");
+        fifos.push(tmp);
+    }
     let (saved, done) = mpsc::channel();
     let saving = core.clone();
     let worker = std::thread::spawn(move || {
@@ -203,11 +210,13 @@ fn a_blocked_registry_write_does_not_hold_the_core_lock() {
     });
     let returned = done.recv_timeout(Duration::from_millis(250)).is_ok();
     let unlocked = core.state.try_lock().is_ok();
-    // Always release the blocked write, even when checking the old synchronous implementation.
-    let reader = std::fs::File::open(&tmp).unwrap();
+    let readers: Vec<_> = fifos
+        .iter()
+        .filter_map(|tmp| std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(tmp).ok())
+        .collect();
     worker.join().unwrap();
     drop(core);
-    drop(reader);
+    drop(readers);
     remove_root(&root);
     assert!(returned && unlocked, "saving to a stalled disk must leave output and input free to take the core lock");
 }
