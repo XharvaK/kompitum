@@ -5,9 +5,11 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState, TextView } from "gpui-base";
-import { kom, readTextFile, home, props, closeOverlay, theme } from "kompitum";
+import { kom, readTextFile, home, props, closeOverlay, notify, theme } from "kompitum";
 
 const OUTSIDE = "The vault is outside your home folder, so the mailbox can't read its notes.";
+// The vault's marks are append-only, so a close written now could never be undone.
+const UNDO_MS = 6000;
 
 const text = (v) => (typeof v === "string" ? v : "");
 const base = (p) => String(p ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
@@ -122,6 +124,8 @@ export default class Mailbox extends View {
     this.answering = false;
     this.actionError = null;
     this.busy = false;
+    // Notes whose Close is waiting out its undo window: still open in the vault.
+    this.closing = [];
     this.homePath = String(home() ?? "");
     this.handle = cx.focus_handle();
     this.answerState = TextareaState.new({ placeholder: "Write your answer", rows: 5 });
@@ -232,8 +236,10 @@ export default class Mailbox extends View {
   }
 
   rows() {
-    if (this.tab === "all") return this.all ?? [];
-    return this.needs;
+    const rows = this.tab === "all" ? (this.all ?? []) : this.needs;
+    // A note in its undo window reads as closed, though the vault still has it open.
+    const closing = this.closing.map((p) => p.path);
+    return closing.length ? rows.filter((n) => !closing.includes(text(n.path))) : rows;
   }
 
   select(note, cx) {
@@ -343,25 +349,73 @@ export default class Mailbox extends View {
     });
   }
 
+  // Close keeps the note open in the vault for six seconds: `vault done` is
+  // append-only, so Undo can only work by not having written yet. Leaving the
+  // mailbox writes what is still owed instead of dropping it.
   closeNote(cx) {
     const note = this.selected;
-    if (!note || this.busy) return;
-    this.busy = true;
+    const path = text(note?.path);
+    if (!note || !path || this.busy || this.closing.some((p) => p.path === path)) return;
+    const pending = { note, path, timer: null };
+    pending.timer = cx.timer.after(UNDO_MS, (cx) => this.finishClose(pending, cx));
+    this.closing.push(pending);
     this.actionError = null;
+    this.answering = false;
+    this.answer = "";
+    this.answerState.set_value("");
+    this.selected = null;
+    this.body = null;
+    this.bodyError = null;
+    this.handle.focus();
     cx.notify();
-    const path = text(note.path);
+  }
+
+  undoClose(cx) {
+    const pending = this.closing[this.closing.length - 1];
+    if (!pending) return;
+    pending.timer?.cancel();
+    this.closing = this.closing.filter((p) => p !== pending);
+    this.actionError = null;
+    this.select(pending.note, cx);
+  }
+
+  finishClose(pending, cx) {
+    if (!this.closing.includes(pending)) return;
+    pending.timer?.cancel();
+    this.closing = this.closing.filter((p) => p !== pending);
+    cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const result = await kom(["vault", "done", path, "--as", "owner"]);
+        const result = await kom(["vault", "done", pending.path, "--as", "owner"]);
         if (result.code !== 0) throw new Error(errorText(result));
         await this.load(cx);
       } catch (e) {
+        // The vault refused it, so the note is still open: show it again with the words.
+        if (!this.selected) this.select(pending.note, cx);
         this.actionError = String(e?.message ?? e ?? "").trim() || "The note wasn't closed.";
       } finally {
-        this.busy = false;
         cx.notify();
       }
     });
+  }
+
+  // The mailbox's own `close(cx)`: the six seconds end when it leaves the screen.
+  async close(cx) {
+    const pending = this.closing;
+    this.closing = [];
+    for (const p of pending) {
+      p.timer?.cancel();
+      try {
+        const result = await kom(["vault", "done", p.path, "--as", "owner"]);
+        if (result.code !== 0) throw new Error(errorText(result));
+      } catch (e) {
+        notify({
+          title: "The note wasn't closed",
+          body: String(e?.message ?? e ?? "").trim() || "The vault didn't answer.",
+          level: "error",
+        });
+      }
+    }
   }
 
   // Quiet footer actions, and the one filled action for the note.
@@ -504,6 +558,24 @@ export default class Mailbox extends View {
   notePane(t, cx) {
     const note = this.selected;
     if (!note) {
+      if (this.closing.length) {
+        return v_flex()
+          .flex_1()
+          .min_w(0)
+          .min_h(0)
+          .child(div().flex_1())
+          .child(
+            h_flex()
+              .flex_none()
+              .px(16)
+              .py(10)
+              .gap(8)
+              .items_center()
+              .border_t(1)
+              .border_color(t.border)
+              .child(this.textButton(t, "mail-undo", "Closed. Undo", (_e, cx) => this.undoClose(cx))),
+          );
+      }
       return v_flex()
         .flex_1()
         .min_w(0)
