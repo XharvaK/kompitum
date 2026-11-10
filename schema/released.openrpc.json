@@ -1,8 +1,78 @@
 {
   "components": {
     "schemas": {
+      "Asked": {
+        "description": "What `task.start` asked of the checks and the worker, on top of the repository's committed file.",
+        "properties": {
+          "forbid": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "qa_rounds": {
+            "default": null,
+            "description": "How many times failed checks go back to the worker; null takes the repository's.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "require": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "test": {
+            "default": null,
+            "description": "The test command, replacing the repository's.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warn": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "web": {
+            "default": false,
+            "description": "The worker may use the web.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "AskingView": {
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "task": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "question"
+        ],
+        "type": "object"
+      },
       "AttachResult": {
         "properties": {
+          "automatic_input": {
+            "description": "The entire attach path accepts AUTOMATIC_INPUT (kind 6). Absent means use DATA.",
+            "type": "boolean"
+          },
           "channel": {
             "description": "Stream channel: first paint, then live bytes. Send keys as DATA on it;\nRESIZE, FOCUS, FACTS, CREDIT and CLOSE frames control it.",
             "format": "uint32",
@@ -20,8 +90,186 @@
         "required": [
           "channel",
           "terminal",
-          "resize_notifications"
+          "resize_notifications",
+          "automatic_input"
         ],
+        "type": "object"
+      },
+      "Bucket": {
+        "properties": {
+          "cost_usd": {
+            "format": "double",
+            "type": "number"
+          },
+          "runs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runs",
+          "cost_usd"
+        ],
+        "type": "object"
+      },
+      "ChangedFile": {
+        "properties": {
+          "added": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "in_scope": {
+            "default": false,
+            "type": "boolean"
+          },
+          "path": {
+            "default": "",
+            "type": "string"
+          },
+          "removed": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "CheckReport": {
+        "description": "What the checks found after one turn.",
+        "properties": {
+          "checks_file_changed": {
+            "default": false,
+            "description": "The worker changed the repository's checks file, which fails the task.",
+            "type": "boolean"
+          },
+          "errors": {
+            "default": [],
+            "description": "What could not be checked, in words.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "forbid_checked": {
+            "default": 0,
+            "description": "How many forbid entries were checked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "forbid_hits": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Hit"
+            },
+            "type": "array"
+          },
+          "ok": {
+            "default": false,
+            "type": "boolean"
+          },
+          "require_checked": {
+            "default": 0,
+            "description": "How many require entries were checked.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "require_missing": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "test": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TestRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "turn": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "warn_hits": {
+            "default": [],
+            "description": "Lines flagged for the review; these never fail a task.",
+            "items": {
+              "$ref": "#/components/schemas/WarnHit"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "CheckRun": {
+        "description": "A check whose test is running, kept on the record so a restarted core can finish it.",
+        "properties": {
+          "cmd": {
+            "default": "",
+            "type": "string"
+          },
+          "report": {
+            "$ref": "#/components/schemas/CheckReport",
+            "default": {
+              "checks_file_changed": false,
+              "errors": [],
+              "forbid_checked": 0,
+              "forbid_hits": [],
+              "ok": false,
+              "require_checked": 0,
+              "require_missing": [],
+              "seconds": 0.0,
+              "test": null,
+              "turn": 0,
+              "warn_hits": []
+            },
+            "description": "The report so far: the patterns' half."
+          },
+          "started_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminal": {
+            "default": null,
+            "description": "The test's terminal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeout_s": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "turn": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "Children": {
@@ -30,6 +278,70 @@
           "all"
         ],
         "type": "string"
+      },
+      "Cli": {
+        "description": "A worker CLI the loop can run headless and read. Its launch, stream and quota words live in code.",
+        "enum": [
+          "codex",
+          "command_code",
+          "opencode",
+          "claude"
+        ],
+        "type": "string"
+      },
+      "CliUpdate": {
+        "description": "One CLI as `kom workers` shows it.",
+        "properties": {
+          "before": {
+            "description": "What it was before the last update that changed it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "tried_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "updated_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting": {
+            "description": "Why it is busy now, in words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "tried_ms",
+          "updated_ms"
+        ],
+        "type": "object"
       },
       "CoreInfo": {
         "properties": {
@@ -133,6 +445,15 @@
           "new"
         ],
         "type": "object"
+      },
+      "Ending": {
+        "description": "Why the loop is ending the current turn.",
+        "enum": [
+          "cancel",
+          "idle",
+          "wall"
+        ],
+        "type": "string"
       },
       "ExecResult": {
         "properties": {
@@ -337,6 +658,32 @@
         ],
         "type": "object"
       },
+      "Hit": {
+        "description": "A line a forbid pattern matched, as the review shows it.",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pattern": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pattern",
+          "file",
+          "line",
+          "text"
+        ],
+        "type": "object"
+      },
       "HolderInfo": {
         "properties": {
           "current": {
@@ -373,6 +720,29 @@
         ],
         "type": "string"
       },
+      "InitialSize": {
+        "properties": {
+          "cols": {
+            "description": "Initial terminal width in columns (at least 1).",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "rows": {
+            "description": "Initial terminal height in rows (at least 1).",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cols",
+          "rows"
+        ],
+        "type": "object"
+      },
       "InterruptResult": {
         "properties": {
           "key": {
@@ -407,6 +777,220 @@
         "required": [
           "turn"
         ],
+        "type": "object"
+      },
+      "LedgerResult": {
+        "properties": {
+          "parent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ParentUsage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The orchestrator's own requests for `task`, read from its transcript."
+          },
+          "problems": {
+            "description": "Lines of the ledger that could not be read.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "description": "The rows, oldest first.",
+            "items": {
+              "$ref": "#/components/schemas/LedgerRow"
+            },
+            "type": "array"
+          },
+          "table": {
+            "description": "The rows as a Markdown table, with their totals and any parent usage.",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/Usage",
+            "description": "What the rows add up to."
+          }
+        },
+        "required": [
+          "rows",
+          "table",
+          "totals",
+          "problems"
+        ],
+        "type": "object"
+      },
+      "LedgerRow": {
+        "description": "One task's row, written when it is accepted or discarded and kept for good.",
+        "properties": {
+          "at_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "by": {
+            "default": null,
+            "description": "Who started it: opus, manager or owner; null for a record from before this.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changed": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "checks": {
+            "default": null,
+            "description": "The last checks in a few words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handoffs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "out_of_scope": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "outcome": {
+            "default": "",
+            "description": "accepted or discarded.",
+            "type": "string"
+          },
+          "qa_rounds": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "repo": {
+            "default": "",
+            "type": "string"
+          },
+          "report": {
+            "default": "",
+            "description": "The worker's last report.",
+            "type": "string"
+          },
+          "review": {
+            "default": null,
+            "description": "What the review decided.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "default": "",
+            "description": "What the row was for: worker, reader, scout or suite.",
+            "type": "string"
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "task": {
+            "default": "",
+            "type": "string"
+          },
+          "turns": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/LedgerTurn"
+            },
+            "type": "array"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "cache_read": 0,
+              "cache_write": 0,
+              "cost_usd": 0.0,
+              "input": 0,
+              "largest_request": 0,
+              "output": 0,
+              "reasoning": 0,
+              "steps": 0
+            }
+          },
+          "workers": {
+            "default": [],
+            "description": "Every turn's worker key, in order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "LedgerTurn": {
+        "description": "One turn in a ledger row.",
+        "properties": {
+          "n": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "refused": {
+            "default": null,
+            "description": "The window of the refusal that ended it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "default": "",
+            "description": "worker, qa or redo.",
+            "type": "string"
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "cache_read": 0,
+              "cache_write": 0,
+              "cost_usd": 0.0,
+              "input": 0,
+              "largest_request": 0,
+              "output": 0,
+              "reasoning": 0,
+              "steps": 0
+            }
+          },
+          "worker": {
+            "default": "",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "ListResult": {
@@ -572,6 +1156,57 @@
         ],
         "type": "object"
       },
+      "ParentUsage": {
+        "description": "What the orchestrator itself spent on one task, read from its transcript.",
+        "properties": {
+          "cache_read": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cache_write": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "closed": {
+            "default": false,
+            "description": "The transcript also holds the task's accept or discard, so the window is whole.",
+            "type": "boolean"
+          },
+          "fresh": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "output": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "peak": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "requests": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "transcript": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "PutResult": {
         "properties": {
           "bytes": {
@@ -646,6 +1281,11 @@
             "maximum": 65535,
             "minimum": 0,
             "type": "integer"
+          },
+          "contain": {
+            "default": false,
+            "description": "Nothing it starts can leave its terminal (see `kom run --contain`).",
+            "type": "boolean"
           },
           "created_ms": {
             "format": "uint64",
@@ -745,6 +1385,11 @@
               "integer",
               "null"
             ]
+          },
+          "person": {
+            "default": false,
+            "description": "A person works here: nothing types into it (see `kom run --person`).",
+            "type": "boolean"
           },
           "pid": {
             "format": "uint32",
@@ -863,6 +1508,11 @@
               }
             ],
             "description": "With `wait`: how the wait ended (exit, a status, or timeout: still running)."
+          },
+          "waiting_for_person": {
+            "default": false,
+            "description": "An incoming message is held for the person's unsent draft (not composer detection).",
+            "type": "boolean"
           }
         },
         "required": [
@@ -880,6 +1530,10 @@
       },
       "SendResult": {
         "properties": {
+          "queued": {
+            "description": "True when the program was blocked: the text is held and goes in when it leaves\n`blocked`. A core restart loses it.",
+            "type": "boolean"
+          },
           "started": {
             "description": "Whether it went `working` within a few seconds; null when it doesn't\nreport status, so nobody can tell.",
             "type": [
@@ -910,10 +1564,62 @@
               }
             ],
             "description": "With `wait`: how that turn ended."
+          },
+          "waited_for_person": {
+            "description": "True when delivery was held for a person's unsent draft.",
+            "type": "boolean"
           }
         },
         "required": [
-          "turn"
+          "turn",
+          "waited_for_person",
+          "queued"
+        ],
+        "type": "object"
+      },
+      "Side": {
+        "description": "Which side of a diff a line is on. `+` is what the worker added.",
+        "enum": [
+          "added",
+          "removed"
+        ],
+        "type": "string"
+      },
+      "Source": {
+        "description": "Where a warn rule came from, so a review can say whose lesson it is.",
+        "enum": [
+          "builtin",
+          "file",
+          "call"
+        ],
+        "type": "string"
+      },
+      "Source2": {
+        "description": "Who set a block's time. `Named`: the worker's own message gave it.",
+        "enum": [
+          "person",
+          "named",
+          "estimate"
+        ],
+        "type": "string"
+      },
+      "Spend": {
+        "description": "What one worker spent over the last 5 hours, 7 days and 30 days.",
+        "properties": {
+          "five_hours": {
+            "$ref": "#/components/schemas/Bucket"
+          },
+          "month": {
+            "$ref": "#/components/schemas/Bucket"
+          },
+          "week": {
+            "$ref": "#/components/schemas/Bucket"
+          }
+        },
+        "required": [
+          "five_hours",
+          "week",
+          "month"
         ],
         "type": "object"
       },
@@ -1063,6 +1769,874 @@
         ],
         "type": "object"
       },
+      "Task": {
+        "properties": {
+          "asked": {
+            "$ref": "#/components/schemas/Asked",
+            "default": {
+              "forbid": [],
+              "qa_rounds": null,
+              "require": [],
+              "test": null,
+              "warn": [],
+              "web": false
+            },
+            "description": "What `task.start` asked of the checks and the worker."
+          },
+          "base": {
+            "default": "",
+            "description": "The commit it was cut from.",
+            "type": "string"
+          },
+          "branch": {
+            "default": "",
+            "description": "The branch it was cut from, \"HEAD\" when detached.",
+            "type": "string"
+          },
+          "by": {
+            "default": null,
+            "description": "Who started it: opus, manager or owner; null for a record from before this.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "chain": {
+            "default": [],
+            "description": "The worker keys `task.start` fixed, in the order to try them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "changed": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChangedFile"
+            },
+            "type": "array"
+          },
+          "check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckRun"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The test a check has running."
+          },
+          "checks": {
+            "default": [],
+            "description": "One report per checked turn, in order.",
+            "items": {
+              "$ref": "#/components/schemas/CheckReport"
+            },
+            "type": "array"
+          },
+          "created_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ended_ms": {
+            "default": null,
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Ending"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Why the loop is ending the current turn."
+          },
+          "error": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "followup_role": {
+            "default": null,
+            "description": "What the next follow-up is: qa or redo.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handoffs": {
+            "default": [],
+            "description": "One sentence per hand-off, in the order they happened.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "idle_s": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "default": "",
+            "type": "string"
+          },
+          "one_at_a_time": {
+            "default": false,
+            "description": "The repository's committed checks asked for one builder at a time.",
+            "type": "boolean"
+          },
+          "owner_said": {
+            "default": null,
+            "description": "The Owner's words that let a manager accept it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "qa_used": {
+            "default": 0,
+            "description": "How many times the checks have sent this work back.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "question": {
+            "default": null,
+            "description": "What its worker asked at the end of its turn, when it is asking.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "default": "",
+            "description": "git's toplevel.",
+            "type": "string"
+          },
+          "review": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "scope": {
+            "default": [],
+            "description": "Empty: the whole repo.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "seq": {
+            "default": 0,
+            "description": "The queue's order: lower starts first.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "started_by": {
+            "default": null,
+            "description": "The caller's terminal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_ms": {
+            "default": null,
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "default": "queued"
+          },
+          "task_branch": {
+            "default": "",
+            "type": "string"
+          },
+          "turns": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Turn"
+            },
+            "type": "array"
+          },
+          "waiting": {
+            "default": null,
+            "description": "Why it is still queued, in words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wall_s": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "worker": {
+            "default": "",
+            "description": "The key of the current or last turn's worker, empty until one is picked.",
+            "type": "string"
+          },
+          "worktree": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "TaskAcceptResult": {
+        "properties": {
+          "commit": {
+            "description": "The commit made, or null with `no_commit`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "files": {
+            "description": "The files that came in.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "left": {
+            "description": "What could not be removed, in words.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "patch": {
+            "description": "The patch, kept until the sweep takes it.",
+            "type": "string"
+          },
+          "removed": {
+            "description": "Whether its worktree and branch were removed.",
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state now: accepted."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "files",
+          "patch",
+          "removed",
+          "left"
+        ],
+        "type": "object"
+      },
+      "TaskCancelResult": {
+        "properties": {
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state once it has ended."
+          },
+          "survivors": {
+            "description": "Processes carrying the turn's scope that outlived the kill.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "survivors"
+        ],
+        "type": "object"
+      },
+      "TaskDiscardResult": {
+        "properties": {
+          "left": {
+            "description": "What could not be removed, in words.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "removed": {
+            "description": "Whether its worktree was removed.",
+            "type": "boolean"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state now: discarded."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "removed",
+          "left"
+        ],
+        "type": "object"
+      },
+      "TaskLine": {
+        "description": "The wake and the result: one task, small enough to read in one line of tools.",
+        "properties": {
+          "by": {
+            "default": null,
+            "description": "Who started it: opus, manager or owner; null for a record from before this.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changed": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "checks": {
+            "default": null,
+            "description": "The last checks in a few words: \"passed\", \"none ran\", or what failed; null before any ran.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cost_usd": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "error": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "default": null,
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "gaps": {
+            "default": null,
+            "description": "The last report's Gaps section, cut like the text; null when it has none.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "handoffs": {
+            "default": [],
+            "description": "What each hand-off did, one sentence each.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "next": {
+            "default": null,
+            "description": "How to answer an asking task: `answer on stdin: kom task redo <task> --brief -`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ok": {
+            "default": false,
+            "description": "Done or accepted, nothing changed outside the scope, and the last checks passed.",
+            "type": "boolean"
+          },
+          "out_of_scope": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "question": {
+            "default": null,
+            "description": "What its worker asked, when it is asking.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repo": {
+            "default": "",
+            "description": "git's toplevel.",
+            "type": "string"
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "default": "queued"
+          },
+          "task": {
+            "default": "",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "description": "The last turn's report; the wait cuts it to 1500 characters.",
+            "type": "string"
+          },
+          "turns": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "cache_read": 0,
+              "cache_write": 0,
+              "cost_usd": 0.0,
+              "input": 0,
+              "largest_request": 0,
+              "output": 0,
+              "reasoning": 0,
+              "steps": 0
+            }
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "worker": {
+            "default": null,
+            "description": "The label of the worker that really did the last turn: \"opencode Go\".",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workers": {
+            "default": [],
+            "description": "Every turn's worker key, in order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "TaskListResult": {
+        "properties": {
+          "cap": {
+            "description": "How many may run at once; null for no cap.",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "problems": {
+            "description": "Records the core could not read when it started.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "queued": {
+            "description": "How many wait in the queue.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "running": {
+            "description": "How many tasks run now.",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tasks": {
+            "description": "One wake per task, its report cut as in `task.wait`.",
+            "items": {
+              "$ref": "#/components/schemas/TaskLine"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tasks",
+          "running",
+          "queued",
+          "problems"
+        ],
+        "type": "object"
+      },
+      "TaskProgress": {
+        "properties": {
+          "cost_usd": {
+            "description": "What the turn has cost so far.",
+            "format": "double",
+            "type": "number"
+          },
+          "out_bytes": {
+            "description": "Bytes the worker has printed.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "peak": {
+            "description": "The largest request so far: input plus cache read plus cache write.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "seconds_since_event": {
+            "description": "How long the runner has been silent.",
+            "format": "double",
+            "type": "number"
+          },
+          "steps": {
+            "description": "Steps finished so far.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tools": {
+            "description": "The last five tools, oldest first.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "steps",
+          "tools",
+          "cost_usd",
+          "peak",
+          "out_bytes",
+          "seconds_since_event"
+        ],
+        "type": "object"
+      },
+      "TaskRedoResult": {
+        "properties": {
+          "next": {
+            "description": "The command that waits for it.",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state right after the pump looked at it."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          },
+          "turn": {
+            "description": "The number of the turn the follow-up goes to.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "waiting": {
+            "description": "Why it is still queued, in words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "turn",
+          "next"
+        ],
+        "type": "object"
+      },
+      "TaskReviewResult": {
+        "properties": {
+          "patch_file": {
+            "description": "Where the whole patch went, when it was asked for and did not fit.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state now."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          },
+          "text": {
+            "description": "The review, in Markdown.",
+            "type": "string"
+          },
+          "truncated": {
+            "description": "The review was cut at `max_bytes`.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "text",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "TaskStartResult": {
+        "properties": {
+          "error": {
+            "description": "Why it failed, when the start already went wrong.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "next": {
+            "description": "The command that waits for it.",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state right after the pump looked at it."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          },
+          "terminal": {
+            "description": "The worker's terminal (`t7`), or null while it is still queued.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "waiting": {
+            "description": "Why it is still queued, in words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warnings": {
+            "description": "Things worth knowing before the worker runs, like uncommitted files.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "worker": {
+            "description": "The worker's label (\"opencode Go\"), once one is picked.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "worktree": {
+            "description": "Where its worktree is, once there is one.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "warnings",
+          "next"
+        ],
+        "type": "object"
+      },
+      "TaskState": {
+        "enum": [
+          "queued",
+          "running",
+          "stranded",
+          "checking",
+          "asking",
+          "done",
+          "failed",
+          "timed_out",
+          "cancelled",
+          "discarded",
+          "accepted"
+        ],
+        "type": "string"
+      },
+      "TaskSweepResult": {
+        "properties": {
+          "discarded": {
+            "description": "Failed, timed-out or cancelled tasks nobody came for: discarded, worktree and all.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dry_run": {
+            "description": "Nothing was removed: this says what would go.",
+            "type": "boolean"
+          },
+          "freed_bytes": {
+            "description": "The bytes those folders held.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "left": {
+            "description": "What could not be removed, and worktree folders no task owns, in words.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "removed": {
+            "description": "Accepted or discarded tasks whose folder and record went; their ledger rows stay.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "removed",
+          "discarded",
+          "freed_bytes",
+          "left",
+          "dry_run"
+        ],
+        "type": "object"
+      },
+      "TaskView": {
+        "properties": {
+          "folder": {
+            "description": "Its folder: the brief, each turn's files, and result.json.",
+            "type": "string"
+          },
+          "line": {
+            "$ref": "#/components/schemas/TaskLine",
+            "description": "The same task as a wake."
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The current turn's heartbeat, when there is one."
+          },
+          "task": {
+            "$ref": "#/components/schemas/Task",
+            "description": "The whole record."
+          }
+        },
+        "required": [
+          "task",
+          "line",
+          "folder"
+        ],
+        "type": "object"
+      },
+      "TaskWaitResult": {
+        "properties": {
+          "lines": {
+            "description": "Known tasks, in the order asked for.",
+            "items": {
+              "$ref": "#/components/schemas/TaskLine"
+            },
+            "type": "array"
+          },
+          "over": {
+            "description": "Every task has ended or is asking (or, with `first`, one has), and none is\nunknown; a stranded task ends it too unless `while_stranded` was asked for.",
+            "type": "boolean"
+          },
+          "unfinished": {
+            "description": "Known tasks that have not ended or asked.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "unknown": {
+            "description": "Names no task here uses.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines",
+          "unfinished",
+          "unknown",
+          "over"
+        ],
+        "type": "object"
+      },
       "TemplateInfo": {
         "properties": {
           "command": {
@@ -1121,6 +2695,11 @@
             "minimum": 0,
             "type": "integer"
           },
+          "contain": {
+            "default": false,
+            "description": "Nothing it starts can leave its terminal (see `kom run --contain`).",
+            "type": "boolean"
+          },
           "created_ms": {
             "format": "uint64",
             "minimum": 0,
@@ -1147,6 +2726,17 @@
               "integer",
               "null"
             ]
+          },
+          "first_message": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FirstMessage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A template first message that was not sent; retained for later inspection."
           },
           "foreground": {
             "anyOf": [
@@ -1201,6 +2791,11 @@
               "integer",
               "null"
             ]
+          },
+          "person": {
+            "default": false,
+            "description": "A person works here: nothing types into it (see `kom run --person`).",
+            "type": "boolean"
           },
           "pid": {
             "format": "uint32",
@@ -1308,6 +2903,11 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "waiting_for_person": {
+            "default": false,
+            "description": "An incoming message is held for the person's unsent draft (not composer detection).",
+            "type": "boolean"
           }
         },
         "required": [
@@ -1321,6 +2921,273 @@
           "cols",
           "rows"
         ],
+        "type": "object"
+      },
+      "TestRun": {
+        "description": "One run of a task's test command.",
+        "properties": {
+          "cmd": {
+            "default": "",
+            "type": "string"
+          },
+          "exit_code": {
+            "default": null,
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "failed": {
+            "default": [],
+            "description": "The names that failed.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "fingerprint": {
+            "additionalProperties": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "default": null,
+            "description": "What each changed and untracked file held when this test ran, so a later round can tell\nwhat changed since; null for a file that is gone.",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "log": {
+            "default": null,
+            "description": "The file holding its whole output.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ok": {
+            "default": false,
+            "type": "boolean"
+          },
+          "reused": {
+            "default": null,
+            "description": "Why it wasn't run again: this result is an earlier round's.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "seconds": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "summary": {
+            "default": [],
+            "description": "Its verdict lines.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tail": {
+            "default": "",
+            "description": "The end of its output.",
+            "type": "string"
+          },
+          "timed_out": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "Turn": {
+        "properties": {
+          "cli": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cli"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The CLI this turn ran, fixed at its start; null in records from before this."
+          },
+          "died_at_start": {
+            "default": false,
+            "description": "The worker exited with an error before it began; it was started again.",
+            "type": "boolean"
+          },
+          "ended_ms": {
+            "default": null,
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "exit_code": {
+            "default": null,
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "n": {
+            "default": 0,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path_first": {
+            "default": null,
+            "description": "The folder put first on PATH for this turn, so a check finds the same programs.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refused": {
+            "default": null,
+            "description": "The window of the refusal that ended this turn, kept for the hand-off.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resumes": {
+            "default": null,
+            "description": "The session this turn was started to continue; None starts fresh.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "default": "",
+            "description": "What this turn was for: worker, qa when the checks sent the work back, redo when a person did.",
+            "type": "string"
+          },
+          "scope_token": {
+            "default": null,
+            "description": "The terminal's `KOMPITUM_SCOPE` token: everything the turn started carries it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session": {
+            "default": null,
+            "description": "The session the worker reported, once it did.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started_ms": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "survivors": {
+            "default": 0,
+            "description": "Processes carrying the scope token that outlived the kill.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "terminal": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "default": "",
+            "description": "The last report it wrote, whole; the wake cuts it.",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "cache_read": 0,
+              "cache_write": 0,
+              "cost_usd": 0.0,
+              "input": 0,
+              "largest_request": 0,
+              "output": 0,
+              "reasoning": 0,
+              "steps": 0
+            }
+          },
+          "worker": {
+            "default": "",
+            "description": "The worker key (`go`, `free`).",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "Usage": {
+        "properties": {
+          "cache_read": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cache_write": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cost_usd": {
+            "default": 0.0,
+            "format": "double",
+            "type": "number"
+          },
+          "input": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "largest_request": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "output": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasoning": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "default": 0,
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "WaitResult": {
@@ -1385,6 +3252,243 @@
           "children"
         ],
         "type": "object"
+      },
+      "WarnHit": {
+        "description": "A line a warn rule flagged, for the review and never for a refusal.",
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "side": {
+            "$ref": "#/components/schemas/Side"
+          },
+          "source": {
+            "$ref": "#/components/schemas/Source"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rule",
+          "side",
+          "file",
+          "line",
+          "text",
+          "source"
+        ],
+        "type": "object"
+      },
+      "WorkerView": {
+        "properties": {
+          "cli": {
+            "$ref": "#/components/schemas/Cli",
+            "description": "codex, command_code, opencode or claude."
+          },
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "refusals": {
+            "description": "Credits refusals in a row.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "route": {
+            "description": "The model route it runs.",
+            "type": "string"
+          },
+          "sentence": {
+            "description": "The block in words, as `kom workers` shows it.",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Source2"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who set the block: person, named or estimate."
+          },
+          "spend": {
+            "$ref": "#/components/schemas/Spend"
+          },
+          "state": {
+            "description": "ready, out or not_installed.",
+            "type": "string"
+          },
+          "until_ms": {
+            "description": "When its block ends, or 0.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "window": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "cli",
+          "route",
+          "state",
+          "until_ms",
+          "window",
+          "message",
+          "sentence",
+          "refusals",
+          "spend"
+        ],
+        "type": "object"
+      },
+      "WorkersAddParam": {
+        "properties": {
+          "cli": {
+            "$ref": "#/components/schemas/Cli",
+            "description": "Its CLI: codex, command_code, opencode or claude."
+          },
+          "key": {
+            "description": "The new worker's key, using the terminal name rules (1-32 of a-z 0-9 - _ ., starting with a letter or digit).",
+            "type": "string"
+          },
+          "label": {
+            "default": null,
+            "description": "Its label; the key when absent.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "route": {
+            "description": "The model route it runs; not empty.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "cli",
+          "route"
+        ],
+        "type": "object"
+      },
+      "WorkersBlockParam": {
+        "properties": {
+          "reason": {
+            "default": null,
+            "description": "Why, in your words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "until": {
+            "default": null,
+            "description": "When it is back: a date, a date and clock, or a span such as 3h.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "worker": {
+            "description": "The worker to mark: a known worker key.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker"
+        ],
+        "type": "object"
+      },
+      "WorkersView": {
+        "properties": {
+          "all_out": {
+            "description": "Why every worker is out, when every one is.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "asking": {
+            "description": "Tasks whose worker asked a question and waits for the lead's answer.",
+            "items": {
+              "$ref": "#/components/schemas/AskingView"
+            },
+            "type": "array"
+          },
+          "chain": {
+            "description": "The worker keys this mode tries, in order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "clis": {
+            "description": "The CLIs the core keeps up to date, and where each one stands.",
+            "items": {
+              "$ref": "#/components/schemas/CliUpdate"
+            },
+            "type": "array"
+          },
+          "mode": {
+            "description": "The mode new tasks use.",
+            "type": "string"
+          },
+          "next": {
+            "description": "The key of the worker the next task would use, or null when all are out.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "order": {
+            "description": "The auto chain, with the default filled in.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "description": "Things worth knowing, like a damaged workers.json.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode",
+          "order",
+          "chain",
+          "warnings",
+          "clis",
+          "asking",
+          "workers"
+        ],
+        "type": "object"
       }
     }
   },
@@ -1394,7 +3498,7 @@
       "name": "Apache-2.0"
     },
     "title": "kompitum-core",
-    "version": "0.1.17"
+    "version": "0.1.18"
   },
   "methods": [
     {
@@ -1581,6 +3685,13 @@
             "kind": "config"
           },
           "message": "config"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "refused"
+          },
+          "message": "refused"
         }
       ],
       "name": "terminal.run",
@@ -1612,6 +3723,16 @@
           }
         },
         {
+          "description": "Nothing this program starts can leave its terminal: no breaking away from\nits job, and on Windows a shell started through COMSPEC stays hidden. Changes\nnothing on Unix, where everything carrying the terminal's mark ends with it.",
+          "name": "contain",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Nothing this program starts can leave its terminal: no breaking away from\nits job, and on Windows a shell started through COMSPEC stays hidden. Changes\nnothing on Unix, where everything carrying the terminal's mark ends with it.",
+            "type": "boolean"
+          }
+        },
+        {
           "description": "Working directory (default: where kom runs; through the API, the core's;\nwith --on, that machine's home).",
           "name": "cwd",
           "required": false,
@@ -1631,6 +3752,22 @@
             "default": false,
             "description": "Ignored: children end with their parent unless `outlive_parent`.",
             "type": "boolean"
+          }
+        },
+        {
+          "description": "The caller's colors and cell size, answering the program's display queries\nfrom its start. Omitted: Ghostty's defaults until a viewer attaches.",
+          "name": "display",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Display"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The caller's colors and cell size, answering the program's display queries\nfrom its start. Omitted: Ghostty's defaults until a viewer attaches."
           }
         },
         {
@@ -1748,6 +3885,16 @@
           }
         },
         {
+          "description": "A person works in this terminal: only `kom attach` types into it. `send`, `keys`,\n`interrupt` and notes are refused, `--force` included. News of its children waits\nfor its next `kom wait`.",
+          "name": "person",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "A person works in this terminal: only `kom attach` types into it. `send`, `keys`,\n`interrupt` and notes are refused, `--force` included. News of its children waits\nfor its next `kom wait`.",
+            "type": "boolean"
+          }
+        },
+        {
           "description": "Remove it right after it exits (once a waiting parent has the exit code).",
           "name": "rm",
           "required": false,
@@ -1755,6 +3902,22 @@
             "default": false,
             "description": "Remove it right after it exits (once a waiting parent has the exit code).",
             "type": "boolean"
+          }
+        },
+        {
+          "description": "Initial size before the program starts. Omitted: the configured\nheadless size (default 200 columns by 120 rows). Later viewers resize normally.",
+          "name": "size",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InitialSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Initial size before the program starts. Omitted: the configured\nheadless size (default 200 columns by 120 rows). Later viewers resize normally."
           }
         },
         {
@@ -2311,7 +4474,7 @@
       }
     },
     {
-      "description": "Paste text and press Enter, once nobody has typed for ~3 s; keys a person presses meanwhile are held, then delivered. Refuses a blocked program unless `force`.",
+      "description": "Paste text and press Enter after the person submits or clears their draft (up to 3 min), then ~3 s quiet; keys a person presses meanwhile are held, then delivered. Refuses a blocked program unless `force`; a plain send to one is held until it leaves `blocked`.",
       "errors": [
         {
           "code": -32000,
@@ -2368,6 +4531,13 @@
             "kind": "config"
           },
           "message": "config"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "refused"
+          },
+          "message": "refused"
         }
       ],
       "name": "terminal.send",
@@ -2515,7 +4685,7 @@
           }
         },
         {
-          "description": "Wait on children instead: all = until none is working, any = next news or a message to you.\n\n`all`: until none of the children is working (one that hasn't reported\nyet counts as working). `any`: the parent's unseen news (a turn ended, it\nblocked, it hit an error, it exited), else the next child to stop working; for the parent\nitself, also a message typed into it while it worked (reason `message`).",
+          "description": "Wait on children instead: all = until none is working, any = next news or a message to you.\n\n`all`: until none of the children is working (one that hasn't reported\nyet counts as working). `any`: the parent's unseen news (a turn ended, it\nblocked, it hit an error, it exited), else the next child to stop working; for the parent\nitself, also a message typed into it while it worked (reason `message`).\nA child with a sent launch task counts as working until its turn advances\npast delivery, or it reports done, blocked, error, or exits. Startup idle\ndoes not complete that task in either mode. Without a launch task, idle\nstill counts as stopped.",
           "name": "children",
           "required": false,
           "schema": {
@@ -2527,7 +4697,7 @@
                 "type": "null"
               }
             ],
-            "description": "Wait on children instead: all = until none is working, any = next news or a message to you.\n\n`all`: until none of the children is working (one that hasn't reported\nyet counts as working). `any`: the parent's unseen news (a turn ended, it\nblocked, it hit an error, it exited), else the next child to stop working; for the parent\nitself, also a message typed into it while it worked (reason `message`)."
+            "description": "Wait on children instead: all = until none is working, any = next news or a message to you.\n\n`all`: until none of the children is working (one that hasn't reported\nyet counts as working). `any`: the parent's unseen news (a turn ended, it\nblocked, it hit an error, it exited), else the next child to stop working; for the parent\nitself, also a message typed into it while it worked (reason `message`).\nA child with a sent launch task counts as working until its turn advances\npast delivery, or it reports done, blocked, error, or exits. Startup idle\ndoes not complete that task in either mode. Without a launch task, idle\nstill counts as stopped."
           }
         },
         {
@@ -2576,7 +4746,7 @@
       }
     },
     {
-      "description": "Press named keys, encoded for the program's current keyboard modes. Same quiet rule as send.",
+      "description": "Press named keys, encoded for the program's current keyboard modes. Same quiet rule as send. Refuses a blocked program unless `force`.",
       "errors": [
         {
           "code": -32000,
@@ -2612,6 +4782,20 @@
             "kind": "invalid_params"
           },
           "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "blocked"
+          },
+          "message": "blocked"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "refused"
+          },
+          "message": "refused"
         }
       ],
       "name": "terminal.keys",
@@ -2625,6 +4809,16 @@
               "string",
               "null"
             ]
+          }
+        },
+        {
+          "description": "Press them even if the program is blocked: that answers its dialog.",
+          "name": "force",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Press them even if the program is blocked: that answers its dialog.",
+            "type": "boolean"
           }
         },
         {
@@ -2657,7 +4851,7 @@
       }
     },
     {
-      "description": "Press the stop key (esc if it reports status, else ctrl+c), then report what was observed. Never escalates.",
+      "description": "Press the stop key (esc if it reports status, else ctrl+c), then report what was observed. Never escalates. Refuses a blocked program unless `force`.",
       "errors": [
         {
           "code": -32000,
@@ -2693,11 +4887,35 @@
             "kind": "invalid_params"
           },
           "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "blocked"
+          },
+          "message": "blocked"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "refused"
+          },
+          "message": "refused"
         }
       ],
       "name": "terminal.interrupt",
       "paramStructure": "by-name",
       "params": [
+        {
+          "description": "Interrupt even if the program is blocked: the key answers its dialog.",
+          "name": "force",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Interrupt even if the program is blocked: the key answers its dialog.",
+            "type": "boolean"
+          }
+        },
         {
           "description": "The terminal: `t7`, a name, or `machine/t7`.",
           "name": "terminal",
@@ -2935,7 +5153,7 @@
       }
     },
     {
-      "description": "Read a text file here or on a machine (`on`): lines from `offset`, at most `limit` and 8 MB, and how many it has.",
+      "description": "Read a text file here or on a machine (`on`): lines from `offset`, at most `limit` and 8 MB, and how many it has. Stays inside `root`, by default `cwd`.",
       "errors": [
         {
           "code": -32602,
@@ -2964,6 +5182,13 @@
             "kind": "io"
           },
           "message": "io"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "outside_root"
+          },
+          "message": "outside_root"
         },
         {
           "code": -32000,
@@ -3050,6 +5275,18 @@
             "description": "The file: absolute, or from `cwd`.",
             "type": "string"
           }
+        },
+        {
+          "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+          "name": "root",
+          "required": false,
+          "schema": {
+            "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         }
       ],
       "result": {
@@ -3060,7 +5297,7 @@
       }
     },
     {
-      "description": "Write a file here or on a machine (`on`), making missing folders. Swapped in whole: a reader sees old or new, never half. An existing file keeps its mode; a symlink is followed.",
+      "description": "Write a file here or on a machine (`on`), making missing folders. Swapped in whole: a reader sees old or new, never half. An existing file keeps its mode; a symlink is followed. Stays inside `root`, by default `cwd`.",
       "errors": [
         {
           "code": -32602,
@@ -3075,6 +5312,13 @@
             "kind": "io"
           },
           "message": "io"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "outside_root"
+          },
+          "message": "outside_root"
         },
         {
           "code": -32000,
@@ -3142,6 +5386,18 @@
             "description": "The file: absolute, or from `cwd`.",
             "type": "string"
           }
+        },
+        {
+          "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+          "name": "root",
+          "required": false,
+          "schema": {
+            "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
         }
       ],
       "result": {
@@ -3152,7 +5408,7 @@
       }
     },
     {
-      "description": "Edit a text file here or on a machine (`on`): each `old` must be found exactly once in the file as it was, edits must not overlap; all are made or none. Written like file.write.",
+      "description": "Edit a text file here or on a machine (`on`): each `old` must be found exactly once in the file as it was, edits must not overlap; all are made or none. Written like file.write, and stays inside `root`.",
       "errors": [
         {
           "code": -32602,
@@ -3188,6 +5444,13 @@
             "kind": "io"
           },
           "message": "io"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "outside_root"
+          },
+          "message": "outside_root"
         },
         {
           "code": -32000,
@@ -3257,6 +5520,18 @@
           "schema": {
             "description": "The file: absolute, or from `cwd`.",
             "type": "string"
+          }
+        },
+        {
+          "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+          "name": "root",
+          "required": false,
+          "schema": {
+            "description": "Stay inside this folder: a path or link that leads out is refused. Relative\nones start at `cwd`. Default: `cwd`.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       ],
@@ -3731,6 +6006,1116 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/RemoveResult"
+        }
+      }
+    },
+    {
+      "description": "Start a task: a worktree cut from HEAD, a contained terminal with a worker in it, and a record that ends when the worker's process exits. Checks everything first, writes the record, pumps once, and reports what it observed.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "name_taken"
+          },
+          "message": "name_taken"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_a_repo"
+          },
+          "message": "not_a_repo"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "worker_missing"
+          },
+          "message": "worker_missing"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "config"
+          },
+          "message": "config"
+        }
+      ],
+      "name": "task.start",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "The brief the worker is given, at most 200000 characters.",
+          "name": "brief",
+          "required": true,
+          "schema": {
+            "description": "The brief the worker is given, at most 200000 characters.",
+            "type": "string"
+          }
+        },
+        {
+          "description": "Who starts it: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who starts it: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The caller's terminal.",
+          "name": "caller",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The caller's terminal.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The folder inside the repository (default: the core's own folder).",
+          "name": "folder",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The folder inside the repository (default: the core's own folder).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Regex or glob::regex: no added line may match (added to the repository's).",
+          "name": "forbid",
+          "required": false,
+          "schema": {
+            "default": [],
+            "description": "Regex or glob::regex: no added line may match (added to the repository's).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "description": "Seconds without output, CPU or I/O before the turn is cut (default 900).",
+          "name": "idle",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Seconds without output, CPU or I/O before the turn is cut (default 900).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "How many times failed checks go back to the worker, 0 to 3 (default: the repository's, else 1).",
+          "name": "qa_rounds",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "How many times failed checks go back to the worker, 0 to 3 (default: the repository's, else 1).",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "glob::regex: some line of the matching files must match after the run (added to the repository's).",
+          "name": "require",
+          "required": false,
+          "schema": {
+            "default": [],
+            "description": "glob::regex: some line of the matching files must match after the run (added to the repository's).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "description": "Paths the task may change; empty means the whole repository.",
+          "name": "scope",
+          "required": false,
+          "schema": {
+            "default": [],
+            "description": "Paths the task may change; empty means the whole repository.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "description": "The task's name, using the terminal name rules (1-32 of a-z 0-9 - _ ., starting with a letter or digit).",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name, using the terminal name rules (1-32 of a-z 0-9 - _ ., starting with a letter or digit).",
+            "type": "string"
+          }
+        },
+        {
+          "description": "The test command the checks run when the worker ends, replacing the repository's.",
+          "name": "test",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The test command the checks run when the worker ends, replacing the repository's.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Seconds the turn may run (default: none).",
+          "name": "timeout",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Seconds the turn may run (default: none).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Regex or glob::regex: a hit flags the line for the review (added to the repository's).",
+          "name": "warn",
+          "required": false,
+          "schema": {
+            "default": [],
+            "description": "Regex or glob::regex: a hit flags the line for the review (added to the repository's).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "description": "Let the worker use the web.",
+          "name": "web",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Let the worker use the web.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "The worker: auto, free, or a known worker key. With none, the mode `kom workers` shows.",
+          "name": "worker",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The worker: auto, free, or a known worker key. With none, the mode `kom workers` shows.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskStartResult"
+        }
+      }
+    },
+    {
+      "description": "Every task here as a wake line, with how many run and queue, the cap, and records the core could not read.",
+      "errors": [],
+      "name": "task.list",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Include discarded tasks too.",
+          "name": "all",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Include discarded tasks too.",
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskListResult"
+        }
+      }
+    },
+    {
+      "description": "One task: its whole record, its wake line, its folder, and its current turn's progress.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        }
+      ],
+      "name": "task.get",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        },
+        {
+          "description": "Cancel another caller's task.",
+          "name": "yes",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Cancel another caller's task.",
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskView"
+        }
+      }
+    },
+    {
+      "description": "Wait until every task ends, any ends badly, or with `first` any ends; returns at that change or the timeout. Unknown names are listed and do not count as ended.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        }
+      ],
+      "name": "task.wait",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Return at the first task that ends or asks, however it did.",
+          "name": "first",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Return at the first task that ends or asks, however it did.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "The tasks to wait for.",
+          "name": "tasks",
+          "required": true,
+          "schema": {
+            "description": "The tasks to wait for.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        {
+          "description": "Seconds before it checks in (default 60, at most 300).",
+          "name": "timeout",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Seconds before it checks in (default 60, at most 300).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Keep waiting while every worker is out; the task goes on by itself when one comes back.",
+          "name": "while_stranded",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Keep waiting while every worker is out; the task goes on by itself when one comes back.",
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskWaitResult"
+        }
+      }
+    },
+    {
+      "description": "Cancel a queued task, or kill a running one and return once it has ended. Its worktree stays, for reading.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "finished"
+          },
+          "message": "finished"
+        }
+      ],
+      "name": "task.cancel",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        },
+        {
+          "description": "Cancel another caller's task.",
+          "name": "yes",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Cancel another caller's task.",
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskCancelResult"
+        }
+      }
+    },
+    {
+      "description": "Remove a finished task's worktree and branch, keeping its folder and record, and write its ledger row. A queued or running task must be cancelled first, and an accepted one has nothing left to discard.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "running"
+          },
+          "message": "running"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "finished"
+          },
+          "message": "finished"
+        }
+      ],
+      "name": "task.discard",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "What the review decided, kept with the record.",
+          "name": "review",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "What the review decided, kept with the record.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        },
+        {
+          "description": "Discard another caller's task.",
+          "name": "yes",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Discard another caller's task.",
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskDiscardResult"
+        }
+      }
+    },
+    {
+      "description": "The whole review of a task in one read: time and cost, the checks, each changed file in or out of scope, the warn hits, the worker's Gaps and report, and only the hunks those point at. `full` adds the whole patch; one that does not fit goes to a file the reply names.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "task.review",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Add the whole patch; one that does not fit goes to a file the review names.",
+          "name": "full",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Add the whole patch; one that does not fit goes to a file the review names.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "The review's size in bytes (default 20000).",
+          "name": "max_bytes",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The review's size in bytes (default 20000).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskReviewResult"
+        }
+      }
+    },
+    {
+      "description": "Bring a finished task's changes into its repository and commit only those files, with the repository's identity and hooks. Never pushes. Then removes the worktree and branch, keeps the patch, and writes the ledger row. A refusal leaves the repository as it was.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "running"
+          },
+          "message": "running"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "finished"
+          },
+          "message": "finished"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unfinished"
+          },
+          "message": "unfinished"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "scope_violation"
+          },
+          "message": "scope_violation"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "target_branch_changed"
+          },
+          "message": "target_branch_changed"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "no_worktree"
+          },
+          "message": "no_worktree"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "no_changes"
+          },
+          "message": "no_changes"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "files_dirty"
+          },
+          "message": "files_dirty"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "conflict"
+          },
+          "message": "conflict"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "commit_failed"
+          },
+          "message": "commit_failed"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "task.accept",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Accept files changed outside the task's scope.",
+          "name": "accept_scope_violation",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Accept files changed outside the task's scope.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "Accept a task that failed, timed out or was cancelled, or whose last checks failed.",
+          "name": "accept_unfinished",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Accept a task that failed, timed out or was cancelled, or whose last checks failed.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The commit message (default: the review, else a line naming the task).",
+          "name": "message",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The commit message (default: the review, else a line naming the task).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Put the changes in the working tree and make no commit.",
+          "name": "no_commit",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Put the changes in the working tree and make no commit.",
+            "type": "boolean"
+          }
+        },
+        {
+          "description": "The Owner's words that let a manager accept; kept in the record and the ledger row.",
+          "name": "owner_said",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The Owner's words that let a manager accept; kept in the record and the ledger row.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "What the review decided, kept for the ledger.",
+          "name": "review",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "What the review decided, kept for the ledger.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskAcceptResult"
+        }
+      }
+    },
+    {
+      "description": "Send a finished task back with a follow-up brief: the same worker goes on in its session while it can, any other starts fresh with a hand-off note. The checks run again when it ends.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "running"
+          },
+          "message": "running"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "finished"
+          },
+          "message": "finished"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "no_worktree"
+          },
+          "message": "no_worktree"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "task.redo",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "What to do now, at most 200000 characters.",
+          "name": "brief",
+          "required": true,
+          "schema": {
+            "description": "What to do now, at most 200000 characters.",
+            "type": "string"
+          }
+        },
+        {
+          "description": "Who is asking: opus, manager or owner (default: owner).",
+          "name": "by",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Who is asking: opus, manager or owner (default: owner).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskRedoResult"
+        }
+      }
+    },
+    {
+      "description": "Remove what old tasks left: an accepted or discarded task's folder and record, and a failed, timed-out or cancelled task nobody came for. Ledger rows stay. The core also does this by itself once a day.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "task.sweep",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Days after its end that a task keeps its files (default 14).",
+          "name": "days",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Days after its end that a task keeps its files (default 14).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Say what would go, and remove nothing.",
+          "name": "dry_run",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Say what would go, and remove nothing.",
+            "type": "boolean"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskSweepResult"
+        }
+      }
+    },
+    {
+      "description": "The ledger: one row per accepted or discarded task, with its turns, what they cost and the review. With `task`, also the orchestrator's own requests for it.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "ledger.show",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "The newest rows to show (default 20).",
+          "name": "last",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The newest rows to show (default 20).",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Only this task's row, with the orchestrator's own usage for it.",
+          "name": "task",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Only this task's row, with the orchestrator's own usage for it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/LedgerResult"
+        }
+      }
+    },
+    {
+      "description": "Which workers can take a task, the order new tasks try them, and what each has spent.",
+      "errors": [],
+      "name": "workers.show",
+      "paramStructure": "by-name",
+      "params": [],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/WorkersView"
+        }
+      }
+    },
+    {
+      "description": "Change the order, mark a worker out until a time, or say one is back now.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        }
+      ],
+      "name": "workers.set",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "Add a worker, at the end of the auto chain.",
+          "name": "add",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkersAddParam"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Add a worker, at the end of the auto chain."
+          }
+        },
+        {
+          "description": "Mark a worker out until a time.",
+          "name": "block",
+          "required": false,
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkersBlockParam"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mark a worker out until a time."
+          }
+        },
+        {
+          "description": "Say this worker is back now.",
+          "name": "clear",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Say this worker is back now.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The mode new tasks use: auto or a known worker key.",
+          "name": "mode",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The mode new tasks use: auto or a known worker key.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The new auto chain: known keys, no repeats, at least one.",
+          "name": "order",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The new auto chain: known keys, no repeats, at least one.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Remove an added worker, its block and its place in the order.",
+          "name": "remove",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Remove an added worker, its block and its place in the order.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/WorkersView"
         }
       }
     },
