@@ -1,15 +1,15 @@
 {
-  "version": "0.1.17",
+  "version": "0.1.18",
   "generation": 1,
-  "notes": "kompitum-core 0.1.17",
+  "notes": "kompitum-core 0.1.18: kom vault bell, and Claude Haiku as the last worker",
   "targets": {
     "linux-aarch64": {
-      "url": "https://xharvak.github.io/kompitum/core/0.1.17/kompitum-core-linux-aarch64.tar.gz",
-      "sha256": "5ddbc1d8aa4975838c06f4766774d2b82de4c16e9c2d1469d623cd2c12d68fec"
+      "url": "https://xharvak.github.io/kompitum/core/0.1.18/kompitum-core-linux-aarch64.tar.gz",
+      "sha256": "d0cb33fd28ab6839691e1d1c147c7e73369f2567344237e8615a19227db8e0f3"
     },
     "linux-x86_64": {
-      "url": "https://xharvak.github.io/kompitum/core/0.1.17/kompitum-core-linux-x86_64.tar.gz",
-      "sha256": "2fa4e7fc913b028296021ddd5c2145a401e29a292e8bd405cd741450fb0d3331"
+      "url": "https://xharvak.github.io/kompitum/core/0.1.18/kompitum-core-linux-x86_64.tar.gz",
+      "sha256": "bab4703ea30873499ece72217a48cf243d1ba5e378a87df572fce6e2b4dfcd3c"
     }
   }
 }
