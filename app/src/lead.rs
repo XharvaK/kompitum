@@ -549,6 +549,9 @@ pub struct Session {
     /// SessionStart). Not saved: a new window reads it again once.
     #[serde(skip)]
     pub history_read: bool,
+    /// Whether this window has seen the lead's SessionStart. Not saved.
+    #[serde(skip)]
+    pub started: bool,
 }
 
 /// The kind of ask a blocking hook makes, or None for an event that is not one.
@@ -569,6 +572,7 @@ pub fn published_session(session: &Session) -> Value {
         "terminal": session.conversation.terminal,
         "reveal": session.conversation.reveal,
         "reveal_why": session.conversation.reveal_why,
+        "started": session.started,
         "conversation": {
             "version": session.conversation.version,
             "length": session.conversation.items.len(),
@@ -613,6 +617,21 @@ pub fn apply_auth_status(conversation: &mut Conversation, code: i32) {
         Some(Reveal::Login) => Some("Claude needs you to sign in.".into()),
         _ => None,
     };
+}
+
+/// Shows the terminal while Claude asks its startup question, before the conversation begins.
+pub fn apply_startup_reveal(conversation: &mut Conversation) {
+    conversation.show(
+        Reveal::Startup,
+        Some("Claude is asking something before it starts.".into()),
+    );
+}
+
+/// Hides the startup reveal only; a login or manual reveal stays.
+pub fn hide_startup(conversation: &mut Conversation) {
+    if conversation.reveal == Some(Reveal::Startup) {
+        conversation.hide();
+    }
 }
 
 /// Runs `claude auth status` through the core. Only the exit code is kept.
@@ -1475,6 +1494,7 @@ mod tests {
         assert_eq!(value["state"], json!("working"));
         assert_eq!(value["terminal"], json!("hidden"));
         assert_eq!(value["reveal"], Value::Null);
+        assert_eq!(value["started"], json!(false));
         assert_eq!(value["conversation"]["length"], json!(2));
         assert!(value["conversation"]["version"].as_u64().unwrap() > 0);
         assert!(value.get("items").is_none(), "{value}");

@@ -10649,12 +10649,75 @@ export default class Probe extends View {
                 crate::model::Tab::new("tb1", "", "p1", "t1"),
             );
             this.documents.get_mut("").unwrap().available = true;
+            std::fs::write(
+                crate::settings::path(),
+                serde_json::to_string(&json!({"lead": {"program": "claude", "folder": "/tmp"}})).unwrap(),
+            )
+            .unwrap();
             let before = this.live.len();
             let result = this.lead_open(window, cx);
             assert!(result.is_ok(), "lead.open: {result:?}");
             assert_eq!(
                 result.unwrap(),
                 json!({ "ok": true, "needs": "model" })
+            );
+            assert_eq!(this.live.len(), before, "lead.open starts nothing");
+            let has_composer = this.model.tabs().any(|tab| {
+                tab.root.panes().iter().any(|node| {
+                    matches!(
+                        node.content(),
+                        Some(crate::layout::Content::Mod { name, .. }) if name == "composer"
+                    )
+                })
+            });
+            assert!(has_composer, "lead.open shows the composer's tab");
+        });
+    }
+
+    #[test]
+    fn lead_open_asks_for_a_folder_when_none_is_saved() {
+        in_own_process("lead_open_asks_for_a_folder");
+    }
+
+    #[gpui::test]
+    fn lead_open_asks_for_a_folder(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_open_asks_for_a_folder") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.model = crate::model::Model::default();
+            this.model.add_space(
+                "sp1",
+                "test",
+                "/tmp",
+                crate::model::Tab::new("tb1", "", "p1", "t1"),
+            );
+            this.documents.get_mut("").unwrap().available = true;
+            std::fs::write(
+                crate::settings::path(),
+                serde_json::to_string(&json!({"lead": {"program": "claude", "model": "sonnet"}})).unwrap(),
+            )
+            .unwrap();
+            let before = this.live.len();
+            let result = this.lead_open(window, cx);
+            assert!(result.is_ok(), "lead.open: {result:?}");
+            assert_eq!(
+                result.unwrap(),
+                json!({ "ok": true, "needs": "folder" }),
+                "a missing folder wins over a saved model"
+            );
+            let saved: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(crate::settings::path()).unwrap()).unwrap();
+            assert!(
+                saved["lead"].get("folder").is_none(),
+                "lead.open must not write a folder"
             );
             assert_eq!(this.live.len(), before, "lead.open starts nothing");
             let has_composer = this.model.tabs().any(|tab| {
