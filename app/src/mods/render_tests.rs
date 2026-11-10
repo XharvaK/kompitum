@@ -337,6 +337,14 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     "stdout": vault_report(vec![], 0, vec![]),
                     "stderr": ""
                 })),
+                // The mailbox's close: recorded, so a test can see whether Undo wrote it.
+                "kom" if first.as_array().is_some_and(|a| {
+                    a.first().and_then(Value::as_str) == Some("vault")
+                        && a.get(1).and_then(Value::as_str) == Some("done")
+                }) => {
+                    calls.borrow_mut().effects.push(("kom".into(), vec![first.clone()]));
+                    Some(json!({"code": 0, "stdout": "", "stderr": ""}))
+                }
                 "kom" if first == json!(["vault", "read", "manager/to/owner/2026-11-08-please-review.md", "--json", "--as", "owner"]) => Some(json!({
                     "code": 0,
                     "stdout": json!({
