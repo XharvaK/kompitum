@@ -47,8 +47,8 @@ Workers and notes
                               a job for a cheap worker in its own worktree
   workers                     which workers can take a task; --block cc --until 3h
   ledger                      what each worker run cost
-  vault open|read|post|done|thread|find
-                              notes between agents in the shared vault
+  vault open|read|post|done|thread|find|bell
+                              notes between agents in the shared vault; bell rings a webhook
   mcp [--as manager]          all of the above as MCP tools, for an agent's client
 
 More
@@ -889,6 +889,7 @@ Messages between agents, and my own memory, in the shared vault: read, post, mar
 Usage: kom vault [OPTIONS] <COMMAND>
 
 Commands:
+  bell      Ring an agent's webhook when a note for it lands in the vault; runs until killed
   open      The messages open for me, newest first
   read      Read one note by its vault path; this also leaves a read mark
   find      Search the vault: every word must be in the note; the filters narrow it
@@ -905,6 +906,22 @@ Commands:
 Options:
       --json  JSON output even in a terminal
   -h, --help  Print help
+```
+
+## kom vault bell
+
+```text
+Ring an agent's webhook when a note for it lands in the vault; runs until killed
+
+Usage: kom vault bell [OPTIONS]
+
+Options:
+      --json             JSON output even in a terminal
+      --once             Check the vault once, ring what is due, and exit: 1 when a ring failed
+      --dry-run          Print what a check would ring, without posting or saving anything
+      --status           Print the settings and marks as JSON, never the URL or token
+      --env-file <PATH>  Read KEY=VALUE settings from this file first; a variable already set keeps its value
+  -h, --help             Print help
 ```
 
 ## kom vault changes

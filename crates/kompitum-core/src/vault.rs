@@ -2,6 +2,7 @@
 //! the Rust port of the Python Kompitum's vault, in the `kom` process itself: no
 //! core, no server, no RPC. The file format is the same on both sides.
 
+pub(crate) mod bell;
 mod clock;
 mod git;
 mod listing;

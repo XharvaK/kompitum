@@ -239,6 +239,42 @@ pub fn home_dir() -> PathBuf {
     PathBuf::from(std::env::var_os("HOME").unwrap_or_else(|| "/".into()))
 }
 
+/// Whether a process with this id is running. Permission denied still means it is.
+pub fn process_alive(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else { return false };
+    // SAFETY: signal 0 sends nothing; it only asks whether the process exists.
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// A process's argument list where this OS shows it (Linux); None where it does not.
+pub fn process_argv(pid: u32) -> Option<Vec<String>> {
+    if !Path::new("/proc/self").is_dir() {
+        return None;
+    }
+    let bytes = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    Some(bytes.split(|b| *b == 0).filter(|a| !a.is_empty()).map(|a| String::from_utf8_lossy(a).into_owned()).collect())
+}
+
+/// The kernel's id for this boot, where the OS has one (Linux).
+pub fn boot_id() -> Option<String> {
+    let text = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").ok()?;
+    Some(text.trim().to_string()).filter(|id| !id.is_empty())
+}
+
+/// A new file that only its owner can read; it fails if the file exists.
+pub fn create_private(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(path)
+}
+
+/// The device that discards what is written to it.
+pub fn null_device() -> &'static str {
+    "/dev/null"
+}
+
 pub fn parent_pid() -> u32 {
     std::os::unix::process::parent_id()
 }

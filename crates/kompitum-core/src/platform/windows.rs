@@ -664,6 +664,42 @@ pub fn home_dir() -> PathBuf {
     std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\"))
 }
 
+/// Whether a process with this id is running: its exit code is still STILL_ACTIVE.
+pub fn process_alive(pid: u32) -> bool {
+    const STILL_ACTIVE: u32 = 259;
+    // SAFETY: the handle is closed before returning; the exit code is written to a local u32.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            return false;
+        }
+        let mut code = 0u32;
+        let running = GetExitCodeProcess(handle, &mut code) != 0 && code == STILL_ACTIVE;
+        CloseHandle(handle);
+        running
+    }
+}
+
+/// Windows shows no argument list to read here, so the bell lock counts a live pid as a bell.
+pub fn process_argv(_pid: u32) -> Option<Vec<String>> {
+    None
+}
+
+/// Windows has no boot id; the lock then ignores boots.
+pub fn boot_id() -> Option<String> {
+    None
+}
+
+/// A new file that fails if it exists. The user's profile already keeps it to its owner.
+pub fn create_private(path: &Path) -> io::Result<File> {
+    std::fs::OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+/// The device that discards what is written to it.
+pub fn null_device() -> &'static str {
+    "NUL"
+}
+
 pub fn parent_pid() -> u32 {
     use windows_sys::Win32::System::Diagnostics::ToolHelp::*;
     unsafe {

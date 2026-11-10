@@ -193,6 +193,11 @@ kom vault find quota reset              # did we try this before?
   `post` refuses them. Workers may read the vault but never write to it.
 - Kinds: request, report, decision, tried, question, answer.
   `--body-file -` reads the body from stdin.
+- `kom vault bell` is the vault bell: it fetches the vault each minute and rings
+  a target's webhook (`KOMPITUM_BELL_<T>_URL`) when a note for it lands, with no
+  model and no quota. `--env-file` reads the settings, `--once`, `--dry-run` and
+  `--status` check them. The Owner runs it under systemd as the user unit
+  `deploy/kom-vault-bell.service`. A worker may not run it.
 
 ## Memory: what I wake with
 

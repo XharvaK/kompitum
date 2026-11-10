@@ -1,0 +1,25 @@
+# Kompitum vault bell: a systemd user unit, run by the Owner on the always-on machine.
+#
+# Install, as the Owner's user (no root):
+#   mkdir -p ~/.config/systemd/user ~/.config/kompitum
+#   cp deploy/kom-vault-bell.service ~/.config/systemd/user/
+# Fill in ~/.config/kompitum/bell.env (the settings the bell reads; see `kom vault bell --help`), then
+#   chmod 600 ~/.config/kompitum/bell.env
+#   systemctl --user daemon-reload && systemctl --user enable --now kom-vault-bell
+#   loginctl enable-linger $USER
+# Check the settings first, without ringing:  kom vault bell --status --env-file ~/.config/kompitum/bell.env
+# Logs: journalctl --user -u kom-vault-bell -f
+
+[Unit]
+Description=Kompitum vault bell
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# The bell reads its settings from the env file itself, so a variable already set keeps its value.
+ExecStart=%h/.local/bin/kom vault bell --env-file %h/.config/kompitum/bell.env
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

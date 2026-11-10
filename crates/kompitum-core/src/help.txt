@@ -37,8 +37,8 @@ Workers and notes
                               a job for a cheap worker in its own worktree
   workers                     which workers can take a task; --block cc --until 3h
   ledger                      what each worker run cost
-  vault open|read|post|done|thread|find
-                              notes between agents in the shared vault
+  vault open|read|post|done|thread|find|bell
+                              notes between agents in the shared vault; bell rings a webhook
   mcp [--as manager]          all of the above as MCP tools, for an agent's client
 
 More

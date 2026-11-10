@@ -2,10 +2,13 @@
 //! The vault runs here, in this process, as the Python Kompitum does.
 
 use super::*;
+use crate::vault::bell;
 use crate::vault::{MemoryDraft, Message, Report, Vault};
 
 #[derive(Subcommand)]
 pub(crate) enum VaultCmd {
+    /// Ring an agent's webhook when a note for it lands in the vault; runs until killed.
+    Bell(BellArgs),
     /// The messages open for me, newest first.
     Open(AsArgs),
     /// Read one note by its vault path; this also leaves a read mark.
@@ -28,6 +31,22 @@ pub(crate) enum VaultCmd {
     Forget(ForgetArgs),
     /// What I wake with: standing memories in full, then one line per other memory.
     Memory(MemoryArgs),
+}
+
+#[derive(clap::Args)]
+pub(crate) struct BellArgs {
+    /// Check the vault once, ring what is due, and exit: 1 when a ring failed.
+    #[arg(long)]
+    pub once: bool,
+    /// Print what a check would ring, without posting or saving anything.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Print the settings and marks as JSON, never the URL or token.
+    #[arg(long)]
+    pub status: bool,
+    /// Read KEY=VALUE settings from this file first; a variable already set keeps its value.
+    #[arg(long, value_name = "PATH")]
+    pub env_file: Option<std::path::PathBuf>,
 }
 
 #[derive(clap::Args)]
@@ -192,15 +211,25 @@ pub(crate) fn vault_as_a_worker(action: &VaultCmd) -> Result<(), RpcError> {
         | VaultCmd::Thread(_)
         | VaultCmd::Changes(_)
         | VaultCmd::Memory(_) => Ok(()),
-        VaultCmd::Post(_) | VaultCmd::Mark(_) | VaultCmd::Done(_) | VaultCmd::Remember(_) | VaultCmd::Forget(_) => {
-            Err(worker_refused())
-        }
+        VaultCmd::Post(_)
+        | VaultCmd::Mark(_)
+        | VaultCmd::Done(_)
+        | VaultCmd::Remember(_)
+        | VaultCmd::Forget(_)
+        | VaultCmd::Bell(_) => Err(worker_refused()),
     }
 }
 
 pub(crate) fn vault_cmd(action: VaultCmd, asked: bool) -> Result<Option<Out>, RpcError> {
     let _ = asked;
     Ok(Some(match action {
+        // The bell runs until killed and sets its own exit code, so it leaves the process here.
+        VaultCmd::Bell(a) => std::process::exit(bell::run(&bell::Options {
+            once: a.once,
+            dry_run: a.dry_run,
+            status: a.status,
+            env_file: a.env_file,
+        })),
         VaultCmd::Open(a) => {
             let report = vault(&a.name)?.open()?;
             Out { json: report.json(), human: open_human(&report) }
