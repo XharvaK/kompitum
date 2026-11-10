@@ -5,6 +5,25 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, Popover } from "gpui-base";
 
 const CHEVRON = "mods/workspace-chrome/chevron-down.svg";
+// Popover and Input claim Enter and the arrows with bindings, which GPUI runs
+// before on_key_down. These bindings sit in a context on the list itself, so
+// they come first while one is open and mean nothing anywhere else.
+const KEYS = "SettingsDropdown";
+let keysBound = false;
+
+function bindKeys(cx) {
+  if (keysBound) return;
+  keysBound = true;
+  const bindings = [];
+  for (const key of ["down", "up", "enter", "escape"]) {
+    const action = `settings-dropdown-${key}`;
+    // On the list itself, and at the depth of a search field inside it: the
+    // second outranks Input's own arrows and Enter, which sit at that depth.
+    bindings.push({ keystroke: key, action, context: KEYS });
+    bindings.push({ keystroke: key, action, context: `${KEYS} > Input` });
+  }
+  cx.bind_keys(bindings);
+}
 
 function itemIcon(item, size, t) {
   if (!item?.icon) return null;
@@ -15,9 +34,10 @@ function itemIcon(item, size, t) {
 
 // A dropdown: a trigger that shows the pick and a floating list to choose from.
 // `items`: [{ value, label, icon?, tint?, detail?, font? }]. `state`: an object the caller keeps across renders
-// (it holds whether the list is open and the search field; `accent` puts the search highlight on the trigger).
-// `search`: a field over the list that filters it. `onOpen(cx)`: called when the list opens, for lists that load
-// on demand. `limit`: draw at most that many matching rows, then a dim line saying to type to narrow it.
+// (it holds whether the list is open, the search field and the highlighted row; `accent` puts the search
+// highlight on the trigger). `search`: a field over the list that filters it. `onOpen(cx)`: called when the list
+// opens, for lists that load on demand. `limit`: draw at most that many matching rows, then a dim line saying to
+// type to narrow it.
 export function dropdown(t, id, { items, value, onPick, state, search = false, width = 240, anchor = "top_right", empty = "Choose…", onOpen = null, limit = 0 }) {
   const picked = items.find((item) => item.value === value);
   const query = (state.query ?? "").trim().toLowerCase();
@@ -25,13 +45,36 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     ? items.filter((item) => `${item.label ?? ""} ${item.detail ?? ""}`.toLowerCase().includes(query))
     : items;
   const shown = limit > 0 ? matching.slice(0, limit) : matching;
+  // The keyboard and the pointer share one highlight, kept on the caller's state. It stays in range when the
+  // filter shrinks the list, and starts on the first row whenever there is none yet.
+  const high = shown.length ? Math.max(0, Math.min(shown.length - 1, Number.isInteger(state.hi) ? state.hi : 0)) : -1;
   const close = (cx) => {
     state.open = false;
     state.query = "";
     state.input?.set_value("");
     cx.notify();
   };
-  const row = (item) => {
+  const pick = (item, cx) => {
+    if (!item) return;
+    close(cx);
+    onPick(item.value, cx);
+  };
+  const key = (name, cx) => {
+    if (name === "down" || name === "up") {
+      if (shown.length) {
+        const step = name === "down" ? 1 : shown.length - 1;
+        state.hi = (high + step) % shown.length;
+        cx.notify();
+      }
+    } else if (name === "enter") {
+      // With nothing shown, Enter stays ours: it must not close the list.
+      if (high >= 0) pick(shown[high], cx);
+    } else if (name === "escape") {
+      close(cx);
+    } else return;
+    cx.stop_propagation();
+  };
+  const row = (item, index) => {
     const on = item.value === value;
     return h_flex()
       .id(`${id}-${item.value}`)
@@ -44,10 +87,13 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
       .rounded(6)
       .cursor_pointer()
       .hover((s) => s.bg(t.hover))
-      .on_click((_e, cx) => {
-        close(cx);
-        onPick(item.value, cx);
+      .when(index === high, (el) => el.bg(t.hover))
+      .on_hover((hovered, cx) => {
+        if (!hovered || state.hi === index) return;
+        state.hi = index;
+        cx.notify();
       })
+      .on_click((_e, cx) => pick(item, cx))
       .when(Boolean(item.icon), (el) => el.child(itemIcon(item, 15, t)))
       .child(
         v_flex()
@@ -78,6 +124,12 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .overflow_hidden()
     // The list scrolls natively first; its wrapper keeps the wheel from reaching the page under it.
     .on_scroll_wheel((_e, cx) => cx.stop_propagation())
+    .when(Boolean(state.focus), (el) => el.track_focus(state.focus))
+    .key_context(KEYS)
+    .on_action("settings-dropdown-down", (_e, cx) => key("down", cx))
+    .on_action("settings-dropdown-up", (_e, cx) => key("up", cx))
+    .on_action("settings-dropdown-enter", (_e, cx) => key("enter", cx))
+    .on_action("settings-dropdown-escape", (_e, cx) => key("escape", cx))
     .when(search && Boolean(state.input), (el) =>
       el.child(div().px(10).py(6).border_b(1).border_color(t.border).child(Input.new(state.input).h(26).text_size(13).text_color(t.foreground))))
     .child(list);
@@ -103,16 +155,26 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
   const popover = Popover.new(`${id}-menu`)
     .anchor(anchor)
     .open(Boolean(state.open))
+    .when(Boolean(state.focus), (el) => el.track_focus(state.focus))
     .on_open_change((open, cx) => {
       if (open) {
         state.open = true;
+        state.hi = 0;
+        bindKeys(cx);
         // Retained state is created in an event handler, never in render.
+        state.focus ??= cx.focus_handle();
         if (search && !state.input) {
           state.input = InputState.new({ placeholder: "Search" });
-          state.input.on("change", (_e, cx) => { state.query = state.input.value(); cx.notify(); });
+          state.input.on("change", (_e, cx) => { state.query = state.input.value(); state.hi = 0; cx.notify(); });
         }
         cx.notify();
-        if (search) cx.timer.after(0, () => state.input?.focus());
+        if (search) {
+          state.input?.focus();
+          cx.timer.after(0, () => state.input?.focus());
+        } else {
+          state.focus?.focus();
+          cx.timer.after(0, () => state.focus?.focus());
+        }
         onOpen?.(cx);
       } else close(cx);
     })
