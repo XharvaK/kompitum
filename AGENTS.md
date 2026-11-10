@@ -51,8 +51,8 @@ layout or a workspace to return to, it does not belong in the core.
   Keep every other change to upstream's files small, since each changed line
   can conflict when an upstream release is merged.
 - Name features after what they do.
-- Friction and upgrade ideas go to `UPGRADES.md` in the Python repository until
-  this one takes over from it.
+- Friction and upgrade ideas go to `UPGRADES.md` here. It moved from the Python
+  repository when that was retired on 2026-11-11.
 
 ## Rules that aren't in the code
 
@@ -117,9 +117,10 @@ layout or a workspace to return to, it does not belong in the core.
   `scripts/check_windows.py` touches the crate roots, so a check always builds
   its own worktree. It is `just check` for this PC, and the server's check here.
 - `LC_*` is the locale namespace and SSH configs forward it, so our
-  environment is `KOMPITUM_*`. The Python Kompitum owns `KOMPITUM_VAULT`, `KOMPITUM_AGENT`,
-  `KOMPITUM_POLL_SECONDS`, `KOMPITUM_SEEN_FILE`, `KOMPITUM_LISTEN` and `KOMPITUM_BELL_*`,
-  and the rename script refuses them.
+  environment is `KOMPITUM_*`. `KOMPITUM_VAULT`, `KOMPITUM_AGENT`,
+  `KOMPITUM_POLL_SECONDS`, `KOMPITUM_SEEN_FILE`, `KOMPITUM_LISTEN` and `KOMPITUM_BELL_*`
+  keep the meanings the retired Python Kompitum gave them (`kom vault bell` reads the
+  `KOMPITUM_BELL_*` ones), and the rename script refuses them.
 - `just install` replaces the installed binary and restarts core. Running
   terminals are kept.
 - Real-agent smokes (Claude Code with haiku, Pi with a cheap model) cost
