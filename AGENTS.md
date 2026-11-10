@@ -51,8 +51,9 @@ layout or a workspace to return to, it does not belong in the core.
   Keep every other change to upstream's files small, since each changed line
   can conflict when an upstream release is merged.
 - Name features after what they do.
-- Friction and upgrade ideas go to `UPGRADES.md` here. It moved from the Python
-  repository when that was retired on 2026-11-11.
+- Friction and upgrade ideas go to `audit/UPGRADES.md`, which git ignores, because
+  they name machines and projects. They moved from the private Python repository
+  when that was retired on 2026-11-11.
 
 ## Rules that aren't in the code
 
