@@ -255,7 +255,43 @@ fn pull_once(dir: &Path, timeout: Duration) -> GitResult {
     if remotes.output.trim().is_empty() {
         return GitResult { ok: true, output: String::new(), error: String::new() };
     }
-    run(dir, &["pull", "--rebase", "--quiet"], timeout)
+    let fetched = run_retrying_ref_lock(dir, &["fetch", "--quiet"], timeout);
+    if !fetched.ok {
+        return fetched;
+    }
+    // `@{upstream}`, not FETCH_HEAD: several pullers can fetch at once and
+    // leave FETCH_HEAD with more than one branch for merge.
+    run_retrying_ref_lock(dir, &["rebase", "--quiet", "@{upstream}"], timeout)
+}
+
+/// Run one git step, and once more after a pause if a ref lock refused it.
+fn run_retrying_ref_lock(dir: &Path, args: &[&str], timeout: Duration) -> GitResult {
+    let first = run(dir, args, timeout);
+    if first.ok || !ref_lock(&first.error) {
+        return first;
+    }
+    std::thread::sleep(REF_LOCK_PAUSE);
+    run(dir, args, timeout)
+}
+
+/// How long a step waits before trying again past another git process's lock.
+const REF_LOCK_PAUSE: Duration = Duration::from_millis(100);
+
+/// Whether git refused a step because another process holds a ref or index lock.
+fn ref_lock(error: &str) -> bool {
+    let error = error.to_lowercase();
+    [
+        "unable to create",
+        "cannot lock",
+        "could not update ref",
+        "unable to update local ref",
+        "index.lock",
+        "another git process seems to be running in this repository",
+        "remove the file manually to continue",
+        ".lock",
+    ]
+    .iter()
+    .any(|marker| error.contains(marker))
 }
 
 /// The line a read says when its pull failed, so an old copy never passes for
@@ -417,7 +453,15 @@ pub fn status_paths(dir: &Path) -> Vec<String> {
 
 fn tail(output: &str) -> String {
     let lines: Vec<&str> = output.trim().lines().collect();
-    lines[lines.len().saturating_sub(3)..].join(" ")
+    let start = lines.len().saturating_sub(3);
+    let mut kept: Vec<&str> = Vec::new();
+    // Keep git's first line too: it names the cause ("fatal: ...", "error:
+    // cannot lock ref ..."), while the last lines say what to do about it.
+    if start > 0 {
+        kept.push(lines[0]);
+    }
+    kept.extend_from_slice(&lines[start..]);
+    kept.join(" ")
 }
 
 #[cfg(test)]
@@ -598,6 +642,116 @@ mod tests {
     }
 
     #[test]
+    fn two_pulls_at_once_both_succeed_without_a_multiple_branch_rebase() {
+        let (root, clone) = clone_with_remote("two-pulls");
+        advance_remote(&root, "remote-ahead");
+
+        let one = clone.clone();
+        let two = clone.clone();
+        let first = std::thread::spawn(move || pull(&one, TIMEOUT));
+        let second = std::thread::spawn(move || pull(&two, TIMEOUT));
+        for result in [first.join().unwrap(), second.join().unwrap()] {
+            assert!(result.ok, "{}", result.error);
+            assert!(
+                !result.error.contains("Cannot rebase onto multiple branches"),
+                "two pullers must never make git refuse the pull: {}",
+                result.error
+            );
+        }
+        assert_eq!(std::fs::read_to_string(clone.join("remote-ahead.md")).unwrap(), "# Remote\n");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_two_line_fetch_head_does_not_stop_the_pull() {
+        let (root, clone) = clone_with_remote("fetch-head");
+        advance_remote(&root, "remote-ahead");
+        let head = command(&clone, &["rev-parse", "HEAD"]).trim().to_string();
+        let fetch_head = clone.join(".git").join("FETCH_HEAD");
+        // What two fetches at once can leave behind: two branches marked for
+        // merge. `git pull --rebase` reads this; `fetch` and `@{upstream}` do not.
+        std::fs::write(&fetch_head, format!("{head}\t\tbranch 'main' of remote\n{head}\t\tbranch 'other' of remote\n"))
+            .unwrap();
+        let pulled = pull(&clone, TIMEOUT);
+        assert!(pulled.ok, "{}", pulled.error);
+        assert_eq!(std::fs::read_to_string(clone.join("remote-ahead.md")).unwrap(), "# Remote\n");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_git_ref_lock_is_retried_once_and_a_held_one_is_reported() {
+        let (root, clone) = clone_with_remote("ref-lock");
+        advance_remote(&root, "first");
+
+        // Another git process holds the remote ref lock just long enough for
+        // the first fetch to be refused; the retry after the pause succeeds.
+        let lock = remote_ref_lock(&clone);
+        std::fs::write(&lock, "").unwrap();
+        let held = lock.clone();
+        let remover = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(40));
+            let _ = std::fs::remove_file(&held);
+        });
+        let pulled = pull(&clone, TIMEOUT);
+        remover.join().unwrap();
+        assert!(pulled.ok, "{}", pulled.error);
+        assert_eq!(std::fs::read_to_string(clone.join("first.md")).unwrap(), "# Remote\n");
+
+        // A lock that does not go is returned as the error after the one retry.
+        advance_remote(&root, "second");
+        let lock = remote_ref_lock(&clone);
+        std::fs::write(&lock, "").unwrap();
+        let failed = pull(&clone, TIMEOUT);
+        assert!(!failed.ok, "a held ref lock is reported");
+        assert!(ref_lock(&failed.error), "{}", failed.error);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_vault_with_no_upstream_fails_in_words() {
+        let root = scratch("no-upstream");
+        let remote = root.join("remote.git");
+        let vault = root.join("vault");
+        command(&root, &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+        command(&root, &["init", "-q", "-b", "main", vault.to_str().unwrap()]);
+        configure(&vault);
+        std::fs::write(vault.join("README.md"), "# Vault\n").unwrap();
+        command(&vault, &["add", "."]);
+        command(&vault, &["commit", "-q", "-m", "seed"]);
+        command(&vault, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        let failed = pull(&vault, TIMEOUT);
+        assert!(!failed.ok, "a vault without an upstream cannot pull");
+        assert!(failed.error.to_lowercase().contains("upstream"), "{}", failed.error);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_ref_lock_is_recognized_by_what_git_says() {
+        for error in [
+            "fatal: Unable to create '/v/.git/refs/heads/main.lock': File exists.",
+            "error: cannot lock ref 'refs/remotes/origin/main'",
+            "index.lock: File exists",
+            "Another git process seems to be running in this repository",
+            " ! abc..def  main -> origin/main  (unable to update local ref)",
+            "remove the file manually to continue",
+        ] {
+            assert!(ref_lock(error), "{error}");
+        }
+        assert!(!ref_lock("fatal: no upstream configured for branch 'main'"));
+        assert!(!ref_lock("fatal: Cannot rebase onto multiple branches"));
+    }
+
+    #[test]
+    fn a_long_git_error_keeps_its_cause_and_its_last_lines() {
+        let output = "fatal: cannot lock ref 'refs/remotes/origin/main'\n\
+                      error: some detail\nerror: some more detail\nerror: could not fetch origin\n";
+        let kept = tail(output);
+        assert!(kept.starts_with("fatal: cannot lock ref"), "{kept}");
+        assert!(kept.ends_with("error: could not fetch origin"), "{kept}");
+        assert_eq!(tail("one\ntwo\nthree"), "one two three");
+    }
+
+    #[test]
     fn a_read_reuses_a_recent_pull_but_a_write_always_pulls() {
         let root = scratch("fresh");
         let remote = root.join("remote.git");
@@ -656,6 +810,25 @@ mod tests {
 
     fn edit_shared(root: &Path, text: &str) {
         std::fs::write(root.join("shared.md"), text).unwrap();
+    }
+
+    /// Add a commit to `root`'s remote through a second clone, so a pull has
+    /// something new to fetch.
+    fn advance_remote(root: &Path, name: &str) {
+        let remote = root.join("remote.git");
+        let writer = root.join(name);
+        command(root, &["clone", "-q", remote.to_str().unwrap(), writer.to_str().unwrap()]);
+        configure(&writer);
+        std::fs::write(writer.join(format!("{name}.md")), "# Remote\n").unwrap();
+        command(&writer, &["add", "."]);
+        let message = format!("remote: {name}");
+        command(&writer, &["commit", "-q", "-m", &message]);
+        command(&writer, &["push", "-q"]);
+    }
+
+    /// The lock a fetch takes while it updates the remote-tracking `main`.
+    fn remote_ref_lock(clone: &Path) -> PathBuf {
+        clone.join(".git").join("refs").join("remotes").join("origin").join("main.lock")
     }
 
     /// Pull, edit and commit with one lock held across all three.

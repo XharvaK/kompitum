@@ -15,6 +15,26 @@ function problemText(problem) {
   return String(problem ?? "");
 }
 
+// A problem that says the vault's pull failed, not one about a note's shape.
+const PULL_FAILED = /couldn't be updated|could not be pulled|may be behind/i;
+// A ref lock, a rebase onto several branches, or another puller in the way.
+const PULL_BUSY =
+  /cannot rebase onto multiple branches|cannot lock|unable to create|unable to update local ref|index\.lock|another git process seems to be running in this repository|remove the file manually to continue|\.lock/i;
+const PULL_TIMED_OUT = /took longer than|timed out|timeout/i;
+
+// The plain words under State; git's own text stays in the line's tooltip.
+export function pullWords(problem) {
+  const text = problemText(problem);
+  if (PULL_BUSY.test(text)) return "Another pull was running. Trying again.";
+  if (PULL_TIMED_OUT.test(text)) return "The pull took too long.";
+  return "The vault could not be pulled.";
+}
+
+function pullProblem(problems) {
+  const problem = problems.find((text) => PULL_FAILED.test(text));
+  return problem ? { detail: problem, words: pullWords(problem) } : null;
+}
+
 // Piped, kom says what went wrong as JSON: {"error": {"message", "hint"}}; show its words.
 function errorText(result) {
   for (const out of [result?.stderr, result?.stdout]) {
@@ -62,6 +82,8 @@ export function vaultSection(view, t, cx) {
   const unpushed = Number(vault?.unpushed ?? 0);
   const needs = Array.isArray(vault?.notes) ? vault.notes.length : 0;
   const problems = Array.isArray(vault?.problems) ? vault.problems.map(problemText).filter(Boolean) : [];
+  const pull = pullProblem(problems);
+  const otherProblems = problems.filter((problem) => !PULL_FAILED.test(problem));
   const value = (label) => div().max_w(480).min_w(0).truncate().text_size(12.5).text_color(t.muted).child(label);
   const placeholder = () => div().w(110).h(9).rounded(5).bg(t.hover);
   const folderControl = folder ? value(folder) : vault || view.vaultError ? value("Not set") : placeholder();
@@ -82,6 +104,31 @@ export function vaultSection(view, t, cx) {
           .child(view.textButton(t, "st-vault-retry", "Retry", (_e, cx) => loadVault(view, cx))),
       )
       .child(div().max_w(360).text_size(11.5).line_height("16px").text_color(t.dim).child(view.vaultError));
+  } else if (pull) {
+    state = v_flex()
+      .items_end()
+      .gap(3)
+      .child(
+        h_flex()
+          .gap(4)
+          .items_center()
+          .child(
+            div()
+              .text_size(12.5)
+              .text_color(t.blocked)
+              .child(`Couldn't pull${view.vaultCheckedAt ? ` \u00b7 ${ago(view.vaultCheckedAt)}` : ""}`),
+          )
+          .child(view.textButton(t, "st-vault-retry", "Retry", (_e, cx) => loadVault(view, cx))),
+      )
+      .child(
+        div()
+          .max_w(360)
+          .text_size(11.5)
+          .line_height("16px")
+          .text_color(t.blocked)
+          .tooltip(pull.detail)
+          .child(pull.words),
+      );
   } else if (unpushed > 0) {
     state = value(`${unpushed} ${unpushed === 1 ? "note" : "notes"} not sent yet`);
   } else {
@@ -93,7 +140,7 @@ export function vaultSection(view, t, cx) {
       .child("Notes your agents leave each other, kept in Git."))
     .child(view.row(t, "Folder", null, folderControl))
     .child(view.row(t, "State", null, state))
-    .children(problems.map((problem, i) =>
+    .children(otherProblems.map((problem, i) =>
       div().id(`st-vault-problem-${i}`).pb(6).text_size(12.5).line_height("18px").text_color(t.blocked).child(problem),
     ))
     .child(view.row(t, "Needs you", null, value(`${needs} ${needs === 1 ? "note" : "notes"}`)))

@@ -589,3 +589,130 @@ fn adding_a_worker_says_when_no_worker_cli_is_installed(cx: &mut TestAppContext)
     assert!(!tree.contains("st-add-go"), "no Add: {tree}");
 }
 
+#[gpui::test]
+fn a_failed_vault_pull_is_not_up_to_date(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("vault");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert(
+        "vaultJson".into(),
+        json!({
+            "vault": "/fixture/vault", "agent": "owner", "unpushed": 0,
+            "problems": [
+                "The vault couldn't be updated, so this may be behind (git: fatal: Cannot rebase onto multiple branches)."
+            ],
+            "notes": []
+        }),
+    );
+    let theme = values["theme"].clone();
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    assert!(tree.contains("Couldn't pull \u{b7} just now"), "{tree}");
+    assert!(!tree.contains("Up to date"), "{tree}");
+    assert!(
+        tree.contains("Another pull was running. Trying again."),
+        "the plain words name the busy puller: {tree}"
+    );
+    assert!(tree.contains("st-vault-retry"), "Retry is kept: {tree}");
+
+    let blocked = theme["blocked"].as_str().unwrap();
+    let lines: Vec<&str> = tree.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.contains("text \"Couldn't pull"))
+        .unwrap_or_else(|| panic!("no Couldn't pull label: {tree}"));
+    assert!(
+        lines[at - 1].contains(blocked),
+        "the State label is blocked: {}",
+        lines[at - 1]
+    );
+    assert!(
+        !lines[at].contains("Cannot rebase onto multiple branches"),
+        "git's text is not the State label: {}",
+        lines[at]
+    );
+
+    let raw = "Cannot rebase onto multiple branches";
+    let mut seen = false;
+    for line in tree.lines().filter(|line| line.contains(raw)) {
+        seen = true;
+        assert!(line.contains(":tooltip["), "git's text stays in the tooltip: {line}");
+    }
+    assert!(seen, "the git detail is kept as a tooltip: {tree}");
+}
+
+#[gpui::test]
+fn a_note_problem_is_not_a_failed_pull(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("vault");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert(
+        "vaultJson".into(),
+        json!({
+            "vault": "/fixture/vault", "agent": "owner", "unpushed": 0,
+            "problems": ["fixture: a note's mark file is damaged"],
+            "notes": []
+        }),
+    );
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    assert!(tree.contains("Up to date"), "{tree}");
+    assert!(!tree.contains("Couldn't pull"), "{tree}");
+    assert!(
+        tree.contains("fixture: a note's mark file is damaged"),
+        "the note's own problem is still drawn: {tree}"
+    );
+}
+
+/// The Settings helper maps git's causes to plain words; the raw text never shows.
+#[gpui::test]
+fn pull_words_name_the_cause_without_git_text(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    std::fs::write(
+        staged.0.join("main.js"),
+        r#"
+import { View, div } from 'gpui-kit';
+import { pullWords } from './frame/settings/vault.js';
+export default class Probe extends View {
+  render() {
+    return div().children([
+      div().child(`lock: ${pullWords("fatal: Unable to create '/v/.git/index.lock': File exists.")}`),
+      div().child(`branches: ${pullWords('fatal: Cannot rebase onto multiple branches')}`),
+      div().child(`timeout: ${pullWords('git fetch --quiet took longer than 15 s')}`),
+      div().child(`other: ${pullWords("fatal: no upstream configured for branch 'main'")}`),
+    ]);
+  }
+}
+"#,
+    )
+    .unwrap();
+    let tree = describe(
+        cx,
+        &staged,
+        ".",
+        false,
+        props(),
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(
+        tree.contains("lock: Another pull was running. Trying again."),
+        "{tree}"
+    );
+    assert!(
+        tree.contains("branches: Another pull was running. Trying again."),
+        "{tree}"
+    );
+    assert!(tree.contains("timeout: The pull took too long."), "{tree}");
+    assert!(
+        tree.contains("other: The vault could not be pulled."),
+        "{tree}"
+    );
+    assert!(!tree.contains("Unable to create"), "{tree}");
+    assert!(!tree.contains("Cannot rebase onto multiple branches"), "{tree}");
+}
+
