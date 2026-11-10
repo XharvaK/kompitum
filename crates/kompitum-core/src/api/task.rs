@@ -240,7 +240,7 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         return Err(RpcError::new(
             "worker_missing",
             words.join(" "),
-            "install a worker CLI, or set [workers] codex, [workers] commandcode or [workers] opencode in ~/.config/kompitum-core/config.toml",
+            "install a worker CLI, or set [workers] codex, [workers] commandcode, [workers] opencode or [workers] claude in ~/.config/kompitum-core/config.toml",
         ));
     }
     let folder = p.folder.clone().or_else(|| std::env::current_dir().ok().map(|p| p.display().to_string()));
@@ -432,7 +432,7 @@ pub struct WorkersAddParam {
     /// Its label; the key when absent.
     #[serde(default)]
     pub label: Option<String>,
-    /// Its CLI: codex, command_code or opencode.
+    /// Its CLI: codex, command_code, opencode or claude.
     pub cli: Cli,
     /// The model route it runs; not empty.
     pub route: String,
@@ -491,7 +491,7 @@ pub struct AskingView {
 pub struct WorkerView {
     pub key: String,
     pub label: String,
-    /// codex, command_code or opencode.
+    /// codex, command_code, opencode or claude.
     pub cli: Cli,
     /// The model route it runs.
     pub route: String,

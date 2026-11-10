@@ -21,6 +21,7 @@ pub enum Cli {
     Codex,
     CommandCode,
     Opencode,
+    Claude,
 }
 
 impl Cli {
@@ -29,6 +30,7 @@ impl Cli {
             Cli::Codex => "codex",
             Cli::CommandCode => "command_code",
             Cli::Opencode => "opencode",
+            Cli::Claude => "claude",
         }
     }
 
@@ -37,6 +39,7 @@ impl Cli {
             "codex" => Some(Cli::Codex),
             "command_code" => Some(Cli::CommandCode),
             "opencode" => Some(Cli::Opencode),
+            "claude" => Some(Cli::Claude),
             _ => None,
         }
     }
@@ -73,6 +76,12 @@ pub fn builtin() -> Vec<Worker> {
             route: "opencode/deepseek/deepseek-v4.1-flash-free#max".into(),
         },
         Worker { key: "codex".into(), label: "Codex".into(), cli: Cli::Codex, route: "gpt-6-luna#high".into() },
+        Worker {
+            key: "haiku".into(),
+            label: "Claude Haiku".into(),
+            cli: Cli::Claude,
+            route: "claude-haiku-5-5#high".into(),
+        },
     ]
 }
 
@@ -235,12 +244,24 @@ pub(crate) fn codex_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
     }
 }
 
+/// `claude_prefix`: an explicit argv, else the executable on PATH.
+pub(crate) fn claude_prefix(config: &Config) -> Result<Vec<String>, RpcError> {
+    if let Some(argv) = config.claude() {
+        return command_program("Claude Code", "claude", argv);
+    }
+    match on_path(&[program("claude")]) {
+        Some(found) => Ok(vec![found.display().to_string()]),
+        None => Err(worker_missing("Claude Code", "claude", "Claude Code was not found on PATH")),
+    }
+}
+
 /// The argv prefix that starts a worker CLI.
 pub fn prefix(worker: &Worker, config: &Config) -> Result<Vec<String>, RpcError> {
     match worker.cli {
         Cli::Codex => codex_prefix(config),
         Cli::CommandCode => commandcode_prefix(config),
         Cli::Opencode => opencode_prefix(config),
+        Cli::Claude => claude_prefix(config),
     }
 }
 
@@ -432,6 +453,31 @@ pub fn turn_command(
             env: BTreeMap::new(),
             prefix_len: Some(prefix.len()),
         },
+        Cli::Claude => {
+            let (model, effort) = worker.route().split_once('#').unwrap_or((worker.route(), ""));
+            let mut argv = prefix.to_vec();
+            // Never `--bare`: it reads only an API key, and the plan is a login.
+            argv.extend(["-p", "--output-format", "stream-json", "--verbose", "--model", model].map(String::from));
+            if !effort.is_empty() {
+                argv.extend(["--effort".to_string(), effort.to_string()]);
+            }
+            argv.extend(
+                [
+                    "--permission-mode",
+                    "bypassPermissions",
+                    "--strict-mcp-config",
+                    "--setting-sources",
+                    "project,local",
+                    "--disallowedTools",
+                    "Agent",
+                ]
+                .map(String::from),
+            );
+            if let Some(session) = session {
+                argv.extend(["--resume".to_string(), session.to_string()]);
+            }
+            TurnCommand { argv, stdin: Some(prompt_path.to_string()), env: BTreeMap::new(), prefix_len: None }
+        }
     }
 }
 
@@ -466,6 +512,7 @@ impl Progress {
             Cli::Codex => crate::task::codex::progress(self, line),
             Cli::CommandCode => crate::task::commandcode::progress(self, line),
             Cli::Opencode => crate::task::opencode::progress(self, line),
+            Cli::Claude => crate::task::claude::progress(self, line),
         }
     }
 }
@@ -587,6 +634,7 @@ impl TurnOutcome {
             Cli::Codex => crate::task::codex::read(lines),
             Cli::CommandCode => crate::task::commandcode::read(lines),
             Cli::Opencode => crate::task::opencode::read(lines),
+            Cli::Claude => crate::task::claude::read(lines),
         }
     }
 
@@ -606,6 +654,7 @@ mod tests {
                 opencode: oc.map(|p| vec![p.to_string()]),
                 commandcode: cc.map(|p| vec![p.to_string()]),
                 codex: None,
+                claude: None,
             }),
             ..Default::default()
         }
@@ -613,7 +662,7 @@ mod tests {
 
     #[test]
     fn every_cli_key_round_trips() {
-        for key in ["codex", "command_code", "opencode"] {
+        for key in ["codex", "command_code", "opencode", "claude"] {
             assert_eq!(Cli::from_key(key).map(Cli::key), Some(key));
         }
         assert_eq!(Cli::from_key("nope"), None);
@@ -706,6 +755,44 @@ mod tests {
         let no_model = Worker { route: "#high".into(), ..codex };
         let no_model_command = turn_command(&no_model, &prefix, "fix-1", "p", None);
         assert!(!no_model_command.argv.iter().any(|arg| arg == "-m"), "{:?}", no_model_command.argv);
+    }
+
+    #[test]
+    fn the_haiku_worker_runs_claude_headless_with_its_brief_on_stdin() {
+        let prefix = vec!["claude".to_string()];
+        let haiku = worker("haiku");
+        let fresh = turn_command(&haiku, &prefix, "fix-1", "C:/t/prompt.md", None);
+        assert_eq!(
+            fresh.argv,
+            [
+                "claude",
+                "-p",
+                "--output-format",
+                "stream-json",
+                "--verbose",
+                "--model",
+                "claude-haiku-5-5",
+                "--effort",
+                "high",
+                "--permission-mode",
+                "bypassPermissions",
+                "--strict-mcp-config",
+                "--setting-sources",
+                "project,local",
+                "--disallowedTools",
+                "Agent",
+            ]
+        );
+        assert_eq!(fresh.stdin.as_deref(), Some("C:/t/prompt.md"));
+        assert!(!fresh.argv.iter().any(|arg| arg == "--bare"), "{:?}", fresh.argv);
+        assert_eq!(fresh.prefix_len, None);
+        let continued = turn_command(&haiku, &prefix, "fix-1", "p", Some("session-1"));
+        assert_eq!(&continued.argv[..16], &fresh.argv[..], "every flag stays before resume");
+        assert_eq!(&continued.argv[16..], ["--resume", "session-1"]);
+        let bare = Worker { route: "claude-haiku-5-5".into(), ..haiku };
+        let bare_command = turn_command(&bare, &prefix, "fix-1", "p", None);
+        assert!(!bare_command.argv.iter().any(|arg| arg == "--effort"), "{:?}", bare_command.argv);
+        assert!(bare_command.argv.windows(2).any(|w| w == ["--model", "claude-haiku-5-5"]));
     }
 
     #[test]

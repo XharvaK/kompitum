@@ -29,7 +29,7 @@ pub struct Args {
     pub turn: u32,
     #[arg(long)]
     pub worker: String,
-    /// The worker's CLI: codex, command_code or opencode.
+    /// The worker's CLI: codex, command_code, opencode or claude.
     #[arg(long)]
     pub cli: Option<String>,
     /// The file the worker reads as stdin (closed when absent).

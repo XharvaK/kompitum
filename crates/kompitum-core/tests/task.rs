@@ -113,15 +113,18 @@ impl Session {
     }
 
     /// Both keys, each naming its own script. A test that wants no Command Code
-    /// names a path that does not exist.
+    /// names a path that does not exist. Claude always names one: the auto chain
+    /// ends with it, and a test must never start the real `claude` from PATH.
     fn config_for(&self, opencode: &Path, commandcode: &Path, extra: &str) {
         let dir = self.root.join("config").join("kompitum-core");
         std::fs::create_dir_all(&dir).unwrap();
         let worker = serde_json::to_string(TEST_WORKER).unwrap();
         let opencode = serde_json::to_string(opencode.to_str().unwrap()).unwrap();
         let commandcode = serde_json::to_string(commandcode.to_str().unwrap()).unwrap();
-        let text =
-            format!("[workers]\n{extra}opencode = [{worker}, {opencode}]\ncommandcode = [{worker}, {commandcode}]\n");
+        let claude = serde_json::to_string(self.root.join("no-claude").to_str().unwrap()).unwrap();
+        let text = format!(
+            "[workers]\n{extra}opencode = [{worker}, {opencode}]\ncommandcode = [{worker}, {commandcode}]\nclaude = [{claude}]\n"
+        );
         std::fs::write(dir.join("config.toml"), text).unwrap();
     }
 

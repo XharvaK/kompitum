@@ -42,6 +42,8 @@ pub struct WorkersConfig {
     pub commandcode: Option<Vec<String>>,
     /// Codex's argv prefix, for a build not on PATH.
     pub codex: Option<Vec<String>>,
+    /// Claude Code's argv prefix, for a build not on PATH.
+    pub claude: Option<Vec<String>>,
 }
 
 impl Config {
@@ -84,6 +86,10 @@ impl Config {
 
     pub fn codex(&self) -> Option<Vec<String>> {
         self.workers.as_ref().and_then(|w| w.codex.clone()).filter(|argv| !argv.is_empty())
+    }
+
+    pub fn claude(&self) -> Option<Vec<String>> {
+        self.workers.as_ref().and_then(|w| w.claude.clone()).filter(|argv| !argv.is_empty())
     }
 }
 
@@ -149,5 +155,14 @@ mod tests {
         };
         assert_eq!(config(Some(3)).cap(), Some(3));
         assert_eq!(config(Some(0)).cap(), None, "a cap of zero is no cap");
+    }
+
+    #[test]
+    fn claude_takes_its_own_argv_from_the_workers_table() {
+        assert_eq!(Config::default().claude(), None);
+        let argv: Config = toml::from_str("[workers]\nclaude = [\"/opt/claude/claude\"]\n").unwrap();
+        assert_eq!(argv.claude(), Some(vec!["/opt/claude/claude".to_string()]));
+        let empty: Config = toml::from_str("[workers]\nclaude = []\n").unwrap();
+        assert_eq!(empty.claude(), None, "an empty argv is no argv");
     }
 }

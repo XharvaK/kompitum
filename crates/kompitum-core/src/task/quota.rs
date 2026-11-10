@@ -51,6 +51,8 @@ static CODEX_USAGE: OnceLock<Regex> = OnceLock::new();
 static CODEX_TRY_AGAIN: OnceLock<Regex> = OnceLock::new();
 static CODEX_DATE: OnceLock<Regex> = OnceLock::new();
 static CODEX_CLOCK: OnceLock<Regex> = OnceLock::new();
+static CLAUDE_EPOCH: OnceLock<Regex> = OnceLock::new();
+static CLAUDE_RESETS: OnceLock<Regex> = OnceLock::new();
 
 /// The longest wait a worker's words can set: a garbled number must neither
 /// overflow nor take a worker away for good.
@@ -441,6 +443,87 @@ pub fn codex_refusal(errors: &[String], now_ms: u64, offset_min: i32) -> Option<
     Some(Refusal { window: window.into(), until_ms, source, message: cut(message.trim(), 300) })
 }
 
+/// Claude Code's "resets 3am", "resets 3:30 pm" and "resets Nov 14, 9pm": a
+/// clock today (tomorrow once passed), or a dated moment in the local year. The
+/// zone in parentheses is ignored; `offset_min` is the zone. Claude's words only:
+/// `next_clock` is unchanged for the other CLIs.
+fn claude_clock(text: &str, now_ms: u64, offset_min: i32) -> Option<u64> {
+    let captures = re(
+        &CLAUDE_RESETS,
+        r"(?i)resets\s+(?:([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)",
+    )
+    .captures(text)?;
+    let hour = hour_24(captures[3].parse().ok()?, Some(&captures[5]))?;
+    let minute: u32 = match captures.get(4) {
+        Some(minutes) => minutes.as_str().parse().ok()?,
+        None => 0,
+    };
+    if minute > 59 {
+        return None;
+    }
+    let local = clock::civil(now_ms, offset_min);
+    if let (Some(month), Some(day)) = (captures.get(1), captures.get(2)) {
+        let month = month_number(month.as_str())?;
+        let day: u32 = day.as_str().parse().ok()?;
+        if !(1..=31).contains(&day) {
+            return None;
+        }
+        let at = |year: i32| clock::to_ms(&Civil { year, month, day, hour, minute, second: 0, weekday: 0 }, offset_min);
+        let this_year = at(local.year);
+        // A date more than a day gone is next year's.
+        return Some(if this_year.saturating_add(86_400_000) < now_ms { at(local.year + 1) } else { this_year });
+    }
+    let at = clock::to_ms(
+        &Civil { year: local.year, month: local.month, day: local.day, hour, minute, second: 0, weekday: 0 },
+        offset_min,
+    );
+    Some(if at <= now_ms { at + 86_400_000 } else { at })
+}
+
+/// When a Claude Code limit lifts, and who said so: the epoch seconds after a `|`
+/// (never more than `LONGEST_WAIT_MS` away), else the clock the text names, else
+/// the next clock `next_clock` reads, else five hours on.
+fn claude_reset(message: &str, now_ms: u64, offset_min: i32) -> (u64, Source) {
+    if let Some(captures) = re(&CLAUDE_EPOCH, r"\|(\d{9,11})\b").captures(message) {
+        let seconds: u64 = captures[1].parse().unwrap_or(0);
+        let longest = now_ms.saturating_add(LONGEST_WAIT_MS);
+        return (seconds.saturating_mul(1000).min(longest), Source::Named);
+    }
+    if let Some(at) = claude_clock(message, now_ms, offset_min) {
+        return (at, Source::Named);
+    }
+    match next_clock(message, now_ms, offset_min) {
+        Some(at) => (at, Source::Named),
+        None => (wait_until(now_ms, 5 * 3_600_000), Source::Estimate),
+    }
+}
+
+/// Claude Code's refusal, from the errors a turn reported: a usage limit with its
+/// reset, a sign-in failure, or an empty credit balance. None for any other text.
+pub fn claude_refusal(errors: &[String], now_ms: u64, offset_min: i32) -> Option<Refusal> {
+    errors.iter().find_map(|message| claude_refusal_of(message, now_ms, offset_min))
+}
+
+fn claude_refusal_of(message: &str, now_ms: u64, offset_min: i32) -> Option<Refusal> {
+    let low = message.to_lowercase();
+    let text = cut(message.trim(), 300);
+    if ["usage limit reached", "limit reached", "hit your limit"].iter().any(|phrase| low.contains(phrase)) {
+        let (until_ms, source) = claude_reset(message, now_ms, offset_min);
+        let far = source == Source::Named && until_ms.saturating_sub(now_ms) > 5 * 3_600_000;
+        let window = if low.contains("week") || far { "weekly" } else { "5-hour" };
+        return Some(Refusal { window: window.into(), until_ms, source, message: text });
+    }
+    if ["/login", "not logged in", "invalid api key"].iter().any(|phrase| low.contains(phrase)) {
+        let until_ms = wait_until(now_ms, 3_600_000);
+        return Some(Refusal { window: "auth".into(), until_ms, source: Source::Estimate, message: text });
+    }
+    if low.contains("credit balance is too low") {
+        let until_ms = wait_until(now_ms, 3_600_000);
+        return Some(Refusal { window: "credits".into(), until_ms, source: Source::Estimate, message: text });
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,5 +741,60 @@ mod tests {
         assert_eq!((credits.window.as_str(), credits.source), ("credits", Source::Estimate));
         assert_eq!(credits.until_ms, nine + 3_600_000, "as Command Code's credits refusal");
         assert!(codex_refusal(&["the tool exploded".to_string()], nine, 180).is_none());
+    }
+
+    #[test]
+    fn claude_names_its_reset_as_epoch_seconds() {
+        let refusal = claude_refusal(&["Claude AI usage limit reached|1793000000".to_string()], now(), 0).unwrap();
+        assert_eq!((refusal.until_ms, refusal.source), (1_793_000_000_000, Source::Named));
+        assert_eq!(refusal.window, "5-hour", "no week in the text, and the reset is not five hours away");
+    }
+
+    #[test]
+    fn claude_reads_a_clock_it_names_as_a_future_moment() {
+        // 13:00 UTC is 16:00 at UTC+3, so the next 3 am is tomorrow's.
+        let text = "You've hit your limit · resets 3am (Europe/Istanbul)";
+        let refusal = claude_refusal(&[text.to_string()], now(), 180).unwrap();
+        assert_eq!(refusal.source, Source::Named);
+        assert!(refusal.until_ms > now());
+    }
+
+    #[test]
+    fn claude_reads_a_dated_clock_in_the_local_year() {
+        let text = "Weekly limit reached · resets Nov 14, 9pm (Europe/Istanbul)";
+        let refusal = claude_refusal(&[text.to_string()], now(), 180).unwrap();
+        let november =
+            clock::to_ms(&Civil { year: 2026, month: 11, day: 14, hour: 21, minute: 0, second: 0, weekday: 0 }, 180);
+        assert_eq!((refusal.window.as_str(), refusal.source), ("weekly", Source::Named));
+        assert_eq!(refusal.until_ms, november);
+    }
+
+    #[test]
+    fn claude_caps_an_epoch_reset_at_the_longest_wait() {
+        let far = claude_refusal(&["Claude AI usage limit reached|9999999999".to_string()], now(), 0).unwrap();
+        assert_eq!((far.until_ms, far.source), (now() + LONGEST_WAIT_MS, Source::Named));
+    }
+
+    #[test]
+    fn claude_weekly_sign_in_and_credits_are_their_own_windows() {
+        let weekly = claude_refusal(&["Weekly limit reached".to_string()], now(), 0).unwrap();
+        assert_eq!(weekly.window, "weekly");
+        let auth = claude_refusal(&["Please run /login".to_string()], now(), 0).unwrap();
+        assert_eq!((auth.window.as_str(), auth.source), ("auth", Source::Estimate));
+        assert_eq!(auth.until_ms, now() + 3_600_000);
+        let credits = claude_refusal(&["Credit balance is too low".to_string()], now(), 0).unwrap();
+        assert_eq!((credits.window.as_str(), credits.source), ("credits", Source::Estimate));
+    }
+
+    #[test]
+    fn an_unrelated_error_is_no_claude_refusal() {
+        let errors = ["tool Bash failed: test_limit_reached FAILED".to_string()];
+        assert!(claude_refusal(&errors, now(), 0).is_none());
+    }
+
+    #[test]
+    fn a_claude_refusal_message_is_cut_to_three_hundred_characters() {
+        let text = format!("Weekly limit reached {}", "x".repeat(1000));
+        assert_eq!(claude_refusal(&[text], now(), 0).unwrap().message.chars().count(), 300);
     }
 }

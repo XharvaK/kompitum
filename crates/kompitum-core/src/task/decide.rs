@@ -275,6 +275,7 @@ pub fn turn_end(
     let cli = turn.map_or(Cli::Opencode, |turn| turn.cli_or_lookup(workers));
     match cli {
         Cli::Codex => codex_end(task, code, outcome, now_ms, offset_min),
+        Cli::Claude => crate::task::claude::end(task, code, outcome, now_ms, offset_min),
         Cli::CommandCode => {
             let key = turn.map(|turn| turn.worker.as_str()).unwrap_or_default();
             let route = workers.iter().find(|worker| worker.key == key).map_or("", |worker| worker.route.as_str());
@@ -284,7 +285,7 @@ pub fn turn_end(
     }
 }
 
-fn session_end(task: &Task, outcome: &TurnOutcome) -> Option<TurnEnd> {
+pub(crate) fn session_end(task: &Task, outcome: &TurnOutcome) -> Option<TurnEnd> {
     let expected = task.turns.last().and_then(|turn| turn.resumes.clone());
     match &outcome.session {
         None => Some(TurnEnd::failed("worker did not report a session id")),

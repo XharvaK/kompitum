@@ -6,6 +6,7 @@ pub mod accept;
 pub mod brief;
 pub mod checking;
 pub mod checks;
+pub mod claude;
 pub mod clock;
 pub mod codex;
 pub mod commandcode;

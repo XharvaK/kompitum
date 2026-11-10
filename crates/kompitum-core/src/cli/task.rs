@@ -123,8 +123,8 @@ pub(super) struct WorkersArgs {
     /// Add a worker, at the end of the auto chain
     #[arg(long, value_name = "KEY", requires_all = ["cli", "route"])]
     pub add: Option<String>,
-    /// The added worker's CLI: codex, command_code or opencode
-    #[arg(long, value_parser = ["codex", "command_code", "opencode"], requires = "add")]
+    /// The added worker's CLI: codex, command_code, opencode or claude
+    #[arg(long, value_parser = ["codex", "command_code", "opencode", "claude"], requires = "add")]
     pub cli: Option<String>,
     /// The added worker's model route
     #[arg(long, requires = "add")]

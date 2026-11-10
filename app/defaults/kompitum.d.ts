@@ -90,7 +90,7 @@ export function knownAgents(options?: { on?: string | null; fresh?: boolean }): 
   login?: string[];
   /** An argv whose exit code says whether it is signed in (0 yes); only where the CLI documents it. */
   signed_in?: string[];
-  worker?: "codex" | "command_code" | "opencode";
+  worker?: "codex" | "command_code" | "opencode" | "claude";
   route?: string;
   plans?: AgentPlan[];
   reports?: "status_line";

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The auto chain when the file names none.
-const DEFAULT_ORDER: [&str; 2] = ["cc", "go"];
+const DEFAULT_ORDER: [&str; 3] = ["cc", "go", "haiku"];
 
 /// A worker that may not start until `until_ms`, and who said so.
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -372,8 +372,8 @@ mod tests {
     #[test]
     fn a_follow_up_stays_with_its_worker_and_only_within_the_chain() {
         let mut file = WorkersFile::default();
-        assert_eq!(keys(&stay_with(chain(&file), "go")), ["go", "cc"]);
-        assert_eq!(keys(&stay_with(chain(&file), "cc")), ["cc", "go"]);
+        assert_eq!(keys(&stay_with(chain(&file), "go")), ["go", "cc", "haiku"]);
+        assert_eq!(keys(&stay_with(chain(&file), "cc")), ["cc", "go", "haiku"]);
         file.mode = "go".into();
         assert_eq!(keys(&stay_with(chain(&file), "cc")), ["go"]);
     }
@@ -381,8 +381,8 @@ mod tests {
     #[test]
     fn the_chain_is_the_order_free_or_one_pinned_worker() {
         let mut file = WorkersFile::default();
-        assert_eq!(keys(&chain(&file)), ["cc", "go"], "the default order");
-        assert_eq!(keys(&chain_for(&file, "free").unwrap()), ["free", "cc", "go"]);
+        assert_eq!(keys(&chain(&file)), ["cc", "go", "haiku"], "the default order");
+        assert_eq!(keys(&chain_for(&file, "free").unwrap()), ["free", "cc", "go", "haiku"]);
         file.mode = "go".into();
         assert_eq!(keys(&chain(&file)), ["go"], "a pinned key");
         file.order = vec!["free".into(), "cc".into()];
@@ -429,7 +429,7 @@ mod tests {
         let file = WorkersFile::default();
         assert_eq!(
             find(&file, "x").unwrap_err().message,
-            r#"unknown worker "x": use cc, go, free, codex"#,
+            r#"unknown worker "x": use cc, go, free, codex, haiku"#,
             "the known keys are listed"
         );
     }
@@ -459,7 +459,7 @@ mod tests {
         assert!(file.workers.is_empty() && file.order.is_empty(), "nothing was changed");
 
         add_worker(&mut file, custom("mine", Cli::Opencode, "opencode/x#max")).unwrap();
-        assert_eq!(file.order, ["cc", "go", "mine"], "an empty order is filled with the default first");
+        assert_eq!(file.order, ["cc", "go", "haiku", "mine"], "an empty order is filled with the default first");
         file.order = vec!["go".into()];
         add_worker(&mut file, custom("other", Cli::Opencode, "opencode/y#max")).unwrap();
         assert_eq!(file.order, ["go", "other"]);
@@ -503,7 +503,7 @@ mod tests {
         let none = |_worker: &Worker| false;
         assert_eq!(
             pick(&chain(&empty), &empty, none, now, 0),
-            Err("ALL WORKERS OUT: Command Code is not installed. opencode Go is not installed.".into())
+            Err("ALL WORKERS OUT: Command Code is not installed. opencode Go is not installed. Claude Haiku is not installed.".into())
         );
         let cc_only = workers_file(&[("cc", block(Source::Named, "weekly", now + 3_600_000))]);
         let mut pinned = cc_only.clone();
@@ -526,8 +526,18 @@ mod tests {
         assert_eq!(pick(&chain(&free), &both, |_| true, now, 0), Ok(find(&both, "go").unwrap()));
         let cc_out = workers_file(&[("free", block(Source::Named, "daily", now + 3_600_000))]);
         assert_eq!(pick(&chain(&free), &cc_out, |_| true, now, 0), Ok(find(&cc_out, "cc").unwrap()));
-        assert_eq!(keys(&chain(&free)), ["free", "cc", "go"]);
-        assert_eq!(keys(&chain(&WorkersFile::default())), ["cc", "go"]);
+        assert_eq!(keys(&chain(&free)), ["free", "cc", "go", "haiku"]);
+        assert_eq!(keys(&chain(&WorkersFile::default())), ["cc", "go", "haiku"]);
+    }
+
+    #[test]
+    fn haiku_is_the_third_worker_when_the_other_two_are_out() {
+        let now = now();
+        let both_out = workers_file(&[
+            ("cc", block(Source::Named, "weekly", now + 3_600_000)),
+            ("go", block(Source::Named, "weekly", now + 3_600_000)),
+        ]);
+        assert_eq!(pick(&chain(&both_out), &both_out, |_| true, now, 0), Ok(find(&both_out, "haiku").unwrap()));
     }
 
     #[test]

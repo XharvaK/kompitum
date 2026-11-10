@@ -1139,7 +1139,7 @@ Options:
       --mode <MODE>      Which worker new tasks use: auto or a worker key
       --order <KEY,...>  The auto chain, in order (a comma list)
       --add <KEY>        Add a worker, at the end of the auto chain
-      --cli <CLI>        The added worker's CLI: codex, command_code or opencode [possible values: codex, command_code, opencode]
+      --cli <CLI>        The added worker's CLI: codex, command_code, opencode or claude [possible values: codex, command_code, opencode, claude]
       --route <ROUTE>    The added worker's model route
       --label <LABEL>    The added worker's label (default: its key)
       --remove <KEY>     Remove an added worker

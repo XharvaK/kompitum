@@ -284,7 +284,8 @@
         "enum": [
           "codex",
           "command_code",
-          "opencode"
+          "opencode",
+          "claude"
         ],
         "type": "string"
       },
@@ -3290,7 +3291,7 @@
         "properties": {
           "cli": {
             "$ref": "#/components/schemas/Cli",
-            "description": "codex, command_code or opencode."
+            "description": "codex, command_code, opencode or claude."
           },
           "key": {
             "type": "string"
@@ -3362,7 +3363,7 @@
         "properties": {
           "cli": {
             "$ref": "#/components/schemas/Cli",
-            "description": "Its CLI: codex, command_code or opencode."
+            "description": "Its CLI: codex, command_code, opencode or claude."
           },
           "key": {
             "description": "The new worker's key, using the terminal name rules (1-32 of a-z 0-9 - _ ., starting with a letter or digit).",

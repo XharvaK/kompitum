@@ -139,8 +139,8 @@ If your parent is a person's terminal (`kom run --person`), nothing types into i
 ## Cheap workers: kom task
 
 A task is one bounded job for a cheap worker: a git worktree, a contained
-terminal with no window, a worker (Command Code, then opencode Go, or Codex
-once you add it; see `kom workers`) and a record. You design and decide; the
+terminal with no window, a worker (Command Code, then opencode Go, then Claude
+Haiku; see `kom workers`) and a record. You design and decide; the
 worker edits to your brief; you review and accept.
 
 ```sh
