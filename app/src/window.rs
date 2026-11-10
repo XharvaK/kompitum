@@ -3854,8 +3854,7 @@ impl AppWindow {
         let folder = lead
             .folder
             .clone()
-            .filter(|folder| !folder.is_empty())
-            .unwrap_or_else(|| crate::mods::home().to_string_lossy().into_owned());
+            .filter(|folder| !folder.is_empty());
         if let Some(terminal) = self.lead_terminal(&program) {
             if let Some(pane) = self.model.pane_of(&terminal) {
                 self.focused_block = None;
@@ -3873,6 +3872,10 @@ impl AppWindow {
                 "the lead's terminal {terminal:?} is alive but has no pane; keep it with terminal.keep"
             ));
         }
+        let Some(folder) = folder else {
+            self.show_composer_for_model_pick()?;
+            return Ok(json!({ "ok": true, "needs": "folder" }));
+        };
         if lead_needs_saved_model(&lead, &program) {
             self.show_composer_for_model_pick()?;
             return Ok(json!({ "ok": true, "needs": "model" }));
@@ -3931,8 +3934,16 @@ impl AppWindow {
             self.swapped.remove(&pane);
             self.model.focus_pane(&pane);
         }
+        let session = self.lead_sessions.entry(terminal.clone()).or_default();
+        // Only Claude asks its trust question before SessionStart; other lead programs have no hook to wait for.
+        session.started = !checks_auth;
         if checks_auth {
-            // The lead is on screen at once, hidden; the check runs beside it.
+            crate::lead::apply_startup_reveal(&mut session.conversation);
+        }
+        self.apply_lead_terminal_layout(&terminal);
+        self.publish_lead(cx);
+        if checks_auth {
+            // The lead is on screen at once; the check runs beside it.
             self.check_lead_auth(terminal.clone(), window, cx);
         }
         if choice.is_resume_or_continue() {
@@ -4144,6 +4155,11 @@ impl AppWindow {
         if self.lead_sessions.get(&terminal).is_some_and(|session| session.history_read) {
             return;
         }
+        // A lead already running when this window opened is past its SessionStart: this window
+        // didn't see it, but the lead is ready for words.
+        if !self.lead_sessions.contains_key(&terminal) {
+            self.lead_sessions.entry(terminal.clone()).or_default().started = true;
+        }
         let streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
         let transcript = crate::lead::stream_of(&streams, &program).and_then(|stream| stream.transcript);
         let skipped = self.read_lead_history(&terminal, transcript.as_deref());
@@ -4185,6 +4201,9 @@ impl AppWindow {
                 mods::set_shared("lead.streams".into(), streams);
             }
             if from_lead {
+                let session = self.lead_sessions.entry(terminal.clone()).or_default();
+                session.started = true;
+                crate::lead::hide_startup(&mut session.conversation);
                 let skipped = self.read_lead_history(&terminal, transcript);
                 if skipped > 0 {
                     tracing::debug!(skipped, "skipped unknown transcript line types");

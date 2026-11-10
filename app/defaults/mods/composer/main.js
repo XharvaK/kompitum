@@ -20,6 +20,7 @@ import {
   readTextFile,
   writeTextFile,
   pickFiles,
+  pickFolder,
   pasteImage,
   lead as leadOf,
   conversation as conversationFrom,
@@ -198,6 +199,7 @@ export default class Composer extends View {
     this.sending = false;
     this.error = null;
     this.chips = [];
+    this.askedFolder = false;
     this.history = loadHistory();
     this.historyAt = -1;
     this.draft = "";
@@ -282,6 +284,7 @@ export default class Composer extends View {
       } catch {
         this.agents = [];
       }
+      this.askFolder(cx);
       if (this.needsFirstPick()) {
         this.saveEffortOnRelease = false;
         this.ensureEffortSlider(this.leadProgram());
@@ -302,6 +305,27 @@ export default class Composer extends View {
       this.terminal
         && terminals().some((terminal) => terminal.address === this.terminal && terminal.state === "live"),
     );
+  }
+
+  leadReady() {
+    return Boolean(leadOf()?.started);
+  }
+
+  // The lead has no folder yet: ask for one once. A cancelled pick saves nothing and starts nothing.
+  askFolder(cx) {
+    if (this.askedFolder || this.person?.lead?.folder) return;
+    this.askedFolder = true;
+    cx.spawn(async (cx) => {
+      try {
+        const folder = await pickFolder({ prompt: "Choose the folder the lead works in" });
+        if (!folder) return;
+        await this.writeLead({ folder });
+        run("lead.open");
+      } catch (error) {
+        this.error = `Couldn't choose the lead's folder: ${String(error?.message ?? error)}`;
+      }
+      cx.notify();
+    });
   }
 
   needsFirstPick() {
@@ -560,6 +584,7 @@ export default class Composer extends View {
   send(cx) {
     if (this.sending) return;
     if (this.state === "asking") return;
+    if (!this.leadReady()) return;
     const text = this.text.value();
     const paths = this.chips.map((chip) => chip.path);
     if (!text.trim() && paths.length === 0) return;
@@ -987,7 +1012,7 @@ export default class Composer extends View {
   // pane (under a shown terminal, or the first pick) it fills the pane.
   bar(t, cx, panel = false) {
     const first = this.needsFirstPick();
-    const ready = !this.sending && Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0;
+    const canSend = this.leadReady() && !this.sending && (Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0);
     const send = h_flex()
       .id("composer-send")
       .w(30)
@@ -997,11 +1022,11 @@ export default class Composer extends View {
       .justify_center()
       .rounded(15)
       .cursor_pointer()
-      .tooltip(this.sending ? "Sending…" : "Send (Enter)")
-      .when(ready, (el) => el.bg(t.foreground).hover((s) => s.opacity(0.85)))
-      .when(!ready, (el) => el.border_1().border_color(t.input))
+      .tooltip(!this.leadReady() ? "Claude is asking something before it starts." : this.sending ? "Sending…" : "Send (Enter)")
+      .when(canSend, (el) => el.bg(t.foreground).hover((s) => s.opacity(0.85)))
+      .when(!canSend, (el) => el.border_1().border_color(t.input))
       .on_click((_e, cx) => this.send(cx))
-      .child(svg("mods/composer/arrow-up.svg").size(16).text_color(ready ? t.background : t.dim));
+      .child(svg("mods/composer/arrow-up.svg").size(16).text_color(canSend ? t.background : t.dim));
     const plus = h_flex()
       .id("composer-attach")
       .w(28)
@@ -1388,7 +1413,7 @@ export default class Composer extends View {
   revealNote(t) {
     const lead = leadOf();
     if (lead?.terminal !== "shown") return null;
-    if (lead?.reveal !== "auto" && lead?.reveal !== "login") return null;
+    if (lead?.reveal !== "auto" && lead?.reveal !== "login" && lead?.reveal !== "startup") return null;
     const why = typeof lead.reveal_why === "string" && lead.reveal_why.trim() ? lead.reveal_why : null;
     if (!why) return null;
     return div()

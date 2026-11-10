@@ -325,10 +325,12 @@ export type ConversationItem =
 export function lead(): {
   state: "working" | "asking" | "waiting" | null;
   ask: LeadAsk | null;
+  /** Whether this window has seen the lead's SessionStart; Send waits for it. */
+  started: boolean;
   /** Whether the lead's terminal pane is drawn. */
   terminal: "hidden" | "shown";
   /** Why the terminal is shown, and how it hides; null when it is hidden. */
-  reveal: "login" | "auto" | "manual" | null;
+  reveal: "login" | "auto" | "manual" | "startup" | null;
   /** One-line note for an automatic reveal, drawn above the composer box. */
   reveal_why?: string | null;
   /** Version rises when items change; length is how many items there are. */

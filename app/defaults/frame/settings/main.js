@@ -42,6 +42,7 @@ const SEARCH = [
   { section: "agents", key: "lead", title: "CLI", words: "lead agent program claude command code opencode grok" },
   { section: "agents", key: "lead_model", title: "Model", words: "provider models list other" },
   { section: "agents", key: "lead_model", title: "Reasoning", words: "effort levels low medium high xhigh max" },
+  { section: "agents", key: "folder", title: "Folder", words: "lead folder project directory picker" },
   { section: "agents", key: "workers", title: "Workers", words: "order add remove drag subagents claude sonnet haiku" },
   { section: "agents", key: "clis", title: "CLI versions", words: "update version releases" },
   { section: "vault", key: "Folder", title: "Vault folder", words: "notes git mailbox" },
