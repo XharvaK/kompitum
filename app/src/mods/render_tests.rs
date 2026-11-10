@@ -267,7 +267,13 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                         .clone()
                         .map_or(Value::Null, |person| Value::String(person.to_string())),
                 ),
-                "writeTextFile" if first == "/fixture/app/settings.json" => Some(Value::Null),
+                "writeTextFile" if first == "/fixture/app/settings.json" => {
+                    calls.borrow_mut().effects.push((
+                        "writeTextFile".into(),
+                        vec![first.clone(), a.get(1).map(from_host).unwrap_or(Value::Null)],
+                    ));
+                    Some(Value::Null)
+                }
                 "readTextFile" if first == "/fixture/.ssh/config" => Some(Value::Null),
                 "readTextFile" if first.as_str().is_some_and(|p| p.starts_with("/fixture/vault/")) => {
                     Some(json!("# Fixture note\n\nA body from the vault.\n"))
