@@ -12,11 +12,14 @@ use std::{
 };
 
 // One file per area of the rework, so workers on different areas never share a file.
+mod agents_page;
 mod cli_errors;
 mod composer;
 mod machines;
 mod mailbox;
+mod palette_keys;
 mod settings_pages;
+mod welcome;
 mod window_bar;
 
 struct Staged(PathBuf);
