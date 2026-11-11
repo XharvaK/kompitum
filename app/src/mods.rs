@@ -1023,6 +1023,11 @@ fn exec_limit(options: Option<&HostValue>) -> Result<Duration, HostError> {
     }
 }
 
+/// The core the app runs, as a program to start (`kom` until one is found).
+fn core_program() -> String {
+    crate::core_bin::path().to_string_lossy().into_owned()
+}
+
 pub(crate) fn run_blocking(
     command: &str,
     args: &[String],
@@ -1106,7 +1111,7 @@ fn run_remote_with_limit(
     kom_args.push(command.into());
     kom_args.extend(args.iter().cloned());
     // Let the remote timeout end the program and deliver its result before the wrapper expires.
-    let (_, out, err) = run_blocking("kom", &kom_args, None, limit + Duration::from_secs(5))?;
+    let (_, out, err) = run_blocking(&core_program(), &kom_args, None, limit + Duration::from_secs(5))?;
     let v: Value = serde_json::from_str(out.trim())
         .or_else(|_| serde_json::from_str(err.trim()))
         .map_err(|_| format!("kom exec: {}", err.trim()))?;
@@ -1310,7 +1315,8 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             let expected = a.get(2).and_then(|v| match v { HostValue::Str(s) => Some(s.clone()), _ => None });
             Ok(crate::mod_files::write_text(a.string(0)?.to_owned(), a.string(1)?.to_owned(), expected))
         })
-        .async_function("kom", |a| Ok(exec_future("kom".into(), strings(a.get(0)), None, None, EXEC_LIMIT)))
+        // The core the app runs, by its path: a stale `kom` earlier on PATH would refuse newer commands.
+        .async_function("kom", |a| Ok(exec_future(core_program(), strings(a.get(0)), None, None, EXEC_LIMIT)))
         .function("home", |_| Ok(home().to_string_lossy().into_owned().into()))
         .function("appHome", |_| Ok(app_dir().to_string_lossy().into_owned().into()))
         .function("fonts", |_| Ok(to_host(&json!(*FONTS.lock().unwrap()))))

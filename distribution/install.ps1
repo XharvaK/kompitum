@@ -83,6 +83,14 @@ try {
     if (-not (Get-Command kom -ErrorAction SilentlyContinue) -and -not (Test-Path (Join-Path $dir "kom.exe"))) {
         New-Item -ItemType HardLink -Path (Join-Path $dir "kom.exe") -Target $exe | Out-Null
     }
+    # A kom.exe in this folder that is not this build is an old copy, and PATH would run it.
+    $kom = Join-Path $dir "kom.exe"
+    if ((Test-Path $kom) -and (Get-FileHash $kom).Hash -ne (Get-FileHash $exe).Hash) {
+        $aside = "$kom.old-$PID-" + [guid]::NewGuid().ToString("N")
+        Move-Item -Force $kom $aside
+        New-Item -ItemType HardLink -Path $kom -Target $exe | Out-Null
+        Remove-Item -Force $aside -ErrorAction SilentlyContinue
+    }
 
     # The raw user PATH, so %VARIABLES% in it stay unexpanded and keep their type.
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)

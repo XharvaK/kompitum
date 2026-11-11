@@ -2658,8 +2658,8 @@ fn agent_usage_shows_claude_limits_under_the_lead(cx: &mut TestAppContext) {
     let values = agents_values(agent_catalog(), workers.clone(), status);
     let theme = values["theme"].clone();
     let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
-    assert!(tree.contains("5H 42%"), "{tree}");
-    assert!(tree.contains("Week 61%"), "{tree}");
+    assert!(tree.contains("5h 42%"), "{tree}");
+    assert!(tree.contains("week 61%"), "{tree}");
     assert!(!tree.contains("· resets"), "no estimates or resets: {tree}");
     assert!(!tree.contains("st-plan-"), "the plans are gone: {tree}");
     let status = json!({
@@ -2677,13 +2677,13 @@ fn agent_usage_shows_claude_limits_under_the_lead(cx: &mut TestAppContext) {
         None,
     )
     .unwrap();
-    assert!(tree.contains("5H 100%"), "{tree}");
-    assert!(tree.contains("Week 61%"), "{tree}");
+    assert!(tree.contains("5h 100%"), "{tree}");
+    assert!(tree.contains("week 61%"), "{tree}");
     let blocked = theme["blocked"].as_str().unwrap();
     let lines: Vec<&str> = tree.lines().collect();
     let at = lines
         .iter()
-        .position(|line| line.contains("text \"5H 100%\""))
+        .position(|line| line.contains("text \"5h 100%\""))
         .unwrap_or_else(|| panic!("no limited meter: {tree}"));
     assert!(
         lines[at - 1].contains(blocked),
@@ -2735,7 +2735,7 @@ fn agent_workers_follow_the_core_order_and_show_out_windows(cx: &mut TestAppCont
         .find("st-worker-cc")
         .unwrap_or_else(|| panic!("cc row missing: {tree}"));
     assert!(go < cc, "workers must follow the core's order: {tree}");
-    assert!(tree.contains("5H exhausted · resets"), "{tree}");
+    assert!(tree.contains("5h used up · back"), "{tree}");
 }
 
 #[gpui::test]
@@ -2781,8 +2781,8 @@ fn agent_lead_dropdowns_show_cli_model_and_reasoning(cx: &mut TestAppContext) {
         "the list stays closed: {tree}"
     );
     assert!(tree.contains("st-lead-model"), "{tree}");
-    assert!(tree.contains("Choose…"), "no saved model shows the empty text: {tree}");
-    assert!(tree.contains("Its own default"), "reasoning keeps its own default: {tree}");
+    assert!(tree.contains("Default"), "no saved model or reasoning reads Default: {tree}");
+    assert!(!tree.contains("Its own default"), "{tree}");
     assert!(tree.contains("st-lead-effort"), "{tree}");
     assert!(
         !tree.contains("st-lead-effort-low"),
