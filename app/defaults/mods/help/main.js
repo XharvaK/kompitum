@@ -3,7 +3,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { keys, props, closeOverlay, theme } from "kompitum";
+import { keys, props, closeOverlay, theme, shared } from "kompitum";
 
 const GROUPS = [
   ["Spaces", /^space\./],
@@ -13,6 +13,37 @@ const GROUPS = [
   ["Terminal", /^terminal\.|^send:/],
   ["Window", /./],
 ];
+
+// On the desk layout the groups are the palette's (frame/palette/main.js): this
+// table is its DESK, by action and title, and every other command falls under
+// More. Keep it in step with that one.
+const DESK_GROUPS = ["Lead", "Agents", "Terminals", "Window", "More"];
+const DESK = [
+  ["Lead", "lead.open", "Open the lead"],
+  ["Agents", "agent.next", "Next agent"],
+  ["Agents", "agent.prev", "Previous agent"],
+  ["Terminals", "tab.new", "New terminal"],
+  ["Terminals", "mod.open:picker", "Go to terminal…"],
+  ["Terminals", "tab.rename", "Rename terminal"],
+  ["Terminals", "tab.close", "Close terminal"],
+  ["Terminals", "tab.next", "Next terminal"],
+  ["Terminals", "tab.prev", "Previous terminal"],
+  ["Window", "app.mailbox", "Mailbox"],
+  ["Window", "app.settings", "Settings"],
+  ["Window", "app.help", "Keys"],
+  ["Window", "app.zoom_in", "Zoom in"],
+  ["Window", "app.zoom_out", "Zoom out"],
+  ["Window", "app.zoom_reset", "Reset zoom"],
+];
+
+// The shown layout (desk when none is shown yet, as settings reads it).
+const onDesk = () => (shared("layout") ?? "desk") === "desk";
+
+// The group a command's row sits in.
+function groupOf(action) {
+  if (onDesk()) return DESK.find(([, a]) => a === action)?.[0] ?? "More";
+  return GROUPS.find(([, re]) => re.test(action))[0];
+}
 
 // The palette's names (frame/palette/main.js), so both screens call a command
 // the same thing. Keep this table in step with that one.
@@ -78,6 +109,8 @@ function titleOf(name) {
 
 function titleFor(action) {
   if (action.startsWith("send:")) return "Type " + JSON.stringify(action.slice(5));
+  const desk = DESK.find(([, a]) => a === action);
+  if (desk && onDesk()) return desk[2];
   const [name, arg] = action.split(":");
   const exact = NAMED.find(([n, a]) => n === name && (a === undefined || a === arg));
   if (exact) return exact[2];
@@ -128,25 +161,25 @@ function numberedRow(list, base) {
   };
 }
 
+// One row per command, with all of its keys side by side, in keys() order.
+// Numbered keys (space.select:1 ... tab.select:9) collapse into one row.
 function rowsFor(list) {
   const ranges = [numberedRow(list, "space.select"), numberedRow(list, "tab.select")].filter(Boolean);
   const byBase = new Map(ranges.map((row) => [row.base, row]));
-  const seen = new Set();
-  const rows = [];
+  const rows = new Map();
   for (const k of list) {
     const base = ["space.select", "tab.select"].find(
       (name) => k.action.startsWith(name + ":") && /^\d+$/.test(k.action.slice(name.length + 1)),
     );
     if (base && byBase.has(base)) {
-      if (!seen.has(base)) {
-        seen.add(base);
-        rows.push(byBase.get(base));
-      }
+      const range = byBase.get(base);
+      if (!rows.has(base)) rows.set(base, { action: base, label: range.label, keys: [{ keys: range.keys, section: range.section }] });
       continue;
     }
-    rows.push({ keys: k.keys, label: titleFor(k.action), section: k.section });
+    if (!rows.has(k.action)) rows.set(k.action, { action: k.action, label: titleFor(k.action), keys: [] });
+    rows.get(k.action).keys.push({ keys: k.keys, section: k.section });
   }
-  return rows;
+  return [...rows.values()];
 }
 
 export default class Help extends View {
@@ -162,15 +195,14 @@ export default class Help extends View {
   render(cx) {
     const t = theme();
     const f = this.filter.toLowerCase();
-    const all = keys().filter((k) => {
+    const shown = rowsFor(keys()).filter((row) => {
       if (!f) return true;
-      return `${k.keys} ${titleFor(k.action)} ${k.section}`.toLowerCase().includes(f);
+      return `${row.keys.map((k) => `${k.keys} ${k.section}`).join(" ")} ${row.label}`.toLowerCase().includes(f);
     });
-    const seen = new Set();
-    const groups = GROUPS.map(([name, re]) => {
-      const rows = rowsFor(all.filter((k) => !seen.has(k) && re.test(k.action) && (seen.add(k) || true)));
-      return [name, rows];
-    }).filter(([, rows]) => rows.length > 0);
+    const names = onDesk() ? DESK_GROUPS : GROUPS.map(([name]) => name);
+    const groups = names
+      .map((name) => [name, shown.filter((row) => groupOf(row.action) === name)])
+      .filter(([, rows]) => rows.length > 0);
     const keycap = (p) =>
       div().px(5).rounded(4).border_1().border_color(t.border).bg(t.raised).text_size(11).text_color(t.dim).child(p);
     return v_flex()
@@ -207,7 +239,7 @@ export default class Help extends View {
                 .gap(2)
                 .child(div().text_size(11.5).font_medium().text_color(t.dim).child(name))
                 .children(
-                  rows.map((k) =>
+                  rows.map((row) =>
                     h_flex()
                       .h(32)
                       .px(8)
@@ -215,14 +247,21 @@ export default class Help extends View {
                       .items_center()
                       .child(
                         h_flex()
-                          .w(200)
+                          .min_w(200)
                           .flex_none()
-                          .gap(3)
+                          .gap(14)
                           .items_center()
-                          .children(keyParts(k.keys).map(keycap))
-                          .when(k.section !== "global", (el) => el.child(div().pl(4).text_size(10.5).text_color(t.dim).child(k.section))),
+                          .children(
+                            row.keys.map((k) =>
+                              h_flex()
+                                .gap(3)
+                                .items_center()
+                                .children(keyParts(k.keys).map(keycap))
+                                .when(k.section !== "global", (el) => el.child(div().pl(4).text_size(10.5).text_color(t.dim).child(k.section))),
+                            ),
+                          ),
                       )
-                      .child(div().text_color(t.foreground).child(k.label)),
+                      .child(div().text_color(t.foreground).child(row.label)),
                   ),
                 ),
             ),

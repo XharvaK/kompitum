@@ -60,6 +60,45 @@ const NAMED = [
   ["app.quit", {}, "App", "Quit Kompitum", "exit"],
 ];
 
+// On the desk layout the groups are these, in this order (Recent first, as
+// always). A DESK entry is [group, command, args, title]; every other entry
+// falls under More. The shortcuts sheet (mods/help) keeps this in step.
+const DESK_GROUPS = ["Recent", "Lead", "Agents", "Terminals", "Window", "More"];
+const DESK = [
+  ["Lead", "lead.open", {}, "Open the lead"],
+  ["Agents", "agent.next", {}, "Next agent"],
+  ["Agents", "agent.prev", {}, "Previous agent"],
+  ["Terminals", "tab.new", {}, "New terminal"],
+  ["Terminals", "mod.open", { name: "picker" }, "Go to terminal…"],
+  ["Terminals", "tab.rename", {}, "Rename terminal"],
+  ["Terminals", "tab.close", {}, "Close terminal"],
+  ["Terminals", "tab.next", {}, "Next terminal"],
+  ["Terminals", "tab.prev", {}, "Previous terminal"],
+  ["Window", "app.mailbox", {}, "Mailbox"],
+  ["Window", "app.settings", {}, "Settings"],
+  ["Window", "app.help", {}, "Keys"],
+  ["Window", "app.zoom_in", {}, "Zoom in"],
+  ["Window", "app.zoom_out", {}, "Zoom out"],
+  ["Window", "app.zoom_reset", {}, "Reset zoom"],
+];
+
+// The shown layout (its name; desk when none is shown yet, as settings reads it).
+const onDesk = () => (shared("layout") ?? "desk") === "desk";
+
+// The desk entries, in DESK's order, then every other entry under More.
+function deskEntries(list) {
+  const keyFor = (name, args) => `${name}:${JSON.stringify(args)}`;
+  const found = new Map(list.map((e) => [keyFor(e.name, e.args), e]));
+  const placed = DESK.filter(([, name, args]) => found.has(keyFor(name, args))).map(([group, name, args, title]) => ({
+    ...found.get(keyFor(name, args)),
+    group,
+    title,
+  }));
+  const placedKeys = new Set(DESK.map(([, name, args]) => keyFor(name, args)));
+  const more = list.filter((e) => !placedKeys.has(keyFor(e.name, e.args))).map((e) => ({ ...e, group: "More" }));
+  return [...placed, ...more];
+}
+
 // Commands that act on something you point at (ids, terminals): not for a list.
 const HIDDEN = new Set([
   "space.move", "tab.move", "space.select", "tab.select", "pane.focus", "terminal.keep",
@@ -87,7 +126,7 @@ function entries() {
     if (named.has(c.name) || HIDDEN.has(c.name) || c.args.some((a) => a.required && a.name !== "name")) continue;
     list.push({ name: c.name, args: {}, ...titleOf(c.name), words: c.about });
   }
-  return list.map((e) => ({ ...e, id: `${e.name}:${JSON.stringify(e.args)}` }));
+  return (onDesk() ? deskEntries(list) : list).map((e) => ({ ...e, id: `${e.name}:${JSON.stringify(e.args)}` }));
 }
 
 // The key bound to an entry: `name` or `name:value` in keys.json.
@@ -180,9 +219,10 @@ export default class Palette extends View {
     const all = entries();
     const q = this.query.trim().toLowerCase().replace(/\s+/g, "");
     if (!q) {
+      const groups = onDesk() ? DESK_GROUPS : GROUPS;
       const recent = this.recent.map((id) => all.find((e) => e.id === id)).filter(Boolean).slice(0, 5);
-      const rest = GROUPS.slice(1).flatMap((g) => all.filter((e) => e.group === g && !recent.includes(e)));
-      const others = all.filter((e) => !GROUPS.includes(e.group) && !recent.includes(e));
+      const rest = groups.slice(1).flatMap((g) => all.filter((e) => e.group === g && !recent.includes(e)));
+      const others = all.filter((e) => !groups.includes(e.group) && !recent.includes(e));
       return [...recent.map((e) => ({ e, head: "Recent" })), ...[...rest, ...others].map((e) => ({ e, head: e.group }))];
     }
     const rank = (e) => this.recent.indexOf(e.id);

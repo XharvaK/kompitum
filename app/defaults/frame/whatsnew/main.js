@@ -57,7 +57,7 @@ export default class WhatsNew extends View {
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .child(div().pl(6).flex_1().text_size(12).text_color(t.dim).child("Something off or missing? Settings › Send feedback."))
         .child(h_flex().id("wn-done").h(30).px(12).items_center().rounded(8).cursor_pointer()
-          .text_size(12.5).font_medium().bg(t.solid).text_color(t.solid_foreground).hover(s => s.opacity(0.88))
+          .text_size(12.5).font_medium().bg(t.accent_fill).text_color(t.accent_foreground).hover(s => s.opacity(0.88))
           .on_click(() => this.done()).child("Got it")));
   }
 }
