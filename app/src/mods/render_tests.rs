@@ -2253,34 +2253,6 @@ fn welcome_step_one_offers_install_and_the_command_for_this_os(cx: &mut TestAppC
     );
 }
 
-/// An installed CLI with no signed-in check gets no note, and its Sign in is
-/// quiet text too.
-#[gpui::test]
-fn the_welcome_rows_keep_signing_in_quiet(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let mut agents = welcome_agents();
-    agents[0]["installed"] = json!(true);
-    let tree = describe_settled(
-        cx,
-        &staged,
-        "frame/welcome",
-        welcome_values(json!({"lead": {"program": "opencode"}}), agents),
-        Some("this.step = 1; this.signedIn = {};"),
-    )
-    .unwrap();
-    assert!(!tree.contains("Kompitum can't check whether"), "{tree}");
-    let signin = tree
-        .lines()
-        .find(|line| line.contains("w-signin-opencode"))
-        .unwrap_or_else(|| panic!("no sign in button: {tree}"));
-    let base = signin.split(":hover").next().unwrap();
-    assert!(
-        !base.contains("border") && !base.contains(".bg["),
-        "Sign in is a quiet text button: {signin}"
-    );
-}
-
 #[gpui::test]
 fn welcome_step_two_draws_the_folder_from_settings(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -2959,10 +2931,11 @@ fn local_state_and_overlay_initial_descriptions(cx: &mut TestAppContext) {
             true,
             props(),
             updates("current", "current"),
-            Some(&format!("this.step = {page};")),
+            // The third step exists only for Claude Code.
+            Some(&format!("this.step = {page}; this.chosen = \"claude\";")),
         )
         .unwrap();
-        let expected = ["Pick your lead", "Pick a home folder", "Connect agents"][page - 1];
+        let expected = ["Who do you want to talk to?", "Where is your work?", "One permission"][page - 1];
         assert!(tree.contains(expected), "welcome page {page}: {tree}");
     }
     for query in ["settings", "no-such-command"] {

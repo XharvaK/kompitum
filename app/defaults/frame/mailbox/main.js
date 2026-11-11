@@ -18,7 +18,7 @@ const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim(
 
 // The same test as frame/settings/vault.js
 function isSyncProblem(words) {
-  return /couldn't be updated|could not be pulled|may be behind/i.test(String(words ?? ""));
+  return /couldn't be updated|could not be pulled|may be behind|still working in the vault|nothing was pulled/i.test(String(words ?? ""));
 }
 
 // A problem reads `<path>: <reason>`. The note's name is its file name, without the date prefix and `.md`.

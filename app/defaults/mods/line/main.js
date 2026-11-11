@@ -68,7 +68,7 @@ function bodyLines(body) {
 
 // The same test as frame/settings/vault.js
 function isSyncProblem(words) {
-  return /couldn't be updated|could not be pulled|may be behind/i.test(String(words ?? ""));
+  return /couldn't be updated|could not be pulled|may be behind|still working in the vault|nothing was pulled/i.test(String(words ?? ""));
 }
 
 // The core says a read's pull failed with these words; they belong behind

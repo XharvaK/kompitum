@@ -1264,7 +1264,7 @@ impl AppWindow {
     fn open_welcome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A window over the live app (nothing dims), centered and movable:
         // each step changes what's behind it, and a click beside it doesn't end it.
-        let spec = json!({ "mod": "frame-welcome", "kind": "window", "width": 660, "height": 600 });
+        let spec = json!({ "mod": "frame-welcome", "kind": "window", "width": 640, "height": 560 });
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 

@@ -16,7 +16,7 @@ function problemText(problem) {
 }
 
 // A problem that says the vault's pull failed, not one about a note's shape.
-const PULL_FAILED = /couldn't be updated|could not be pulled|may be behind/i;
+const PULL_FAILED = /couldn't be updated|could not be pulled|may be behind|still working in the vault|nothing was pulled/i;
 // A ref lock, a rebase onto several branches, or another puller in the way.
 const PULL_BUSY =
   /cannot rebase onto multiple branches|cannot lock|unable to create|unable to update local ref|index\.lock|another git process seems to be running in this repository|remove the file manually to continue|\.lock/i;
