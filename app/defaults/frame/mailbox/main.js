@@ -3,7 +3,7 @@
 // the Owner can be answered or closed; the Owner's read mark follows opening.
 // The app's own mod: rewritten from the binary on every start.
 
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState, TextView } from "gpui-base";
 import { kom, readTextFile, home, props, closeOverlay, notify, theme } from "kompitum";
 
@@ -13,7 +13,30 @@ const UNDO_MS = 6000;
 
 const text = (v) => (typeof v === "string" ? v : "");
 const base = (p) => String(p ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
+const cap = (s) => (s ? String(s).replace(/^./, (c) => c.toUpperCase()) : "");
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+
+// The same test as frame/settings/vault.js
+function isSyncProblem(words) {
+  return /couldn't be updated|could not be pulled|may be behind/i.test(String(words ?? ""));
+}
+
+// A problem reads `<path>: <reason>`. The note's name is its file name, without the date prefix and `.md`.
+function problemParts(problem) {
+  const match = /^(.*?): ([\s\S]*)$/.exec(String(problem));
+  const path = match ? match[1] : String(problem);
+  const reason = match ? match[2].trim() : "";
+  const name = base(path).replace(/^\d{4}-\d{2}-\d{2}_\d{4}_/, "").replace(/\.md$/, "");
+  return { name, reason: plainReason(reason) };
+}
+
+function plainReason(reason) {
+  const unknown = /^has an unknown status: (.*)$/.exec(reason);
+  if (unknown) return `Its status is “${unknown[1]}”, which Kompitum doesn't know.`;
+  if (!reason) return "";
+  const said = cap(reason);
+  return /[.!?]$/.test(said) ? said : `${said}.`;
+}
 
 function problemText(problem) {
   if (typeof problem === "string") return problem;
@@ -119,6 +142,8 @@ export default class Mailbox extends View {
     this.loaded = false;
     this.loading = false;
     this.selected = null;
+    // Show puts the notes that couldn't be filed in the reading pane, in place of a note.
+    this.filedOpen = false;
     this.body = null;
     this.bodyError = null;
     this.answering = false;
@@ -245,6 +270,7 @@ export default class Mailbox extends View {
   select(note, cx) {
     if (!note) return;
     this.selected = note;
+    this.filedOpen = false;
     this.body = null;
     this.bodyError = null;
     this.answering = false;
@@ -271,6 +297,20 @@ export default class Mailbox extends View {
       }
       cx.notify();
     });
+  }
+
+  // Show: the notes that couldn't be filed, in the reading pane. Selecting a note leaves it.
+  openFiled(cx) {
+    this.selected = null;
+    this.filedOpen = true;
+    this.body = null;
+    this.bodyError = null;
+    this.answering = false;
+    this.actionError = null;
+    this.answer = "";
+    this.answerState.set_value("");
+    this.handle.focus();
+    cx.notify();
   }
 
   readBody(note, cx) {
@@ -555,14 +595,41 @@ export default class Mailbox extends View {
       );
   }
 
+  // The notes that couldn't be filed, two lines each: the name, then why.
+  filedPane(t, filed) {
+    return v_flex()
+      .id("mail-filed")
+      .flex_1()
+      .min_w(0)
+      .min_h(0)
+      .h_full()
+      .p(24)
+      .gap(12)
+      .overflow_y_scrollbar()
+      .children(filed.map((problem, i) => {
+        const { name, reason } = problemParts(problem);
+        return v_flex()
+          .id(`mail-filed-${i}`)
+          .flex_none()
+          .gap(2)
+          .child(div().text_size(14).text_color(t.foreground).child(name))
+          .when(Boolean(reason), (el) => el.child(div().text_size(12).text_color(t.dim).child(reason)));
+      }));
+  }
+
   notePane(t, cx) {
     const note = this.selected;
+    if (!note && this.filedOpen) {
+      const filed = this.problems.filter((problem) => !isSyncProblem(problem));
+      if (filed.length) return this.filedPane(t, filed);
+    }
     if (!note) {
       if (this.closing.length) {
         return v_flex()
           .flex_1()
           .min_w(0)
           .min_h(0)
+          .h_full()
           .child(div().flex_1())
           .child(
             h_flex()
@@ -580,6 +647,7 @@ export default class Mailbox extends View {
         .flex_1()
         .min_w(0)
         .min_h(0)
+        .h_full()
         .items_center()
         .justify_center()
         // While the list loads it says so itself; the reading pane stays empty.
@@ -589,9 +657,11 @@ export default class Mailbox extends View {
     const kind = text(note.kind) || "note";
     const meta = [route(note), kind, stamp(note.date)].filter(Boolean).join(" · ");
     return v_flex()
+      .id("mail-note")
       .flex_1()
       .min_w(0)
       .min_h(0)
+      .h_full()
       .child(
         v_flex()
           .flex_none()
@@ -601,7 +671,7 @@ export default class Mailbox extends View {
           .gap(5)
           .border_b(1)
           .border_color(t.border)
-          .child(div().w_full().max_w(680).truncate().text_size(18).font_semibold().text_color(t.foreground).child(text(note.title) || base(note.path) || "Note"))
+          .child(div().id("mail-note-title").w_full().max_w(680).truncate().text_size(18).font_semibold().text_color(t.foreground).child(text(note.title) || base(note.path) || "Note"))
           .child(div().w_full().max_w(680).truncate().text_size(12).text_color(t.dim).child(meta)),
       )
       .child(this.bodyPane(t))
@@ -647,10 +717,42 @@ export default class Mailbox extends View {
       );
   }
 
+  // The sheet's top: its name, and the close that the Settings sheet draws too.
+  sheetHeader(t) {
+    return h_flex()
+      .h(52)
+      .w_full()
+      .flex_none()
+      .pl(16)
+      .pr(12)
+      .items_center()
+      .border_b(1)
+      .border_color(t.border)
+      .child(div().flex_1().min_w(0).text_size(15).font_semibold().text_color(t.foreground).child("Mailbox"))
+      .child(
+        div()
+          .id("mail-sheet-close")
+          .w(28)
+          .h(28)
+          .flex_none()
+          .rounded(6)
+          .flex()
+          .items_center()
+          .justify_center()
+          .text_color(t.muted)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .on_click(() => closeOverlay(props()?.overlay))
+          .child(svg("mods/workspace-chrome/x.svg").size(14)),
+      );
+  }
+
   render(cx) {
     const t = theme();
     const rows = this.rows();
-    return h_flex()
+    const sync = this.problems.filter((problem) => isSyncProblem(problem));
+    const filed = this.problems.filter((problem) => !isSyncProblem(problem));
+    return v_flex()
       .id("mailbox")
       .track_focus(this.handle)
       .w_full()
@@ -666,49 +768,83 @@ export default class Mailbox extends View {
         cx.stop_propagation();
         cx.notify();
       })
+      .child(this.sheetHeader(t))
       .child(
-        v_flex()
-          .w(300)
-          .flex_none()
-          .h_full()
+        h_flex()
+          .flex_1()
           .min_h(0)
-          .border_r(1)
-          .border_color(t.border)
-          .child(
-            h_flex()
-              .flex_none()
-              .px(10)
-              .py(8)
-              .border_b(1)
-              .border_color(t.border)
-              .child(this.tabs(t)),
-          )
-          .when(this.problems.length > 0, (el) =>
-            el.child(
-              v_flex()
-                .flex_none()
-                .px(10)
-                .py(6)
-                .gap(2)
-                .border_b(1)
-                .border_color(t.border)
-                .children(this.problems.map((problem, i) => div().id(`mail-problem-${i}`).text_size(10.5).line_height("15px").text_color(t.blocked).tooltip(problem).child(firstLine(problem) || problem))),
-            ),
-          )
-          .when(Boolean(this.error), (el) => el.child(div().id("mail-load-error").flex_none().px(10).py(6).text_size(11).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)))
           .child(
             v_flex()
-              .id("mail-rows")
-              .flex_1()
+              .w(300)
+              .flex_none()
+              .h_full()
               .min_h(0)
-              .p(8)
-              .gap(2)
-              .overflow_y_scrollbar()
-              .when(this.loading && !this.loaded, (el) => el.child(div().p(8).text_size(11.5).text_color(t.muted).child("Loading notes…")))
-              .children(rows.map((note, i) => this.row(t, note, i)))
-              .when(this.loaded && rows.length === 0, (el) => el.child(div().p(8).text_size(12.5).text_color(t.dim).child("Nothing here yet."))),
-          ),
-      )
-      .child(this.notePane(t, cx));
+              .border_r(1)
+              .border_color(t.border)
+              .child(
+                h_flex()
+                  .flex_none()
+                  .px(10)
+                  .py(8)
+                  .border_b(1)
+                  .border_color(t.border)
+                  .child(this.tabs(t)),
+              )
+              .when(sync.length > 0, (el) =>
+                el.child(
+                  v_flex()
+                    .flex_none()
+                    .px(10)
+                    .py(6)
+                    .gap(2)
+                    .border_b(1)
+                    .border_color(t.border)
+                    .children(sync.map((problem, i) => div().id(`mail-problem-${i}`).text_size(12).line_height("17px").text_color(t.blocked).tooltip(problem).child(firstLine(problem) || problem))),
+                ),
+              )
+              .when(Boolean(this.error), (el) => el.child(div().id("mail-load-error").flex_none().px(10).py(6).text_size(12).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)))
+              .child(
+                v_flex()
+                  .id("mail-rows")
+                  .flex_1()
+                  .min_h(0)
+                  .p(8)
+                  .gap(2)
+                  .overflow_y_scrollbar()
+                  .when(this.loading && !this.loaded, (el) => el.child(div().p(8).text_size(11.5).text_color(t.muted).child("Loading notes…")))
+                  .children(rows.map((note, i) => this.row(t, note, i)))
+                  .when(this.loaded && rows.length === 0, (el) => el.child(div().p(8).text_size(12.5).text_color(t.dim).child(this.tab === "all" ? "No notes yet." : "Nothing needs you."))),
+              )
+              .when(filed.length > 0, (el) =>
+                el.child(
+                  h_flex()
+                    .id("mail-filed-bar")
+                    .h(30)
+                    .w_full()
+                    .flex_none()
+                    .px(12)
+                    .gap(8)
+                    .items_center()
+                    .border_t(1)
+                    .border_color(t.border)
+                    .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(`${filed.length} ${filed.length === 1 ? "note" : "notes"} couldn't be filed`))
+                    .child(
+                      div()
+                        .id("mail-show-filed")
+                        .px(6)
+                        .py(2)
+                        .rounded(5)
+                        .cursor_pointer()
+                        .text_size(12)
+                        .text_color(t.accent)
+                        .hover((s) => s.text_color(t.foreground))
+                        .on_click((_e, cx) => this.openFiled(cx))
+                        .child("Show"),
+                    ),
+                ),
+              ),
+          )
+          .child(this.notePane(t, cx)),
+      );
   }
 }

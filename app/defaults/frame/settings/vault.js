@@ -83,10 +83,13 @@ export function vaultSection(view, t, cx) {
   const needs = Array.isArray(vault?.notes) ? vault.notes.length : 0;
   const problems = Array.isArray(vault?.problems) ? vault.problems.map(problemText).filter(Boolean) : [];
   const pull = pullProblem(problems);
-  const otherProblems = problems.filter((problem) => !PULL_FAILED.test(problem));
+  // Notes that couldn't be filed: not a failed pull, so they wait under Unfiled.
+  const filed = problems.filter((problem) => !PULL_FAILED.test(problem));
   const value = (label) => div().max_w(480).min_w(0).truncate().text_size(12.5).text_color(t.muted).child(label);
   const placeholder = () => div().w(110).h(9).rounded(5).bg(t.hover);
-  const folderControl = folder ? value(folder) : vault || view.vaultError ? value("Not set") : placeholder();
+  // Windows shows its own backslashes, not the forward slashes git prints.
+  const shown = /^[A-Za-z]:\//.test(folder) ? folder.replace(/\//g, "\\") : folder;
+  const folderControl = folder ? value(shown) : vault || view.vaultError ? value("Not set") : placeholder();
   let state;
   if (!vault && !view.vaultError) {
     state = placeholder();
@@ -137,12 +140,13 @@ export function vaultSection(view, t, cx) {
   return v_flex()
     .w_full()
     .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
-      .child("Notes your agents leave each other, kept in Git."))
+      .child("The notes your agents leave each other."))
     .child(view.row(t, "Folder", null, folderControl))
-    .child(view.row(t, "State", null, state))
-    .children(otherProblems.map((problem, i) =>
-      div().id(`st-vault-problem-${i}`).pb(6).text_size(12.5).line_height("18px").text_color(t.blocked).tooltip(problem).child(firstLine(problem) || problem),
-    ))
+    .child(view.row(t, "Sync", null, state))
+    .when(filed.length > 0, (el) => el.child(view.row(t, "Unfiled", null, h_flex().gap(8).items_center()
+      // The problems' own words stay in the tooltip, as git's words do under Sync.
+      .child(value(`${filed.length} ${filed.length === 1 ? "note" : "notes"}`).tooltip(filed.join("\n")))
+      .child(view.textButton(t, "st-vault-unfiled", "Show", () => run("app.mailbox"))))))
     .child(view.row(t, "Needs you", null, value(`${needs} ${needs === 1 ? "note" : "notes"}`)))
     .child(h_flex().pt(16).child(view.button(t, "st-open-mailbox", "Open the mailbox", () => run("app.mailbox"))));
 }

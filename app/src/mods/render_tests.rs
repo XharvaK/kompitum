@@ -2441,7 +2441,7 @@ fn vault_says_not_set_without_a_vault(cx: &mut TestAppContext) {
     let mut values = fixture(true, p, updates("current", "current"));
     values.insert("vaultMissing".into(), json!(true));
     let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
-    assert!(tree.contains("Notes your agents leave each other, kept in Git."), "{tree}");
+    assert!(tree.contains("The notes your agents leave each other."), "{tree}");
     assert!(tree.contains("Not set"), "{tree}");
     assert!(tree.contains("Couldn't update"), "{tree}");
     assert!(tree.contains("st-vault-retry"), "{tree}");
@@ -3328,7 +3328,7 @@ fn the_status_bar_counts_the_live_lead(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn the_line_says_it_may_be_behind_and_strips_markdown_previews(cx: &mut TestAppContext) {
+fn the_notes_say_they_couldnt_sync_and_strip_markdown_previews(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let mut values = fixture(true, props(), updates("current", "current"));
@@ -3345,7 +3345,8 @@ fn the_line_says_it_may_be_behind_and_strips_markdown_previews(cx: &mut TestAppC
         }),
     );
     let tree = describe_settled(cx, &staged, "mods/line", values, None).unwrap();
-    assert!(tree.contains("The Line may be behind."), "{tree}");
+    assert!(tree.contains("Couldn't sync the notes."), "{tree}");
+    assert!(!tree.contains("The Line"), "{tree}");
     assert!(
         tree.contains("line-retry") && tree.contains("Retry"),
         "{tree}"
@@ -3390,6 +3391,33 @@ export default class Probe extends View {
     );
 }
 
+/// A note the vault couldn't file is one line under the header, not a red line
+/// per problem; a sync failure keeps its own words, and there is none here.
+#[gpui::test]
+fn the_drop_up_counts_notes_that_couldnt_be_filed(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert(
+        "threadJson".into(),
+        json!({
+            "vault": "/fixture/vault", "agent": "opus", "unpushed": 0,
+            "problems": ["manager/to/opus/2026-11-10_0615_1b-merged.md: has an unknown status: done"],
+            "notes": [{
+                "path": "manager/to/opus/2026-11-08-markdown.md", "from": "manager", "to": ["opus"],
+                "title": "Tests pass", "date": "2026-11-08T09:00:00+03:00", "status": "open",
+                "body": "The body under the title."
+            }]
+        }),
+    );
+    let tree = describe_settled(cx, &staged, "mods/line", values, None).unwrap();
+    // The notes sit in a virtual list, which describes its one row by count only.
+    assert!(tree.contains("v_virtual_list \"line-notes\" \u{d7}1"), "the note is listed: {tree}");
+    assert!(tree.contains("1 note couldn't be filed"), "{tree}");
+    assert!(!tree.contains("Couldn't sync the notes."), "{tree}");
+    assert!(!tree.contains("has an unknown status"), "{tree}");
+}
+
 #[gpui::test]
 fn agents_empty_state_is_calm(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -3424,9 +3452,11 @@ fn the_mailbox_lists_both_tabs_and_a_row_per_note(cx: &mut TestAppContext) {
     assert!(tree.contains("All notes"), "{tree}");
     assert!(tree.contains("Please review"), "{tree}");
     assert!(tree.contains("Progress on the build"), "{tree}");
+    assert!(tree.contains("1 note couldn't be filed"), "{tree}");
+    assert!(tree.contains("mail-show-filed") && tree.contains("Show"), "{tree}");
     assert!(
-        tree.contains("fixture: a note's mark file is damaged"),
-        "problems must be drawn in words: {tree}"
+        !tree.contains("mark file is damaged"),
+        "a note problem is not drawn as a raw line: {tree}"
     );
 }
 
@@ -3485,6 +3515,105 @@ fn the_mailbox_answer_opens_a_multi_line_field_with_send(cx: &mut TestAppContext
     );
 }
 
+/// The vault's answer with two notes it couldn't file: no sync problem, two raw lines.
+fn two_unfiled_notes() -> Value {
+    json!({
+        "vault": "/fixture/vault", "agent": "owner", "unpushed": 0,
+        "problems": [
+            "manager/to/owner/2026-11-10_0615_1b-merged.md: has an unknown status: done",
+            "worker/to/owner/2026-11-09_1200_2c-stale.md: has an unknown status: stale"
+        ],
+        "notes": [vault_owner_note()]
+    })
+}
+
+#[gpui::test]
+fn the_mailbox_counts_notes_it_couldnt_file_and_draws_no_raw_line(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("vaultJson".into(), two_unfiled_notes());
+    let tree = describe_settled(cx, &staged, "frame/mailbox", values, None).unwrap();
+    assert!(tree.contains("2 notes couldn't be filed"), "{tree}");
+    assert!(tree.contains("mail-show-filed") && tree.contains("Show"), "{tree}");
+    assert!(!tree.contains("has an unknown status"), "{tree}");
+    assert!(!tree.contains("1b-merged.md"), "{tree}");
+    assert!(!tree.contains("2c-stale.md"), "{tree}");
+}
+
+/// Show lists each note by its name without the date prefix, and says why in a second line.
+#[gpui::test]
+fn show_names_each_unfiled_note_and_says_why(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("vaultJson".into(), two_unfiled_notes());
+    let tree = describe_settled(cx, &staged, "frame/mailbox", values, Some("this.openFiled(cx);")).unwrap();
+    assert!(tree.contains("1b-merged"), "{tree}");
+    assert!(tree.contains("2c-stale"), "{tree}");
+    assert!(!tree.contains("2026-11-10_0615_"), "the date prefix is left out: {tree}");
+    assert!(tree.contains("Its status is \u{201c}done\u{201d}, which Kompitum doesn't know."), "{tree}");
+    assert!(tree.contains("Its status is \u{201c}stale\u{201d}, which Kompitum doesn't know."), "{tree}");
+}
+
+/// Mounts the mailbox with an opened note; returns its tree, the reading pane's bounds and the title's.
+fn opened_note_laid_out(
+    cx: &mut TestAppContext,
+) -> (String, gpui::Bounds<gpui::Pixels>, gpui::Bounds<gpui::Pixels>) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let mut p = props();
+    p["note"] = json!("manager/to/owner/2026-11-08-please-review.md");
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-mail-pane.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(fixture(true, p, updates("current", "current")), calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.0.join("frame/mailbox");
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let pane = visual.debug_bounds("mail-note").expect("the reading pane is laid out");
+    let title = visual.debug_bounds("mail-note-title").expect("the title is laid out");
+    let content = window
+        .update(cx, |mounted, _, cx| mounted.0.read(cx).content().clone())
+        .unwrap();
+    let script = content
+        .downcast::<gpui_shell::ScriptView>()
+        .unwrap_or_else(|_| panic!("the mailbox is not a script view"));
+    let tree = visual.update(|_, cx| {
+        script
+            .read(cx)
+            .snapshot()
+            .expect("the mailbox has a rendered tree")
+            .debug_tree()
+    });
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    (tree, pane, title)
+}
+
+/// An opened note draws its body, and its title sits at the top of the reading pane.
+#[gpui::test]
+fn an_opened_note_draws_its_body_with_the_title_at_the_top(cx: &mut TestAppContext) {
+    let (tree, pane, title) = opened_note_laid_out(cx);
+    assert!(tree.contains("A body from the vault"), "{tree}");
+    assert!(title.origin.y >= pane.origin.y, "the title is inside the pane: {tree}");
+    assert!(
+        title.origin.y < pane.origin.y + gpui::px(80.),
+        "the title sits in the top 80 px of the pane: {tree}"
+    );
+}
+
 #[gpui::test]
 fn the_vault_section_draws_its_folder_and_mailbox_button(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -3502,11 +3631,9 @@ fn the_vault_section_draws_its_folder_and_mailbox_button(cx: &mut TestAppContext
     assert!(tree.contains("st-s-vault"), "{tree}");
     assert!(tree.contains("/fixture/vault"), "{tree}");
     assert!(tree.contains("2 notes not sent yet"), "{tree}");
-    assert!(
-        tree.contains("fixture: a note's mark file is damaged"),
-        "{tree}"
-    );
-    assert!(tree.contains("1 note"), "{tree}");
+    assert!(tree.contains("Sync"), "the State row is now Sync: {tree}");
+    assert!(tree.contains("Unfiled") && tree.contains("1 note"), "{tree}");
+    assert!(tree.contains("st-vault-unfiled") && tree.contains("Show"), "{tree}");
     assert!(tree.contains("Open the mailbox"), "{tree}");
 }
 

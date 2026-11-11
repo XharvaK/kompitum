@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
-import { kom, theme, notify, playSound, openOverlay, closeOverlay, props } from "kompitum";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, run } from "kompitum";
 
 // The same two colors the Board's chips use.
 const OPUS = "accent";
@@ -66,13 +66,15 @@ function bodyLines(body) {
   return value ? value.split("\n").slice(0, 4).map(stripMarkdown) : [];
 }
 
+// The same test as frame/settings/vault.js
+function isSyncProblem(words) {
+  return /couldn't be updated|could not be pulled|may be behind/i.test(String(words ?? ""));
+}
+
 // The core says a read's pull failed with these words; they belong behind
 // "Details", not over a card.
 function behindProblems(problems) {
-  return problems.filter((problem) => {
-    const words = problemText(problem);
-    return /vault (?:couldn't|could not) be (?:updated|pulled)|another kom is still working in the vault|nothing was pulled/i.test(words);
-  });
+  return problems.filter((problem) => isSyncProblem(problemText(problem)));
 }
 
 // The row heights the cards below are built from: padding, border, one line
@@ -305,7 +307,7 @@ export default class Line extends View {
     const t = theme();
     const behind = behindProblems(this.problems);
     const details = behind;
-    const otherProblems = this.problems.filter((problem) => !behind.includes(problem));
+    const filed = this.problems.filter((problem) => !isSyncProblem(problemText(problem)));
     return v_flex()
       .id("line")
       .size_full()
@@ -314,7 +316,7 @@ export default class Line extends View {
       .text_color(t.foreground)
       .text_size(13)
       .child(h_flex().h(42).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child("Line"))
+        .child(div().font_semibold().child("Notes"))
         .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(`with ${cap(this.other)}`))
         .child(div()
           .id("line-refresh")
@@ -330,7 +332,7 @@ export default class Line extends View {
       .when(this.unpushed > 0, (el) => el.child(div().px(12).pt(6).text_size(11).text_color(t.muted)
         .child(`${this.unpushed} unpushed`)))
       .when(details.length > 0, (el) => el.child(h_flex().id("line-behind").px(12).pt(6).gap(8).items_center()
-        .child(div().text_size(11).text_color(t.muted).child("The Line may be behind."))
+        .child(div().text_size(11).text_color(t.muted).child("Couldn't sync the notes."))
         .child(div().id("line-retry").text_size(11).text_color(t.accent).cursor_pointer()
           .hover((s) => s.text_color(t.foreground))
           .on_click((_e, cx) => this.retry(cx))
@@ -350,17 +352,10 @@ export default class Line extends View {
           .hover((s) => s.text_color(t.foreground))
           .on_click((_e, cx) => this.retry(cx))
           .child("Retry"))))
-      .children(otherProblems.map((problem, i) => {
-        const message = problemText(problem);
-        return div()
-          .id(`line-problem-${i}`)
-          .px(12)
-          .pt(4)
-          .text_size(11)
-          .text_color(t.muted)
-          .tooltip(message)
-          .child(firstLine(message) || message);
-      }))
+      .when(filed.length > 0, (el) => el.child(div().id("line-filed").px(12).pt(6).text_size(11).text_color(t.dim).cursor_pointer()
+        .hover((s) => s.text_color(t.foreground))
+        .on_click(() => { closeOverlay(props()?.overlay); run("app.mailbox"); })
+        .child(`${filed.length} ${filed.length === 1 ? "note" : "notes"} couldn't be filed · Open the mailbox`)))
       .child(v_flex().flex_1().min_h(0).relative()
         .when(this.notes.length === 0, (el) => el.p(12).child(div().text_size(12).text_color(t.muted)
           .child(this.error ? "No notes to show." : this.loaded ? "No notes yet." : "Loading notes…")))
