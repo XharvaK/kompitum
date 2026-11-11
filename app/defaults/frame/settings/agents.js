@@ -7,7 +7,8 @@ import { v_flex, h_flex } from "gpui-base";
 import { kom, exec, knownAgents, pickFolder, window } from "kompitum";
 import { dropdown } from "./ui.js";
 
-const BUILTIN = new Set(["cc", "codex", "go", "free"]);
+// The core's built-in workers (`builtin()` in crates/kompitum-core/src/task/worker.rs): none of them can be removed.
+const BUILTIN = new Set(["cc", "go", "free", "codex", "haiku"]);
 const USAGE_EVERY_MS = 60000;
 const DETAIL_LIMIT = 32;
 
@@ -36,6 +37,7 @@ export function ensureAgents(view) {
     workers: null,
     status: null,
     errors: [],
+    workerError: null,
     busy: false,
     usage: {},
     usageError: {},
@@ -114,7 +116,7 @@ async function loadUsage(view, cx, s, force) {
 // 80% and over is working; 100% (or the report's own limited flag) is blocked.
 function usageMeters(t, meters) {
   const parts = [];
-  for (const [label, meter] of [["5H", meters?.rolling], ["Week", meters?.weekly], ["Month", meters?.monthly]]) {
+  for (const [label, meter] of [["5h", meters?.rolling], ["week", meters?.weekly], ["month", meters?.monthly]]) {
     const percent = meter?.percent;
     if (percent == null || !Number.isFinite(Number(percent))) continue;
     const used = Math.round(Number(percent));
@@ -166,8 +168,15 @@ function routeModel(route) {
   return model;
 }
 
+// The model's name from the CLI's list when it has one; else a name built from its id, so a raw id never shows.
 function modelLabel(entry, id) {
-  return entry?.models?.find((m) => m.id === id)?.label ?? id;
+  return entry?.models?.find((m) => m.id === id)?.label ?? modelWords(id);
+}
+
+// "claude-haiku-5-5" reads "Claude Haiku 5.5"; "deepseek/deepseek-v4.1-flash" reads "Deepseek V4.1 Flash".
+function modelWords(id) {
+  const name = String(id ?? "").split("/").pop().replace(/(\d)-(\d+)$/, "$1.$2");
+  return name.split("-").filter(Boolean).map(cap).join(" ");
 }
 
 function programFor(s, cli) {
@@ -175,16 +184,19 @@ function programFor(s, cli) {
 }
 
 const WINDOWS = [
-  { label: "5H", block: "5-hour", clock: true },
+  { label: "5h", block: "5-hour", clock: true },
   { label: "Week", block: "weekly", clock: false },
   { label: "Month", block: "monthly", clock: false },
 ];
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 function two(n) {
   return String(n).padStart(2, "0");
 }
 
-function resetWords(ms, clock) {
+// A time the core sent: milliseconds, seconds or an ISO text. Null when there is none.
+function dateOf(ms) {
   if (ms == null || ms === 0) return null;
   let when;
   if (typeof ms === "string" && Number.isNaN(Number(ms))) {
@@ -194,14 +206,38 @@ function resetWords(ms, clock) {
     if (!Number.isFinite(value)) return null;
     when = new Date(value > 1e12 ? value : value * 1000);
   }
-  if (Number.isNaN(when.getTime())) return null;
+  return Number.isNaN(when.getTime()) ? null : when;
+}
+
+function clockWords(when) {
+  return `${two(when.getHours())}:${two(when.getMinutes())}`;
+}
+
+function dayMonth(when) {
+  return `${when.getDate()} ${MONTHS[when.getMonth()]}`;
+}
+
+function sameDay(when, now) {
+  return when.getFullYear() === now.getFullYear() && when.getMonth() === now.getMonth() && when.getDate() === now.getDate();
+}
+
+// When a window reopens: the clock time for the 5-hour window or for today, a weekday within a week, else "23 Nov".
+function resetWords(ms, clock) {
+  const when = dateOf(ms);
+  if (!when) return null;
   const now = new Date();
-  const sameDay = when.getFullYear() === now.getFullYear() && when.getMonth() === now.getMonth() && when.getDate() === now.getDate();
-  if (clock || sameDay) return `${two(when.getHours())}:${two(when.getMinutes())}`;
+  if (clock || sameDay(when, now)) return clockWords(when);
   const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const days = Math.round((midnight(when) - midnight(now)) / 86400000);
-  if (Math.abs(days) < 7) return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][when.getDay()];
-  return `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][when.getMonth()]} ${when.getDate()}`;
+  if (Math.abs(days) < 7) return WEEKDAYS[when.getDay()];
+  return dayMonth(when);
+}
+
+// When an out worker with no window is back, if that is still ahead: the clock time when it is today, else "23 Nov".
+function backWords(ms) {
+  const when = dateOf(ms);
+  if (!when || when.getTime() <= Date.now()) return null;
+  return sameDay(when, new Date()) ? clockWords(when) : dayMonth(when);
 }
 
 function programIcon(entry, size, t) {
@@ -341,6 +377,7 @@ function leadSection(view, t, cx, s) {
   const modelMenu = dropdown(t, "st-lead-model", {
     items: modelItems,
     value: lead.model ?? "",
+    empty: "Default",
     onPick: (value, cx) => saveLead(view, { model: value }, cx),
     state: sState.leadModel,
     search: true,
@@ -350,7 +387,7 @@ function leadSection(view, t, cx, s) {
   const effortMenu = entry.efforts?.length
     ? dropdown(t, "st-lead-effort", {
         items: [
-          { value: "", label: "Its own default" },
+          { value: "", label: "Default" },
           ...(entry.efforts ?? []).map((level) => ({ value: level, label: cap(level) })),
           // A saved level this CLI no longer lists still shows as the pick.
           ...(effort && !entry.efforts.includes(effort) ? [{ value: effort, label: cap(effort) }] : []),
@@ -367,7 +404,7 @@ function leadSection(view, t, cx, s) {
     .child(view.heading(t, "Lead"))
     .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
       .child("The agent you talk to. It plans, asks you, and hands work to the workers below."))
-    .child(cliMenu)
+    .child(view.row(t, "Agent", null, cliMenu, "lead"))
     .when(Boolean(usage), (el) => el.child(div().pt(6).child(usage)))
     .child(view.row(t, "Model", null, modelMenu, "lead_model"))
     .when(Boolean(modelNote), (el) => el.child(modelNote))
@@ -384,30 +421,47 @@ function leadSection(view, t, cx, s) {
         .child(view.button(t, "st-lead-folder", "Choose\u2026", (_e, cx) => chooseFolder(view, cx))),
       "folder",
     ))
-    .child(div().pt(8).text_size(12).text_color(t.dim).child("Changes apply to the lead's next conversation."));
+    .child(div().pt(8).text_size(12).text_color(t.dim).child("Applies when the lead restarts."));
 }
 
+// The worker's own line: what it is waiting for, in words the page builds (never the core's sentence, which is the tooltip).
 function workerState(t, worker) {
-  if (worker.state === "not_installed") return div().text_size(12).text_color(t.dim).child("Not installed");
+  if (worker.state === "not_installed") return div().w_full().text_size(12).text_color(t.dim).truncate().child("Not installed");
   if (worker.state !== "out") return null;
   const window = WINDOWS.find((w) => w.block === worker.window);
-  const text = window
-    ? `${window.label} exhausted · resets ${resetWords(worker.until_ms, window.clock)}`
-    : worker.sentence;
-  return div().text_size(12).text_color(t.working).truncate().child(text);
+  let text;
+  if (window) {
+    const back = resetWords(worker.until_ms, window.clock);
+    text = back ? `${window.label} used up · back ${back}` : `${window.label} used up`;
+  } else {
+    const back = backWords(worker.until_ms);
+    text = back ? `Out · back ${back}` : "Out of quota";
+  }
+  return div().w_full().text_size(12).text_color(t.working).truncate()
+    .when(Boolean(worker.sentence), (el) => el.tooltip(worker.sentence))
+    .child(text);
 }
 
-function keyButton(t, id, label, onClick) {
-  return div().id(id).w(22).h(22).flex_none().flex().items_center().justify_center().rounded(5)
-    .text_size(12).text_color(t.dim)
+const ICON_UP = "mods/lead/chevron-up.svg";
+const ICON_DOWN = "mods/workspace-chrome/chevron-down.svg";
+const ICON_CLOSE = "frame/settings/close.svg";
+
+function keyButton(t, id, icon, onClick) {
+  return div().id(id).w(28).h(28).flex_none().flex().items_center().justify_center().rounded(6)
+    .text_color(t.dim)
     .hover((s) => s.bg(t.hover).text_color(t.foreground))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
     .on_click(onClick)
-    .child(label);
+    .child(svg(icon).size(14));
+}
+
+// Claude's own entry: the catalog's when it lists one, else its bundled mark. Its workers and its subagents draw it.
+function claudeEntry(s) {
+  return (s.known ?? []).find((entry) => entry.key === "claude") ?? { key: "claude", name: "Claude Code", icon: "icons/claude.svg", tint: false };
 }
 
 function workerRow(view, t, cx, s, worker, index) {
-  const entry = programFor(s, worker.cli) ?? { name: worker.label, icon: null };
+  const entry = programFor(s, worker.cli) ?? (worker.cli === "claude" ? claudeEntry(s) : { name: worker.label, icon: null });
   const model = routeModel(worker.route);
   const state = workerState(t, worker);
   const reported = entry.key ? usageMeters(t, s.usage[entry.key]) : null;
@@ -447,17 +501,19 @@ function workerRow(view, t, cx, s, worker, index) {
       .child(programIcon(entry, 16, t))
       .child(v_flex().flex_1().min_w(0).gap(2)
         .child(div().text_size(13.5).text_color(t.foreground).truncate().child(worker.label))
-        .child(div().text_size(12).text_color(t.dim).truncate().child(modelLabel(entry, model))))
-      .when(Boolean(state), (el) => el.child(state.flex_none()))
-      .child(keyButton(t, `st-worker-up-${worker.key}`, "↑", (_e, cx) => workerStep(view, index, -1, cx)))
-      .child(keyButton(t, `st-worker-down-${worker.key}`, "↓", (_e, cx) => workerStep(view, index, 1, cx)))
-      .when(!BUILTIN.has(worker.key), (el) => el.child(keyButton(t, `st-worker-remove-${worker.key}`, "×", (_e, cx) => removeWorker(view, worker, cx)))));
-  if (usage) row.child(usage);
+        .child(div().text_size(12).text_color(t.dim).truncate()
+          .when(Boolean(model), (el) => el.tooltip(model))
+          .child(modelLabel(entry, model))))
+      .child(keyButton(t, `st-worker-up-${worker.key}`, ICON_UP, (_e, cx) => workerStep(view, index, -1, cx)))
+      .child(keyButton(t, `st-worker-down-${worker.key}`, ICON_DOWN, (_e, cx) => workerStep(view, index, 1, cx)))
+      .when(!BUILTIN.has(worker.key), (el) => el.child(keyButton(t, `st-worker-remove-${worker.key}`, ICON_CLOSE, (_e, cx) => removeWorker(view, worker, cx)))))
+    .when(Boolean(state), (el) => el.child(state))
+    .when(Boolean(usage), (el) => el.child(usage));
   return row;
 }
 
 function subagentRow(view, t, cx, s, name, index) {
-  const claude = (s.known ?? []).find((entry) => entry.key === "claude") ?? { icon: "icons/claude.svg", tint: false };
+  const claude = claudeEntry(s);
   const row = v_flex()
     .id(`st-subagent-${name}`)
     .relative()
@@ -485,9 +541,9 @@ function subagentRow(view, t, cx, s, name, index) {
       .child(v_flex().flex_1().min_w(0).gap(2)
         .child(div().text_size(13.5).text_color(t.foreground).child("Claude Code"))
         .child(div().text_size(12).text_color(t.dim).child(name)))
-      .child(keyButton(t, `st-subagent-up-${name}`, "↑", (_e, cx) => workerStep(view, `sub:${index}`, -1, cx)))
-      .child(keyButton(t, `st-subagent-down-${name}`, "↓", (_e, cx) => workerStep(view, `sub:${index}`, 1, cx)))
-      .child(keyButton(t, `st-subagent-remove-${name}`, "×", (_e, cx) => removeSubagent(view, name, cx))));
+      .child(keyButton(t, `st-subagent-up-${name}`, ICON_UP, (_e, cx) => workerStep(view, `sub:${index}`, -1, cx)))
+      .child(keyButton(t, `st-subagent-down-${name}`, ICON_DOWN, (_e, cx) => workerStep(view, `sub:${index}`, 1, cx)))
+      .child(keyButton(t, `st-subagent-remove-${name}`, ICON_CLOSE, (_e, cx) => removeSubagent(view, name, cx))));
   return row;
 }
 
@@ -557,9 +613,11 @@ function komCall(view, args, cx) {
         throw new Error(message || `kom ${args[0]} failed`);
       }
       s.busy = false;
+      s.workerError = null;
       loadAgents(view, cx);
     } catch (error) {
-      s.errors = [errorText(error)];
+      // Drawn under the Workers heading, where the Owner is looking, not at the top of the page.
+      s.workerError = errorText(error);
     }
     cx.notify();
   });
@@ -863,18 +921,28 @@ function dayWords(ms) {
   return `${at.getDate()} ${month}${at.getFullYear() !== now.getFullYear() ? ` ${at.getFullYear()}` : ""}`;
 }
 
+// The version number in a CLI's report: "grok 1.0.77 (50ca579fa996) [stable]" has 1.0.77 and nothing else that counts.
+function versionOf(text) {
+  for (const token of String(text ?? "").split(/\s+/)) {
+    const found = token.match(/\d+\.\d+(?:\.\d+)*/);
+    if (found) return found[0];
+  }
+  return null;
+}
+
 function cliLine(cli, now) {
-  const name = cli.version ? `${cli.label} ${cli.version}` : cli.label;
+  const from = versionOf(cli.before);
+  const to = versionOf(cli.version);
+  const name = cli.version ? `${cli.label} ${to ?? cli.version}` : cli.label;
   if (cli.waiting) return `${name} · waiting: ${cli.waiting}`;
-  const when = dayWords(cli.updated_ms > 0 ? cli.updated_ms : cli.tried_ms);
   if (cli.updated_ms > 0) {
-    const changed = cli.before && cli.before !== cli.version
-      ? `${name} · updated ${when} (was ${cli.before})`
-      : `${name} · updated ${when}`;
+    const changed = from && to && from !== to
+      ? `${name} · updated ${dayWords(cli.updated_ms)} from ${from}`
+      : `${name} · checked ${dayWords(cli.tried_ms > 0 ? cli.tried_ms : cli.updated_ms)}`;
     return cli.error ? `${changed}: ${cli.error}` : changed;
   }
   if (cli.error) return `${name} · update failed: ${cli.error}`;
-  if (cli.tried_ms > 0) return `${name} · up to date, checked ${when}`;
+  if (cli.tried_ms > 0) return `${name} · up to date, checked ${dayWords(cli.tried_ms)}`;
   return `${name} · not checked yet`;
 }
 
@@ -887,7 +955,9 @@ function workersSection(view, t, cx, s) {
   const clis = Array.isArray(s.workers?.clis) ? s.workers.clis : [];
   return v_flex().w_full()
     .child(view.heading(t, "Workers"))
-    .child(div().pb(6).text_size(12.5).text_color(t.dim).child("Tried top to bottom; drag or use the arrows."))
+    .child(div().pb(6).text_size(12.5).text_color(t.dim).child("Kompitum tries them from the top."))
+    .when(Boolean(s.workerError), (el) => el.child(div().pb(6).text_size(12.5).text_color(t.blocked).truncate()
+      .tooltip(s.workerError).child(firstLine(s.workerError) || s.workerError)))
     .when(rows.length > 0, (el) => el.children(rows))
     .when(rows.length === 0, (el) => el.child(div().py(10).text_size(12.5).text_color(t.dim).child(s.workers ? "No workers in the order." : "Reading workers…")))
     .child(h_flex().pt(10).child(view.button(t, "st-add-worker", "Add a worker", (_e, cx) => { s.addOpen = !s.addOpen; cx.notify(); })))

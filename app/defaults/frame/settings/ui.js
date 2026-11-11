@@ -115,8 +115,11 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .when(matching.length === 0, (el) => el.child(div().px(8).py(6).text_size(12.5).text_color(t.dim).child("Nothing matches.")))
     .when(limit > 0 && matching.length > limit, (el) =>
       el.child(div().px(8).py(6).text_size(12.5).text_color(t.dim).child("Type to narrow the list.")));
+  // The list sits 4 px under the trigger: the Popover binding has no offset, so the gap is the list's own top margin.
+  // Its right edge is the trigger's (`anchor`, top_right), and the trigger is never wider than `width`, so the list is at least as wide.
   const content = v_flex()
     .w(width)
+    .mt(4)
     .rounded(10)
     .border_1()
     .border_color(t.border)
