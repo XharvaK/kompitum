@@ -41,8 +41,8 @@ fn keyboard_is_a_macos_page(cx: &mut TestAppContext) {
         assert_eq!(tree.contains("st-s-keyboard"), shown, "{platform}: {tree}");
         if !shown {
             assert!(
-                tree.contains("Home folder"),
-                "{platform}: keyboard opens General: {tree}"
+                !tree.contains("Option-key settings are for macOS."),
+                "{platform}: keyboard opens Agents, not Keyboard: {tree}"
             );
             assert!(
                 !tree.contains("st-option-"),
@@ -892,5 +892,200 @@ export default class Probe extends View {
     );
     assert!(!tree.contains("Unable to create"), "{tree}");
     assert!(!tree.contains("Cannot rebase onto multiple branches"), "{tree}");
+}
+
+/// General is gone: its one row, the lead's folder, lives on Agents, and an old
+/// `general` section still opens there.
+#[gpui::test]
+fn general_is_gone_and_its_section_opens_agents(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = lead_values("claude");
+    let mut p = props();
+    p["section"] = json!("general");
+    values.insert("props".into(), p);
+    values.insert(
+        "person".into(),
+        json!({"lead": {"program": "claude", "folder": "/fixture/projects"}}),
+    );
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    assert!(!tree.contains("Home folder"), "{tree}");
+    assert!(!tree.contains("Onboarding"), "{tree}");
+    assert!(tree.contains("st-lead-folder"), "general opens Agents: {tree}");
+}
+
+#[gpui::test]
+fn settings_list_has_connect_but_no_general_or_machines(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("appearance");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("st-s-connect"), "{tree}");
+    assert!(!tree.contains("st-s-general"), "{tree}");
+    assert!(!tree.contains("st-s-machines"), "{tree}");
+}
+
+/// A system with no entry shows only the Connect button, never "Not connected".
+#[gpui::test]
+fn connect_system_without_an_entry_has_connect_and_no_state(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let found = json!({"program": "C:\\Program Files\\Grok Bot\\grokbot.exe", "icon": null});
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(found, Value::Null),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("st-c-connect-grokbot"), "{tree}");
+    assert!(tree.contains(r#"text "Connect""#), "{tree}");
+    assert!(!tree.contains("Not connected"), "{tree}");
+    assert!(!tree.contains("Waiting for it to join"), "{tree}");
+    assert!(!tree.contains("Joined as"), "{tree}");
+}
+
+/// An entry with only `since` says it waits for the system to join.
+#[gpui::test]
+fn connect_system_with_only_since_waits_for_it_to_join(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let found = json!({"program": "C:\\Program Files\\Grok Bot\\grokbot.exe", "icon": null});
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(
+            found,
+            json!({"connect": {"grokbot": {"since": "2026-11-11T10:00:00.000Z"}}}),
+        ),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Waiting for it to join"), "{tree}");
+    assert!(tree.contains("st-c-prompt-grokbot"), "{tree}");
+    assert!(!tree.contains("st-c-connect-grokbot"), "{tree}");
+    assert!(!tree.contains("Not connected"), "{tree}");
+}
+
+/// An entry with an agent says it joined as that agent.
+#[gpui::test]
+fn connect_system_with_an_agent_says_joined_as(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let found = json!({"program": "C:\\Program Files\\Grok Bot\\grokbot.exe", "icon": null});
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(
+            found,
+            json!({"connect": {"grokbot": {"since": "2026-11-11T10:00:00.000Z", "agent": "grok"}}}),
+        ),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Joined as grok"), "{tree}");
+    assert!(!tree.contains("Connected as"), "{tree}");
+}
+
+/// Connect opens with Machines: its heading, then This computer, then the agent systems.
+#[gpui::test]
+fn connect_draws_machines_first_with_this_computer_under_it(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let found = json!({"program": "C:\\Program Files\\Grok Bot\\grokbot.exe", "icon": null});
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(found, Value::Null),
+        None,
+    )
+    .unwrap();
+    let heading = tree
+        .find(r#"text "Machines""#)
+        .unwrap_or_else(|| panic!("no Machines heading: {tree}"));
+    let this = tree
+        .find(r#"text "This computer""#)
+        .unwrap_or_else(|| panic!("no This computer row: {tree}"));
+    let systems = tree
+        .find(r#"text "Agents from other systems""#)
+        .unwrap_or_else(|| panic!("no agents heading: {tree}"));
+    assert!(heading < this && this < systems, "order: {tree}");
+    assert!(tree.contains(r#"text "Connected""#), "{tree}");
+    assert!(!tree.contains("Connected ·"), "This computer says only Connected: {tree}");
+}
+
+/// The old section name `machines` opens Connect.
+#[gpui::test]
+fn machines_section_name_opens_connect(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("machines");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("person".into(), Value::Null);
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    assert!(tree.contains(r#"text "Machines""#), "{tree}");
+    assert!(tree.contains("st-c-other"), "{tree}");
+}
+
+#[gpui::test]
+fn about_source_build_says_it_does_not_update_itself(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("about");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("source", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(
+        tree.contains("This build was made from source, so it doesn't update itself."),
+        "{tree}"
+    );
+    assert!(!tree.contains("Not checked"), "{tree}");
+    assert!(tree.contains(r#"text "0.1.0""#), "the App row shows the version: {tree}");
+}
+
+#[gpui::test]
+fn notifications_ask_the_lead_for_sounds(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("notifications");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(
+        tree.contains("Want your own sounds? Ask your lead to change them."),
+        "{tree}"
+    );
+    assert!(!tree.contains("MP3"), "{tree}");
 }
 

@@ -1,5 +1,6 @@
-// Settings › Connect: agent systems found by their link scheme, the prompt
-// that joins them, and the "Joined" note that says they did.
+// Settings › Connect: this computer's machines (drawn by main.js), agent
+// systems found by their link scheme, the prompt that joins them, and the
+// "Joined" note that says they did.
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -205,22 +206,20 @@ function systemRow(view, t, system, cx) {
       .gap(8)
       .items_center()
       .child(div().w(7).h(7).rounded(4).bg(t.ansi2))
-      .child(div().text_size(12.5).text_color(t.muted).child(`Connected as ${saved.agent}`))
+      .child(div().text_size(12.5).text_color(t.muted).child(`Joined as ${saved.agent}`))
       .child(view.button(t, `st-c-open-${system.id}`, "Open", () => openLink(`${system.scheme}://`)))
       .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
   } else if (saved.since) {
     state = h_flex()
       .gap(8)
       .items_center()
-      .child(div().text_size(12.5).text_color(t.muted).child(`Copied. Paste it into ${system.name}.`))
+      .child(div().text_size(12.5).text_color(t.muted).child("Waiting for it to join"))
       .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
   } else {
     state = h_flex()
       .gap(8)
       .items_center()
-      .child(div().text_size(12.5).text_color(t.dim).child("Not connected"))
-      .child(view.primaryButton(t, `st-c-connect-${system.id}`, "Connect", (_e, cx) => connectSystem(view, system, cx)))
-      .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
+      .child(view.primaryButton(t, `st-c-connect-${system.id}`, "Connect", (_e, cx) => connectSystem(view, system, cx)));
   }
   return h_flex()
     .id(`st-c-${system.id}`)
@@ -242,8 +241,8 @@ function otherRow(view, t, cx) {
     .gap(3)
     .border_b(1)
     .border_color(t.border)
-    .child(div().text_size(14).text_color(t.foreground).child("Other"))
-    .child(div().text_size(12.5).line_height("18px").text_color(t.dim).child("Any agent that can run kom and reach the vault."))
+    .child(div().text_size(14).text_color(t.foreground).child("Any other agent"))
+    .child(div().text_size(12.5).line_height("18px").text_color(t.dim).child("Any agent that can run a command on a computer you added."))
     .child(
       h_flex()
         .pt(8)
@@ -275,6 +274,8 @@ export function connectPage(view, t, cx) {
   const connect = view.connect;
   return v_flex()
     .w_full()
+    .child(view.machines(t))
+    .child(view.heading(t, "Agents from other systems"))
     .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim).child("Bring another agent into Kompitum."))
     .child(
       h_flex()

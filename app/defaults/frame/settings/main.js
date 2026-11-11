@@ -7,18 +7,15 @@ import { loadVault, vaultSection } from "./vault.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
 import { agentsPage, loadAgents, ensureAgents } from "./agents.js";
 import { appearancePage } from "./appearance.js";
-import { generalPage } from "./general.js";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
 const SECTIONS = [
-  { id: "general", title: "General", icon: "settings" },
   { id: "appearance", title: "Appearance", icon: "palette" },
   { id: "agents", title: "Agents", icon: "bot" },
   { id: "vault", title: "Vault", icon: "mail" },
   { id: "connect", title: "Connect", icon: "link" },
   { id: "notifications", title: "Notifications", icon: "bell" },
-  { id: "machines", title: "Machines", icon: "server" },
   { id: "keyboard", title: "Keyboard", icon: "keyboard" },
   { id: "about", title: "About", icon: "info" },
 ];
@@ -34,7 +31,6 @@ function liveSections() {
 // What the search field finds: one entry per row the sections draw, so search
 // never reads the drawn tree. `key` matches the row's highlight key.
 const SEARCH = [
-  { section: "general", key: "folder", title: "Home folder", words: "lead starts projects user drive working directory" },
   { section: "appearance", key: "theme", title: "Theme", words: "light dark system appearance" },
   { section: "appearance", key: "layout", title: "Window", words: "layout reset desk window shape back" },
   { section: "appearance", key: "zoom", title: "Zoom", words: "size scale bigger smaller interface" },
@@ -48,22 +44,22 @@ const SEARCH = [
   { section: "agents", key: "clis", title: "CLI versions", words: "update version releases" },
   { section: "vault", key: "Folder", title: "Vault folder", words: "notes git mailbox" },
   { section: "vault", key: "Needs you", title: "Notes that need you", words: "mailbox notes requests questions" },
-  { section: "connect", key: "connect", title: "Connect", words: "agent systems join prompt grok hermes openclaw manager" },
+  { section: "connect", key: "connect", title: "Connect", words: "agent systems join prompt grok hermes openclaw manager machines" },
   { section: "notifications", key: "sounds", title: "Play sounds", words: "sound audio notification" },
   { section: "notifications", key: "blocked", title: "An agent needs you", words: "sound blocked attention" },
   { section: "notifications", key: "done", title: "An agent finished", words: "sound done finished" },
   { section: "notifications", key: "Notes between agents", title: "Notes between agents", words: "pop-ups toast vault mail" },
   { section: "notifications", key: "Quiet while a game is fullscreen", title: "Quiet while a game is fullscreen", words: "game fullscreen mute do not disturb" },
-  { section: "machines", key: "this", title: "This computer", words: "local version kom" },
-  { section: "machines", key: "add", title: "Add a machine", words: "ssh remote host" },
+  { section: "connect", key: "this", title: "This computer", words: "local version kom machines" },
+  { section: "connect", key: "add", title: "Add a machine", words: "ssh remote host machines" },
   { section: "keyboard", key: "option", title: "Option key", words: "alt macos accents keyboard" },
   { section: "about", key: "welcome", title: "Welcome", words: "show again onboarding first start setup" },
   { section: "about", key: "app", title: "Kompitum", words: "version update what's new release" },
   { section: "about", key: "core", title: "kompitum-core", words: "version update core terminals" },
 ];
 
-// Sections that were named differently before; old links still open their page.
-const RENAMED_SECTIONS = { look: "appearance", alerts: "notifications" };
+// Sections that were named differently or merged before; old links still open their page.
+const RENAMED_SECTIONS = { look: "appearance", alerts: "notifications", general: "agents", machines: "connect" };
 
 export default class Settings extends View {
   init(_props, cx) {
@@ -108,7 +104,7 @@ export default class Settings extends View {
     this.handle.focus();
     cx.spawn(async (cx) => {
       await this.load();
-      if (this.section === "machines") await this.loadMachines();
+      if (this.section === "connect") await this.loadMachines();
       if (this.section === "vault") loadVault(this, cx);
       if (this.section === "agents") loadAgents(this, cx);
       cx.notify();
@@ -127,7 +123,7 @@ export default class Settings extends View {
       cx.notify();
     });
     cx.timer.every(3000, (cx) => {
-      if (this.section !== "machines") return;
+      if (this.section !== "connect") return;
       cx.spawn(async (cx) => {
         await this.loadMachines();
         cx.notify();
@@ -213,7 +209,7 @@ export default class Settings extends View {
     this.search = "";
     this.searchInput.set_value("");
     this.handle.focus();
-    if (match.section === "machines") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
+    if (match.section === "connect") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
     if (match.section === "agents") loadAgents(this, cx, true);
     if (match.section === "vault") loadVault(this, cx);
     if (match.section === "connect" && this.connect.vault === null) loadConnect(this, cx);
@@ -230,9 +226,9 @@ export default class Settings extends View {
     return Boolean(this.highlight) && this.highlight.section === this.sectionNow() && this.highlight.key === key;
   }
 
-  // Opening Keyboard on a system without it lands on General.
+  // Opening Keyboard on a system without it lands on Agents.
   sectionNow() {
-    return this.section === "keyboard" && !macos() ? "general" : this.section;
+    return this.section === "keyboard" && !macos() ? "agents" : this.section;
   }
 
   // Pieces ---------------------------------------------------------------
@@ -483,8 +479,9 @@ export default class Settings extends View {
   machines(t) {
     const version = updates().core.version;
     return v_flex().w_full()
-      .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim).child("Your computers, reached over ssh. Their terminals keep running when you disconnect."))
-      .child(this.row(t, "This computer", `Connected · ${version ? `kom ${version}` : "kom version unknown"}`, div().w(7).h(7).rounded(4).bg(t.ansi2), "this"))
+      .child(this.heading(t, "Machines"))
+      .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim).child("Your other computers. Their agents keep working when this one sleeps."))
+      .child(this.row(t, "This computer", "Connected", div().w(7).h(7).rounded(4).bg(t.ansi2), "this"))
       .children((this.machineList ?? []).map((m) => this.machineRow(t, m, version)))
       .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12.5).text_color(t.dim).child("Reading machines…"))))
       .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(12.5).text_color(t.dim).child("No other machines yet.")))
@@ -519,7 +516,7 @@ export default class Settings extends View {
       .child(this.heading(t, "Pop-ups"))
       .child(this.row(t, "Notes between agents", "Show a note for a few seconds when agents write to each other.", this.toggle(t, "st-notes-between-agents", between, (_e, cx) => this.change((p) => (p.notes_between_agents = !between), cx))))
       .child(this.row(t, "Quiet while a game is fullscreen", "No sounds and no passing notes while another app fills the screen. Notes that need you still wait for you.", this.toggle(t, "st-quiet-fullscreen", quiet, (_e, cx) => this.change((p) => (p.quiet_while_fullscreen = !quiet), cx))))
-      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Want your own sounds? Ask your agent to set sounds.done and sounds.blocked in settings.json to an MP3."));
+      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Want your own sounds? Ask your lead to change them."));
   }
 
   // About ----------------------------------------------------------------
@@ -568,7 +565,7 @@ export default class Settings extends View {
             ? [`${c.ready} is ready. Your terminals keep running through it.`, primary("st-core-update", "Update kompitum-core", () => run("app.update_core"))]
             : u.checks
               ? [result, check("st-check-core")]
-              : ["Not checked: a build from source looks for no updates.", null];
+              : ["This build was made from source, so it doesn't update itself.", null];
     return v_flex()
       .w_full()
       .child(
@@ -591,6 +588,7 @@ export default class Settings extends View {
               .child(div().text_size(12.5).text_color(t.dim).child("App"))
               .when(Boolean(app[0]), (el) => el.child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(t.muted).child(app[0])))
               .child(div().flex_1())
+              .when(Boolean(u.app.version), (el) => el.child(div().text_size(12.5).text_color(t.muted).child(u.app.version)))
               .child(this.button(t, "st-whats-new", "What's new", () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
               .when(Boolean(app[1]), (el) => el.child(app[1])),
           )
@@ -705,7 +703,7 @@ export default class Settings extends View {
               this.machineEdit = null;
               this.highlight = null;
               this.handle.focus();
-              if (s.id === "machines") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
+              if (s.id === "connect") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
               if (s.id === "vault") loadVault(this, cx);
               if (s.id === "connect" && this.connect.vault === null) loadConnect(this, cx);
               if (s.id === "agents") loadAgents(this, cx);
@@ -794,16 +792,12 @@ export default class Settings extends View {
                       .px(28)
                       .py(22)
                       .child(
-                        section === "general"
-                          ? generalPage(this, t, cx)
-                          : section === "appearance"
-                            ? appearancePage(this, t, cx)
+                        section === "appearance"
+                          ? appearancePage(this, t, cx)
                           : section === "agents"
                             ? agentsPage(this, t, cx)
                           : section === "keyboard"
                             ? this.keyboard(t)
-                          : section === "machines"
-                            ? this.machines(t)
                           : section === "vault"
                             ? vaultSection(this, t, cx)
                           : section === "connect"
