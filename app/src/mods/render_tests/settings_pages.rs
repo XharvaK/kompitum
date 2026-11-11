@@ -166,7 +166,7 @@ fn opencode_usage_reads_the_nested_report(cx: &mut TestAppContext) {
     }));
     let theme = values["theme"].clone();
     let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
-    for meter in ["5H 100%", "Week 19%", "Month 96%"] {
+    for meter in ["5h 100%", "week 19%", "month 96%"] {
         assert!(tree.contains(meter), "missing {meter:?}: {tree}");
     }
     assert!(
@@ -178,7 +178,7 @@ fn opencode_usage_reads_the_nested_report(cx: &mut TestAppContext) {
     let lines: Vec<&str> = tree.lines().collect();
     let at = lines
         .iter()
-        .position(|line| line.contains("text \"Month 96%\""))
+        .position(|line| line.contains("text \"month 96%\""))
         .unwrap_or_else(|| panic!("no month meter: {tree}"));
     assert!(
         lines[at - 1].contains(working),
@@ -187,7 +187,7 @@ fn opencode_usage_reads_the_nested_report(cx: &mut TestAppContext) {
     );
     let at = lines
         .iter()
-        .position(|line| line.contains("text \"5H 100%\""))
+        .position(|line| line.contains("text \"5h 100%\""))
         .unwrap_or_else(|| panic!("no 5H meter: {tree}"));
     assert!(
         lines[at - 1].contains(blocked),

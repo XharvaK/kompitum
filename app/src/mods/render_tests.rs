@@ -2096,7 +2096,7 @@ fn connect_shows_a_joined_system_as_connected(cx: &mut TestAppContext) {
         None,
     )
     .unwrap();
-    assert!(tree.contains("Connected as grok"), "{tree}");
+    assert!(tree.contains("Joined as grok"), "{tree}");
 }
 
 #[gpui::test]
@@ -2294,24 +2294,6 @@ fn welcome_step_three_shows_the_toggle_only_for_claude(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
-fn settings_general_draws_the_home_folder_row(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let mut p = props();
-    p["section"] = json!("general");
-    let mut values = fixture(true, p, updates("current", "current"));
-    values.insert("person".into(), json!({"lead": {"folder": "/fixture/projects"}}));
-    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
-    assert!(tree.contains("Home folder"), "{tree}");
-    assert!(tree.contains("/fixture/projects"), "{tree}");
-    assert!(tree.contains("st-general-folder"), "{tree}");
-    assert!(
-        !tree.contains("st-general-welcome"),
-        "Welcome moved to About: {tree}"
-    );
-}
-
-#[gpui::test]
 fn settings_nav_lists_every_section_and_an_unknown_one_opens_appearance(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
@@ -2327,17 +2309,11 @@ fn settings_nav_lists_every_section_and_an_unknown_one_opens_appearance(cx: &mut
         None,
     )
     .unwrap();
-    for id in [
-        "general",
-        "appearance",
-        "agents",
-        "vault",
-        "connect",
-        "notifications",
-        "machines",
-        "about",
-    ] {
+    for id in ["appearance", "agents", "vault", "connect", "notifications", "about"] {
         assert!(tree.contains(&format!("st-s-{id}")), "missing {id}: {tree}");
+    }
+    for id in ["general", "machines"] {
+        assert!(!tree.contains(&format!("st-s-{id}")), "{id} has no page of its own: {tree}");
     }
     assert!(
         !tree.contains("st-s-keyboard"),
@@ -2439,7 +2415,7 @@ fn connect_opens_with_one_line_and_hides_how_it_works(cx: &mut TestAppContext) {
     assert!(tree.contains("How it works"), "{tree}");
     assert!(!tree.contains("Connect copies a prompt for them"), "{tree}");
     assert!(tree.contains("st-c-connect-grokbot"), "{tree}");
-    assert!(tree.contains("st-c-prompt-grokbot"), "{tree}");
+    assert!(!tree.contains("st-c-prompt-grokbot"), "only Connect before the prompt was sent: {tree}");
     let tree = describe_settled(
         cx,
         &staged,
