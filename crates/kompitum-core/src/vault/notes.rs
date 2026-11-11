@@ -12,6 +12,8 @@ pub const KINDS: [&str; 6] = ["request", "report", "decision", "tried", "questio
 pub const MEMORY: &str = "memory";
 /// The statuses a sender may mark, and the only words open/answered mean.
 pub const STATUSES: [&str; 3] = ["open", "answered", "superseded"];
+/// Statuses other agent systems write into notes: the core reads them and never writes them.
+pub const READ_STATUSES: [&str; 2] = ["done", "closed"];
 
 /// One front matter value: a line, or a list of lines.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -134,6 +136,11 @@ pub fn format_note(meta: &Meta, body: &str) -> String {
 /// can be shown, not hidden.
 pub fn status_of(meta: &Meta) -> String {
     meta.text("status").unwrap_or_else(|| "open".to_string())
+}
+
+/// Whether a status means the note is closed: answered, superseded, done or closed.
+pub fn closes_note(status: &str) -> bool {
+    matches!(status, "answered" | "superseded") || READ_STATUSES.contains(&status)
 }
 
 /// The title: front matter `title`, else the first `# ` heading, else the file name.
@@ -291,6 +298,20 @@ mod tests {
         let again = parse_note(&format_note(&meta, "Done.\n\nTwo lines."));
         assert_eq!(again.meta, meta);
         assert_eq!(again.body, "Done.\n\nTwo lines.\n");
+    }
+
+    #[test]
+    fn answered_superseded_done_and_closed_close_a_note_and_open_and_unknown_do_not() {
+        for (status, closes) in [
+            ("open", false),
+            ("answered", true),
+            ("superseded", true),
+            ("done", true),
+            ("closed", true),
+            ("banana", false),
+        ] {
+            assert_eq!(closes_note(status), closes, "{status}");
+        }
     }
 
     #[test]

@@ -3,7 +3,7 @@
 
 use super::git;
 use super::marks;
-use super::notes::{self, Meta, STATUSES};
+use super::notes::{self, Meta, READ_STATUSES, STATUSES};
 use super::store::{Message, Query, SHOWN, unavailable};
 use crate::paths::Paths;
 use crate::rpc::RpcError;
@@ -88,7 +88,7 @@ pub(super) fn message_of(entry: &Entry, index: &marks::Index, agent: &str) -> Me
         if !recipients.is_empty() && !recipients.iter().any(|to| to == recipient) {
             problems.push(format!("says to: {} but sits in to/{recipient}/", recipients.join(", ")));
         }
-        if !STATUSES.contains(&status.as_str()) {
+        if !STATUSES.contains(&status.as_str()) && !READ_STATUSES.contains(&status.as_str()) {
             problems.push(format!("has an unknown status: {status}"));
         }
     }
@@ -129,7 +129,7 @@ pub(super) fn open_messages(
             continue;
         }
         let message = message_of(entry, index, agent);
-        if message.status == "answered" || message.status == "superseded" {
+        if notes::closes_note(&message.status) {
             continue;
         }
         let kind = message.kind();
@@ -336,20 +336,12 @@ pub(super) fn refuse_link(root: &Path, path: &str) -> Result<PathBuf, RpcError> 
             Err(error) => return Err(unavailable(format!("cannot read {}: {error}", current.display()))),
             Ok(meta) => {
                 if meta.file_type().is_symlink() {
-                    return Err(RpcError::new(
-                        "refused",
-                        format!("refused: {path} is a link out of the vault"),
-                        "",
-                    ));
+                    return Err(RpcError::new("refused", format!("refused: {path} is a link out of the vault"), ""));
                 }
                 let real = std::fs::canonicalize(&current)
                     .map_err(|error| unavailable(format!("cannot read {}: {error}", current.display())))?;
                 if !real.starts_with(&real_root) {
-                    return Err(RpcError::new(
-                        "refused",
-                        format!("refused: {path} is a link out of the vault"),
-                        "",
-                    ));
+                    return Err(RpcError::new("refused", format!("refused: {path} is a link out of the vault"), ""));
                 }
             }
         }
@@ -516,6 +508,51 @@ mod tests {
             "requests and questions first, newest first, then the rest; a read decision and a done question leave"
         );
         assert!(notes[0].loud() && notes[1].loud() && !notes[2].loud());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn done_and_closed_are_read_as_closed_and_only_a_status_in_neither_list_is_unknown() {
+        let root = scratch("read-statuses");
+        for status in ["done", "closed", "banana"] {
+            write(
+                &root,
+                &format!("manager/to/opus/{status}.md"),
+                &format!(
+                    "---\nfrom: manager\nto: [opus]\nkind: request\nstatus: {status}\ntitle: {status}\n---\n\nBody.\n"
+                ),
+            );
+        }
+        let entries = list_entries(&root).unwrap();
+        let index = marks::read_all(&root);
+        let problems = |status: &str| {
+            let path = format!("manager/to/opus/{status}.md");
+            let entry = entries.iter().find(|entry| entry.path == path).unwrap();
+            message_of(entry, &index, "opus").problems
+        };
+        assert!(problems("done").is_empty(), "{:?}", problems("done"));
+        assert!(problems("closed").is_empty(), "{:?}", problems("closed"));
+        assert_eq!(problems("banana"), ["has an unknown status: banana"]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn done_and_closed_notes_leave_the_open_list_as_answered_ones_do() {
+        let root = scratch("open-closed");
+        for status in ["done", "closed", "open"] {
+            write(
+                &root,
+                &format!("manager/to/opus/{status}.md"),
+                &format!(
+                    "---\nfrom: manager\nto: [opus]\nkind: request\nstatus: {status}\ndate: 2026-11-01\ntitle: {status}\n---\n\nBody.\n"
+                ),
+            );
+        }
+        let index = marks::read_all(&root);
+        let (notes, problems) = open_messages(&root, &index, "opus").unwrap();
+        assert!(problems.is_empty(), "{problems:?}");
+        let paths: Vec<&str> = notes.iter().map(|note| note.path.as_str()).collect();
+        assert_eq!(paths, ["manager/to/opus/open.md"]);
         std::fs::remove_dir_all(root).unwrap();
     }
 
