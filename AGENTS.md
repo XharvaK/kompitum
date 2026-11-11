@@ -108,13 +108,16 @@ layout or a workspace to return to, it does not belong in the core.
   `scripts/watch_windows.py` runs a command the same way and records every
   window that opens meanwhile, which is how to check the no-windows rule.
 - A worker's worktree has an empty `vendor/ghostty` and no build. On this PC
-  `.cargo\config.toml` in the folder above Kompitum's state sets `target-dir`, `ZIG`,
+  `.cargo\config.toml` in the folder above Kompitum's state sets `ZIG`,
   `LIBCLANG_PATH`, `KOMPITUM_GHOSTTY_SRC` and the app's own `KOMPITUM_APP_GHOSTTY_SRC` (the app pins
   another Ghostty commit), so a plain `cargo` works there, in the core and in `app/`. The app also
   `include_str!`s from `app/vendor/ghostty` (`app/src/vt.rs`), so an app worker first copies that
-  checkout into its worktree, without `.git`. That build folder is
-  shared and Cargo judges freshness by file times, so two worktrees building at
-  once can run each other's binaries: one building worker at a time for now.
+  checkout into its worktree, without `.git`. That config sets no `target-dir`: each worktree
+  builds in its own `target` folder, so workers can build at the same time. A shared build folder
+  can't do that, because Cargo judges freshness by file times and two worktrees building at once
+  can run each other's binaries. A cold app build is about 10 GB, so accept or discard finished
+  tasks soon. The core queues tasks whose scopes overlap: render tests have one file per area
+  under `app/src/mods/render_tests/` for that reason.
   `scripts/check_windows.py` touches the crate roots, so a check always builds
   its own worktree. It is `just check` for this PC, and the server's check here.
 - `LC_*` is the locale namespace and SSH configs forward it, so our
