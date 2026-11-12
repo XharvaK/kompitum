@@ -9,5 +9,15 @@
   ],
   "one_at_a_time": false,
   "build_folders": 3,
-  "scopes_may_overlap": true
+  "scopes_may_overlap": true,
+  "workshop": {
+    "one_writer": [
+      "crates/**",
+      "app/**",
+      "scripts/**",
+      "vendor/**",
+      "Cargo.toml",
+      "Cargo.lock"
+    ]
+  }
 }

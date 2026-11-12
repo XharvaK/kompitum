@@ -1,4 +1,5 @@
 /target
+/target-logs
 /.local
 /AGENTS.local.md
 /audit/
