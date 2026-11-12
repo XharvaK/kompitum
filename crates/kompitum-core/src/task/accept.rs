@@ -4,7 +4,8 @@ use crate::api::{TaskAcceptParams, TaskAcceptResult, TaskRedoParams, TaskRedoRes
 use crate::rpc::RpcError;
 use crate::runtime::{Core, now_ms};
 use crate::task::git;
-use crate::task::types::TaskState;
+use crate::task::types::{Task, TaskState};
+use crate::task::workshop;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -133,24 +134,14 @@ pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptR
             format!("check out {} and accept again", task.branch),
         ));
     }
-    git::git(&worktree, &["add", "-N", "."]).await?;
-    let diff = git::git(&worktree, &["diff", "--binary", "--full-index", "--no-renames", &task.base]).await?;
-    if diff.stdout.is_empty() {
+    let (files, bytes) = taken(&task, &worktree).await?;
+    if files.is_empty() || bytes.is_empty() {
         return Err(no_changes(&task.name));
     }
-    let names = git::git(&worktree, &["diff", "--name-only", "-z", "--no-renames", &task.base]).await?;
-    let files: Vec<String> = names
-        .stdout
-        .split(|byte| *byte == 0)
-        .filter(|name| !name.is_empty())
-        .map(|name| String::from_utf8_lossy(name).into_owned())
-        .collect();
-    if files.is_empty() {
-        return Err(no_changes(&task.name));
-    }
+    // The repository's commit before the apply: a shared task's workshop settles against it.
+    let before = if task.shared { Some(workshop::head(&task.repo).await?) } else { None };
     let patch_path = core.paths.state.join("patches").join(format!("{}.patch", task.name));
     let patch = patch_path.display().to_string();
-    let bytes = diff.stdout;
     let path = patch_path.clone();
     let written = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
@@ -223,10 +214,16 @@ pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptR
     if let Err(words) = crate::task::ledger::record(&core.paths.state, &task, "accepted", now_ms()) {
         task.warnings.push(words);
     }
-    let removal = git::remove_worktree(&task.repo, task.worktree.as_deref(), Some(&task.task_branch)).await;
-    if removal.removed {
-        task.worktree = None;
-    }
+    let (removed, left) = match before {
+        Some(before) => settle_files(&mut task, &worktree, &files, &before, commit.as_deref()).await,
+        None => {
+            let removal = git::remove_worktree(&task.repo, task.worktree.as_deref(), Some(&task.task_branch)).await;
+            if removal.removed {
+                task.worktree = None;
+            }
+            (removal.removed, removal.left)
+        }
+    };
     let name = task.name.clone();
     let state = task.state;
     super::save(&core.paths.state, &task);
@@ -234,7 +231,53 @@ pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptR
     super::replace(core, task);
     core.changed.notify_waiters();
     drop(serial);
-    Ok(TaskAcceptResult { task: name, state, commit, files, patch, removed: removal.removed, left: removal.left })
+    Ok(TaskAcceptResult { task: name, state, commit, files, patch, removed, left })
+}
+
+/// What an accept takes from a task's worktree: the changed files and the patch that applies them.
+/// A shared task's are its scope's files in the workshop; any other task's are its worktree's.
+async fn taken(task: &Task, worktree: &str) -> Result<(Vec<String>, Vec<u8>), RpcError> {
+    if task.shared {
+        let files = workshop::files_of(worktree, &task.scope).await?;
+        let bytes = workshop::patch(worktree, &files, &["--binary", "--full-index"]).await?;
+        return Ok((files, bytes));
+    }
+    git::git(worktree, &["add", "-N", "."]).await?;
+    let diff = git::git(worktree, &["diff", "--binary", "--full-index", "--no-renames", &task.base]).await?;
+    let names = git::git(worktree, &["diff", "--name-only", "-z", "--no-renames", &task.base]).await?;
+    let files: Vec<String> = names
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect();
+    Ok((files, diff.stdout))
+}
+
+/// Takes a shared task's files out of the workshop once they are in the repository: they settle to
+/// the commit that now holds them, or are left behind in words. Returns (removed, left).
+async fn settle_files(
+    task: &mut Task,
+    worktree: &str,
+    files: &[String],
+    before: &str,
+    commit: Option<&str>,
+) -> (bool, Vec<String>) {
+    let settled = workshop::settle(worktree, files, before, commit).await;
+    task.worktree = None;
+    match settled {
+        Ok(None) => (true, Vec::new()),
+        Ok(Some(words)) => {
+            let text = format!("the workshop stayed behind: {words}");
+            task.warnings.push(text.clone());
+            (true, vec![text])
+        }
+        Err(e) => {
+            let text = format!("the workshop still has {}'s files: {}", task.name, e.message);
+            task.warnings.push(text.clone());
+            (false, vec![text])
+        }
+    }
 }
 
 /// What a redo sends as the next turn: an answer carries its own words in front.

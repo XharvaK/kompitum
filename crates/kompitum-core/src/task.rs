@@ -580,6 +580,31 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     }
     let before_changed = task.changed.clone();
     let changed = match task.worktree.as_deref() {
+        Some(worktree) if task.shared => match workshop::changed(worktree, &task.scope).await {
+            Ok((mine, others)) => {
+                let held: Vec<Vec<String>> = core
+                    .tasks
+                    .all()
+                    .into_iter()
+                    .filter(|other| other.name != task.name && other.repo == task.repo && workshop::holds(other))
+                    .map(|other| other.scope)
+                    .collect();
+                let scopes: Vec<&[String]> = held.iter().map(Vec::as_slice).collect();
+                let stray = workshop::strays(&others, &scopes);
+                if !stray.is_empty() {
+                    let text =
+                        format!("files changed in the workshop outside every task's scope: {}", stray.join(", "));
+                    if !task.warnings.contains(&text) {
+                        task.warnings.push(text);
+                    }
+                }
+                mine
+            }
+            Err(e) => {
+                task.warnings.push(format!("cannot read the changed files: {}", e.message));
+                Vec::new()
+            }
+        },
         Some(worktree) => match git::changed_files(worktree, &task.base, &task.scope).await {
             Ok(changed) => changed,
             Err(e) => {
@@ -720,7 +745,10 @@ async fn fail_start(core: &Arc<Core>, task: &Task, error: RpcError) {
     }
     let mut task = core.tasks.snapshot(&task.name).unwrap_or_else(|| task.clone());
     // A later turn's failed start keeps the first worker's work.
-    if task.turns.is_empty()
+    if task.turns.is_empty() && task.shared {
+        // The workshop stays; a task holds nothing in it before its first turn.
+        task.worktree = None;
+    } else if task.turns.is_empty()
         && let Some(worktree) = task.worktree.clone()
     {
         let removal = git::remove_worktree(&task.repo, Some(&worktree), Some(&task.task_branch)).await;
@@ -797,7 +825,30 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     let prompt_path = folder.join(format!("turn-{n}.prompt.md"));
     crate::paths::write_atomic(&prompt_path, &built.text)
         .map_err(|e| unavailable(format!("cannot write {}: {e}", prompt_path.display())))?;
-    if task.worktree.is_none() {
+    if task.shared {
+        let path = workshop::path(&core.paths.state, &task.repo).display().to_string();
+        // Only a task of this repository that is mid-turn in the workshop keeps it where it is.
+        let quiet = !core.tasks.all().iter().any(|other| {
+            other.name != task.name
+                && other.repo == task.repo
+                && other.shared
+                && matches!(other.state, TaskState::Running | TaskState::Checking)
+        });
+        if let Some(words) = workshop::enter(&task.repo, &path, quiet).await? {
+            update(core, &task.name, |stored| {
+                if !stored.warnings.contains(&words) {
+                    stored.warnings.push(words.clone());
+                }
+            });
+            if !task.warnings.contains(&words) {
+                task.warnings.push(words);
+            }
+        }
+        if task.worktree.is_none() {
+            update(core, &task.name, |stored| stored.worktree = Some(path.clone()));
+            task.worktree = Some(path);
+        }
+    } else if task.worktree.is_none() {
         let worktree = worktree_path(&core.paths.state, &task.name).display().to_string();
         git::add_worktree(&task.repo, &worktree, &task.task_branch, &task.base).await?;
         update(core, &task.name, |task| task.worktree = Some(worktree.clone()));
@@ -1040,7 +1091,25 @@ pub async fn discard(
         ));
     }
     let first_time = task.state != TaskState::Discarded;
-    let removal = git::remove_worktree(&task.repo, task.worktree.as_deref(), Some(&task.task_branch)).await;
+    let removal = if task.shared {
+        // The files go back to the workshop, which is never removed: nothing else is cleaned up.
+        if let Some(path) = task.worktree.clone().filter(|path| Path::new(path).exists()) {
+            let put_back = match workshop::files_of(&path, &task.scope).await {
+                Ok(files) => workshop::restore(&path, &files).await,
+                Err(e) => Err(e),
+            };
+            if let Err(e) = put_back {
+                return Err(RpcError::new(
+                    "unavailable",
+                    format!("{name}'s files could not be put back in the workshop: {}", e.message),
+                    format!("try again: kom task discard {name}"),
+                ));
+            }
+        }
+        git::Removal { removed: true, left: Vec::new() }
+    } else {
+        git::remove_worktree(&task.repo, task.worktree.as_deref(), Some(&task.task_branch)).await
+    };
     if removal.removed {
         task.worktree = None;
     }

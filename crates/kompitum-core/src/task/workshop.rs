@@ -122,6 +122,19 @@ pub async fn ensure(repo: &str, path: &str) -> Result<(), RpcError> {
     git(repo, &["worktree", "add", "--detach", path, "HEAD"]).await.map(|_| ())
 }
 
+/// Before a turn: the workshop exists, and follows the repository when no other task is mid-turn
+/// there. A refused follow is a warning in words, never a failed start.
+pub async fn enter(repo: &str, path: &str, quiet: bool) -> Result<Option<String>, RpcError> {
+    ensure(repo, path).await?;
+    if !quiet {
+        return Ok(None);
+    }
+    match sync(path, &head(repo).await?).await {
+        Ok(()) => Ok(None),
+        Err(e) => Ok(Some(e.message)),
+    }
+}
+
 /// Moves the workshop to the repository's commit, keeping every task's uncommitted files. Refused,
 /// with git's own words, when that commit changes a file a task is editing.
 pub async fn sync(path: &str, to: &str) -> Result<(), RpcError> {
@@ -167,6 +180,33 @@ pub async fn changed(path: &str, scope: &[String]) -> Result<(Vec<ChangedFile>, 
     Ok((mine, others))
 }
 
+/// The files a task has changed in the workshop right now, by path.
+pub async fn files_of(path: &str, scope: &[String]) -> Result<Vec<String>, RpcError> {
+    Ok(changed(path, scope).await?.0.into_iter().map(|file| file.path).collect())
+}
+
+/// After an accept. `before` is the repository's commit before the accept, `after` the new commit
+/// (None when nothing was committed). The accepted files end up reading as unchanged.
+pub async fn settle(
+    path: &str,
+    files: &[String],
+    before: &str,
+    after: Option<&str>,
+) -> Result<Option<String>, RpcError> {
+    let Some(after) = after else {
+        restore(path, files).await?;
+        return Ok(None);
+    };
+    if head(path).await? != before {
+        if let Err(e) = sync(path, before).await {
+            restore(path, files).await?;
+            return Ok(Some(e.message));
+        }
+    }
+    follow(path, after).await?;
+    Ok(None)
+}
+
 /// `git diff --numstat` lines as (path, added, removed); a binary file's `-` counts as zero.
 fn numstat(text: &str) -> Vec<(String, u64, u64)> {
     let number = |value: &str| value.parse::<u64>().unwrap_or(0);
@@ -205,9 +245,10 @@ async fn untracked_among(path: &str, files: &[String]) -> Result<Vec<String>, Rp
     Ok(split_z(&out.stdout))
 }
 
-/// A task's files as one patch against the workshop's commit. `binary` gives the form `git apply`
-/// needs for an accept; without it the patch is for reading.
-pub async fn patch(path: &str, files: &[String], binary: bool) -> Result<Vec<u8>, RpcError> {
+/// A task's files as one patch against the workshop's commit. `flags` go right after `diff`: an
+/// accept passes `--binary --full-index` so `git apply` can take it, the checks `-U0 --no-color`,
+/// reading passes none.
+pub async fn patch(path: &str, files: &[String], flags: &[&str]) -> Result<Vec<u8>, RpcError> {
     if files.is_empty() {
         return Ok(Vec::new());
     }
@@ -218,9 +259,7 @@ pub async fn patch(path: &str, files: &[String], binary: bool) -> Result<Vec<u8>
         git_retry(path, &args).await?;
     }
     let mut args = vec!["diff"];
-    if binary {
-        args.extend(["--binary", "--full-index"]);
-    }
+    args.extend(flags.iter().copied());
     args.extend(["--no-renames", "HEAD", "--"]);
     args.extend(files.iter().map(String::as_str));
     let diff = git_retry(path, &args).await;
@@ -242,6 +281,10 @@ pub async fn restore(path: &str, files: &[String]) -> Result<(), RpcError> {
     if files.is_empty() {
         return Ok(());
     }
+    // A worker's `git add` would keep a file in the index: unstage first, so the listing below sees it.
+    let mut unstage = vec!["reset", "-q", "--"];
+    unstage.extend(files.iter().map(String::as_str));
+    git_retry(path, &unstage).await?;
     let added = untracked_among(path, files).await?;
     let root = Path::new(path);
     for file in &added {
@@ -466,7 +509,7 @@ mod tests {
         edit_workshop(&ws);
         let ws = ws.display().to_string();
         let before = status_of(&ws);
-        let bytes = patch(&ws, &scopes(&["src/new.rs"]), true).await.unwrap();
+        let bytes = patch(&ws, &scopes(&["src/new.rs"]), &["--binary", "--full-index"]).await.unwrap();
         assert_eq!(status_of(&ws), before, "patch leaves the workshop's index as it was");
         let file = dir.join("state").join("task.patch");
         std::fs::write(&file, &bytes).unwrap();
@@ -485,7 +528,7 @@ mod tests {
         ensure(&main, &ws.display().to_string()).await.unwrap();
         edit_workshop(&ws);
         let ws = ws.display().to_string();
-        let bytes = patch(&ws, &scopes(&["src/new.rs"]), true).await.unwrap();
+        let bytes = patch(&ws, &scopes(&["src/new.rs"]), &["--binary", "--full-index"]).await.unwrap();
         let file = dir.join("state").join("task.patch");
         std::fs::write(&file, &bytes).unwrap();
         let file_text = file.display().to_string();
@@ -537,10 +580,98 @@ mod tests {
         std::fs::write(ws.join("a.txt"), "one\ntwo\n").unwrap();
         std::fs::create_dir_all(ws.join("src").join("deep")).unwrap();
         std::fs::write(ws.join("src").join("deep").join("new.rs"), "x\n").unwrap();
+        run(&ws, &["add", "src/deep/new.rs"]);
         restore(&ws_text, &scopes(&["a.txt", "src/deep/new.rs"])).await.unwrap();
         assert_eq!(std::fs::read_to_string(ws.join("a.txt")).unwrap(), "one\n");
         assert!(!ws.join("src").exists(), "the folders it left empty go too");
         assert_eq!(status_of(&ws_text), "", "the workshop is clean again");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Accepts `files` the way the core does: the workshop's patch applied to the repository and
+    /// committed. Returns the repository's commit before the accept and the one after.
+    async fn accept_by_hand(dir: &Path, ws: &str, files: &[String]) -> (String, String) {
+        let before = head(&dir.display().to_string()).await.unwrap();
+        let bytes = patch(ws, files, &["--binary", "--full-index"]).await.unwrap();
+        let file = dir.join("state").join("task.patch");
+        std::fs::write(&file, &bytes).unwrap();
+        let file_text = file.display().to_string();
+        run(dir, &["apply", file_text.as_str()]);
+        for accepted in files {
+            run(dir, &["add", accepted.as_str()]);
+        }
+        run(dir, &["commit", "-q", "-m", "accepted"]);
+        (before, head(&dir.display().to_string()).await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn settle_leaves_the_accepted_file_clean_and_another_edit_changed() {
+        let dir = main_repo("settle");
+        let main = dir.display().to_string();
+        let ws = dir.join("state").join("workshops").join("x");
+        ensure(&main, &ws.display().to_string()).await.unwrap();
+        edit_workshop(&ws);
+        let ws = ws.display().to_string();
+        let accepted = scopes(&["src/new.rs"]);
+        let (before, after) = accept_by_hand(&dir, &ws, &accepted).await;
+        assert_eq!(settle(&ws, &accepted, &before, Some(after.as_str())).await.unwrap(), None);
+        let (mine, others) = changed(&ws, &scopes(&["**"])).await.unwrap();
+        let listed: Vec<String> = mine.iter().map(|f| f.path.clone()).chain(others).collect();
+        assert_eq!(listed, ["a.txt", "notes/x.md"], "the accepted file is clean, the rest stay changed");
+        assert_eq!(head(&ws).await.unwrap(), after);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn settle_refuses_a_repository_commit_that_meets_an_edit_and_keeps_the_other_edit() {
+        let dir = main_repo("settle-refused");
+        let main = dir.display().to_string();
+        let ws = dir.join("state").join("workshops").join("x");
+        ensure(&main, &ws.display().to_string()).await.unwrap();
+        edit_workshop(&ws);
+        let ws = ws.display().to_string();
+        let workshop_head = head(&ws).await.unwrap();
+        // The repository moves on by a commit of its own that changes a.txt, which the workshop edited.
+        std::fs::write(dir.join("a.txt"), "one\nmain\n").unwrap();
+        run(&dir, &["commit", "-q", "-am", "a moves"]);
+        let accepted = scopes(&["src/new.rs"]);
+        let (before, after) = accept_by_hand(&dir, &ws, &accepted).await;
+        let warning = settle(&ws, &accepted, &before, Some(after.as_str())).await.unwrap();
+        assert!(warning.as_deref().is_some_and(|text| text.contains("a.txt")), "{warning:?}");
+        assert_eq!(head(&ws).await.unwrap(), workshop_head, "the workshop stays behind");
+        assert!(!Path::new(&ws).join("src").join("new.rs").exists(), "the accepted file is back as HEAD has it");
+        assert_eq!(std::fs::read_to_string(Path::new(&ws).join("a.txt")).unwrap(), "one\ntwo\n");
+        assert!(Path::new(&ws).join("notes").join("x.md").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn settle_without_a_commit_restores_only_the_accepted_files() {
+        let dir = main_repo("settle-none");
+        let main = dir.display().to_string();
+        let ws = dir.join("state").join("workshops").join("x");
+        ensure(&main, &ws.display().to_string()).await.unwrap();
+        edit_workshop(&ws);
+        let ws = ws.display().to_string();
+        let main_head = head(&main).await.unwrap();
+        assert_eq!(settle(&ws, &scopes(&["src/new.rs"]), &main_head, None).await.unwrap(), None);
+        assert!(!Path::new(&ws).join("src").exists(), "the accepted file is restored away");
+        assert_eq!(std::fs::read_to_string(Path::new(&ws).join("a.txt")).unwrap(), "one\ntwo\n", "other edits stay");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn enter_makes_the_workshop_once_and_follows_the_repository_when_quiet() {
+        let dir = main_repo("enter");
+        let main = dir.display().to_string();
+        let ws = dir.join("state").join("workshops").join("x").display().to_string();
+        assert_eq!(enter(&main, &ws, false).await.unwrap(), None);
+        assert_eq!(enter(&main, &ws, false).await.unwrap(), None, "a second start is fine");
+        std::fs::write(dir.join("c.txt"), "c two\n").unwrap();
+        run(&dir, &["commit", "-q", "-am", "c moves"]);
+        let moved = head(&main).await.unwrap();
+        assert_eq!(enter(&main, &ws, true).await.unwrap(), None);
+        assert_eq!(head(&ws).await.unwrap(), moved);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

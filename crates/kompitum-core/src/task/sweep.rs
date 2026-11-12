@@ -28,6 +28,7 @@ pub async fn sweep(core: &Arc<Core>, p: TaskSweepParams) -> Result<TaskSweepResu
             TaskState::Accepted | TaskState::Discarded => {
                 let mut left = Vec::new();
                 if !p.dry_run
+                    && !task.shared
                     && let Some(worktree) = task.worktree.clone()
                 {
                     let removal =

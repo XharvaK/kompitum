@@ -9,6 +9,7 @@ use crate::task::checks::{
 };
 use crate::task::git;
 use crate::task::types::{Asked, CheckReport, CheckRun, Task, TaskState, TestRun, cut};
+use crate::task::workshop;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -80,7 +81,7 @@ async fn begin(core: &Arc<Core>, mut task: Task) {
         }
     }
 
-    let lines = match read_diff(&worktree, &task.base).await {
+    let lines = match read_diff(&task, &worktree).await {
         Ok(lines) => lines,
         Err(words) => {
             report.errors.push(words);
@@ -120,7 +121,7 @@ async fn begin(core: &Arc<Core>, mut task: Task) {
     report.require_missing = missing;
     report.errors.extend(problems);
 
-    report.checks_file_changed = has_checks(&task).await && checks_file_changed(&worktree).await;
+    report.checks_file_changed = has_checks(&task).await && checks_file_changed(&task, &worktree).await;
 
     let mut rules = builtin_warns();
     let call = asked_checks(&task.asked).warn;
@@ -148,7 +149,7 @@ async fn begin(core: &Arc<Core>, mut task: Task) {
     .await
     .unwrap_or_default();
 
-    let Some(cmd) = spec.test_cmd.clone() else {
+    let Some(cmd) = test_cmd(&task, &spec) else {
         finish(core, task, report, started).await;
         return;
     };
@@ -346,7 +347,7 @@ async fn finish(core: &Arc<Core>, mut task: Task, mut report: CheckReport, start
         if let Some(test) = report.test.as_mut().filter(|test| test.ok)
             && let Some(worktree) = task.worktree.as_deref()
         {
-            test.fingerprint = fingerprint(worktree, &task.base).await;
+            test.fingerprint = fingerprint(&task, worktree).await;
         }
         let path = super::task_folder(&core.paths.state, &task.name)
             .join(format!("turn-{}.followup.md", super::next_turn(&task)));
@@ -445,7 +446,7 @@ async fn reused_test(task: &Task, worktree: &str, cmd: &str, globs: &[String]) -
         return None;
     }
     let before = previous.fingerprint.as_ref()?;
-    let after = fingerprint(worktree, &task.base).await?;
+    let after = fingerprint(task, worktree).await?;
     let changed = round_changed(before, &after);
     if changed.iter().any(|path| !globs.iter().any(|glob| glob_match(path, glob))) {
         return None;
@@ -465,18 +466,25 @@ async fn reused_test(task: &Task, worktree: &str, cmd: &str, globs: &[String]) -
 }
 
 /// Every changed and untracked file's hash, so a later round can see what moved.
-async fn fingerprint(worktree: &str, base: &str) -> Option<BTreeMap<String, Option<String>>> {
-    git::git(worktree, &["add", "-N", "."]).await.ok()?;
-    let tracked = git::git(worktree, &["diff", "--name-only", "-z", "--no-renames", base]).await.ok()?;
-    let untracked = git::git(worktree, &["ls-files", "--others", "--exclude-standard", "-z"]).await.ok()?;
-    let mut names: Vec<String> = Vec::new();
-    for output in [&tracked, &untracked] {
-        for name in String::from_utf8_lossy(&output.stdout).split('\0') {
-            if !name.is_empty() && !names.iter().any(|seen| seen == name) {
-                names.push(name.to_string());
+async fn fingerprint(task: &Task, worktree: &str) -> Option<BTreeMap<String, Option<String>>> {
+    let names = if task.shared {
+        // The workshop's own list: the index is not touched.
+        workshop::files_of(worktree, &task.scope).await.ok()?
+    } else {
+        git::git(worktree, &["add", "-N", "."]).await.ok()?;
+        let base = task.base.as_str();
+        let tracked = git::git(worktree, &["diff", "--name-only", "-z", "--no-renames", base]).await.ok()?;
+        let untracked = git::git(worktree, &["ls-files", "--others", "--exclude-standard", "-z"]).await.ok()?;
+        let mut names: Vec<String> = Vec::new();
+        for output in [&tracked, &untracked] {
+            for name in String::from_utf8_lossy(&output.stdout).split('\0') {
+                if !name.is_empty() && !names.iter().any(|seen| seen == name) {
+                    names.push(name.to_string());
+                }
             }
         }
-    }
+        names
+    };
     let root = PathBuf::from(worktree);
     tokio::task::spawn_blocking(move || {
         let mut map = BTreeMap::new();
@@ -499,10 +507,18 @@ async fn fingerprint(worktree: &str, base: &str) -> Option<BTreeMap<String, Opti
     .flatten()
 }
 
-/// `git add -N .`, then the added and removed lines against the base.
-async fn read_diff(worktree: &str, base: &str) -> Result<Vec<DiffLine>, String> {
+/// `git add -N .`, then the added and removed lines against the base. A task in the workshop reads
+/// only its own changed files there, and never adds to the workshop's index.
+async fn read_diff(task: &Task, worktree: &str) -> Result<Vec<DiffLine>, String> {
+    if task.shared {
+        let files: Vec<String> = task.changed.iter().map(|file| file.path.clone()).collect();
+        let out = workshop::patch(worktree, &files, &["-U0", "--no-color"]).await.map_err(|e| e.message)?;
+        return Ok(parse_diff(&String::from_utf8_lossy(&out)));
+    }
     git::git(worktree, &["add", "-N", "."]).await.map_err(|e| e.message)?;
-    let out = git::git(worktree, &["diff", "-U0", "--no-color", "--no-renames", base]).await.map_err(|e| e.message)?;
+    let out = git::git(worktree, &["diff", "-U0", "--no-color", "--no-renames", task.base.as_str()])
+        .await
+        .map_err(|e| e.message)?;
     Ok(parse_diff(&String::from_utf8_lossy(&out.stdout)))
 }
 
@@ -512,6 +528,15 @@ async fn working_names(worktree: &str) -> Result<Vec<String>, String> {
         .await
         .map_err(|e| e.message)?;
     Ok(String::from_utf8_lossy(&out.stdout).split('\0').filter(|name| !name.is_empty()).map(str::to_string).collect())
+}
+
+/// The test a task's checks run. A task in the workshop runs only the test its start asked for:
+/// the repository's own would meet other tasks' unfinished files.
+pub fn test_cmd(task: &Task, spec: &ChecksFile) -> Option<String> {
+    if task.shared {
+        return task.asked.test.as_deref().map(str::trim).filter(|cmd| !cmd.is_empty()).map(str::to_string);
+    }
+    spec.test_cmd.clone()
 }
 
 /// `has_checks`: the base has a checks file, or the call asked for a test, forbid or
@@ -525,7 +550,10 @@ async fn has_checks(task: &Task) -> bool {
 }
 
 /// `_checks_file_changed`: the committed checks file differs from the base, or one is untracked.
-async fn checks_file_changed(worktree: &str) -> bool {
+async fn checks_file_changed(task: &Task, worktree: &str) -> bool {
+    if task.shared {
+        return task.changed.iter().any(|file| file.path == CHECKS_PATH);
+    }
     if git::git(worktree, &["rev-parse", "--verify", "HEAD"]).await.is_ok()
         && git::git(worktree, &["diff", "--quiet", "HEAD", "--", CHECKS_PATH]).await.is_err()
     {
@@ -576,6 +604,28 @@ mod tests {
 
     fn hit() -> Hit {
         Hit { pattern: "p".into(), file: "f".into(), line: 1, text: "t".into() }
+    }
+
+    #[test]
+    fn a_workshop_task_runs_only_the_test_its_start_asked_for() {
+        let spec = ChecksFile { test_cmd: Some("cargo test".into()), ..ChecksFile::default() };
+        let shared = Task { shared: true, ..Default::default() };
+        assert_eq!(test_cmd(&shared, &spec), None, "the repository's own test would meet other tasks' files");
+        let asked = Task {
+            shared: true,
+            asked: Asked { test: Some("  cargo test --lib x  ".into()), ..Default::default() },
+            ..Default::default()
+        };
+        assert_eq!(test_cmd(&asked, &spec), Some("cargo test --lib x".into()));
+        let blank =
+            Task { shared: true, asked: Asked { test: Some("  ".into()), ..Default::default() }, ..Default::default() };
+        assert_eq!(test_cmd(&blank, &spec), None, "a blank asked test is no test");
+        let plain = Task::default();
+        assert_eq!(
+            test_cmd(&plain, &spec),
+            Some("cargo test".into()),
+            "a task outside the workshop runs the repository's"
+        );
     }
 
     #[test]

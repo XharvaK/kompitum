@@ -365,6 +365,10 @@ pub async fn prepare(
     prepared.env.insert("GIT_CONFIG_KEY_0".into(), "core.hooksPath".into());
     prepared.env.insert("GIT_CONFIG_VALUE_0".into(), forward_slashes(&hooks));
     prepared.env.insert("KOMPITUM_PROTECTED".into(), protected);
+    // In the shared workshop a worker's own `git status` must never take the index lock others need.
+    if task.shared {
+        prepared.env.insert("GIT_OPTIONAL_LOCKS".into(), "0".into());
+    }
     // OpenCode would read the repository's and the home folder's AGENTS.md by itself; the prompt
     // carries the committed one instead. Command Code's settings stay as they are: what it
     // carries is unmeasured until its credits return.

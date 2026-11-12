@@ -55,6 +55,11 @@ pub async fn review(core: &Arc<Core>, p: TaskReviewParams) -> Result<TaskReviewR
     let mut patch = String::new();
     let worktree = task.worktree.as_deref().filter(|path| Path::new(path).exists());
     match worktree {
+        Some(worktree) if task.shared => {
+            let files = super::workshop::files_of(worktree, &task.scope).await?;
+            let out = super::workshop::patch(worktree, &files, &[]).await?;
+            patch = String::from_utf8_lossy(&out).into_owned();
+        }
         Some(worktree) => {
             super::git::git(worktree, &["add", "-N", "."]).await?;
             let out = super::git::git(worktree, &["diff", "--no-renames", &task.base]).await?;

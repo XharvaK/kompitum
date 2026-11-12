@@ -26,6 +26,8 @@ mod prompt;
 mod review;
 #[path = "task/workers.rs"]
 mod workers;
+#[path = "task/workshop.rs"]
+mod workshop;
 
 const BIN: &str = env!("CARGO_BIN_EXE_kompitum-core");
 const TEST_WORKER: &str = env!("CARGO_BIN_EXE_kompitum-test-worker");

@@ -156,6 +156,7 @@ kom task accept fix-docs --review "clean; one typo fixed by hand"
   and the repository's `.kompitum/checks.json`) run when it ends, and failures go
   back to it (`--qa-rounds`) before you are told.
 - `"one_at_a_time": true` in `.kompitum/checks.json` makes that repository build one task at a time, whatever their scopes.
+- `"workshop": true` in `.kompitum/checks.json` makes that repository's scoped tasks share one long-lived checkout (the workshop) instead of a worktree each, so its build stays warm. A task there changes only its scope's files; one whose scope overlaps an earlier task's waits until that one is accepted or discarded; and it runs only its own `--test`. `"workshop": {"one_writer": ["src/**"]}` also lets one task at a time write under those globs, for code that must compile together. A task with no scope still gets a worktree of its own.
 - There is no cap on how many tasks run at once unless `[workers] cap` in the config sets one.
 - A turn has no wall-clock limit unless `--timeout` sets one; `--idle` (900 s) cuts it only after no output, CPU or I/O.
 - A worker that ends its turn with a `## Question` leaves the task `asking`: `kom task wait`

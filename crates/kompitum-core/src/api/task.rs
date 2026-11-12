@@ -255,18 +255,26 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         return Err(RpcError::invalid_params(format!("qa_rounds is 0 to {}", crate::task::checks::MAX_QA_ROUNDS)));
     }
     let dirty = crate::task::git::dirty_count(&repo).await?;
+    let asked =
+        Asked { test: p.test, forbid: p.forbid, require: p.require, warn: p.warn, qa_rounds: p.qa_rounds, web: p.web };
+    let (start_warnings, one_at_a_time, workshop) =
+        crate::task::prompt::start_warnings(&repo, &base, &p.brief, &p.scope, &asked).await;
+    let shared = workshop.is_some() && !p.scope.is_empty();
+    let globs = workshop.as_ref().map(|w| w.one_writer.as_slice()).unwrap_or(&[]);
+    let one_writer = shared && crate::task::workshop::needs_one_writer(&p.scope, globs);
     let mut warnings = if dirty > 0 {
-        vec![format!(
-            "{dirty} uncommitted files in {repo} are not in the worktree: commit first if the worker needs them"
-        )]
+        let place = if shared { "are not in the workshop" } else { "are not in the worktree" };
+        vec![format!("{dirty} uncommitted files in {repo} {place}: commit first if the worker needs them")]
     } else {
         Vec::new()
     };
-    let asked =
-        Asked { test: p.test, forbid: p.forbid, require: p.require, warn: p.warn, qa_rounds: p.qa_rounds, web: p.web };
-    let (start_warnings, one_at_a_time) =
-        crate::task::prompt::start_warnings(&repo, &base, &p.brief, &p.scope, &asked).await;
     warnings.extend(start_warnings);
+    if workshop.is_some() && p.scope.is_empty() {
+        warnings.push(
+            "this repository shares a workshop, but a task with no scope gets a worktree of its own: give it a scope to work in the workshop"
+                .into(),
+        );
+    }
     let task = Task {
         name: p.task.clone(),
         seq: core.tasks.next_seq(),
@@ -295,8 +303,8 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         review: None,
         asked,
         one_at_a_time,
-        shared: false,
-        one_writer: false,
+        shared,
+        one_writer,
         checks: Vec::new(),
         check: None,
         qa_used: 0,

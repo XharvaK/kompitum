@@ -3,7 +3,7 @@
 use crate::rpc::RpcError;
 use crate::task::brief::{self, Footer, Plan, TestPlan};
 use crate::task::checking;
-use crate::task::checks::{ChecksFile, glob_match};
+use crate::task::checks::{ChecksFile, Workshop, glob_match};
 use crate::task::git;
 use crate::task::types::{Asked, Task};
 use crate::task::worker::Worker;
@@ -90,10 +90,12 @@ pub async fn turn_prompt(
         return Ok(TurnPrompt { text: followup.unwrap_or_default().to_vec(), warnings: Vec::new() });
     }
     let mut warnings = Vec::new();
-    let (spec, problems) = match checking::spec(&task.repo, &task.base, &task.asked).await {
+    let (mut spec, problems) = match checking::spec(&task.repo, &task.base, &task.asked).await {
         Ok((spec, problems)) => (spec, problems),
         Err(error) => (ChecksFile::default(), vec![format!("the checks could not be read: {}", error.message)]),
     };
+    // The footer names the test that will really run.
+    spec.test_cmd = checking::test_cmd(task, &spec);
     warnings.extend(problems);
     let notes = base_text(&task.repo, &task.base, ".kompitum/brief.md", &mut warnings).await;
     let rules = match base_text(&task.repo, &task.base, ".kompitum/rules.md", &mut warnings).await {
@@ -127,6 +129,7 @@ pub async fn turn_prompt(
         notes,
         rules,
         agents,
+        shared: task.shared,
     });
     let mut text = note.unwrap_or_default().to_vec();
     text.extend_from_slice(brief.trim_end().as_bytes());
@@ -146,7 +149,7 @@ pub async fn start_warnings(
     brief: &str,
     _scope: &[String],
     asked: &Asked,
-) -> (Vec<String>, bool) {
+) -> (Vec<String>, bool, Option<Workshop>) {
     let mut warnings = Vec::new();
     let spec = match checking::spec(repo, base, asked).await {
         Ok((spec, problems)) => {
@@ -159,12 +162,13 @@ pub async fn start_warnings(
         }
     };
     let one_at_a_time = spec.one_at_a_time;
+    let workshop = spec.workshop.clone();
     let has_any_check = spec.test_cmd.as_deref().is_some_and(|cmd| !cmd.trim().is_empty())
         || !spec.forbid.is_empty()
         || !spec.require.is_empty();
     warnings.extend(brief::start_warnings(brief, &spec.require, has_any_check));
     let Some(rules) = base_text(repo, base, ".kompitum/rules.md", &mut warnings).await else {
-        return (warnings, one_at_a_time);
+        return (warnings, one_at_a_time, workshop);
     };
     let (rules, problems) = brief::parse_rules(&rules);
     warnings.extend(problems);
@@ -176,5 +180,5 @@ pub async fn start_warnings(
         }
         Err(error) => warnings.push(format!("the files of the task's base could not be listed: {}", error.message)),
     }
-    (warnings, one_at_a_time)
+    (warnings, one_at_a_time, workshop)
 }
