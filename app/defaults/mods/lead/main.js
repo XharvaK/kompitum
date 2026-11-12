@@ -1,15 +1,25 @@
-// The Lead switch and the Door: who leads between Opus and Manager, and one
-// click to Manager's own chat. A hand-off is a note, not a lock. Nothing is
-// gathered or sent on its own: the pill opens a window, and the window's send
-// button posts the note.
+// The lead switch, and the status bar's right end: Notes with the agent that
+// joined through Connect, and a click to that system's own app when one is
+// installed. A hand-off is a note, not a lock. Nothing is gathered or sent on
+// its own: the pill opens a window, and the window's send button posts the note.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { kom, theme, notify, openOverlay, closeOverlay, shared, setShared, props, appLink, openLink } from "kompitum";
+import { kom, theme, notify, openOverlay, closeOverlay, shared, setShared, props, appLink, openLink, settings } from "kompitum";
 
 const LEAD_KEY = "lead";
-const DOOR = "grokbot://";
 const TASK_SECTIONS = [["review", "To review"], ["running", "Running"], ["queued", "Queued"]];
+
+const cap = (word) => (word ? word[0].toUpperCase() + word.slice(1) : "");
+
+// The first system that joined through Connect, or null: who the notes are with, and its app's link.
+function joined() {
+  const connect = settings()?.connect ?? {};
+  const id = Object.keys(connect).sort().find((key) => connect[key]?.agent);
+  if (!id) return null;
+  const agent = String(connect[id].agent);
+  return { id, agent, name: connect[id].name || cap(agent), link: connect[id].link || `${id}://` };
+}
 
 function asState(value) {
   if (!value || typeof value !== "object") return null;
@@ -229,6 +239,7 @@ export default class Lead extends View {
     this.handoff = Boolean(p && p.mode === "handoff" && typeof p.markdown === "string");
     this.sending = false;
     this.busy = false;
+    this.apps = {};
     if (this.handoff) cx.timer.after(80, () => this.handle.focus());
   }
 
@@ -263,10 +274,24 @@ export default class Lead extends View {
     });
   }
 
-  door() {
-    const link = String(props()?.door ?? DOOR);
+  // Whether an app answers the link's scheme, asked once per link.
+  appFor(link) {
+    if (!(link in this.apps)) {
+      let app = null;
+      try {
+        app = appLink(link.split(":")[0]);
+      } catch {
+        app = null;
+      }
+      this.apps[link] = Boolean(app);
+    }
+    return this.apps[link];
+  }
+
+  door(other) {
+    const link = String(props()?.door ?? other.link);
     const scheme = link.split(":")[0];
-    const fail = (body) => notify({ title: "Could not open Manager", body, level: "error" });
+    const fail = (body) => notify({ title: `Could not open ${other.name}`, body, level: "error" });
     let app;
     try {
       app = appLink(scheme);
@@ -350,13 +375,13 @@ export default class Lead extends View {
       .child(text);
   }
 
-  // Two labelled items in the status bar's own type: the Line, and the way to Manager's chat.
-  // No pills, and no item naming the lead: they read as part of the bar.
+  // The status bar's right end: nothing until an agent joins through Connect; then Notes with it,
+  // and, when an app answers its link, a divider and a click to that app. No lead name appears.
   renderPill(t) {
     const item = (id) => h_flex().id(id).h_full().px(6).gap(5).items_center().rounded(5).cursor_pointer()
       .text_color(t.muted).hover((s) => s.text_color(t.foreground))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation());
-    return h_flex()
+    let bar = h_flex()
       .id("lead-root")
       .size_full()
       .justify_end()
@@ -366,20 +391,24 @@ export default class Lead extends View {
       .bg(t.chrome)
       .border_t(1)
       .border_color(t.border)
-      .text_size(11.8)
-      .child(
-        item("lead-line")
-          .tooltip("The Line")
-          .on_click(() => openOverlay({ mod: "line", kind: "popup", width: 420, height: 460 }))
-          .child("Line")
-          .child(svg("mods/lead/chevron-up.svg").size(12)),
-      )
+      .text_size(11.8);
+    const other = joined();
+    if (!other) return bar;
+    bar = bar.child(
+      item("lead-notes")
+        .tooltip(`Notes with ${cap(other.agent)}`)
+        .on_click(() => openOverlay({ mod: "line", kind: "popup", width: 420, height: 460, props: { with: other.agent } }))
+        .child("Notes")
+        .child(svg("mods/lead/chevron-up.svg").size(12)),
+    );
+    if (!this.appFor(other.link)) return bar;
+    return bar
       .child(div().w(1).h(12).bg(t.border))
       .child(
         item("lead-door")
-          .tooltip("Open Manager's chat")
-          .on_click(() => this.door())
-          .child("Manager")
+          .tooltip(`Open ${other.name}`)
+          .on_click(() => this.door(other))
+          .child(other.name)
           .child(svg("mods/lead/arrow-up-right.svg").size(11)),
       );
   }

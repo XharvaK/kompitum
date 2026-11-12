@@ -519,6 +519,12 @@ pub struct Connection {
     pub since: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
+    /// The system's name as Connect shows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The link that opens its desktop app, like `scheme://`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 /// The lead agent's choices, applied to the next conversation.
@@ -640,6 +646,9 @@ pub struct Settings {
     /// The lead the composer will start: program, model and reasoning level.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lead: Option<Lead>,
+    /// Agent systems joined through Connect, by system id: mods read who joined from here.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub connect: BTreeMap<String, Connection>,
 }
 
 /// Attention sounds: when an agent needs you, and when one finished while you
@@ -689,6 +698,7 @@ impl Default for Settings {
             option_as_alt: OptionAsAlt::Auto,
             sounds: Sounds::default(),
             lead: None,
+            connect: BTreeMap::new(),
         }
     }
 }
@@ -742,6 +752,7 @@ impl Settings {
             minimum_contrast: person.minimum_contrast,
             option_as_alt: person.option_as_alt,
             lead: person.lead.clone(),
+            connect: person.connect.clone(),
         }
     }
 }
@@ -1218,6 +1229,23 @@ mod tests {
     }
 
     #[test]
+    fn settings_carry_the_persons_connections() {
+        let connection = Connection {
+            since: Some("2026-11-01T00:00:00Z".into()),
+            agent: Some("manager".into()),
+            name: Some("Grok Bot".into()),
+            link: Some("grokbot://".into()),
+        };
+        let person = Person {
+            connect: [("grokbot".into(), connection.clone())].into(),
+            ..Person::default()
+        };
+        let settings = Settings::compose(&person, &crate::layout::Look::default(), true);
+        assert_eq!(settings.connect.get("grokbot"), Some(&connection));
+        assert!(Settings::default().connect.is_empty());
+    }
+
+    #[test]
     fn shipped_looks_and_theme_clicks_have_the_same_precedence() {
         use crate::layout::{Node, ThemeChoice};
         let person = Person {
@@ -1284,6 +1312,8 @@ mod tests {
                 Connection {
                     since: Some(String::new()),
                     agent: None,
+                    name: Some(String::new()),
+                    link: Some(String::new()),
                 },
             )]
             .into(),

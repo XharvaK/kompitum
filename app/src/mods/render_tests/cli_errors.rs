@@ -42,7 +42,10 @@ fn a_line_cli_failure_shows_the_first_line_and_keeps_the_rest_in_the_tooltip(
 ) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let mut values = fixture(true, props(), updates("current", "current"));
+    // The notes open with the agent that joined: without one there is no thread to read.
+    let mut with_agent = props();
+    with_agent["with"] = json!("manager");
+    let mut values = fixture(true, with_agent, updates("current", "current"));
     values.insert("threadFail".into(), json!(DUMP));
     let tree = describe_settled(cx, &staged, "mods/line", values, None).unwrap();
     assert_first_line_and_full_tooltip(&tree);

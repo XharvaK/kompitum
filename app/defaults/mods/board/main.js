@@ -340,8 +340,6 @@ export default class Board extends View {
   }
 
   byLabel(by) {
-    if (by === "opus") return "Opus";
-    if (by === "manager") return "Manager";
     if (by === "owner") return "You";
     return typeof by === "string" ? cap(by) : "";
   }

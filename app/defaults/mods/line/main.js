@@ -1,13 +1,13 @@
-// The notes between Opus and Manager, oldest first and scrolled to the newest.
-// Reads only kom vault thread: kom vault read would write a read mark in Opus's name.
+// The notes between the lead and an agent that joined through Connect.
+// Reads only kom vault thread: kom vault read would write a read mark in the lead's name.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
 import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, run } from "kompitum";
 
-// The same two colors the Board's chips use.
-const OPUS = "accent";
-const MANAGER = "ansi5";
+// The same two colors the Board's chips use: the lead's, and the other agent's.
+const OWN = "accent";
+const OTHER = "ansi5";
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const pad = (n) => String(n).padStart(2, "0");
 
@@ -121,7 +121,7 @@ export default class Line extends View {
   init(_props, cx) {
     const p = props() ?? {};
     this.mode = p.note ? "note" : "panel";
-    this.other = typeof p.with === "string" && p.with ? p.with : "manager";
+    this.other = typeof p.with === "string" && p.with ? p.with : "";
     this.notes = [];
     this.vault = "";
     this.agent = "opus";
@@ -150,7 +150,8 @@ export default class Line extends View {
   }
 
   refresh(cx) {
-    if (this.loading) return;
+    // No agent has joined: there is no thread to read.
+    if (this.loading || !this.other) return;
     this.loading = true;
     this.startedAt = Date.now();
     const seq = (this.seq = (this.seq ?? 0) + 1);
@@ -251,8 +252,8 @@ export default class Line extends View {
   }
 
   senderColor(t, from) {
-    if (from === "opus") return t[OPUS];
-    if (from === "manager") return t[MANAGER];
+    if (from === this.agent) return t[OWN];
+    if (this.other && from === this.other) return t[OTHER];
     return t.muted;
   }
 
@@ -294,7 +295,7 @@ export default class Line extends View {
       key: `line-note:${text(note.path)}`,
       width: 760,
       height: 560,
-      props: { note, vault: this.vault, agent: this.agent },
+      props: { note, vault: this.vault, agent: this.agent, with: this.other },
     });
   }
 
@@ -317,7 +318,9 @@ export default class Line extends View {
       .text_size(13)
       .child(h_flex().h(42).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border)
         .child(div().font_semibold().child("Notes"))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(`with ${cap(this.other)}`))
+        .child(this.other
+          ? div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(`with ${cap(this.other)}`)
+          : div().flex_1())
         .child(div()
           .id("line-refresh")
           .px(6)
@@ -358,7 +361,7 @@ export default class Line extends View {
         .child(`${filed.length} ${filed.length === 1 ? "note" : "notes"} couldn't be filed · Open the mailbox`)))
       .child(v_flex().flex_1().min_h(0).relative()
         .when(this.notes.length === 0, (el) => el.p(12).child(div().text_size(12).text_color(t.muted)
-          .child(this.error ? "No notes to show." : this.loaded ? "No notes yet." : "Loading notes…")))
+          .child(!this.other ? "No agent has joined yet." : this.error ? "No notes to show." : this.loaded ? "No notes yet." : "Loading notes…")))
         .when(this.notes.length > 0, (el) => el
           .child(v_virtual_list(
             "line-notes",

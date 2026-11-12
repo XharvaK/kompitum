@@ -124,8 +124,8 @@ the highlighted line shows where it will land.
   has one or more; closing the last one closes the space (it stays in
   `recent`).
 - A tab can be **settled** (`tab.settle`): put away on this screen, still running;
-  `settled` on each tab. The shipped layouts don't use it (they list every
-  tab); a mod that does can hide or fold settled tabs. Showing one, or an
+  `settled` on each tab. The shipped layouts don't use it; a mod that does
+  can hide or fold settled tabs. Showing one, or an
   agent in it needing the user, brings it back.
 - A **pane** is a terminal on screen, or a **mod** beside them (a markdown
   viewer, a board, a git panel): `pane.split {direction, mod, props}`. A
@@ -174,8 +174,9 @@ Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
 shown one's name. A window starts on `desk` ("Desk": the agents list on the
 left, the lead or one terminal in the middle with Back, the top bar with the
-Board's bell, the mailbox, Files and Changes, and the Line by the lead's name
-in the status bar); the others are there to try or start from. Kompitum ships `main` ("Kompitum": spaces by machine and the
+Board's bell, the mailbox, Files and Changes, and, once an agent has joined
+through Connect, Notes and that system's app at the status bar's right end);
+the others are there to try or start from. Kompitum ships `main` ("Kompitum": spaces by machine and the
 agents list on the left, `workspace-chrome`; tabs as pills with a + menu
 that starts a terminal or any installed agent, `new-menu`; panes as cards
 with a header; Files and Changes panels on the right, `files` and
@@ -698,8 +699,8 @@ What's about the user, never a look:
 - `appearance`: `"light"` or `"dark"` always; absent, the system's. A layout
   with a light and a dark theme shows the matching one.
 - `connect`: agent systems joined to Kompitum, by system id:
-  `{ "grokbot": { "since": "<when Connect was pressed>", "agent": "<the name its Joined note gave>" } }`.
-  Settings › Connect writes it; both fields are optional, `since` alone means the
+  `{ "grokbot": { "since": "<when Connect was pressed>", "agent": "<the name its Joined note gave>", "name": "<the system's name>", "link": "<its app's link, like grokbot://>" } }`.
+  Settings › Connect writes it; every field is optional, `since` alone means the
   prompt was copied and the system hasn't joined yet.
 - `lead`: the lead the next conversation starts with: `program` (a program key
   such as `claude`), `folder` (its home folder; the user's home folder when
@@ -861,8 +862,9 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
   mod showing it, including images that were missing or invalid on first load.
 - The defaults are mods too, read them as examples: `spaces`, `agents`,
   `tabs` (the tab bar), `menu`, `prompt`, `confirm`, `help`, `toast`,
-  Terminals' `picker`, `peek`, and `pane` (an
-  example pane header, not used by the default layouts), and `worktree`
+  Terminals' `picker`, `peek`, and `pane` (the pane header the shipped
+  layouts use, except Desk, which names the shown tab in its top bar), and
+  `worktree`
   (git worktrees as spaces: the space menu's and the + menu's New worktree,
   Open worktree (the repo's checkouts, filtered; one already shown is gone
   to) and Remove worktree open it as a dialog with props `{space, folder?,
@@ -1007,7 +1009,7 @@ All of it is in `kompitum.d.ts`. In short:
   it), accent_foreground, solid and solid_foreground (a primary button),
   selection, working, blocked, done, idle, unknown, ansi0..15; light and
   dark themes name the same ones), `settings()` (with `dark`: the
-  appearance now), `keys()`, `commands()` (every app
+  appearance now; `connect`: the systems joined through Connect), `keys()`, `commands()` (every app
   command, its arguments and what it does), `layouts()` (the layout names).
   `focused().agent` is the agent an agent block shows.
   `focused().space`/`tab` describe the current window context. With a layout terminal

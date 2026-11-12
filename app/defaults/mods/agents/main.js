@@ -300,8 +300,10 @@ export default class Agents extends View {
     // agent's own title, never an automatic tab number unless two rows would
     // otherwise read the same.
     // Read the pane snapshot once: every host read copies the whole list into JS.
-    const leads = leadPanes(panes());
-    const tabs = new Map(spaces().flatMap(s => s.tabs).map(tab => [tab.id, tab]));
+    const paneList = panes();
+    const spaceList = spaces();
+    const leads = leadPanes(paneList);
+    const tabs = new Map(spaceList.flatMap(s => s.tabs).map(tab => [tab.id, tab]));
     const labels = new Map(list.map(a => {
       const tab = tabs.get(a.tab);
       const many = tabCounts.get(a.tab) > 1;
@@ -467,11 +469,85 @@ export default class Agents extends View {
         .when(Boolean(word), (el) => el.child(div().flex_none().text_size(11).text_color(leadColor(t, leadState)).child(word)));
     };
     const leadRows = leadTerminal && !leadListed ? [leadRow()] : [];
+    // The plain terminals no other row lists: tabs of the active space with a terminal, but not the
+    // lead's tab and not an agent's, in the space's tab order.
+    const leadTab = leadTerminal ? paneList.find((p) => p.terminal === leadTerminal.address)?.tab : null;
+    const plainTabs = (spaceList.find((s) => s.active)?.tabs ?? []).filter((tab) => {
+      if (tab.id === leadTab) return false;
+      const terms = paneList.filter((p) => p.tab === tab.id && p.terminal);
+      return terms.length > 0 && !terms.some((p) => this.listed.has(p.terminal));
+    });
+    const terminalRow = (tab) => {
+      const terms = paneList.filter((p) => p.tab === tab.id && p.terminal);
+      const program = terms[0]?.program;
+      const name = /^tb\d+$/.test(tab.name) ? program?.name ?? "Terminal" : tab.name;
+      const key = `term-${tab.id}`;
+      if (collapsed) {
+        return h_flex()
+          .id(key)
+          .h(26)
+          .px(8)
+          .flex_none()
+          .items_center()
+          .gap(4)
+          .when(tab.active, (el) => el.bg(t.raised))
+          .hover((s) => s.bg(t.hover))
+          .on_click(() => run("tab.select", { id: tab.id }))
+          .when(Boolean(icon(program, 14, t.foreground)), (el) => el.child(icon(program, 14, t.foreground)));
+      }
+      return h_flex()
+        .id(key)
+        .px(8)
+        .h(30)
+        .flex_none()
+        .rounded(8)
+        .items_center()
+        .gap(9)
+        .when(tab.active, (el) => el.bg(t.selected))
+        .cursor_pointer()
+        .hover((s) => s.bg(t.hover))
+        .on_hover((on, cx) => {
+          if (on) this.hovered = key;
+          else if (this.hovered === key) this.hovered = null;
+          cx.notify();
+        })
+        .on_click(() => run("tab.select", { id: tab.id }))
+        .when(Boolean(icon(program, 16, t.foreground)), (el) => el.child(icon(program, 16, t.foreground)))
+        .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
+        .when(this.hovered === key, (el) => el.child(div()
+          .id(`term-close-${tab.id}`)
+          .w(22)
+          .h(22)
+          .flex_none()
+          .flex()
+          .items_center()
+          .justify_center()
+          .rounded(6)
+          .text_color(t.dim)
+          .cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .tooltip("Close")
+          .on_click((_e, cx) => {
+            cx.stop_propagation();
+            // A plain shell closes at once; anything else runs something, so ask first.
+            if (terms.every((p) => p.program?.shell === true)) run("tab.close", { id: tab.id });
+            else openOverlay({ mod: "confirm", kind: "dialog", width: 380, props: { title: "Close terminal?", detail: `${name} is still running.`, command: { name: "tab.close", args: { id: tab.id } } } });
+          })
+          .child(svg("mods/pane/close.svg").size(13))));
+    };
+    const terminalSection = plainTabs.length
+      ? [
+        ...(collapsed ? [] : [h_flex().id("ag-terminals").px(8).h(41).pt(14).pb(5).flex_none().items_center()
+          .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Terminals"))]),
+        ...plainTabs.map(terminalRow),
+      ]
+      : [];
     const rows = [
       ...leadRows,
       ...(collapsed
         ? list.flatMap(withKids)
         : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))])),
+      ...terminalSection,
     ];
 
     return v_flex()

@@ -875,20 +875,6 @@ fn the_lead_overlay_draws_the_hand_off_with_a_way_out(cx: &mut TestAppContext) {
     assert!(!tree.contains("Lead · "), "the pill drew instead: {tree}");
 }
 
-/// The status bar names no lead (its model is in the composer's picker), and still offers Manager's chat.
-#[gpui::test]
-fn the_status_bar_names_no_lead_and_offers_managers_chat(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let mut values = fixture(true, props(), updates("current", "current"));
-    values.insert("knownAgents".into(), agent_catalog());
-    values.get_mut("settings").unwrap()["lead"] = json!({"program": "claude", "model": "opus"});
-    let tree = describe_settled(cx, &staged, "mods/lead", values, None).unwrap();
-    assert!(!tree.contains("lead-pill"), "{tree}");
-    assert!(!tree.contains("The lead: Claude"), "{tree}");
-    assert!(tree.contains("Open Manager's chat"), "{tree}");
-}
-
 /// The composer draws its box under a live lead, and the first-pick card when
 /// no lead terminal is alive and no model is saved.
 #[gpui::test]
@@ -3285,7 +3271,9 @@ fn the_status_bar_counts_the_live_lead(cx: &mut TestAppContext) {
 fn the_notes_say_they_couldnt_sync_and_strip_markdown_previews(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let mut values = fixture(true, props(), updates("current", "current"));
+    let mut with_manager = props();
+    with_manager["with"] = json!("manager");
+    let mut values = fixture(true, with_manager, updates("current", "current"));
     values.insert(
         "threadJson".into(),
         json!({
@@ -3351,7 +3339,9 @@ export default class Probe extends View {
 fn the_drop_up_counts_notes_that_couldnt_be_filed(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let mut values = fixture(true, props(), updates("current", "current"));
+    let mut with_manager = props();
+    with_manager["with"] = json!("manager");
+    let mut values = fixture(true, with_manager, updates("current", "current"));
     values.insert(
         "threadJson".into(),
         json!({

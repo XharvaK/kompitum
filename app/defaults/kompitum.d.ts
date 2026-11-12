@@ -457,7 +457,9 @@ export function telemetry(): {
 } | null;
 
 /** What the app runs with: the shown layout's look (theme name, fonts, sizes, terminal
- *  padding and opacity) with the person's zoom and sounds. */
+ *  padding and opacity) with the person's zoom and sounds. Also `lead` (the lead's program,
+ *  model and effort) and `connect` (agent systems joined through Connect, by system id:
+ *  `{ since?, agent?, name?, link? }`). */
 export function settings(): Record<string, unknown>;
 
 /** Every key binding: { section, keys, action }. */

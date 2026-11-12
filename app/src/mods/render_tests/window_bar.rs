@@ -121,9 +121,9 @@ fn the_top_bar_bell_badge_counts_what_waits(cx: &mut TestAppContext) {
     assert!(!tree.contains("topbar-bell-count"), "nothing waits: {tree}");
 }
 
-/// The status bar has the Line and Manager as labelled items, and no item naming the lead.
+/// Until an agent joins through Connect, the status bar's right end holds nothing.
 #[gpui::test]
-fn the_status_bar_shows_the_line_and_manager_and_no_lead_name(cx: &mut TestAppContext) {
+fn the_status_bar_is_empty_until_an_agent_joins(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let tree = describe(
@@ -136,11 +136,104 @@ fn the_status_bar_shows_the_line_and_manager_and_no_lead_name(cx: &mut TestAppCo
         None,
     )
     .unwrap();
-    assert!(tree.contains("lead-line"), "{tree}");
-    assert!(tree.contains("The Line"), "{tree}");
-    assert!(tree.contains("lead-door"), "{tree}");
-    assert!(!tree.contains("lead-pill"), "{tree}");
+    assert!(tree.contains("lead-root"), "{tree}");
+    for gone in ["lead-notes", "lead-door", "Notes", "Manager"] {
+        assert!(!tree.contains(gone), "{gone} before anyone joined: {tree}");
+    }
+}
+
+/// Once an agent joined, Notes sits at the status bar's right end; the joined system's app
+/// is offered only when an app answers its link.
+#[gpui::test]
+fn the_status_bar_offers_notes_and_the_joined_systems_app(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let joined = || {
+        let mut values = fixture(true, props(), updates("current", "current"));
+        values.get_mut("settings").unwrap()["connect"] = json!({
+            "grokbot": { "since": "2026-11-01T00:00:00Z", "agent": "manager", "name": "Grok Bot", "link": "grokbot://" }
+        });
+        values
+    };
+    let mut values = joined();
+    values.insert("appLink".into(), json!({ "name": "Grok Bot", "icon": null }));
+    let tree = describe_with_values(cx, &staged, "mods/lead", values, None).unwrap();
+    for shown in ["lead-notes", "Notes with Manager", "lead-door", "Open Grok Bot", "Grok Bot"] {
+        assert!(tree.contains(shown), "missing {shown}: {tree}");
+    }
+    assert!(!tree.contains("The Line"), "{tree}");
     assert!(!tree.contains("Claude"), "{tree}");
+
+    // No app answers the link (the fixture's default): Notes stays, the app's item goes.
+    let tree = describe_with_values(cx, &staged, "mods/lead", joined(), None).unwrap();
+    assert!(tree.contains("lead-notes"), "{tree}");
+    assert!(!tree.contains("lead-door"), "{tree}");
+}
+
+/// The top bar names the shown tab's folder: its focused pane's, with the home folder as "~".
+#[gpui::test]
+fn the_top_bar_shows_the_shown_tabs_folder(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_with_values(
+        cx,
+        &staged,
+        "mods/topbar",
+        fixture(true, props(), updates("current", "current")),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("topbar-folder"), "{tree}");
+    assert!(tree.contains("~/project"), "{tree}");
+
+    // A Windows folder under the home folder is shortened the same way, and one that only
+    // starts with the same letters is not.
+    let mut windows = fixture(true, props(), updates("current", "current"));
+    windows.insert("home".into(), json!("C:\\Users\\me"));
+    windows.get_mut("panes").unwrap()[0]["cwd"] = json!("C:\\Users\\me\\work");
+    let tree = describe_with_values(cx, &staged, "mods/topbar", windows.clone(), None).unwrap();
+    assert!(tree.contains("~\\work") || tree.contains("~\\\\work"), "{tree}");
+    windows.get_mut("panes").unwrap()[0]["cwd"] = json!("C:\\Users\\merlin");
+    let tree = describe_with_values(cx, &staged, "mods/topbar", windows, None).unwrap();
+    assert!(!tree.contains("~rlin"), "{tree}");
+}
+
+/// A terminal tab that is no agent and not the lead gets a row under "Terminals".
+#[gpui::test]
+fn the_sidebar_lists_a_terminal_that_is_no_agent(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.get_mut("spaces").unwrap()[0]["tabs"].as_array_mut().unwrap().push(json!({
+        "id": "tab3", "index": 2, "name": "Scratch", "active": false, "status": "idle", "panes": 1,
+        "zoomed": false, "settled": false, "settled_at": null, "changed_at": null, "working_since": null
+    }));
+    values.get_mut("panes").unwrap().as_array_mut().unwrap().push(json!({
+        "pane": "p3", "terminal": "t3", "tab": "tab3", "title": "Scratch", "cwd": "/fixture", "branch": null,
+        "status": "idle", "app": null, "program": {"key": "shell", "name": "Shell", "icon": null, "tint": true, "shell": true},
+        "focused": false, "zoomed": false
+    }));
+    let tree = describe_with_values(cx, &staged, "mods/agents", values, None).unwrap();
+    for id in ["ag-terminals", "Terminals", "term-tab3"] {
+        assert!(tree.contains(id), "missing {id}: {tree}");
+    }
+}
+
+/// Every terminal tab is an agent's: the sidebar has no "Terminals" section.
+#[gpui::test]
+fn the_sidebar_has_no_terminals_section_without_one(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_with_values(
+        cx,
+        &staged,
+        "mods/agents",
+        fixture(true, props(), updates("current", "current")),
+        None,
+    )
+    .unwrap();
+    assert!(!tree.contains("ag-terminals"), "{tree}");
+    assert!(!tree.contains("Terminals"), "{tree}");
 }
 
 /// A failed `kom status --json` must not wipe the last review count, and the

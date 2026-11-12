@@ -129,6 +129,23 @@ export function loadConnect(view, cx) {
 
 function checkJoined(view, cx) {
   if (view.section !== "connect") return;
+  // Entries saved before the name and link were kept get both, once.
+  const unnamed = view.connect.found.filter((system) => {
+    const saved = view.person?.connect?.[system.id];
+    return saved?.agent && (!saved.name || !saved.link);
+  });
+  if (unnamed.length) {
+    view.change((person) => {
+      const connect = person.connect ?? (person.connect = {});
+      for (const system of unnamed) {
+        connect[system.id] = {
+          ...(connect[system.id] ?? {}),
+          name: system.name,
+          link: `${system.scheme}://`,
+        };
+      }
+    }, cx);
+  }
   const pending = view.connect.found.filter((system) => {
     const saved = view.person?.connect?.[system.id];
     return saved?.since && !saved?.agent;
@@ -165,6 +182,8 @@ function checkJoined(view, cx) {
           connect[system.id] = {
             ...(connect[system.id] ?? {}),
             agent,
+            name: system.name,
+            link: `${system.scheme}://`,
           };
         }, cx);
       }
@@ -206,6 +225,8 @@ function connectSystem(view, system, cx) {
     connect[system.id] = {
       ...(connect[system.id] ?? {}),
       since: new Date().toISOString(),
+      name: system.name,
+      link: `${system.scheme}://`,
     };
   }, cx);
 }

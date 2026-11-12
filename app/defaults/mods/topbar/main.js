@@ -4,7 +4,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, agents, terminals, lead, kom, run, openOverlay, theme, window, shared, layout, settings } from "kompitum";
+import { spaces, panes, agents, terminals, lead, kom, run, openOverlay, theme, window, shared, layout, settings, home } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -17,6 +17,15 @@ function find(node, id) {
 
 function firstLine(text) {
   return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+// The folder as the pane header shows it: the home folder as "~", on Windows too.
+function folder(cwd) {
+  if (!cwd) return "";
+  const h = home();
+  if (!h || !cwd.startsWith(h)) return cwd;
+  const rest = cwd.slice(h.length);
+  return rest === "" || rest[0] === "/" || rest[0] === "\\" ? "~" + rest : cwd;
 }
 
 export default class TopBar extends View {
@@ -96,6 +105,10 @@ export default class TopBar extends View {
       ? panes().find((p) => p.tab === shown.id && p.program?.agent)?.program ?? panes().find((p) => p.tab === shown.id)?.program
       : null;
     const name = shown ? (/^tb\d+$/.test(shown.name) ? program?.name ?? "Terminal" : shown.name) : "";
+    // The shown tab's folder: its focused pane's, else its first pane's that has one.
+    const tabPanes = shown ? panes().filter((p) => p.tab === shown.id) : [];
+    const dir = folder((tabPanes.find((p) => p.focused && p.cwd) ?? tabPanes.find((p) => p.cwd))?.cwd);
+    const dirText = dir.length > 48 ? `…${dir.slice(-47)}` : dir;
     const leadTerminal = terminals().find((x) => x.state === "live" && x.labels?.lead);
     const leadTab = leadTerminal ? panes().find((p) => p.terminal === leadTerminal.address)?.tab : null;
     const back = Boolean(leadTerminal && shown && leadTab !== shown.id);
@@ -133,7 +146,8 @@ export default class TopBar extends View {
         .child(svg("mods/workspace-chrome/chevron-left.svg").size(14)).child("Back")))
       .when(Boolean(shown), (el) => el.child(h_flex().id("topbar-tab").min_w(0).gap(7).items_center()
         .when(Boolean(program?.icon), (el) => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
-        .child(div().min_w(0).truncate().text_size(13).text_color(t.foreground).child(name))))
+        .child(div().min_w(0).truncate().text_size(13).text_color(t.foreground).child(name))
+        .when(Boolean(dirText), (el) => el.child(div().id("topbar-folder").min_w(0).truncate().text_size(12).text_color(t.dim).child(dirText)))))
       .child(div().flex_1())
       .child(bell)
       .child(iconButton("topbar-mail", "mods/topbar/inbox.svg", "Mailbox", () => run("app.mailbox")))
