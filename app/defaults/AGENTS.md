@@ -622,7 +622,10 @@ The main ones:
   reveal by hand stays until this hides it),
   `lead.fit {terminal, px}` (the composer's height for its text, 80 to 320 px, while the lead isn't asking),
   `lead.compact {terminal}` (have the lead compact its conversation now: the app sends Claude's own `/compact`,
-  the one text it ever sends the lead; refused unless the lead is waiting with no card open),
+  the one text it ever sends the lead; refused unless the lead is waiting with no card open; the app also sends
+  it by itself once the lead has waited ten minutes with 333K tokens or more, or with 222K or more in the five
+  minutes before Claude's prompt cache expires, and never while the Owner has a draft, a card is open, the
+  lead's terminal is shown, or a worker task is running, queued or in review),
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`

@@ -704,6 +704,16 @@ pub struct AppWindow {
     lead_sessions: HashMap<String, crate::lead::Session>,
     /// When the lead's status line last reached the core (`kom status --line`): at most once a minute.
     status_core_at: Option<Instant>,
+    /// When `lead_upkeep` may next do its work: five seconds after its last pass.
+    lead_upkeep_next: Option<Instant>,
+    /// The lead isn't compacted by the app before this: five minutes after the core was found busy.
+    lead_compact_after: Option<Instant>,
+    /// Whether a `status --json` read for the lead's own compaction is running.
+    lead_check_running: bool,
+    /// Lead terminals whose lost program was already handled: each address at most once.
+    lead_restarts_tried: HashSet<String>,
+    /// The lost lead's shell was ended: the lead is started again once no terminal is the lead.
+    lead_restart_pending: bool,
     /// The height each lead's composer asked for (`lead.fit`), by the lead's terminal.
     composer_px: HashMap<String, f32>,
     /// Blocking hooks waiting for the Owner's answer, by ask id.
@@ -837,6 +847,11 @@ impl AppWindow {
             live: HashMap::new(),
             lead_sessions: HashMap::new(),
             status_core_at: None,
+            lead_upkeep_next: None,
+            lead_compact_after: None,
+            lead_check_running: false,
+            lead_restarts_tried: HashSet::new(),
+            lead_restart_pending: false,
             composer_px: HashMap::new(),
             lead_asks: HashMap::new(),
             closed_hooks: HashSet::new(),
@@ -4241,7 +4256,7 @@ impl AppWindow {
             if from_lead {
                 let session = self.lead_sessions.entry(terminal.clone()).or_default();
                 session.started = true;
-                session.compacting = false;
+                session.set_compacting(false, model::now_ms());
                 mods::set_shared("lead.started".into(), json!(terminal));
                 crate::lead::hide_startup(&mut session.conversation);
                 let skipped = self.read_lead_history(&terminal, transcript);
@@ -4268,7 +4283,7 @@ impl AppWindow {
             // Claude's instructions for its summary: given only to the lead's own compaction.
             let output = from_lead.then_some(crate::lead::COMPACT_INSTRUCTIONS);
             if from_lead {
-                self.lead_sessions.entry(terminal.clone()).or_default().compacting = true;
+                self.lead_sessions.entry(terminal.clone()).or_default().set_compacting(true, model::now_ms());
                 self.publish_lead(cx);
             }
             if let Some(reply) = reply {
@@ -4284,7 +4299,7 @@ impl AppWindow {
                 if let Some(state) = crate::lead::state_after_hook(event, &input)
                     && session.ask.is_none()
                 {
-                    session.state = Some(state);
+                    session.set_state(Some(state), model::now_ms());
                 }
                 let transcript = input.get("transcript_path").and_then(Value::as_str);
                 let skipped = self.read_lead_history(&terminal, transcript);
@@ -4331,7 +4346,11 @@ impl AppWindow {
         // came: a stuck flag would hold the Owner's message in the box for good.
         let unstuck = from_lead
             && state.is_some()
-            && self.lead_sessions.get_mut(&terminal).is_some_and(|session| std::mem::take(&mut session.compacting));
+            && self.lead_sessions.get_mut(&terminal).is_some_and(|session| {
+                let was = session.compacting;
+                session.set_compacting(false, model::now_ms());
+                was
+            });
         if let Some(state) = state {
             self.set_lead_state(&terminal, Some(state), cx);
         } else if folded {
@@ -4386,7 +4405,7 @@ impl AppWindow {
         }
         let terminal = ask.terminal.clone();
         let session = self.lead_sessions.entry(terminal).or_default();
-        session.state = Some(crate::lead::State::Asking);
+        session.set_state(Some(crate::lead::State::Asking), model::now_ms());
         session.ask = Some(ask.clone());
         self.lead_asks.insert(ask.id.clone(), PendingAsk { ask, reply });
         self.publish_lead(cx);
@@ -4425,7 +4444,7 @@ impl AppWindow {
             && session.ask.as_ref().is_some_and(|open| open.id == ask.id)
         {
             session.ask = None;
-            session.state = Some(crate::lead::State::Working);
+            session.set_state(Some(crate::lead::State::Working), model::now_ms());
         }
         self.publish_lead(cx);
     }
@@ -4436,7 +4455,7 @@ impl AppWindow {
         if session.state == state || session.ask.is_some() {
             return;
         }
-        session.state = state;
+        session.set_state(state, model::now_ms());
         self.publish_lead(cx);
     }
 
@@ -4458,6 +4477,181 @@ impl AppWindow {
         if lead_changed || items_changed {
             self.refresh_snapshot_mods(cx);
         }
+    }
+
+    /// Sends the lead Claude's `/compact`, off the UI thread: the core waits to see the text go in.
+    /// The one text the app sends the lead by itself (`lead.compact`, and the automatic check).
+    fn send_compact(&mut self, terminal: String, cx: &mut Context<Self>) {
+        let core = self.core.clone();
+        let guard = crate::inflight::track();
+        cx.background_executor()
+            .spawn(async move {
+                let _guard = guard;
+                let sent = core.call(
+                    "terminal.send",
+                    json!({ "terminal": terminal, "text": crate::lead::COMPACT_COMMAND }),
+                );
+                if let Err(error) = sent {
+                    tracing::warn!("the lead wasn't told to compact: {error}");
+                }
+            })
+            .detach();
+    }
+
+    /// The lead's upkeep, run by `poll` and at most once every five seconds: a compaction flag that
+    /// has stuck is cleared, a lead whose program the core lost is started again, and a waiting lead
+    /// that is due is compacted (`auto_compact_rule`).
+    fn lead_upkeep(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let started = Instant::now();
+        if self.lead_upkeep_next.is_some_and(|next| started < next) {
+            return;
+        }
+        self.lead_upkeep_next = Some(started + Duration::from_secs(5));
+        let program = settings::load_person()
+            .ok()
+            .and_then(|person| person.lead)
+            .and_then(|lead| lead.program)
+            .filter(|program| !program.is_empty())
+            .unwrap_or_else(|| "claude".to_owned());
+        let spec = crate::programs::lead_spec(&program).unwrap_or(Value::Null);
+        let name = spec["name"].as_str().unwrap_or(&program).to_owned();
+        let Some(terminal) = self.lead_terminal(&program) else {
+            // The listing shows the old shell gone: the lead starts as it does on launch. When it
+            // first needs a folder or a model, the composer asks and no toast claims a start.
+            if std::mem::take(&mut self.lead_restart_pending) {
+                match self.lead_open(window, cx) {
+                    Ok(opened) if opened.get("needs").is_some() => {}
+                    Ok(_) => self.lead_restart_toast(&name, Ok(()), window, cx),
+                    Err(error) => self.lead_restart_toast(&name, Err(error), window, cx),
+                }
+            }
+            return;
+        };
+        let now = model::now_ms();
+        if let Some(session) = self.lead_sessions.get_mut(&terminal)
+            && crate::lead::compaction_overdue(session, now)
+        {
+            session.set_compacting(false, now);
+            self.publish_lead(cx);
+        }
+        let run_word = spec["run"][0].as_str().unwrap_or_default().to_owned();
+        let lost = self
+            .live
+            .get(&terminal)
+            .is_some_and(|record| crate::lead::lead_program_lost(record, &program, &run_word));
+        if lost && self.lead_restarts_tried.insert(terminal.clone()) {
+            self.restart_lost_lead(terminal, name, window, cx);
+            return;
+        }
+        if self.lead_check_running || self.lead_compact_after.is_some_and(|after| started < after) {
+            return;
+        }
+        let draft = mods::shared("lead.draft") == Some(json!(true));
+        let due = self
+            .lead_sessions
+            .get(&terminal)
+            .is_some_and(|session| crate::lead::auto_compact_due(session, now, draft));
+        if !due {
+            return;
+        }
+        // The core's tasks decide: one `status --json` read, off the UI thread, at most one at a time.
+        self.lead_check_running = true;
+        let core = crate::core_bin::path();
+        cx.spawn_in(window, async move |this, cx| {
+            let status = cx
+                .background_executor()
+                .spawn(async move { crate::lead::core_status_text(&core) })
+                .await;
+            let _ = this.update_in(cx, |this, _window, cx| this.auto_compact_check(terminal, status, cx));
+        })
+        .detach();
+    }
+
+    /// The core's status came back for a due lead: it sends `/compact` when the lead is still due
+    /// and no task is busy. When the core is busy or its status can't be read, the next look is five
+    /// minutes away. The app tries once per stretch of waiting.
+    fn auto_compact_check(&mut self, terminal: String, status: Option<String>, cx: &mut Context<Self>) {
+        self.lead_check_running = false;
+        let busy = match status {
+            Some(text) => crate::lead::tasks_busy(&serde_json::from_str(&text).unwrap_or(Value::Null)),
+            None => {
+                tracing::warn!("couldn't read the core's status, so the lead isn't compacted now");
+                true
+            }
+        };
+        if busy {
+            self.lead_compact_after = Some(Instant::now() + Duration::from_secs(300));
+            return;
+        }
+        let now = model::now_ms();
+        let draft = mods::shared("lead.draft") == Some(json!(true));
+        let Some(session) = self.lead_sessions.get_mut(&terminal) else {
+            return;
+        };
+        let Some(rule) = crate::lead::auto_compact_rule(session, now, draft) else {
+            return;
+        };
+        if crate::lead::compact_refusal(Some(&*session)).is_some() {
+            return;
+        }
+        session.auto_compact_tried = true;
+        let tokens = session.usage.as_ref().and_then(|usage| usage["context_tokens"].as_u64()).unwrap_or_default();
+        tracing::info!(tokens, rule, "the waiting lead is due: sending /compact");
+        self.send_compact(terminal, cx);
+    }
+
+    /// The core restarted and started a plain shell where the lead's program ran: this ends that
+    /// shell. The lead is started again by `lead_upkeep` once a listing shows the shell gone, the way
+    /// it is started on launch, so it resumes its conversation from `lead.streams`. A failure is said
+    /// in a toast, and the address is not tried again.
+    fn restart_lost_lead(&mut self, terminal: String, name: String, window: &Window, cx: &mut Context<Self>) {
+        let core = self.core.clone();
+        let guard = crate::inflight::track();
+        let address = terminal.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let killed = cx
+                .background_executor()
+                .spawn(async move {
+                    let _guard = guard;
+                    core.call("terminal.kill", json!({ "terminal": address }))
+                })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| match killed {
+                Ok(_) => {
+                    this.lead_sessions.remove(&terminal);
+                    this.lead_restart_pending = true;
+                }
+                Err(error) => this.lead_restart_toast(
+                    &name,
+                    Err(format!("Couldn't end the shell the core started in its place: {error}")),
+                    window,
+                    cx,
+                ),
+            });
+        })
+        .detach();
+    }
+
+    /// Says how the lead's restart after a core restart went.
+    fn lead_restart_toast(&mut self, name: &str, outcome: Result<(), String>, window: &mut Window, cx: &mut Context<Self>) {
+        let notification = match outcome {
+            Ok(()) => json!({
+                "title": format!("{name} was started again"),
+                "body": "Kompitum's core restarted. The lead continues the same conversation.",
+                "level": "info",
+            }),
+            Err(error) => json!({
+                "title": format!("{name} wasn't started again"),
+                "body": error,
+                "level": "error",
+            }),
+        };
+        self.open_overlay(
+            mods::new_overlay_id(),
+            json!({ "kind": "toast", "notification": notification }),
+            window,
+            cx,
+        );
     }
 
     /// Hide or show the lead's terminal pane; it stays attached either way.
@@ -5958,21 +6152,7 @@ impl AppWindow {
                 if let Some(why) = crate::lead::compact_refusal(self.lead_sessions.get(&terminal)) {
                     return self.fail(why);
                 }
-                // Off the UI thread: the core waits to see the text go in.
-                let core = self.core.clone();
-                let guard = crate::inflight::track();
-                cx.background_executor()
-                    .spawn(async move {
-                        let _guard = guard;
-                        let sent = core.call(
-                            "terminal.send",
-                            json!({ "terminal": terminal, "text": crate::lead::COMPACT_COMMAND }),
-                        );
-                        if let Err(error) = sent {
-                            tracing::warn!("the lead wasn't told to compact: {error}");
-                        }
-                    })
-                    .detach();
+                self.send_compact(terminal, cx);
                 self.reply = Some(json!({ "sent": true }));
             }
             "lead.fit" => {
@@ -6924,6 +7104,7 @@ impl AppWindow {
                 self.refresh_snapshot_mods(cx);
             }
         }
+        self.lead_upkeep(window, cx);
         let dark = is_dark(window.appearance());
         if dark != self.system_dark {
             self.system_dark = dark;

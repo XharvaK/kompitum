@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 #[path = "lead/conversation.rs"]
 pub mod conversation;
+mod upkeep;
+pub use upkeep::*;
 pub use conversation::{
     Conversation, Event, Item, Reveal, TerminalVis, event_from_hook, fold, is_compact_command,
     items_from_transcript, reveal_after_auth_status,
@@ -579,140 +581,41 @@ pub struct Session {
     /// Whether Claude is compacting now: PreCompact sets it, PostCompact and SessionStart clear it. Not saved.
     #[serde(skip)]
     pub compacting: bool,
+    /// When the state last became Waiting (ms since the Unix epoch). Not saved.
+    #[serde(skip)]
+    pub waiting_since_ms: Option<u64>,
+    /// When `compacting` last became true (ms since the Unix epoch). Not saved.
+    #[serde(skip)]
+    pub compacting_since_ms: Option<u64>,
+    /// The app has sent `/compact` by itself in this stretch of waiting. Not saved.
+    #[serde(skip)]
+    pub auto_compact_tried: bool,
 }
 
-/// The model and usage a status line JSON says, as `Session` keeps them; `seen_ms` is when it arrived.
-/// Each field is read defensively: a missing one is null, never an error.
-pub fn status_line_facts(input: &Value, seen_ms: u64) -> (Option<Value>, Value) {
-    let model = input["model"]["display_name"]
-        .as_str()
-        .filter(|name| !name.trim().is_empty())
-        .map(|name| json!({ "id": input["model"]["id"].as_str(), "name": name }));
-    let window = &input["context_window"];
-    let size = whole(&window["context_window_size"]);
-    // Claude says 0 before its first answer and after a compaction: the size isn't known then.
-    let context_tokens = whole(&window["total_input_tokens"]).filter(|tokens| *tokens > 0).or_else(|| {
-        let percent = window["used_percentage"].as_f64()?;
-        Some((percent * window["context_window_size"].as_f64()? / 100.0).round() as u64).filter(|tokens| *tokens > 0)
-    });
-    let usage = json!({
-        "context_tokens": context_tokens,
-        "context_window": size,
-        "compact_at": AUTO_COMPACT_WINDOW,
-        "cache_ttl": input["prompt_cache"]["ttl"].as_str(),
-        "cache_expires_at": whole(&input["prompt_cache"]["expires_at"]),
-        "five_hour": limit_facts(&input["rate_limits"]["five_hour"]),
-        "seven_day": limit_facts(&input["rate_limits"]["seven_day"]),
-        "session_id": input["session_id"].as_str(),
-        "seen_ms": seen_ms,
-    });
-    (model, usage)
-}
-
-/// One of Claude's limit windows as `{ used_percentage, resets_at }`, or null when the window is missing.
-fn limit_facts(window: &Value) -> Value {
-    if !window.is_object() {
-        return Value::Null;
-    }
-    json!({
-        "used_percentage": window["used_percentage"].as_f64(),
-        "resets_at": whole(&window["resets_at"]),
-    })
-}
-
-/// A count or a time that JSON may write as `271000` or `271000.0`.
-fn whole(value: &Value) -> Option<u64> {
-    value
-        .as_u64()
-        .or_else(|| value.as_f64().filter(|n| n.is_finite() && *n >= 0.0).map(|n| n.round() as u64))
-}
-
-/// The one text the app itself sends the lead: Claude's own command to compact its conversation
-/// (the Owner's one exception to "only the Owner's input reaches the lead", 2026-11-12).
-pub const COMPACT_COMMAND: &str = "/compact";
-
-/// Why the lead can't be told to compact now, or None when it can: it has to be waiting for the
-/// Owner, with no card open and no compaction running.
-pub fn compact_refusal(session: Option<&Session>) -> Option<&'static str> {
-    let Some(session) = session else {
-        return Some("the lead hasn't started yet");
-    };
-    if session.compacting {
-        return Some("Claude is already tidying up");
-    }
-    if session.ask.is_some() {
-        return Some("Claude is asking something: answer it first");
-    }
-    match session.state {
-        Some(State::Waiting) => None,
-        Some(State::Asking) => Some("Claude is asking something: answer it first"),
-        Some(State::Working) => Some("Claude is working: it can tidy up once it has finished"),
-        None => Some("the lead hasn't started yet"),
-    }
-}
-
-/// The lead's state after a hook event, or None when the event doesn't change it. `/compact` is not
-/// a turn, and a compaction the Owner or the app asked for ends with Claude waiting again.
-pub fn state_after_hook(event: &str, input: &Value) -> Option<State> {
-    match event {
-        "UserPromptSubmit" if input["prompt"].as_str().is_some_and(is_compact_command) => None,
-        "UserPromptSubmit" => Some(State::Working),
-        "Stop" | "Notification" => Some(State::Waiting),
-        "PostCompact" if input["trigger"] == "manual" => Some(State::Waiting),
-        _ => None,
-    }
-}
-
-/// Folds a status line into the session. Returns whether what mods see changed: the model, or the
-/// usage without its arrival time (`seen_ms` is kept fresh either way).
-pub fn apply_status_line(session: &mut Session, input: &Value, seen_ms: u64) -> bool {
-    let (model, usage) = status_line_facts(input, seen_ms);
-    let same_usage = session
-        .usage
-        .as_ref()
-        .is_some_and(|old| without_seen(old) == without_seen(&usage));
-    let changed = session.model != model || !same_usage;
-    session.model = model;
-    session.usage = Some(usage);
-    changed
-}
-
-fn without_seen(usage: &Value) -> Value {
-    let mut usage = usage.clone();
-    if let Some(map) = usage.as_object_mut() {
-        map.remove("seen_ms");
-    }
-    usage
-}
-
-/// Claude's compaction is over: its context size is unknown until its next answer.
-pub fn compaction_done(session: &mut Session) {
-    session.compacting = false;
-    if let Some(usage) = session.usage.as_mut() {
-        usage["context_tokens"] = Value::Null;
-    }
-}
-
-/// Hands Claude's status JSON to the core, so `kom status` keeps its limits. It runs headless on its own
-/// thread; a failure is ignored, as the status line itself must never fail.
-pub fn send_status_to_core(input: &Value) {
-    let text = input.to_string();
-    let core = crate::core_bin::path();
-    std::thread::spawn(move || {
-        let Ok(mut child) = crate::spawn::command(core)
-            .args(["status", "--line"])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-        else {
-            return;
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = std::io::Write::write_all(&mut stdin, text.as_bytes());
+impl Session {
+    /// Sets the state and returns whether it changed. Waiting starts its clock, anything else stops
+    /// it, and Working lets the app compact again in the next stretch of waiting.
+    pub fn set_state(&mut self, state: Option<State>, now_ms: u64) -> bool {
+        if self.state == state {
+            return false;
         }
-        let _ = child.wait();
-    });
+        self.state = state;
+        self.waiting_since_ms = (state == Some(State::Waiting)).then_some(now_ms);
+        if state == Some(State::Working) {
+            self.auto_compact_tried = false;
+        }
+        true
+    }
+
+    /// Sets whether Claude is compacting; the clock starts when it first becomes true.
+    pub fn set_compacting(&mut self, on: bool, now_ms: u64) {
+        if !on {
+            self.compacting_since_ms = None;
+        } else if !self.compacting || self.compacting_since_ms.is_none() {
+            self.compacting_since_ms = Some(now_ms);
+        }
+        self.compacting = on;
+    }
 }
 
 /// The kind of ask a blocking hook makes, or None for an event that is not one.
