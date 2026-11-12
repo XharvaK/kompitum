@@ -714,6 +714,8 @@ pub struct AppWindow {
     lead_restarts_tried: HashSet<String>,
     /// The lost lead's shell was ended: the lead is started again once no terminal is the lead.
     lead_restart_pending: bool,
+    /// The lead was ended by hand (`lead.restart`): its start shows no toast when it works.
+    lead_restart_quiet: bool,
     /// The height each lead's composer asked for (`lead.fit`), by the lead's terminal.
     composer_px: HashMap<String, f32>,
     /// Blocking hooks waiting for the Owner's answer, by ask id.
@@ -852,6 +854,7 @@ impl AppWindow {
             lead_check_running: false,
             lead_restarts_tried: HashSet::new(),
             lead_restart_pending: false,
+            lead_restart_quiet: false,
             composer_px: HashMap::new(),
             lead_asks: HashMap::new(),
             closed_hooks: HashSet::new(),
@@ -3948,6 +3951,13 @@ impl AppWindow {
             .as_str()
             .ok_or("the lead's tab returned no terminal")?
             .to_owned();
+        // What this lead was started with: the composer's chip shows it while a saved change waits for a restart.
+        mods::set_shared(
+            "lead.running".into(),
+            json!({
+                "program": program, "terminal": terminal, "model": lead.model, "effort": lead.effort,
+            }),
+        );
         self.ensure_composer(&terminal)?;
         if let Some(pane) = self.model.pane_of(&terminal) {
             self.swapped.remove(&pane);
@@ -4239,6 +4249,10 @@ impl AppWindow {
             .filter(|folder| !folder.is_empty())
             .unwrap_or_else(|| mods::home().to_string_lossy().into_owned());
         let from_lead = self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program));
+        if from_lead {
+            // Every hook and status line from the lead says it is still there (the composer's "Working?").
+            self.lead_sessions.entry(terminal.clone()).or_default().heard_ms = Some(model::now_ms());
+        }
         if event == "SessionStart" {
             let mut streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
             let transcript = input.get("transcript_path").and_then(Value::as_str);
@@ -4370,6 +4384,7 @@ impl AppWindow {
     /// `kom status`, at most once a minute. Returns the model's name for the line to show.
     fn lead_status_line(&mut self, terminal: &str, input: &Value, cx: &mut Context<Self>) -> String {
         let session = self.lead_sessions.entry(terminal.to_owned()).or_default();
+        session.heard_ms = Some(model::now_ms());
         let changed = crate::lead::apply_status_line(session, input, model::now_ms());
         let name = session.model.as_ref().and_then(|m| m["name"].as_str()).unwrap_or_default().to_owned();
         if changed {
@@ -4519,8 +4534,10 @@ impl AppWindow {
             // The listing shows the old shell gone: the lead starts as it does on launch. When it
             // first needs a folder or a model, the composer asks and no toast claims a start.
             if std::mem::take(&mut self.lead_restart_pending) {
+                let quiet = std::mem::take(&mut self.lead_restart_quiet);
                 match self.lead_open(window, cx) {
                     Ok(opened) if opened.get("needs").is_some() => {}
+                    Ok(_) if quiet => {}
                     Ok(_) => self.lead_restart_toast(&name, Ok(()), window, cx),
                     Err(error) => self.lead_restart_toast(&name, Err(error), window, cx),
                 }
@@ -4540,7 +4557,7 @@ impl AppWindow {
             .get(&terminal)
             .is_some_and(|record| crate::lead::lead_program_lost(record, &program, &run_word));
         if lost && self.lead_restarts_tried.insert(terminal.clone()) {
-            self.restart_lost_lead(terminal, name, window, cx);
+            self.restart_lost_lead(terminal, name, false, window, cx);
             return;
         }
         if self.lead_check_running || self.lead_compact_after.is_some_and(|after| started < after) {
@@ -4603,8 +4620,16 @@ impl AppWindow {
     /// The core restarted and started a plain shell where the lead's program ran: this ends that
     /// shell. The lead is started again by `lead_upkeep` once a listing shows the shell gone, the way
     /// it is started on launch, so it resumes its conversation from `lead.streams`. A failure is said
-    /// in a toast, and the address is not tried again.
-    fn restart_lost_lead(&mut self, terminal: String, name: String, window: &Window, cx: &mut Context<Self>) {
+    /// in a toast, and the address is not tried again. `by_hand` is `lead.restart`: the start is quiet
+    /// (the composer's chip shows it) and starts at once.
+    fn restart_lost_lead(
+        &mut self,
+        terminal: String,
+        name: String,
+        by_hand: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
         let core = self.core.clone();
         let guard = crate::inflight::track();
         let address = terminal.clone();
@@ -4620,7 +4645,15 @@ impl AppWindow {
                 Ok(_) => {
                     this.lead_sessions.remove(&terminal);
                     this.lead_restart_pending = true;
+                    this.lead_restart_quiet = by_hand;
+                    this.lead_upkeep_next = None;
                 }
+                Err(error) if by_hand => this.lead_restart_toast(
+                    &name,
+                    Err(format!("Couldn't end the lead: {error}")),
+                    window,
+                    cx,
+                ),
                 Err(error) => this.lead_restart_toast(
                     &name,
                     Err(format!("Couldn't end the shell the core started in its place: {error}")),
@@ -6154,6 +6187,25 @@ impl AppWindow {
                 }
                 self.send_compact(terminal, cx);
                 self.reply = Some(json!({ "sent": true }));
+            }
+            "lead.restart" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let person = settings::load_person().ok();
+                let program = person
+                    .and_then(|person| person.lead)
+                    .and_then(|lead| lead.program)
+                    .filter(|program| !program.is_empty())
+                    .unwrap_or_else(|| "claude".to_owned());
+                if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
+                    return self.fail(format!("{terminal:?} isn't the lead's terminal"));
+                }
+                if let Some(why) = crate::lead::restart_refusal(self.lead_sessions.get(&terminal)) {
+                    return self.fail(why);
+                }
+                let spec = crate::programs::lead_spec(&program).unwrap_or(Value::Null);
+                let name = spec["name"].as_str().unwrap_or(&program).to_owned();
+                self.restart_lost_lead(terminal, name, true, window, cx);
+                self.reply = Some(json!({ "restarting": true }));
             }
             "lead.fit" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();

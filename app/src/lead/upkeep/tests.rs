@@ -272,3 +272,36 @@ fn a_lead_whose_program_the_core_lost_runs_a_shell_not_claude() {
     by_hand["foreground"] = json!({ "name": "powershell.exe", "argv": ["powershell.exe", "-NoExit"] });
     assert!(lead_program_lost(&by_hand, "claude", "claude"));
 }
+
+#[test]
+fn a_restart_by_hand_waits_for_an_idle_lead_and_says_why_not() {
+    assert_eq!(restart_refusal(None), None, "no lead, nothing to end");
+    let mut session = Session::default();
+    assert_eq!(restart_refusal(Some(&session)), None, "no state yet");
+    session.set_state(Some(State::Waiting), 1);
+    assert_eq!(restart_refusal(Some(&session)), None, "waiting is the time to restart");
+    session.set_state(Some(State::Working), 2);
+    assert_eq!(
+        restart_refusal(Some(&session)),
+        Some("The lead is working: restart it when it's done")
+    );
+    session.set_state(Some(State::Waiting), 3);
+    session.set_compacting(true, 4);
+    assert_eq!(
+        restart_refusal(Some(&session)),
+        Some("The lead is tidying up: restart it when it's done")
+    );
+    session.set_compacting(false, 5);
+    session.set_state(Some(State::Asking), 6);
+    session.ask = Some(Ask {
+        id: "ask-1".into(),
+        terminal: "t1".into(),
+        kind: AskKind::Question,
+        input: Value::Null,
+    });
+    assert_eq!(
+        restart_refusal(Some(&session)),
+        Some("The lead is asking something: answer it first"),
+        "an open ask is said before anything else"
+    );
+}

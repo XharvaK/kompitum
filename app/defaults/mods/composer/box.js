@@ -23,6 +23,11 @@ function leadStatus(state) {
   return null;
 }
 
+// Ten minutes since the lead last sent a hook or a status line (`heard_ms`, Unix ms): it may have lost its closing hook.
+function leadQuiet(heard) {
+  return typeof heard === "number" && Date.now() - heard > 600000;
+}
+
 function statusColor(t, state) {
   return state === "asking" ? t.working : t.accent;
 }
@@ -93,6 +98,14 @@ export default {
   },
 
   statusWord(t) {
+    // A working lead that has sent no hook or status line for ten minutes may have lost its closing hook.
+    if (this.state === "working" && leadQuiet(leadOf()?.heard_ms)) {
+      return div()
+        .text_size(11.5)
+        .text_color(t.muted)
+        .tooltip("No word from the lead for 10 minutes.")
+        .child("Working?");
+    }
     const word = leadStatus(this.state);
     if (!word) return null;
     // Working pulses; asking is the amber that wants the Owner; waiting is still.

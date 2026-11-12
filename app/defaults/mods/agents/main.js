@@ -242,6 +242,9 @@ export default class Agents extends View {
     const all = terminals();
     const leadTerminal = all.find((terminal) => terminal.state === "live" && terminal.labels?.lead);
     const leadState = lead()?.state ?? null;
+    // A working lead that has sent no hook or status line for ten minutes may have lost its closing hook.
+    const leadHeard = lead()?.heard_ms;
+    const leadQuiet = leadState === "working" && typeof leadHeard === "number" && Date.now() - leadHeard > 600000;
     const leadListed = leadTerminal && list.some((agent) => agent.address === leadTerminal.address);
     this.migratePins(all);
     const shown = focused()?.agent;
@@ -437,7 +440,7 @@ export default class Agents extends View {
       // Its icon and name are the CLI's, not those of the shell around it.
       const program = entry ?? leadTerminal.program;
       const name = leadName(key, entry);
-      const word = leadWord(leadState);
+      const word = leadQuiet ? "Working?" : leadWord(leadState);
       const on = focused()?.terminal === leadTerminal.address;
       if (collapsed) {
         return h_flex()
@@ -466,7 +469,10 @@ export default class Agents extends View {
         .on_click(() => run("lead.open"))
         .when(Boolean(icon(program, 16, t.foreground)), (el) => el.child(icon(program, 16, t.foreground)))
         .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
-        .when(Boolean(word), (el) => el.child(div().flex_none().text_size(11).text_color(leadColor(t, leadState)).child(word)));
+        .when(Boolean(word), (el) => el.child(div().flex_none().text_size(11)
+          .text_color(leadQuiet ? t.muted : leadColor(t, leadState))
+          .when(leadQuiet, (w) => w.tooltip("No word from the lead for 10 minutes."))
+          .child(word)));
     };
     const leadRows = leadTerminal && !leadListed ? [leadRow()] : [];
     // The plain terminals no other row lists: tabs of the active space with a terminal, but not the

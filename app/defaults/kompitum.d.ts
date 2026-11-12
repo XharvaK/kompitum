@@ -149,7 +149,7 @@ export function openLink(url: string): void;
  *   terminal.right_click {to: "program" | "menu", terminal?} (right-clicks to a program that takes the mouse; Shift: the menu).
  *   terminal.scroll {lines | pages | to: "top" | "bottom", terminal?} (Kompitum's view of the history: negative goes up; pages may be fractional).
  * Agents: agent.next, agent.prev (the agents list's order), agent.focus {terminal} (sub-agents too),
- *   lead.open (focus or start the lead, with the composer under it).
+ *   lead.open (focus or start the lead, with the composer under it), lead.restart {terminal} (end the lead and start it again with the saved model and reasoning).
  * Layout (the shown layout's nodes by id): layout.toggle|show|hide {id}, layout.resize {id, px | weight},
  *   layout.select {stack, child}, layout.set {layout} (personal trees; shipped layouts: click/look fields only), layout.switch {name?} (no name: the next one).
  *   layout.clone {name, as?} duplicates and switches; mod.clone {name, as?} duplicates a mod.
@@ -335,6 +335,8 @@ export function lead(): {
   reveal_why?: string | null;
   /** Version rises when items change; length is how many items there are. */
   conversation: { version: number; length: number };
+  /** When the lead last sent a hook or a status line (Unix ms); null until it has. */
+  heard_ms?: number | null;
   /** The model Claude says it is running, from its status line; null until it has said. */
   model: { id: string; name: string } | null;
   /** How full the lead's context is and Claude's limits, from its status line; null until it has said. Times are Unix seconds. */

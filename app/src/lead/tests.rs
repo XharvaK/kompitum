@@ -694,6 +694,14 @@ fn published_session_gives_conversation_meta_not_the_items() {
 }
 
 #[test]
+fn published_session_carries_when_the_lead_was_last_heard() {
+    let mut session = Session::default();
+    assert_eq!(published_session(&session)["heard_ms"], Value::Null);
+    session.heard_ms = Some(1_700_000_000_123);
+    assert_eq!(published_session(&session)["heard_ms"], json!(1_700_000_000_123u64));
+}
+
+#[test]
 fn a_message_display_hook_grows_the_assistant_item() {
     let mut session = Session::default();
     assert!(apply_hook_event(

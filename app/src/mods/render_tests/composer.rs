@@ -49,10 +49,7 @@ fn the_model_trigger_shows_the_saved_model_and_level(cx: &mut TestAppContext) {
     assert!(tree.contains("Opus"), "{tree}");
     assert!(tree.contains("High"), "{tree}");
     assert!(!tree.contains("high effort"), "{tree}");
-    assert!(
-        tree.contains("The lead's model and reasoning, for its next start"),
-        "{tree}"
-    );
+    assert!(tree.contains("The lead's model and reasoning"), "{tree}");
 }
 
 #[gpui::test]
@@ -82,31 +79,157 @@ fn the_models_view_lists_fable_opus_sonnet_haiku(cx: &mut TestAppContext) {
     }
 }
 
-/// Picking a model (a click, not setting pickerView) switches to the effort card.
+/// Picking a model keeps the models view: the reasoning level is its own row.
 #[gpui::test]
-fn picking_a_model_opens_the_effort_view(cx: &mut TestAppContext) {
+fn picking_a_model_keeps_the_models_view(cx: &mut TestAppContext) {
     let found = composer_laid_out_after_clicks(
         cx,
         composer_person(Some("sonnet"), None),
         "this.modelOpen = true;",
         &["composer-model-opus"],
-        &["composer-effort", "composer-effort-reset"],
+        &["composer-effort", "composer-model-opus"],
     );
-    assert!(found[0].1, "the effort view should show after picking a model: {found:?}");
-    assert!(!found[1].1, "reset stays hidden when no level is saved: {found:?}");
+    assert!(!found[0].1, "a model pick must not open the effort view: {found:?}");
+    assert!(found[1].1, "the models view stays: {found:?}");
 }
 
+/// The Reasoning row opens the effort card; the reset shows only when a level is saved.
 #[gpui::test]
 fn the_effort_reset_shows_only_when_a_level_is_saved(cx: &mut TestAppContext) {
     let found = composer_laid_out_after_clicks(
         cx,
         composer_person(Some("sonnet"), Some("high")),
         "this.modelOpen = true;",
-        &["composer-model-sonnet"],
+        &["composer-reasoning-row"],
         &["composer-effort", "composer-effort-reset"],
     );
     assert!(found[0].1, "the effort view should show: {found:?}");
     assert!(found[1].1, "reset should show when a level is saved: {found:?}");
+}
+
+/// The models view has the Reasoning row and no footer sentence about the next start.
+#[gpui::test]
+fn the_models_view_has_a_reasoning_row_and_no_footer(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_tree(
+        cx,
+        composer_person(Some("sonnet"), Some("low")),
+        Some("this.modelOpen = true;"),
+    );
+    assert!(tree.contains("composer-reasoning-row"), "{tree}");
+    assert!(tree.contains("Reasoning"), "{tree}");
+    assert!(!tree.contains("For the lead's next start"), "{tree}");
+}
+
+/// A helper's shared values for the fixture: `lead.running` as the app sets it at each start.
+fn with_shared(mut values: BTreeMap<String, Value>, shared: Value) -> BTreeMap<String, Value> {
+    values.insert("sharedValues".into(), shared);
+    values
+}
+
+fn running_lead(terminal: &str, model: &str, effort: &str) -> Value {
+    json!({ "lead.running": { "program": "claude", "terminal": terminal, "model": model, "effort": effort } })
+}
+
+/// The saved lead for the live tests: a folder is set, so the composer doesn't ask for one.
+fn saved_lead_with_folder(model: &str, effort: &str) -> Value {
+    json!({"lead": {"program": "claude", "model": model, "effort": effort, "folder": "C:/work"}})
+}
+
+/// The chip shows the reasoning the running lead was started with, and a dot while the saved level waits.
+#[gpui::test]
+fn the_chip_shows_what_the_lead_was_started_with(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let values = with_shared(usage_values(Value::Null, json!({})), running_lead("t1", "opus", "low"));
+    // The closed menu's content is in the dump too, and its Reasoning row shows the saved "High": "Low" is the chip's.
+    let tree = composer_draws(cx, values, None);
+    assert!(tree.contains("Low"), "{tree}");
+    assert!(tree.contains("composer-model-pending"), "{tree}");
+    assert!(tree.contains("Changes wait for the lead's restart"), "{tree}");
+}
+
+#[gpui::test]
+fn no_pending_dot_when_the_saved_settings_run(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let values = with_shared(usage_values(Value::Null, json!({})), running_lead("t1", "opus", "high"));
+    let tree = composer_draws(cx, values, None);
+    assert!(tree.contains("High"), "{tree}");
+    assert!(!tree.contains("composer-model-pending"), "{tree}");
+    assert!(tree.contains("The lead's model and reasoning"), "{tree}");
+}
+
+/// Another terminal's lead start says nothing about this composer's lead.
+#[gpui::test]
+fn another_terminals_start_is_ignored(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let values = with_shared(usage_values(Value::Null, json!({})), running_lead("t9", "opus", "low"));
+    let tree = composer_draws(cx, values, None);
+    assert!(tree.contains("High"), "{tree}");
+    assert!(!tree.contains("composer-model-pending"), "{tree}");
+}
+
+/// The dump line of the Restart now button, which says `on_click` only when the button is live.
+fn restart_button_line(tree: &str) -> &str {
+    tree.lines().find(|line| line.contains("Str(\"composer-restart\")")).unwrap_or_default()
+}
+
+/// Restart now is drawn under the models view while a change waits, live while the lead waits, and runs
+/// lead.restart for this lead. The test window clips the strip's row, so the click is not used: the setup calls
+/// the same method the click calls.
+#[gpui::test]
+fn restart_now_runs_lead_restart(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let mut values = with_shared(usage_values(Value::Null, json!({})), running_lead("t1", "opus", "low"));
+    values.insert("person".into(), saved_lead_with_folder("opus", "high"));
+    let tree = composer_draws(cx, values.clone(), Some("this.modelOpen = true;"));
+    assert!(restart_button_line(&tree).contains("on_click"), "{tree}");
+    let effects = composer_live_run_after_clicks(cx, values, "this.modelOpen = true; this.restartNow(cx);", &[]);
+    assert!(
+        effects
+            .iter()
+            .any(|args| args.first() == Some(&json!("lead.restart")) && args.get(1) == Some(&json!({"terminal": "t1"}))),
+        "{effects:?}"
+    );
+}
+
+/// While the lead works the button is drawn dim with its busy tooltip, and has no click.
+#[gpui::test]
+fn restart_now_waits_while_the_lead_works(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let mut values = with_shared(
+        usage_values(Value::Null, json!({"state": "working"})),
+        running_lead("t1", "opus", "low"),
+    );
+    values.insert("person".into(), saved_lead_with_folder("opus", "high"));
+    let tree = composer_draws(cx, values, Some("this.modelOpen = true;"));
+    assert!(!restart_button_line(&tree).contains("on_click"), "{tree}");
+    assert!(tree.contains("The lead is busy. Restart when it's done."), "{tree}");
+}
+
+/// A working lead with no word for ten minutes reads "Working?"; the tooltip says why.
+#[gpui::test]
+fn a_quiet_working_lead_reads_working_with_a_question_mark(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_draws(
+        cx,
+        usage_values(Value::Null, json!({"state": "working", "heard_ms": 1})),
+        None,
+    );
+    assert!(tree.contains("Working?"), "{tree}");
+    assert!(tree.contains("No word from the lead for 10 minutes."), "{tree}");
+}
+
+#[gpui::test]
+fn a_fresh_working_lead_reads_working(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let now_ms = unix_now() * 1000;
+    let tree = composer_draws(
+        cx,
+        usage_values(Value::Null, json!({"state": "working", "heard_ms": now_ms})),
+        None,
+    );
+    assert!(tree.contains("Working"), "{tree}");
+    assert!(!tree.contains("Working?"), "{tree}");
 }
 
 #[gpui::test]

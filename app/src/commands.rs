@@ -250,9 +250,14 @@ pub const COMMANDS: &[Command] = &[
         "Have the lead compact its conversation now (the app sends Claude's own /compact). Refused unless the lead is waiting, with no card open.",
     ),
     cmd(
+        "lead.restart",
+        &[req("terminal")],
+        "End the lead and start it again with the saved model and reasoning, in the same conversation. Refused while the lead is working, asking or tidying up.",
+    ),
+    cmd(
         "lead.fit",
         &[req("terminal"), req("px")],
-        "Size the lead's composer to its text while its lead isn't asking: px from 80 to 320.",
+        "Size the lead's composer to its text while its lead isn't asking: px from 44 to 320.",
     ),
     cmd(
         "lead.terminal",

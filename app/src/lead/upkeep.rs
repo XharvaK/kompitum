@@ -78,6 +78,18 @@ pub fn compact_refusal(session: Option<&Session>) -> Option<&'static str> {
     }
 }
 
+/// Why the lead can't be restarted by hand right now: a restart ends whatever it is doing.
+pub fn restart_refusal(session: Option<&Session>) -> Option<&'static str> {
+    let session = session?;
+    if session.ask.is_some() {
+        return Some("The lead is asking something: answer it first");
+    }
+    if session.compacting {
+        return Some("The lead is tidying up: restart it when it's done");
+    }
+    (session.state == Some(State::Working)).then_some("The lead is working: restart it when it's done")
+}
+
 /// The app compacts a waiting lead by itself from this many tokens, once it has waited `COMPACT_IDLE_MS`.
 pub const COMPACT_HIGH: u64 = 333_000;
 /// From this many tokens it compacts just before Claude's prompt cache goes cold.

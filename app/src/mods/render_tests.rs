@@ -152,6 +152,10 @@ fn vault_report(notes: Vec<Value>, unpushed: u32, problems: Vec<&str>) -> String
 }
 
 fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostModule {
+    // `sharedValues`: the keys the mod reads with `shared(...)` (the app sets them at run time).
+    if let Some(Value::Object(shared)) = values.remove("sharedValues") {
+        calls.borrow_mut().shared.extend(shared);
+    }
     let person = values.get("person").cloned();
     let known_agents = values.remove("knownAgents");
     let workers_json = values.remove("workersJson");
@@ -956,10 +960,7 @@ fn the_composer_header_names_the_lead_and_its_status(cx: &mut TestAppContext) {
         assert!(tree.contains("Haiku"), "{state}: {tree}");
         assert!(tree.contains("Low"), "{state}: {tree}");
         assert!(!tree.contains("low effort"), "{state}: {tree}");
-        assert!(
-            tree.contains("The lead's model and reasoning, for its next start"),
-            "{state}: {tree}"
-        );
+        assert!(tree.contains("The lead's model and reasoning"), "{state}: {tree}");
         for word in ["Working", "Waiting for you", "Your turn"] {
             assert_eq!(tree.contains(word), expected == Some(word), "{state}/{word}: {tree}");
         }

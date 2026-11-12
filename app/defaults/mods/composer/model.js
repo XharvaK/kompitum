@@ -2,7 +2,7 @@
 
 import { div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb } from "gpui-base";
-import { run, lead as leadOf } from "kompitum";
+import { run, lead as leadOf, shared } from "kompitum";
 
 export function modelLabel(entry, id) {
   return entry?.models?.find((model) => model.id === id)?.label ?? id;
@@ -116,16 +116,61 @@ export default {
     });
   },
 
+  // What the running lead was started with (`lead.running`, set by the app at each start), when it is this
+  // terminal's lead; and whether the saved model or reasoning differs from it, so a change waits for a restart.
+  leadPending() {
+    const runs = shared("lead.running");
+    const started = runs?.terminal === this.terminal ? runs : null;
+    const lead = this.person?.lead ?? {};
+    const pending = Boolean(started)
+      && ((started.model ?? null) !== (lead.model ?? null) || (started.effort ?? null) !== (lead.effort ?? null));
+    return { started, pending };
+  },
+
   pickModel(id, cx) {
     this.saveLead({ model: id }, cx);
-    const entry = this.leadProgram();
-    if (effortIds(entry).length > 0) {
-      this.pickerView = "effort";
-      this.ensureEffortSlider(entry);
-    } else {
-      this.modelOpen = false;
-    }
     cx.notify();
+  },
+
+  restartNow(cx) {
+    run("lead.restart", { terminal: this.terminal });
+    this.modelOpen = false;
+    cx.notify();
+  },
+
+  // The strip under either view while a saved change waits: Restart now is live only while the lead waits.
+  restartStrip(t) {
+    const live = this.state !== "working" && !this.ask && leadOf()?.compacting !== true;
+    let button = h_flex()
+      .id("composer-restart")
+      .h(26)
+      .px(10)
+      .items_center()
+      .rounded(7)
+      .text_size(12)
+      .font_medium();
+    if (live) {
+      button = button
+        .bg(t.accent_fill)
+        .text_color(t.accent_foreground)
+        .cursor_pointer()
+        .on_click((_e, cx) => this.restartNow(cx));
+    } else {
+      button = button.bg(t.hover).text_color(t.dim).tooltip("The lead is busy. Restart when it's done.");
+    }
+    return h_flex()
+      .id("composer-restart-strip")
+      .w_full()
+      .mt(6)
+      .pt(8)
+      .px(8)
+      .pb(4)
+      .gap(8)
+      .items_center()
+      .border_t_1()
+      .border_color(t.border)
+      .child(div().flex_1().text_size(11.5).text_color(t.dim).child("Applies when the lead restarts."))
+      .child(button.child("Restart now"));
   },
 
   resetEffort(cx) {
@@ -244,8 +289,10 @@ export default {
     return body;
   },
 
+  // The models, then (when the program has levels) a hairline and the Reasoning row that opens the effort card.
   modelsView(t, entry, lead) {
     const models = entry?.models ?? [];
+    const reasoning = effortIds(entry).length > 0;
     return v_flex()
       .child(div().px(8).pt(4).pb(2).text_size(11.5).text_color(t.dim).child("Model"))
       .children(models.map((model) =>
@@ -261,8 +308,29 @@ export default {
           .child(div().flex_1().text_size(13).text_color(t.foreground).child(model.label ?? model.id))
           .when(model.id === lead.model, (el) =>
             el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)))))
-      .child(div().px(8).pt(6).pb(2).text_size(11.5).text_color(t.dim)
-        .child("For the lead's next start. Type /model to switch now."));
+      .when(reasoning, (el) => el
+        .child(div().h(1).my(4).bg(t.border))
+        .child(
+          h_flex()
+            .id("composer-reasoning-row")
+            .h(32)
+            .px(8)
+            .items_center()
+            .rounded(7)
+            .cursor_pointer()
+            .hover((s) => s.bg(t.hover))
+            .on_click((_e, cx) => {
+              this.pickerView = "effort";
+              this.ensureEffortSlider(entry);
+              cx.notify();
+            })
+            .child(div().flex_1().text_size(13).text_color(t.foreground).child("Reasoning"))
+            .child(h_flex()
+              .gap(4)
+              .items_center()
+              .child(div().text_size(12.5).text_color(t.dim).child(effortWord(lead.effort) ?? "Default"))
+              .child(div().text_size(12.5).text_color(t.dim).child("›")))))
+      .when(this.leadPending().pending, (el) => el.child(this.restartStrip(t)));
   },
 
   // The effort card: a top row (back to the models, and the reset when a level is saved), then the body.
@@ -308,7 +376,8 @@ export default {
               .child(svg("mods/composer/rotate-ccw.svg").size(14)),
           )),
       )
-      .child(this.effortBody(t, entry, lead));
+      .child(this.effortBody(t, entry, lead))
+      .when(this.leadPending().pending, (el) => el.child(this.restartStrip(t)));
   },
 
   // The lead program's icon at 14 px, as the agents list draws it: a one-colour glyph or a picture. It pulses
@@ -333,7 +402,9 @@ export default {
     // The model the lead says it runs; the saved setting's label until it has said.
     const running = leadOf()?.model?.name;
     const model = typeof running === "string" && running.trim() ? running : lead.model ? modelLabel(entry, lead.model) : null;
-    const level = effortWord(lead.effort);
+    // The reasoning the lead runs with (its started setting), and a dot while a saved change waits for its restart.
+    const { started, pending } = this.leadPending();
+    const level = effortWord(started ? started.effort : lead.effort);
     const icon = this.leadIcon(t, entry);
     let trigger = h_flex()
       .id("composer-model")
@@ -344,7 +415,7 @@ export default {
       .rounded(7)
       .cursor_pointer()
       .hover((s) => s.bg(t.hover))
-      .tooltip("The lead's model and reasoning, for its next start");
+      .tooltip(pending ? "Changes wait for the lead's restart" : "The lead's model and reasoning");
     // The icon sits 6 px left of the name.
     let name = h_flex().gap(6).items_center();
     if (icon) name = name.child(icon);
@@ -354,6 +425,7 @@ export default {
     } else {
       trigger = trigger.child(name.child(div().text_size(12.5).text_color(t.muted).child("Choose a model")));
     }
+    if (pending) trigger = trigger.child(div().id("composer-model-pending").w(6).h(6).rounded(3).bg(t.working));
     trigger = trigger.child(svg("mods/workspace-chrome/chevron-down.svg").size(11).text_color(t.dim));
     const effort = this.pickerView === "effort" && effortIds(entry).length > 0;
     // The effort card is 280 wide with 16 px padding; the models list stays 260 wide with 6.

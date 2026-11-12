@@ -590,6 +590,9 @@ pub struct Session {
     /// The app has sent `/compact` by itself in this stretch of waiting. Not saved.
     #[serde(skip)]
     pub auto_compact_tried: bool,
+    /// When the lead last sent a hook or a status line (ms since the Unix epoch). Not saved.
+    #[serde(skip)]
+    pub heard_ms: Option<u64>,
 }
 
 impl Session {
@@ -640,6 +643,7 @@ pub fn published_session(session: &Session) -> Value {
         "model": session.model,
         "usage": session.usage,
         "compacting": session.compacting,
+        "heard_ms": session.heard_ms,
         "conversation": {
             "version": session.conversation.version,
             "length": session.conversation.items.len(),

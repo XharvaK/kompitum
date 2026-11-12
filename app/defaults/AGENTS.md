@@ -627,6 +627,10 @@ The main ones:
   it by itself once the lead has waited ten minutes with 333K tokens or more, or with 222K or more in the five
   minutes before Claude's prompt cache expires, and never while the Owner has a draft, a card is open, the
   lead's terminal is shown, or a worker task is running, queued or in review),
+  `lead.restart {terminal}` (end the lead and start it again with the saved model and reasoning, in the same
+  conversation; refused while it is working, asking or tidying up). The app sets the shared value
+  `lead.running`, `{program, terminal, model, effort}`: what the running lead was started with, which the composer's
+  chip reads (`shared("lead.running")`) to show its reasoning and a dot while a saved change waits for a restart.
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`
