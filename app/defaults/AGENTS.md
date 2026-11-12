@@ -621,6 +621,8 @@ The main ones:
   `lead.terminal {terminal, show?}` (show or hide the lead's terminal by hand; omitted `show` toggles it; a
   reveal by hand stays until this hides it),
   `lead.fit {terminal, px}` (the composer's height for its text, 80 to 320 px, while the lead isn't asking),
+  `lead.compact {terminal}` (have the lead compact its conversation now: the app sends Claude's own `/compact`,
+  the one text it ever sends the lead; refused unless the lead is waiting with no card open),
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`
@@ -990,8 +992,9 @@ All of it is in `kompitum.d.ts`. In short:
   `agents()` (status, app, space, tab, pinned, focused; "done" turns "idle"
   once someone looks at it on any Kompitum client), `terminals()`
   (every core terminal), `lead()` (the lead terminal's state, open ask, whether
-  its terminal is `hidden` or `shown`, why it was revealed, and `conversation:
-  { version, length }`; a copy without `props().terminal` reads the live terminal
+  its terminal is `hidden` or `shown`, why it was revealed, `conversation:
+  { version, length }`, `model`, `usage` and `compacting` from its status line
+  and compactions; a copy without `props().terminal` reads the live terminal
   labelled `lead`), `conversation(from)` (the conversation items from index
   `from`, so the panel asks only for what's new), `focused()`, `layout()`, `theme()` (every color by
   name: background (the terminals', cards), canvas (behind cards), chrome

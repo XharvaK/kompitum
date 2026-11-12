@@ -451,6 +451,7 @@ fn the_skill_is_installed_only_when_absent() {
     std::fs::remove_dir_all(&home).unwrap();
 }
 
+#[test]
 fn the_app_claude_settings_hold_only_the_compaction_window() {
     let dir = std::env::temp_dir().join(format!(
         "kompitum-app-settings-{}-{}",
@@ -1048,4 +1049,192 @@ fn a_reattached_lead_is_started_only_after_its_own_session_start() {
     assert!(!started_on_reattach(Some(""), "t9"));
     assert!(started_on_reattach(Some("t9"), "t9"));
     assert!(!started_on_reattach(Some("t8"), "t9"));
+}
+
+#[test]
+fn a_path_is_a_shell_word_with_forward_slashes_and_quotes_only_for_a_space() {
+    assert_eq!(shell_word(r"C:\a\b.exe"), "C:/a/b.exe");
+    assert_eq!(shell_word(r"C:\My Apps\b.exe"), r#""C:/My Apps/b.exe""#);
+}
+
+#[test]
+fn claude_settings_name_the_status_line_and_the_compaction_hooks() {
+    let value = claude_settings(
+        Path::new(r"C:\My Apps\kompitum-app.exe"),
+        Path::new(r"C:\kom\kom.exe"),
+        Path::new(r"C:\Users\me\kompitum-app"),
+    );
+    let command = value["statusLine"]["command"].as_str().unwrap();
+    assert_eq!(value["statusLine"]["type"], json!("command"));
+    assert!(!command.contains('\\'), "{command}");
+    assert!(command.starts_with(r#""C:/My Apps/kompitum-app.exe" hook StatusLine "#), "{command}");
+    assert!(command.ends_with("C:/Users/me/kompitum-app"), "{command}");
+
+    let pre = &value["hooks"]["PreCompact"][0]["hooks"][0];
+    assert_eq!(pre["args"], json!(["hook", "PreCompact", r"C:\Users\me\kompitum-app"]));
+    assert_eq!(pre["timeout"], json!(10));
+    assert!(pre.get("async").is_none(), "{pre}");
+    let post = &value["hooks"]["PostCompact"][0]["hooks"][0];
+    assert_eq!(post["args"][1], json!("PostCompact"));
+    assert_eq!(post["async"], json!(true));
+}
+
+#[test]
+fn a_compaction_is_a_notice_and_its_summary_and_meta_lines_are_not_owner_words() {
+    let text = [
+        r#"{"type":"user","message":{"role":"user","content":"First"},"uuid":"u1"}"#,
+        r#"{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","timestamp":"2026-11-11T15:27:19.119Z","uuid":"b1","compactMetadata":{"trigger":"manual","preTokens":353854}}"#,
+        r#"{"type":"user","isCompactSummary":true,"isVisibleInTranscriptOnly":true,"message":{"role":"user","content":"This session is being continued from a previous conversation."},"uuid":"s1"}"#,
+        r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>meta</local-command-caveat>"},"uuid":"m1"}"#,
+        r#"{"type":"user","message":{"role":"user","content":"Second"},"uuid":"u2"}"#,
+    ]
+    .join("\n");
+    let loaded = items_from_transcript(&text);
+    assert_eq!(loaded.skipped, 0);
+    assert_eq!(loaded.items.len(), 3, "{:?}", loaded.items);
+    assert!(matches!(&loaded.items[0], Item::Owner { text, .. } if text == "First"));
+    assert!(matches!(&loaded.items[2], Item::Owner { text, .. } if text == "Second"));
+    match &loaded.items[1] {
+        Item::Notice { id, text } => {
+            assert_eq!(id, "b1");
+            assert!(text.starts_with("Tidied up the conversation"), "{text}");
+        }
+        other => panic!("expected a notice, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_compact_command_makes_no_owner_item_and_keeps_the_terminal_as_it_is() {
+    let owners = |prompt: &str| {
+        let mut conversation = Conversation::default();
+        conversation.show(Reveal::Auto, Some("Claude is showing its menu.".into()));
+        let after = fold(
+            conversation,
+            &Event::UserPromptSubmit {
+                prompt: prompt.into(),
+            },
+        );
+        (after.items.len(), after.reveal)
+    };
+    assert_eq!(owners("/compact"), (0, Some(Reveal::Auto)));
+    assert_eq!(owners("/compact keep the schema"), (0, Some(Reveal::Auto)));
+    assert_eq!(owners("/compacting is slow"), (1, None));
+}
+
+#[test]
+fn a_status_line_gives_the_model_and_the_usage() {
+    let input = json!({
+        "session_id": "s-1",
+        "model": { "id": "claude-haiku-5-5", "display_name": "Haiku 5.5" },
+        "context_window": { "total_input_tokens": 271000, "context_window_size": 1000000, "used_percentage": 27.1 },
+        "prompt_cache": { "ttl": "1h", "expires_at": 1794440000, "warm": true },
+        "rate_limits": {
+            "five_hour": { "used_percentage": 42.4, "resets_at": 1794430000 },
+            "seven_day": { "used_percentage": 61.0, "resets_at": 1794800000 }
+        }
+    });
+    let (model, usage) = status_line_facts(&input, 5_000);
+    assert_eq!(model, Some(json!({ "id": "claude-haiku-5-5", "name": "Haiku 5.5" })));
+    assert_eq!(
+        usage,
+        json!({
+            "context_tokens": 271000,
+            "context_window": 1000000,
+            "compact_at": 444000,
+            "cache_ttl": "1h",
+            "cache_expires_at": 1794440000,
+            "five_hour": { "used_percentage": 42.4, "resets_at": 1794430000 },
+            "seven_day": { "used_percentage": 61.0, "resets_at": 1794800000 },
+            "session_id": "s-1",
+            "seen_ms": 5000,
+        })
+    );
+}
+
+#[test]
+fn a_status_line_without_a_context_window_says_null_for_it() {
+    let (model, usage) = status_line_facts(&json!({ "model": { "display_name": "Opus 5.5" } }), 1);
+    assert_eq!(model, Some(json!({ "id": null, "name": "Opus 5.5" })));
+    assert_eq!(usage["context_tokens"], Value::Null);
+    assert_eq!(usage["context_window"], Value::Null);
+    assert_eq!(usage["cache_expires_at"], Value::Null);
+    assert_eq!(usage["five_hour"], Value::Null);
+    assert_eq!(usage["compact_at"], json!(444_000));
+}
+
+#[test]
+fn a_status_line_rounds_the_tokens_from_its_percentage_when_no_count_is_given() {
+    let input = json!({ "context_window": { "context_window_size": 1000000, "used_percentage": 27.1 } });
+    let (model, usage) = status_line_facts(&input, 1);
+    assert_eq!(model, None);
+    assert_eq!(usage["context_tokens"], json!(271_000));
+    assert_eq!(usage["context_window"], json!(1_000_000));
+}
+
+#[test]
+fn a_status_line_publishes_only_a_change_in_model_or_usage() {
+    let input = json!({
+        "model": { "id": "claude-haiku-5-5", "display_name": "Haiku 5.5" },
+        "context_window": { "total_input_tokens": 271000, "context_window_size": 1000000 },
+    });
+    let mut session = Session::default();
+    assert!(apply_status_line(&mut session, &input, 1));
+    assert!(!apply_status_line(&mut session, &input, 2), "only the arrival time moved");
+    assert_eq!(session.usage.as_ref().unwrap()["seen_ms"], json!(2));
+    let mut moved = input.clone();
+    moved["context_window"]["total_input_tokens"] = json!(272000);
+    assert!(apply_status_line(&mut session, &moved, 3));
+}
+
+#[test]
+fn a_compaction_clears_the_context_size_until_the_next_answer() {
+    let mut session = Session::default();
+    apply_status_line(&mut session, &json!({ "context_window": { "total_input_tokens": 9 } }), 1);
+    session.compacting = true;
+    assert_eq!(published_session(&session)["compacting"], json!(true));
+    compaction_done(&mut session);
+    let value = published_session(&session);
+    assert_eq!(value["compacting"], json!(false));
+    assert_eq!(value["usage"]["context_tokens"], Value::Null);
+    assert_eq!(value["model"], Value::Null);
+}
+
+#[test]
+fn a_status_line_before_claudes_first_answer_knows_no_context_size() {
+    let input = json!({ "context_window": { "total_input_tokens": 0, "context_window_size": 1000000.0, "used_percentage": null } });
+    let (_, usage) = status_line_facts(&input, 1);
+    assert_eq!(usage["context_tokens"], Value::Null);
+    assert_eq!(usage["context_window"], json!(1_000_000));
+}
+
+#[test]
+fn the_lead_compacts_only_while_it_waits_with_no_card_open() {
+    assert!(compact_refusal(None).is_some());
+    let mut session = Session::default();
+    assert!(compact_refusal(Some(&session)).is_some(), "no state yet");
+    session.state = Some(State::Working);
+    assert!(compact_refusal(Some(&session)).unwrap().contains("working"));
+    session.state = Some(State::Waiting);
+    assert_eq!(compact_refusal(Some(&session)), None);
+    session.compacting = true;
+    assert!(compact_refusal(Some(&session)).unwrap().contains("already"));
+    session.compacting = false;
+    session.ask = Some(Ask {
+        id: "a1".into(),
+        terminal: "t1".into(),
+        kind: AskKind::Permission,
+        input: Value::Null,
+    });
+    assert!(compact_refusal(Some(&session)).unwrap().contains("asking"));
+}
+
+#[test]
+fn a_compact_command_is_not_a_turn_and_an_asked_for_compaction_ends_waiting() {
+    let prompt = |text: &str| json!({ "prompt": text });
+    assert_eq!(state_after_hook("UserPromptSubmit", &prompt("hello")), Some(State::Working));
+    assert_eq!(state_after_hook("UserPromptSubmit", &prompt("/compact")), None);
+    assert_eq!(state_after_hook("Stop", &Value::Null), Some(State::Waiting));
+    assert_eq!(state_after_hook("PostCompact", &json!({ "trigger": "manual" })), Some(State::Waiting));
+    assert_eq!(state_after_hook("PostCompact", &json!({ "trigger": "auto" })), None);
+    assert_eq!(state_after_hook("StatusLine", &Value::Null), None);
 }

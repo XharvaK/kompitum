@@ -245,6 +245,11 @@ pub const COMMANDS: &[Command] = &[
         "Add Kompitum's tools and skill to Claude Code, for the claude lead.",
     ),
     cmd(
+        "lead.compact",
+        &[req("terminal")],
+        "Have the lead compact its conversation now (the app sends Claude's own /compact). Refused unless the lead is waiting, with no card open.",
+    ),
+    cmd(
         "lead.fit",
         &[req("terminal"), req("px")],
         "Size the lead's composer to its text while its lead isn't asking: px from 80 to 320.",

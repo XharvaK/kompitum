@@ -595,3 +595,166 @@ fn the_box_and_the_conversation_share_one_centred_column(cx: &mut TestAppContext
     assert!((left - right).abs() <= slack, "the box is centred: left {left:?}, right {right:?}");
     assert!(left >= gpui::px(20.0) - slack, "a 20 px gutter at least: {left:?}");
 }
+
+/// The lead's values for the context ring, Claude's limits, the running model and compaction. Every field the
+/// composer reads is here; `extra` overrides any of them.
+fn usage_values(usage: Value, extra: Value) -> BTreeMap<String, Value> {
+    let mut lead = json!({
+        "state": "waiting",
+        "ask": null,
+        "started": true,
+        "terminal": "hidden",
+        "reveal": null,
+        "reveal_why": null,
+        "conversation": { "version": 1, "length": 0 },
+        "model": null,
+        "usage": usage,
+        "compacting": false
+    });
+    lead.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    let mut values = conversation_values(json!([]), "hidden", Value::Null, None);
+    values.insert("lead".into(), lead);
+    values.insert("person".into(), composer_person(Some("opus"), Some("high")));
+    values
+}
+
+fn usage_with(context_tokens: u64, five_hour: Value) -> Value {
+    json!({
+        "context_tokens": context_tokens,
+        "context_window": 1000000,
+        "compact_at": 444000,
+        "cache_ttl": null,
+        "cache_expires_at": null,
+        "five_hour": five_hour,
+        "seven_day": null,
+        "session_id": null,
+        "seen_ms": 0
+    })
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+fn composer_draws(cx: &mut TestAppContext, values: BTreeMap<String, Value>, setup: Option<&str>) -> String {
+    let staged = Staged::new();
+    describe_settled(cx, &staged, "mods/composer", values, setup).unwrap()
+}
+
+/// The ring is drawn when the context is counted, with its share as the tooltip; not when usage is null.
+#[gpui::test]
+fn the_context_ring_draws_when_the_context_is_counted(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_draws(cx, usage_values(usage_with(300000, Value::Null), json!({})), None);
+    assert!(tree.contains("composer-usage"), "{tree}");
+    assert!(tree.contains("Context 68%"), "{tree}");
+
+    let none = composer_draws(cx, usage_values(Value::Null, json!({})), None);
+    assert!(!none.contains("composer-usage"), "{none}");
+}
+
+/// A present window at 75% or more says itself in the row; under 75 it says nothing.
+#[gpui::test]
+fn a_limit_says_itself_only_when_it_matters(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let soon = unix_now() + 3600;
+    let high = composer_draws(
+        cx,
+        usage_values(
+            usage_with(300000, json!({"used_percentage": 82, "resets_at": soon})),
+            json!({}),
+        ),
+        None,
+    );
+    assert!(high.contains("composer-limit"), "{high}");
+    assert!(high.contains("5h 82%"), "{high}");
+
+    let low = composer_draws(
+        cx,
+        usage_values(
+            usage_with(300000, json!({"used_percentage": 40, "resets_at": soon})),
+            json!({}),
+        ),
+        None,
+    );
+    assert!(!low.contains("composer-limit"), "{low}");
+}
+
+/// The chip names the model the lead says it runs; the saved label stands until it has said.
+#[gpui::test]
+fn the_chip_names_the_running_model(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_draws(
+        cx,
+        usage_values(Value::Null, json!({"model": {"id": "claude-haiku-5-5", "name": "Haiku 5.5"}})),
+        None,
+    );
+    assert!(tree.contains("Haiku 5.5"), "{tree}");
+}
+
+/// While Claude compacts the note says so, and Send neither sends nor clears the box.
+#[gpui::test]
+fn while_compacting_the_composer_holds_the_message(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let values = usage_values(usage_with(300000, Value::Null), json!({"compacting": true}));
+    let tree = composer_draws(cx, values.clone(), None);
+    assert!(tree.contains("Tidying up…"), "{tree}");
+
+    let effects = composer_live_run_after_clicks(
+        cx,
+        usage_values(usage_with(300000, Value::Null), json!({"compacting": true})),
+        "this.text.set_value('hello');",
+        &["composer-send"],
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|args| args.first().is_some_and(|first| first.to_string().contains("send"))),
+        "Send must not reach kom send while compacting: {effects:?}"
+    );
+}
+
+/// The ring opens a card with the context in K and the Compact now button, which is live when the lead waits.
+#[gpui::test]
+fn the_card_shows_the_context_and_compact_now(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let values = usage_values(usage_with(271000, Value::Null), json!({}));
+    let tree = composer_draws(cx, values, Some("this.usageOpen = true;"));
+    assert!(tree.contains("of 444K"), "{tree}");
+    assert!(tree.contains("271K"), "{tree}");
+    assert!(tree.contains("Compact now"), "{tree}");
+    assert!(tree.contains("composer-compact-now"), "{tree}");
+    assert!(tree.contains("Kompitum tidies up by itself while you're away."), "{tree}");
+}
+
+/// The composer reports a draft through the shared flag, set only when it changes.
+#[gpui::test]
+fn a_draft_sets_the_shared_flag(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-draft.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(usage_values(Value::Null, json!({})), calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", "this.text.set_value('hello'); this.syncDraft();");
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let shared = calls.borrow().shared.get("lead.draft").cloned();
+    assert_eq!(shared, Some(Value::Bool(true)), "a typed draft sets lead.draft: {shared:?}");
+}

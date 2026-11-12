@@ -335,6 +335,22 @@ export function lead(): {
   reveal_why?: string | null;
   /** Version rises when items change; length is how many items there are. */
   conversation: { version: number; length: number };
+  /** The model Claude says it is running, from its status line; null until it has said. */
+  model: { id: string; name: string } | null;
+  /** How full the lead's context is and Claude's limits, from its status line; null until it has said. Times are Unix seconds. */
+  usage: {
+    context_tokens: number | null;
+    context_window: number | null;
+    compact_at: number;
+    cache_ttl: string | null;
+    cache_expires_at: number | null;
+    five_hour: { used_percentage: number | null; resets_at: number | null } | null;
+    seven_day: { used_percentage: number | null; resets_at: number | null } | null;
+    session_id: string | null;
+    seen_ms: number;
+  } | null;
+  /** Whether Claude is compacting the conversation right now. */
+  compacting: boolean;
 } | null;
 
 /** Conversation items from index `from` (0-based). The panel asks only for

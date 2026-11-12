@@ -369,6 +369,13 @@ pub fn items_from_transcript(text: &str) -> TranscriptLoad {
         match line_type(&value) {
             Some("user") => apply_user(&mut items, &mut next, &value),
             Some("assistant") => apply_assistant(&mut items, &mut next, &value),
+            Some("system") if value.get("subtype").and_then(Value::as_str) == Some("compact_boundary") => {
+                let id = value.get("uuid").and_then(Value::as_str).map_or_else(|| next("notice"), str::to_owned);
+                items.push(Item::Notice {
+                    id,
+                    text: "Tidied up the conversation".into(),
+                });
+            }
             Some(_) => skipped += 1,
             None => skipped += 1,
         }
@@ -376,7 +383,15 @@ pub fn items_from_transcript(text: &str) -> TranscriptLoad {
     TranscriptLoad { items, skipped }
 }
 
+/// `/compact` sent on its own, or with a note after it: Claude's own command, not the Owner's words.
+pub fn is_compact_command(text: &str) -> bool {
+    text == "/compact" || text.starts_with("/compact ")
+}
+
 fn on_submit(conversation: &mut Conversation, prompt: &str) {
+    if is_compact_command(prompt) {
+        return;
+    }
     if conversation.reveal == Some(Reveal::Auto) && !is_picker_command(prompt) {
         conversation.hide();
     }
@@ -810,6 +825,10 @@ fn message_content(value: &Value) -> &Value {
 }
 
 fn apply_user(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String, value: &Value) {
+    // A compaction's summary and Claude's meta lines are written by Claude, not the Owner.
+    if value["isCompactSummary"] == true || value["isMeta"] == true {
+        return;
+    }
     match message_content(value) {
         Value::String(text) if !text.is_empty() => {
             items.push(Item::Owner {

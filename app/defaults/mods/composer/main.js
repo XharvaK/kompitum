@@ -5,7 +5,7 @@
 // While Claude Code asks (a permission, a plan or a question) its card takes
 // the box's place, and the Owner's click or key answers the hook.
 
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState, InputState, Input, TextView, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb, VirtualListScrollHandle, Scrollbar } from "gpui-base";
 import {
   kom,
@@ -131,6 +131,75 @@ function statusColor(t, state) {
   return state === "asking" ? t.working : t.accent;
 }
 
+// The lead's context and Claude's limits, from lead().usage. Times are Unix seconds; every field may be missing.
+const WEEKDAY_WORDS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH_WORDS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const pad2 = (n) => String(n).padStart(2, "0");
+
+function leadUsage() {
+  const usage = leadOf()?.usage;
+  return usage && typeof usage === "object" ? usage : null;
+}
+
+// The share of the context the lead holds, from 0 up to 1 (capped); null when the count or the limit is unknown.
+function contextFraction(usage) {
+  const tokens = usage?.context_tokens;
+  const max = usage?.compact_at;
+  if (typeof tokens !== "number" || !Number.isFinite(tokens) || typeof max !== "number" || !(max > 0)) return null;
+  return Math.min(1, Math.max(0, tokens / max));
+}
+
+// Tokens as thousands: 271000 is "271K".
+function kTokens(tokens) {
+  return `${Math.round(tokens / 1000)}K`;
+}
+
+// The clock time when a reset is today, the weekday within a week, else "23 Nov" (the rule of Settings > Agents).
+function resetWords(seconds) {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return null;
+  const when = new Date(seconds * 1000);
+  const now = new Date();
+  const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((midnight(when) - midnight(now)) / 86400000);
+  if (days === 0) return `${pad2(when.getHours())}:${pad2(when.getMinutes())}`;
+  if (Math.abs(days) < 7) return WEEKDAY_WORDS[when.getDay()];
+  return `${when.getDate()} ${MONTH_WORDS[when.getMonth()]}`;
+}
+
+// The two windows that count: a window is absent when its reset is in the past or its percentage is not a number.
+function usageWindows(usage) {
+  const now = Date.now() / 1000;
+  return [
+    { short: "5h", long: "5-hour limit", window: usage?.five_hour },
+    { short: "week", long: "Week", window: usage?.seven_day },
+  ]
+    .map(({ short, long, window }) => ({ short, long, pct: window?.used_percentage, resets: window?.resets_at }))
+    .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
+    .filter((w) => !(typeof w.resets === "number" && w.resets < now));
+}
+
+// The present window with the higher share, when it is at 75 or more; null otherwise.
+function limitLine(windows) {
+  const top = windows.reduce((best, w) => (!best || w.pct > best.pct ? w : best), null);
+  if (!top || top.pct < 75) return null;
+  const when = resetWords(top.resets);
+  if (top.pct >= 100) return { text: when ? `${top.short} used up · back ${when}` : `${top.short} used up`, blocked: true };
+  const pct = Math.round(top.pct);
+  return { text: when ? `${top.short} ${pct}% · resets ${when}` : `${top.short} ${pct}%`, blocked: false };
+}
+
+// The ring's paths, 16 px across: a 2 px stroke on a circle of radius 7, drawn from the top, clockwise.
+function ringPath(fraction) {
+  const c = 8;
+  const r = 7;
+  const builder = PathBuilder.stroke(2).move_to(c, c - r);
+  if (fraction >= 1) return builder.arc_to(r, r, 0, false, true, c, c + r).arc_to(r, r, 0, false, true, c, c - r).build();
+  const angle = 2 * Math.PI * Math.min(fraction, 0.999);
+  const x = c + r * Math.sin(angle);
+  const y = c - r * Math.cos(angle);
+  return builder.arc_to(r, r, 0, fraction > 0.5, true, x, y).build();
+}
+
 function repeatsLabel(label, description) {
   const words = String(description ?? "").trim().toLowerCase().replace(/^(choose|pick|select)\s+/, "");
   return words === String(label ?? "").trim().toLowerCase();
@@ -204,6 +273,8 @@ export default class Composer extends View {
     this.history = loadHistory();
     this.historyAt = -1;
     this.draft = "";
+    this.draftShared = null;
+    this.usageOpen = false;
     this.askAt = null;
     // The lead's state and its open ask, from Claude Code's hooks.
     this.state = null;
@@ -234,6 +305,7 @@ export default class Composer extends View {
     this.text.set_submit_on_enter(true);
     this.text.on("change", (_event, cx) => {
       if (this.text.value().length === 0) this.historyAt = -1;
+      this.syncDraft();
       cx.notify();
       this.setHistory(this.text.value().length === 0 || this.historyAt >= 0, cx);
     });
@@ -248,6 +320,7 @@ export default class Composer extends View {
     this.historyMode = true;
     this.text.set_key_context("ComposerHistory");
     this.takeAsk(cx);
+    this.syncDraft();
     cx.spawn(async (cx) => {
       await this.load(cx);
       cx.notify();
@@ -361,19 +434,30 @@ export default class Composer extends View {
     this.askAt = ask.at;
     setShared("composer.ask", null);
     this.text.set_value(ask.text);
+    this.syncDraft();
     this.setHistory(true, cx);
     this.text.focus();
     cx.notify();
+  }
+
+  // Other code reads the shared flag "lead.draft": true while the box holds text or a file. It is set only on a change.
+  syncDraft() {
+    const waiting = this.text.value().length > 0 || this.chips.length > 0;
+    if (waiting === this.draftShared) return;
+    this.draftShared = waiting;
+    setShared("lead.draft", waiting);
   }
 
   addChip(path) {
     const text = String(path ?? "");
     if (!text || this.chips.some((chip) => chip.path === text)) return;
     this.chips.push({ path: text });
+    this.syncDraft();
   }
 
   removeChip(index, cx) {
     this.chips.splice(index, 1);
+    this.syncDraft();
     cx.notify();
   }
 
@@ -585,6 +669,7 @@ export default class Composer extends View {
   send(cx) {
     if (this.sending) return;
     if (this.state === "asking") return;
+    if (leadOf()?.compacting) return;
     if (!this.leadReady()) return;
     const text = this.text.value();
     const paths = this.chips.map((chip) => chip.path);
@@ -603,6 +688,7 @@ export default class Composer extends View {
         if (!r || r.code !== 0) throw new Error(errorText(r));
         this.text.set_value("");
         this.chips = [];
+        this.syncDraft();
         this.error = null;
         this.historyAt = -1;
         this.draft = "";
@@ -955,12 +1041,30 @@ export default class Composer extends View {
       .child(this.effortBody(t, entry, lead));
   }
 
+  // The lead program's icon at 14 px, as the agents list draws it: a one-colour glyph or a picture. It pulses
+  // while the lead works and is still otherwise. Nothing when the program has no icon.
+  leadIcon(t, entry) {
+    if (!entry?.icon) return null;
+    const glyph = entry.tint
+      ? svg(entry.icon).size(14).flex_none().text_color(t.foreground)
+      : image(entry.icon).w(14).h(14).flex_none();
+    return div()
+      .w(14)
+      .h(14)
+      .flex_none()
+      .child(glyph)
+      .when(this.state === "working", (el) => el.loop("opacity", { from: 0.45, to: 1, period: 1200 }));
+  }
+
   // The lead's model and reasoning: models first, then Codex-style effort.
   modelChip(t) {
     const entry = this.leadProgram();
     const lead = this.person?.lead ?? {};
-    const model = lead.model ? modelLabel(entry, lead.model) : null;
+    // The model the lead says it runs; the saved setting's label until it has said.
+    const running = leadOf()?.model?.name;
+    const model = typeof running === "string" && running.trim() ? running : lead.model ? modelLabel(entry, lead.model) : null;
     const level = effortWord(lead.effort);
+    const icon = this.leadIcon(t, entry);
     let trigger = h_flex()
       .id("composer-model")
       .h(28)
@@ -971,11 +1075,14 @@ export default class Composer extends View {
       .cursor_pointer()
       .hover((s) => s.bg(t.hover))
       .tooltip("The lead's model and reasoning, for its next start");
+    // The icon sits 6 px left of the name.
+    let name = h_flex().gap(6).items_center();
+    if (icon) name = name.child(icon);
     if (model) {
-      trigger = trigger.child(div().text_size(12.5).font_medium().text_color(t.foreground).child(model));
+      trigger = trigger.child(name.child(div().text_size(12.5).font_medium().text_color(t.foreground).child(model)));
       if (level) trigger = trigger.child(div().text_size(12.5).text_color(t.dim).child(level));
     } else {
-      trigger = trigger.child(div().text_size(12.5).text_color(t.muted).child("Choose a model"));
+      trigger = trigger.child(name.child(div().text_size(12.5).text_color(t.muted).child("Choose a model")));
     }
     trigger = trigger.child(svg("mods/workspace-chrome/chevron-down.svg").size(11).text_color(t.dim));
     const effort = this.pickerView === "effort" && effortIds(entry).length > 0;
@@ -1007,13 +1114,143 @@ export default class Composer extends View {
       .content(content);
   }
 
+  // The ring for how full the lead's context is: a track and an arc, 16 px across in a 28 px hit area.
+  usageRing(t, fraction) {
+    const color = fraction >= 0.95 ? t.blocked : fraction >= 0.75 ? t.working : t.muted;
+    let drawing = div()
+      .relative()
+      .w(16)
+      .h(16)
+      .flex_none()
+      .child(window.paint_path(ringPath(1), Background.solid(t.border)).absolute().top(0).left(0).size_full());
+    if (fraction > 0) {
+      drawing = drawing.child(
+        window.paint_path(ringPath(fraction), Background.solid(color)).absolute().top(0).left(0).size_full(),
+      );
+    }
+    return h_flex()
+      .id("composer-usage")
+      .w(28)
+      .h(28)
+      .flex_none()
+      .items_center()
+      .justify_center()
+      .rounded(6)
+      .cursor_pointer()
+      .hover((s) => s.bg(t.hover))
+      .tooltip(`Context ${Math.round(fraction * 100)}%`)
+      .child(drawing);
+  }
+
+  // Compact now is live only while the lead waits, no card is open, Claude is not compacting and the count is known.
+  compactReady() {
+    return (
+      this.state === "waiting"
+      && !this.ask
+      && leadOf()?.compacting !== true
+      && typeof leadUsage()?.context_tokens === "number"
+    );
+  }
+
+  compactNow(cx) {
+    this.usageOpen = false;
+    run("lead.compact", { terminal: this.terminal });
+    cx.notify();
+  }
+
+  // The card the ring opens: the context, one row per present limit, and Compact now.
+  usageCard(t, usage, windows) {
+    const compact = this.compactReady();
+    const rows = windows.map((w) => {
+      const when = resetWords(w.resets);
+      const over = w.pct >= 100;
+      const words = over
+        ? (when ? `Used up · back ${when}` : "Used up")
+        : (when ? `${Math.round(w.pct)}% · resets ${when}` : `${Math.round(w.pct)}%`);
+      return h_flex()
+        .w_full()
+        .justify_between()
+        .items_center()
+        .child(div().text_size(12.5).text_color(t.muted).child(w.long))
+        .child(div().text_size(12.5).text_color(over ? t.blocked : t.foreground).child(words));
+    });
+    return v_flex()
+      .w(260)
+      .p(12)
+      .gap(8)
+      .rounded(10)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.popover)
+      .child(
+        v_flex()
+          .gap(4)
+          .child(
+            h_flex()
+              .w_full()
+              .justify_between()
+              .items_center()
+              .child(div().text_size(12.5).text_color(t.muted).child("Context"))
+              .child(
+                div()
+                  .text_size(12.5)
+                  .text_color(t.foreground)
+                  .child(`${kTokens(usage.context_tokens)} of ${kTokens(usage.compact_at)}`),
+              ),
+          )
+          .child(div().text_size(12).text_color(t.dim).child("Kompitum tidies up by itself while you're away.")),
+      )
+      .children(rows)
+      .child(
+        h_flex()
+          .id("composer-compact-now")
+          .w_full()
+          .h(30)
+          .rounded(8)
+          .border_1()
+          .border_color(t.border)
+          .items_center()
+          .justify_center()
+          .when(compact, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.compactNow(cx)))
+          .child(div().text_size(12.5).text_color(compact ? t.foreground : t.dim).child("Compact now")),
+      );
+  }
+
+  // The ring and the card it opens: a popover whose trigger is the ring.
+  usageControl(t, usage, fraction, windows) {
+    return Popover.new("composer-usage-card")
+      .anchor("bottom_right")
+      .open(Boolean(this.usageOpen))
+      .on_open_change((open, cx) => {
+        this.usageOpen = open;
+        cx.notify();
+      })
+      .trigger(this.usageRing(t, fraction))
+      .content(this.usageCard(t, usage, windows));
+  }
+
+  // The limit in words, only when a present window is at 75% or more.
+  usageLimit(t, windows) {
+    const line = limitLine(windows);
+    if (!line) return null;
+    return div()
+      .id("composer-limit")
+      .min_w(0)
+      .truncate()
+      .text_size(11.5)
+      .text_color(line.blocked ? t.blocked : t.working)
+      .child(line.text);
+  }
+
   // One floating box: files, the text (no placeholder), then "+", the lead's status, its model and Send.
   // While the lead asks, its card sits above the text in the same box.
   // `panel`: under the conversation the box is as tall as its text (an ask's card scrolls past 360 px); in its own
   // pane (under a shown terminal, or the first pick) it fills the pane.
   bar(t, cx, panel = false) {
     const first = this.needsFirstPick();
-    const canSend = this.leadReady() && !this.sending && (Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0);
+    const compacting = leadOf()?.compacting === true;
+    const canSend = this.leadReady() && !this.sending && !compacting
+      && (Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0);
     const send = h_flex()
       .id("composer-send")
       .w(30)
@@ -1023,7 +1260,9 @@ export default class Composer extends View {
       .justify_center()
       .rounded(15)
       .cursor_pointer()
-      .tooltip(!this.leadReady() ? "Claude is asking something before it starts." : this.sending ? "Sending…" : "Send (Enter)")
+      .tooltip(!this.leadReady()
+        ? "Claude is asking something before it starts."
+        : compacting ? "Claude is tidying up. Your message waits in the box." : this.sending ? "Sending…" : "Send (Enter)")
       .when(canSend, (el) => el.bg(t.foreground).hover((s) => s.opacity(0.85)))
       .when(!canSend, (el) => el.border_1().border_color(t.input))
       .on_click((_e, cx) => this.send(cx))
@@ -1044,7 +1283,15 @@ export default class Composer extends View {
       .child(svg("mods/composer/plus.svg").size(16));
     const note = this.error
       ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)
-      : this.state ? this.statusWord(t) : null;
+      : compacting
+        ? div().text_size(11.5).text_color(t.dim).child("Tidying up…")
+        : this.state ? this.statusWord(t) : null;
+    // The limit and the ring read the lead's usage; neither is drawn on the first-start card.
+    const usage = first ? null : leadUsage();
+    const fraction = contextFraction(usage);
+    const windows = usage ? usageWindows(usage) : [];
+    const limit = usage ? this.usageLimit(t, windows) : null;
+    const ring = fraction == null ? null : this.usageControl(t, usage, fraction, windows);
     const frame = div()
       .when(panel, (el) => el.w_full().flex_none().px(20).py(10))
       .when(!panel, (el) => el.size_full().p(10))
@@ -1081,6 +1328,8 @@ export default class Composer extends View {
               .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
               .child(div().flex_1())
               .when(!first, (el) => el.child(this.modelChip(t)))
+              .when(Boolean(limit), (el) => el.child(limit))
+              .when(Boolean(ring), (el) => el.child(ring))
               .when(!first && !this.ask, (el) => el.child(send)),
           );
     return frame.child(panel ? h_flex().w_full().justify_center().child(box) : box);

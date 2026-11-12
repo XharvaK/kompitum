@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 #[path = "lead/conversation.rs"]
 pub mod conversation;
 pub use conversation::{
-    Conversation, Event, Item, Reveal, TerminalVis, event_from_hook, fold, items_from_transcript,
-    reveal_after_auth_status,
+    Conversation, Event, Item, Reveal, TerminalVis, event_from_hook, fold, is_compact_command,
+    items_from_transcript, reveal_after_auth_status,
 };
 
 /// The compaction window each Claude terminal the app starts gets
@@ -345,12 +345,30 @@ pub fn claude_settings(app: &Path, core: &Path, home: &Path) -> Value {
     })
     .collect();
     hooks.insert("Notification".into(), Value::Array(notifications));
+    hooks.insert("PreCompact".into(), json!([{ "hooks": [blocking("PreCompact", 10)] }]));
+    hooks.insert("PostCompact".into(), json!([{ "hooks": [async_hook("PostCompact")] }]));
     json!({
         "autoMemoryEnabled": false,
         "modelSettings": model_settings(),
+        "statusLine": { "type": "command", "command": status_line_command(&app, &home) },
         "hooks": hooks,
     })
 }
+
+/// One path as a word in a shell line Claude Code runs under Git Bash: forward slashes (a backslash
+/// is an escape there), and double quotes when the path has a space.
+pub fn shell_word(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    if path.contains(' ') { format!("\"{path}\"") } else { path }
+}
+
+/// The lead's status line command: the app's exe, `hook StatusLine`, then the app home.
+pub fn status_line_command(app: &str, home: &str) -> String {
+    format!("{} hook StatusLine {}", shell_word(app), shell_word(home))
+}
+
+/// What the lead's PreCompact hook hands Claude as the instructions for its summary.
+pub const COMPACT_INSTRUCTIONS: &str = "Keep every decision the Owner made and the Owner's own words for it, what is still open or unfinished, the names of the files, tasks and people involved, and what was promised next. Drop tool output and anything already finished and merged.";
 
 /// Writes the lead's Claude settings file, made fresh every start.
 pub fn write_claude_settings(app_dir: &Path, app: &Path, core: &Path) -> Result<PathBuf, String> {
@@ -552,6 +570,149 @@ pub struct Session {
     /// Whether this window has seen the lead's SessionStart. Not saved.
     #[serde(skip)]
     pub started: bool,
+    /// The model Claude says it runs (`{ id, name }`), from its status line. Not saved.
+    #[serde(skip)]
+    pub model: Option<Value>,
+    /// How full the context is and Claude's limits, from its status line. Not saved.
+    #[serde(skip)]
+    pub usage: Option<Value>,
+    /// Whether Claude is compacting now: PreCompact sets it, PostCompact and SessionStart clear it. Not saved.
+    #[serde(skip)]
+    pub compacting: bool,
+}
+
+/// The model and usage a status line JSON says, as `Session` keeps them; `seen_ms` is when it arrived.
+/// Each field is read defensively: a missing one is null, never an error.
+pub fn status_line_facts(input: &Value, seen_ms: u64) -> (Option<Value>, Value) {
+    let model = input["model"]["display_name"]
+        .as_str()
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| json!({ "id": input["model"]["id"].as_str(), "name": name }));
+    let window = &input["context_window"];
+    let size = whole(&window["context_window_size"]);
+    // Claude says 0 before its first answer and after a compaction: the size isn't known then.
+    let context_tokens = whole(&window["total_input_tokens"]).filter(|tokens| *tokens > 0).or_else(|| {
+        let percent = window["used_percentage"].as_f64()?;
+        Some((percent * window["context_window_size"].as_f64()? / 100.0).round() as u64).filter(|tokens| *tokens > 0)
+    });
+    let usage = json!({
+        "context_tokens": context_tokens,
+        "context_window": size,
+        "compact_at": AUTO_COMPACT_WINDOW,
+        "cache_ttl": input["prompt_cache"]["ttl"].as_str(),
+        "cache_expires_at": whole(&input["prompt_cache"]["expires_at"]),
+        "five_hour": limit_facts(&input["rate_limits"]["five_hour"]),
+        "seven_day": limit_facts(&input["rate_limits"]["seven_day"]),
+        "session_id": input["session_id"].as_str(),
+        "seen_ms": seen_ms,
+    });
+    (model, usage)
+}
+
+/// One of Claude's limit windows as `{ used_percentage, resets_at }`, or null when the window is missing.
+fn limit_facts(window: &Value) -> Value {
+    if !window.is_object() {
+        return Value::Null;
+    }
+    json!({
+        "used_percentage": window["used_percentage"].as_f64(),
+        "resets_at": whole(&window["resets_at"]),
+    })
+}
+
+/// A count or a time that JSON may write as `271000` or `271000.0`.
+fn whole(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_f64().filter(|n| n.is_finite() && *n >= 0.0).map(|n| n.round() as u64))
+}
+
+/// The one text the app itself sends the lead: Claude's own command to compact its conversation
+/// (the Owner's one exception to "only the Owner's input reaches the lead", 2026-11-12).
+pub const COMPACT_COMMAND: &str = "/compact";
+
+/// Why the lead can't be told to compact now, or None when it can: it has to be waiting for the
+/// Owner, with no card open and no compaction running.
+pub fn compact_refusal(session: Option<&Session>) -> Option<&'static str> {
+    let Some(session) = session else {
+        return Some("the lead hasn't started yet");
+    };
+    if session.compacting {
+        return Some("Claude is already tidying up");
+    }
+    if session.ask.is_some() {
+        return Some("Claude is asking something: answer it first");
+    }
+    match session.state {
+        Some(State::Waiting) => None,
+        Some(State::Asking) => Some("Claude is asking something: answer it first"),
+        Some(State::Working) => Some("Claude is working: it can tidy up once it has finished"),
+        None => Some("the lead hasn't started yet"),
+    }
+}
+
+/// The lead's state after a hook event, or None when the event doesn't change it. `/compact` is not
+/// a turn, and a compaction the Owner or the app asked for ends with Claude waiting again.
+pub fn state_after_hook(event: &str, input: &Value) -> Option<State> {
+    match event {
+        "UserPromptSubmit" if input["prompt"].as_str().is_some_and(is_compact_command) => None,
+        "UserPromptSubmit" => Some(State::Working),
+        "Stop" | "Notification" => Some(State::Waiting),
+        "PostCompact" if input["trigger"] == "manual" => Some(State::Waiting),
+        _ => None,
+    }
+}
+
+/// Folds a status line into the session. Returns whether what mods see changed: the model, or the
+/// usage without its arrival time (`seen_ms` is kept fresh either way).
+pub fn apply_status_line(session: &mut Session, input: &Value, seen_ms: u64) -> bool {
+    let (model, usage) = status_line_facts(input, seen_ms);
+    let same_usage = session
+        .usage
+        .as_ref()
+        .is_some_and(|old| without_seen(old) == without_seen(&usage));
+    let changed = session.model != model || !same_usage;
+    session.model = model;
+    session.usage = Some(usage);
+    changed
+}
+
+fn without_seen(usage: &Value) -> Value {
+    let mut usage = usage.clone();
+    if let Some(map) = usage.as_object_mut() {
+        map.remove("seen_ms");
+    }
+    usage
+}
+
+/// Claude's compaction is over: its context size is unknown until its next answer.
+pub fn compaction_done(session: &mut Session) {
+    session.compacting = false;
+    if let Some(usage) = session.usage.as_mut() {
+        usage["context_tokens"] = Value::Null;
+    }
+}
+
+/// Hands Claude's status JSON to the core, so `kom status` keeps its limits. It runs headless on its own
+/// thread; a failure is ignored, as the status line itself must never fail.
+pub fn send_status_to_core(input: &Value) {
+    let text = input.to_string();
+    let core = crate::core_bin::path();
+    std::thread::spawn(move || {
+        let Ok(mut child) = crate::spawn::command(core)
+            .args(["status", "--line"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        else {
+            return;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = std::io::Write::write_all(&mut stdin, text.as_bytes());
+        }
+        let _ = child.wait();
+    });
 }
 
 /// The kind of ask a blocking hook makes, or None for an event that is not one.
@@ -573,6 +734,9 @@ pub fn published_session(session: &Session) -> Value {
         "reveal": session.conversation.reveal,
         "reveal_why": session.conversation.reveal_why,
         "started": session.started,
+        "model": session.model,
+        "usage": session.usage,
+        "compacting": session.compacting,
         "conversation": {
             "version": session.conversation.version,
             "length": session.conversation.items.len(),

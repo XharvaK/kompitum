@@ -702,6 +702,8 @@ pub struct AppWindow {
     live: HashMap<String, Value>,
     /// The lead's state per terminal: working, asking or waiting, and its ask.
     lead_sessions: HashMap<String, crate::lead::Session>,
+    /// When the lead's status line last reached the core (`kom status --line`): at most once a minute.
+    status_core_at: Option<Instant>,
     /// The height each lead's composer asked for (`lead.fit`), by the lead's terminal.
     composer_px: HashMap<String, f32>,
     /// Blocking hooks waiting for the Owner's answer, by ask id.
@@ -834,6 +836,7 @@ impl AppWindow {
             watched: Watched::default(),
             live: HashMap::new(),
             lead_sessions: HashMap::new(),
+            status_core_at: None,
             composer_px: HashMap::new(),
             lead_asks: HashMap::new(),
             closed_hooks: HashSet::new(),
@@ -4238,8 +4241,52 @@ impl AppWindow {
             if from_lead {
                 let session = self.lead_sessions.entry(terminal.clone()).or_default();
                 session.started = true;
+                session.compacting = false;
                 mods::set_shared("lead.started".into(), json!(terminal));
                 crate::lead::hide_startup(&mut session.conversation);
+                let skipped = self.read_lead_history(&terminal, transcript);
+                if skipped > 0 {
+                    tracing::debug!(skipped, "skipped unknown transcript line types");
+                }
+                self.apply_lead_terminal_layout(&terminal);
+                self.publish_lead(cx);
+            }
+            if let Some(reply) = reply {
+                let _ = reply.send(json!({}));
+            }
+            return;
+        }
+        if event == "StatusLine" {
+            // The status line's text is the model's name, which Claude shows in its own footer.
+            let output = if from_lead { self.lead_status_line(&terminal, &input, cx) } else { String::new() };
+            if let Some(reply) = reply {
+                let _ = reply.send(json!({ "output": output }));
+            }
+            return;
+        }
+        if event == "PreCompact" {
+            // Claude's instructions for its summary: given only to the lead's own compaction.
+            let output = from_lead.then_some(crate::lead::COMPACT_INSTRUCTIONS);
+            if from_lead {
+                self.lead_sessions.entry(terminal.clone()).or_default().compacting = true;
+                self.publish_lead(cx);
+            }
+            if let Some(reply) = reply {
+                let _ = reply.send(json!({ "output": output }));
+            }
+            return;
+        }
+        if event == "PostCompact" {
+            if from_lead {
+                let session = self.lead_sessions.entry(terminal.clone()).or_default();
+                crate::lead::compaction_done(session);
+                // A compaction that was asked for (not Claude's own, mid-turn) leaves Claude waiting.
+                if let Some(state) = crate::lead::state_after_hook(event, &input)
+                    && session.ask.is_none()
+                {
+                    session.state = Some(state);
+                }
+                let transcript = input.get("transcript_path").and_then(Value::as_str);
                 let skipped = self.read_lead_history(&terminal, transcript);
                 if skipped > 0 {
                     tracing::debug!(skipped, "skipped unknown transcript line types");
@@ -4279,20 +4326,41 @@ impl AppWindow {
         if folded {
             self.apply_lead_terminal_layout(&terminal);
         }
-        let state = match event {
-            "UserPromptSubmit" => Some(crate::lead::State::Working),
-            "Stop" | "Notification" => Some(crate::lead::State::Waiting),
-            _ => None,
-        };
+        let state = crate::lead::state_after_hook(event, &input);
+        // A turn that starts or ends means no compaction is running, even when its PostCompact never
+        // came: a stuck flag would hold the Owner's message in the box for good.
+        let unstuck = from_lead
+            && state.is_some()
+            && self.lead_sessions.get_mut(&terminal).is_some_and(|session| std::mem::take(&mut session.compacting));
         if let Some(state) = state {
             self.set_lead_state(&terminal, Some(state), cx);
         } else if folded {
+            self.publish_lead(cx);
+        }
+        if unstuck {
             self.publish_lead(cx);
         }
         if let Some(reply) = reply {
             // Never return displayContent; MessageDisplay and the other async hooks get {}.
             let _ = reply.send(json!({}));
         }
+    }
+
+    /// The lead's status line: its model and usage are kept for the mods, published only when they change
+    /// (the line runs often, and each publish redraws the composer). The same JSON goes to the core for
+    /// `kom status`, at most once a minute. Returns the model's name for the line to show.
+    fn lead_status_line(&mut self, terminal: &str, input: &Value, cx: &mut Context<Self>) -> String {
+        let session = self.lead_sessions.entry(terminal.to_owned()).or_default();
+        let changed = crate::lead::apply_status_line(session, input, model::now_ms());
+        let name = session.model.as_ref().and_then(|m| m["name"].as_str()).unwrap_or_default().to_owned();
+        if changed {
+            self.publish_lead(cx);
+        }
+        if self.status_core_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
+            self.status_core_at = Some(Instant::now());
+            crate::lead::send_status_to_core(input);
+        }
+        name
     }
 
     /// Holds a blocking hook's reply and shows its ask, replacing an older one
@@ -5875,6 +5943,37 @@ impl AppWindow {
                     }
                 }
                 self.publish_lead(cx);
+            }
+            "lead.compact" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let person = settings::load_person().ok();
+                let program = person
+                    .and_then(|person| person.lead)
+                    .and_then(|lead| lead.program)
+                    .filter(|program| !program.is_empty())
+                    .unwrap_or_else(|| "claude".to_owned());
+                if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
+                    return self.fail(format!("{terminal:?} isn't the lead's terminal"));
+                }
+                if let Some(why) = crate::lead::compact_refusal(self.lead_sessions.get(&terminal)) {
+                    return self.fail(why);
+                }
+                // Off the UI thread: the core waits to see the text go in.
+                let core = self.core.clone();
+                let guard = crate::inflight::track();
+                cx.background_executor()
+                    .spawn(async move {
+                        let _guard = guard;
+                        let sent = core.call(
+                            "terminal.send",
+                            json!({ "terminal": terminal, "text": crate::lead::COMPACT_COMMAND }),
+                        );
+                        if let Err(error) = sent {
+                            tracing::warn!("the lead wasn't told to compact: {error}");
+                        }
+                    })
+                    .detach();
+                self.reply = Some(json!({ "sent": true }));
             }
             "lead.fit" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();

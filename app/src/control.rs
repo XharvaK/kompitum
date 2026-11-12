@@ -280,7 +280,11 @@ fn hook(event: &str, home: Option<PathBuf>) -> i32 {
     if let Ok(reply) = serde_json::from_str::<Value>(&line)
         && let Some(output) = reply.get("output").filter(|value| !value.is_null())
     {
-        println!("{}", serde_json::to_string(output).unwrap_or_default());
+        // A string is plain text (a status line, a PreCompact instruction); anything else is JSON.
+        match output {
+            Value::String(text) => println!("{text}"),
+            other => println!("{}", serde_json::to_string(other).unwrap_or_default()),
+        }
     }
     0
 }
