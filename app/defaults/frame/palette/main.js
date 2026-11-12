@@ -95,7 +95,10 @@ function deskEntries(list) {
     title,
   }));
   const placedKeys = new Set(DESK.map(([, name, args]) => keyFor(name, args)));
-  const more = list.filter((e) => !placedKeys.has(keyFor(e.name, e.args))).map((e) => ({ ...e, group: "More" }));
+  // `terminal.open` with no arguments opens what "New terminal" (`tab.new`) opens: one entry is enough.
+  const more = list
+    .filter((e) => !placedKeys.has(keyFor(e.name, e.args)) && keyFor(e.name, e.args) !== keyFor("terminal.open", {}))
+    .map((e) => ({ ...e, group: "More" }));
   return [...placed, ...more];
 }
 

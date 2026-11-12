@@ -55,6 +55,30 @@ enum Binding {
 
 type Sections = BTreeMap<String, BTreeMap<String, Binding>>;
 
+/// A section's bindings in the order the file lists them, for `listing`: the
+/// first key a file binds to a command is the one the palette shows.
+struct InFileOrder(Vec<(String, Binding)>);
+
+impl<'de> serde::Deserialize<'de> for InFileOrder {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct Pairs;
+        impl<'de> serde::de::Visitor<'de> for Pairs {
+            type Value = InFileOrder;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a section of key bindings")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<InFileOrder, A::Error> {
+                let mut pairs = Vec::new();
+                while let Some(pair) = map.next_entry::<String, Binding>()? {
+                    pairs.push(pair);
+                }
+                Ok(InFileOrder(pairs))
+            }
+        }
+        d.deserialize_map(Pairs)
+    }
+}
+
 /// Kept separate from string actions so colon payloads always stay literal.
 #[derive(Clone, PartialEq, gpui::Action, serde::Deserialize)]
 #[action(no_json)]
@@ -97,11 +121,16 @@ fn defaults() -> Sections {
 
 /// Every binding as `(section, keys, action)`, for the keybind help.
 pub fn listing() -> Vec<(String, String, String)> {
-    let text = std::fs::read_to_string(path()).unwrap_or_default();
-    let sections: Sections = serde_json::from_str(&text).unwrap_or_else(|_| defaults());
+    listing_of(&std::fs::read_to_string(path()).unwrap_or_default())
+}
+
+/// `listing` for one file's text: sections by name, each section's keys in file order.
+fn listing_of(text: &str) -> Vec<(String, String, String)> {
+    let sections: BTreeMap<String, InFileOrder> = serde_json::from_str(text)
+        .unwrap_or_else(|_| serde_json::from_str(DEFAULTS).expect("defaults/keys.json is valid"));
     let mut out = Vec::new();
     for (s, keys) in sections {
-        for (k, a) in keys {
+        for (k, a) in keys.0 {
             match a {
                 Binding::String(a) => {
                     let a = current(&a);
@@ -352,6 +381,13 @@ mod tests {
             assert_eq!(std::fs::read_to_string(&path).unwrap(), defaults);
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_listing_keeps_a_sections_keys_in_file_order() {
+        let listed = super::listing_of(r#"{"global": {"ctrl-tab": "tab.next", "alt-]": "tab.next", "b": "tab.prev"}}"#);
+        let keys: Vec<&str> = listed.iter().filter(|(_, _, a)| a == "tab.next").map(|(_, k, _)| k.as_str()).collect();
+        assert_eq!(keys, ["ctrl-tab", "alt-]"], "the first key in the file is the one shown");
     }
 
     #[test]

@@ -1255,8 +1255,9 @@ impl AppWindow {
             return;
         }
         let viewport = window.viewport_size();
-        let width = 880.0_f32.min((f32::from(viewport.width) / settings::zoom() - 24.0).max(1.0));
-        let height = 760.0_f32.min((f32::from(viewport.height) / settings::zoom() - 24.0).max(1.0));
+        // A sheet inside the window, never over its top bar and status bar: longer notes scroll.
+        let width = 640.0_f32.min((f32::from(viewport.width) / settings::zoom() - 24.0).max(1.0));
+        let height = 560.0_f32.min((f32::from(viewport.height) / settings::zoom() - 96.0).max(1.0));
         let spec = json!({ "mod": "frame-whatsnew", "kind": "window", "width": width, "height": height, "props": { "notes": notes } });
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
