@@ -454,27 +454,29 @@ fn the_startup_reveal_draws_its_note(cx: &mut TestAppContext) {
         None,
     )
     .unwrap();
-    assert!(tree.contains("composer-reveal-note"), "{tree}");
+    // One row, named by leadName ("Claude" for the claude key), with no reveal note and no box under it.
+    assert!(tree.contains("composer-starting"), "{tree}");
     assert!(
-        tree.contains("Claude is asking something before it starts."),
+        tree.contains("Claude is asking something before it starts. Answer it above."),
         "{tree}"
     );
+    assert!(!tree.contains("composer-reveal-note"), "{tree}");
+    assert!(!tree.contains("composer-box"), "{tree}");
 }
 
 #[gpui::test]
 fn a_lead_that_has_not_started_does_not_send(cx: &mut TestAppContext) {
-    let effects = composer_live_run_after_clicks(
+    // Before SessionStart the box is not drawn at all, so there is no Send to press.
+    let staged = Staged::new();
+    let tree = describe_settled(
         cx,
+        &staged,
+        "mods/composer",
         startup_values(json!([])),
-        "this.text.set_value('hello');",
-        &["composer-send"],
-    );
-    assert!(
-        !effects
-            .iter()
-            .any(|args| args.first() == Some(&json!(["send", "t1", "hello"]))),
-        "Send must no-op before SessionStart: {effects:?}"
-    );
+        Some("this.text.set_value('hello');"),
+    )
+    .unwrap();
+    assert!(!tree.contains("composer-send"), "{tree}");
 }
 
 #[gpui::test]
@@ -757,4 +759,199 @@ fn a_draft_sets_the_shared_flag(cx: &mut TestAppContext) {
     cx.run_until_parked();
     let shared = calls.borrow().shared.get("lead.draft").cloned();
     assert_eq!(shared, Some(Value::Bool(true)), "a typed draft sets lead.draft: {shared:?}");
+}
+
+/// Enter does nothing on a card that has just shown: a key pressed in passing cannot answer it.
+#[gpui::test]
+fn enter_does_nothing_right_after_a_card_arrives(cx: &mut TestAppContext) {
+    let answered = composer_run_effects_after_keys(
+        cx,
+        composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
+        "enter",
+        // The card "arrived" an hour from now, so the wait can't run out on a slow machine.
+        Some("this.askId = 'a1'; this.askSince = Date.now() + 3600000;"),
+    );
+    assert!(
+        !answered.iter().any(|args| args.first() == Some(&json!("lead.answer"))),
+        "Enter must wait for the card to settle: {answered:?}"
+    );
+}
+
+/// A draft in the box holds the card's Enter: the words stay, and the card says the draft is kept.
+#[gpui::test]
+fn enter_does_nothing_while_a_draft_waits(cx: &mut TestAppContext) {
+    let setup = "this.askId = 'a1'; this.askSince = 0; this.text.set_value('half a thought');";
+    let answered = composer_run_effects_after_keys(
+        cx,
+        composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
+        "enter",
+        Some(setup),
+    );
+    assert!(
+        !answered.iter().any(|args| args.first() == Some(&json!("lead.answer"))),
+        "Enter must not answer over a draft: {answered:?}"
+    );
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
+        Some(setup),
+    )
+    .unwrap();
+    assert!(tree.contains("composer-draft-kept"), "{tree}");
+    assert!(tree.contains("You were typing. Click Allow"), "{tree}");
+}
+
+/// Escape acts at once, even on a card that has just shown: it is never held back.
+#[gpui::test]
+fn escape_still_denies_at_once(cx: &mut TestAppContext) {
+    let answered = composer_run_effects_after_keys(
+        cx,
+        composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
+        "escape",
+        None,
+    );
+    assert!(
+        answered.iter().any(|args| {
+            args.first() == Some(&json!("lead.answer"))
+                && args.get(1) == Some(&json!({"id": "a1", "answer": {"action": "deny"}}))
+        }),
+        "Escape must deny at once: {answered:?}"
+    );
+}
+
+/// With no allow-always offered, Deny sits right after Allow rather than at the far end of the row.
+#[gpui::test]
+fn deny_sits_beside_allow(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let values = composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}}));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-deny.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", "");
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let allow = visual.debug_bounds("composer-allow").expect("Allow is laid out");
+    let deny = visual.debug_bounds("composer-deny").expect("Deny is laid out");
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let gap = deny.left() - allow.right();
+    assert!(gap < gpui::px(120.0), "Deny must sit beside Allow: allow {allow:?}, deny {deny:?}");
+}
+
+/// With a card open the box grows, and the list above it must still end on the newest item.
+#[gpui::test]
+fn a_card_keeps_the_newest_item_in_view(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let items: Vec<Value> = (0..80)
+        .map(|n| json!({"kind": "notice", "id": format!("n{n}"), "text": format!("Line {n}")}))
+        .collect();
+    let mut values = conversation_values(Value::Array(items), "hidden", Value::Null, None);
+    values.insert(
+        "lead".into(),
+        json!({
+            "state": "asking",
+            "ask": {"id": "a1", "terminal": "t1", "kind": "permission", "input": {"tool_name": "Bash", "tool_input": {"command": "ls"}}},
+            "started": true,
+            "terminal": "hidden",
+            "reveal": null,
+            "reveal_why": null,
+            "conversation": { "version": 1, "length": 80 }
+        }),
+    );
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-card-view.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", "");
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    for _ in 0..3 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    let list = visual
+        .debug_bounds("composer-conversation")
+        .expect("the conversation list is laid out");
+    let newest = visual
+        .debug_bounds("composer-item-n79")
+        .expect("the newest item is laid out");
+    let slack = gpui::px(1.0);
+    assert!(
+        newest.bottom() <= list.bottom() + slack && newest.bottom() > list.top(),
+        "the newest item must stay in view under a card: item {newest:?}, list {list:?}"
+    );
+}
+
+/// A tool row draws its command in the code font, and no backtick reaches the tree.
+#[gpui::test]
+fn a_tool_row_draws_its_command_without_backticks(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let items = json!([
+        {"kind": "tool", "id": "u1", "name": "Bash", "summary": "Ran `git --version`", "state": "done"}
+    ]);
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        conversation_values(items, "hidden", Value::Null, None),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("git --version"), "{tree}");
+    assert!(!tree.contains('`'), "no backtick may reach the row: {tree}");
+}
+
+/// The chip's remove target is a 28 px hit area, though the × it holds is drawn at its old 14 px.
+#[gpui::test]
+fn a_chip_remove_target_is_28_px_wide(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-chip.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(usage_values(Value::Null, json!({})), calls))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", "this.addChip('/fixture/notes.txt');");
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    for _ in 0..2 {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    let remove = visual
+        .debug_bounds("composer-chip-remove-0")
+        .expect("the chip's remove target is laid out");
+    let chip = visual
+        .debug_bounds("composer-chip-0")
+        .expect("the chip is laid out");
+    assert_eq!(remove.size.width, gpui::px(28.0), "the hit area is 28 px wide: {remove:?}");
+    assert_eq!(remove.size.height, gpui::px(28.0), "the hit area is 28 px tall: {remove:?}");
+    assert_eq!(chip.size.height, gpui::px(22.0), "the chip keeps its 22 px height: {chip:?}");
 }

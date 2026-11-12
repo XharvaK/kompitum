@@ -148,6 +148,71 @@ fn a_failed_tool_is_marked_failed() {
 }
 
 #[test]
+fn a_running_bash_row_says_it_is_running_its_command() {
+    let c = fold(
+        Conversation::default(),
+        &Event::PreToolUse {
+            id: "u1".into(),
+            name: "Bash".into(),
+            input: json!({"command": "git --version"}),
+        },
+    );
+    assert_eq!(
+        tool(&c.items[0]),
+        ("Bash", "Running `git --version`", ToolState::Running, None)
+    );
+}
+
+#[test]
+fn a_bash_row_says_ran_once_its_command_has_ended() {
+    let mut c = Conversation::default();
+    c = fold(
+        c,
+        &Event::PreToolUse {
+            id: "u1".into(),
+            name: "Bash".into(),
+            input: json!({"command": "git --version"}),
+        },
+    );
+    c = fold(
+        c,
+        &Event::PostToolUse {
+            id: "u1".into(),
+            name: "Bash".into(),
+            input: json!({"command": "git --version"}),
+            result: "git version 2.45.0".into(),
+        },
+    );
+    assert_eq!(
+        tool(&c.items[0]),
+        ("Bash", "Ran `git --version`", ToolState::Done, Some("git version 2.45.0"))
+    );
+}
+
+#[test]
+fn a_running_row_that_ends_without_input_turns_its_words_into_the_past() {
+    let mut c = Conversation::default();
+    c = fold(
+        c,
+        &Event::PreToolUse {
+            id: "u1".into(),
+            name: "Bash".into(),
+            input: json!({"command": "git --version"}),
+        },
+    );
+    c = fold(
+        c,
+        &Event::PostToolUse {
+            id: "u1".into(),
+            name: "Bash".into(),
+            input: json!({}),
+            result: String::new(),
+        },
+    );
+    assert_eq!(tool(&c.items[0]).1, "Ran `git --version`");
+}
+
+#[test]
 fn stop_failure_names_its_error_in_a_notice() {
     let c = fold(
         Conversation::default(),

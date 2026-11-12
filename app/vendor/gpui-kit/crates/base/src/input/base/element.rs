@@ -374,6 +374,12 @@ pub(super) fn viewport_visible_lines(viewport_height: Pixels, line_height: Pixel
     (viewport_height / line_height) as usize
 }
 
+/// Whether an input paints its editor scrollbar. A soft-wrapped input has no horizontal bar, so its vertical bar
+/// is painted only when its content is taller than what it shows. An input without soft wrap keeps its bars.
+fn editor_scrollbar_visible(soft_wrap: bool, content_height: Pixels, shown_height: Pixels) -> bool {
+    !soft_wrap || content_height > shown_height + px(0.5)
+}
+
 /// Minimum pixel padding the cursor is kept clear of the viewport's
 /// top/bottom edges before auto-scroll engages. Backs
 /// [`InputBaseState::cursor_surrounding_lines`].
@@ -2961,15 +2967,21 @@ impl<M: InputModeKind> Element for TextElement<M> {
         let hover_definition_hitbox = M::hover_definition_hitbox(state, window, cx);
         let indent_guides_path =
             self.layout_indent_guides(state, &bounds, &last_layout, &text_style, window);
+        // Our copy: a one-line draft showed a thumb at its right end with nothing to scroll, so the bar is set
+        // only when there is overflow to show (see `editor_scrollbar_visible`).
+        let show_bar =
+            editor_scrollbar_visible(state.soft_wrap, scroll_size.height, input_bounds.size.height);
         state
             .editor_scrollbar_snapshot
-            .set(Some(EditorScrollbarSnapshot::new(
-                input_bounds,
-                &last_layout,
-                scroll_size,
-                cursor_scroll_offset,
-                state,
-            )));
+            .set(show_bar.then(|| {
+                EditorScrollbarSnapshot::new(
+                    input_bounds,
+                    &last_layout,
+                    scroll_size,
+                    cursor_scroll_offset,
+                    state,
+                )
+            }));
         let fold_icon_layout =
             self.layout_fold_icons(original_x, &bounds, &last_layout, window, cx);
         let hitbox = window.insert_hitbox(input_bounds, HitboxBehavior::Normal);
@@ -4310,6 +4322,14 @@ mod tests {
         assert_eq!(styles[1].0, 2..6);
         assert_eq!(styles[1].1.color, Some(gpui::red()));
         assert_eq!(styles[1].1.font_style, Some(gpui::FontStyle::Italic));
+    }
+
+    #[test]
+    fn a_soft_wrapped_input_paints_its_vertical_bar_only_when_its_content_overflows() {
+        assert!(!editor_scrollbar_visible(true, px(20.), px(20.)));
+        assert!(!editor_scrollbar_visible(true, px(20.4), px(20.)));
+        assert!(editor_scrollbar_visible(true, px(40.), px(20.)));
+        assert!(editor_scrollbar_visible(false, px(20.), px(20.)));
     }
 
     #[test]

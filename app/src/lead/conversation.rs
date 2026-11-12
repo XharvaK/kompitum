@@ -472,7 +472,7 @@ fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Va
         // A Pre that arrives after its Post or Failure must not start the tool again.
         if *state == ToolState::Running {
             *have = name.to_owned();
-            *have_summary = tool_summary(name, input);
+            *have_summary = tool_summary(name, input, ToolState::Running);
             conversation.touched();
         }
         return;
@@ -485,11 +485,23 @@ fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Va
     conversation.items.push(Item::Tool {
         id,
         name: name.to_owned(),
-        summary: tool_summary(name, input),
+        summary: tool_summary(name, input, ToolState::Running),
         state: ToolState::Running,
         result: None,
     });
     conversation.touched();
+}
+
+/// The summary of a tool that has ended: built again from the end's own input when it has one, otherwise the
+/// running words turned into the past ("Running `ls`" becomes "Ran `ls`").
+fn ended_summary(current: &str, name: &str, input: &Value, state: ToolState) -> String {
+    if input.as_object().is_some_and(|fields| !fields.is_empty()) {
+        return tool_summary(name, input, state);
+    }
+    match current.strip_prefix("Running ") {
+        Some(rest) => format!("Ran {rest}"),
+        None => current.to_owned(),
+    }
 }
 
 /// A tool's end, from its Post or its Failure. The Pre may not have arrived yet, so
@@ -505,11 +517,14 @@ fn on_tool_end(
     let clipped = clip_result(result);
     let result = if clipped.is_empty() { None } else { Some(clipped) };
     if let Some(Item::Tool {
+        name: have_name,
+        summary: have_summary,
         state: have,
         result: have_result,
         ..
     }) = tool_mut(conversation, id)
     {
+        *have_summary = ended_summary(have_summary, have_name, input, state);
         *have = state;
         *have_result = result;
         conversation.touched();
@@ -518,6 +533,7 @@ fn on_tool_end(
     // Without an id, the running tool of this name is the one that ended.
     if id.is_empty() {
         if let Some(Item::Tool {
+            summary: have_summary,
             state: have,
             result: have_result,
             ..
@@ -531,6 +547,7 @@ fn on_tool_end(
                 } if have_name == name
             )
         }) {
+            *have_summary = ended_summary(have_summary, name, input, state);
             *have = state;
             *have_result = result;
             conversation.touched();
@@ -545,7 +562,7 @@ fn on_tool_end(
     conversation.items.push(Item::Tool {
         id,
         name: name.to_owned(),
-        summary: tool_summary(name, input),
+        summary: tool_summary(name, input, state),
         state,
         result,
     });
@@ -668,7 +685,7 @@ fn tool_mut<'a>(conversation: &'a mut Conversation, id: &str) -> Option<&'a mut 
 }
 
 /// A one-line summary from a tool's name and input.
-pub fn tool_summary(name: &str, input: &Value) -> String {
+pub fn tool_summary(name: &str, input: &Value, state: ToolState) -> String {
     let path = |keys: &[&str]| {
         keys.iter()
             .find_map(|key| input.get(*key).and_then(Value::as_str))
@@ -686,10 +703,12 @@ pub fn tool_summary(name: &str, input: &Value) -> String {
         "Write" | "Edit" | "NotebookEdit" | "MultiEdit" => edited_summary(input),
         "Bash" => {
             let command = path(&["command"]);
-            if command.is_empty() {
-                "Ran a command".into()
-            } else {
-                format!("Ran `{command}`")
+            let running = state == ToolState::Running;
+            match (command.is_empty(), running) {
+                (true, true) => "Running a command".into(),
+                (true, false) => "Ran a command".into(),
+                (false, true) => format!("Running `{command}`"),
+                (false, false) => format!("Ran `{command}`"),
             }
         }
         "Grep" => {
@@ -882,7 +901,7 @@ fn apply_assistant(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String,
                     items.push(Item::Tool {
                         id,
                         name: name.to_owned(),
-                        summary: tool_summary(name, &input),
+                        summary: tool_summary(name, &input, ToolState::Running),
                         state: ToolState::Running,
                         result: None,
                     });
@@ -924,11 +943,14 @@ fn apply_tool_result(items: &mut Vec<Item>, part: &Value) {
     let state = if failed { ToolState::Failed } else { ToolState::Done };
     let clipped = clip_result(&result);
     if let Some(Item::Tool {
+        name: have_name,
+        summary: have_summary,
         state: have,
         result: have_result,
         ..
     }) = items.iter_mut().find(|item| matches!(item, Item::Tool { id: have, .. } if have == id))
     {
+        *have_summary = ended_summary(have_summary, have_name, &Value::Null, state);
         *have = state;
         *have_result = if clipped.is_empty() { None } else { Some(clipped) };
     }

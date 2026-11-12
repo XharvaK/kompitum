@@ -8,7 +8,7 @@
 import { View } from "gpui-kit";
 import { v_flex, TextareaState, VirtualListScrollHandle } from "gpui-base";
 import { kom, run, theme, props, shared, setShared, terminals, knownAgents, appHome, readTextFile, writeTextFile, pickFolder, lead as leadOf, nextCommand } from "kompitum";
-import { errorText } from "./util.js";
+import { errorText, CARD_WAIT_MS } from "./util.js";
 import cards from "./cards.js";
 import model from "./model.js";
 import conversation from "./conversation.js";
@@ -24,6 +24,9 @@ const BOX_PX = 76;
 const LINE_PX = 20;
 
 const CHIPS_PX = 28;
+
+// The pane's height while the lead asks before it starts: the one row of startingRow (window.rs clamps to 44 to 320).
+const STARTING_PX = 44;
 
 function quotePath(path) {
   const text = String(path ?? "");
@@ -66,6 +69,8 @@ export default class Composer extends View {
     this.state = null;
     this.ask = null;
     this.askId = null;
+    // When the open card appeared (0 with none): its Enter and digit keys wait for it.
+    this.askSince = 0;
     this.noteOpen = false;
     this.noteInput = null;
     this.noteAction = null;
@@ -216,9 +221,19 @@ export default class Composer extends View {
     cx.notify();
   }
 
+  // The box holds text or a file that the Owner has not sent.
+  hasDraft() {
+    return this.text.value().length > 0 || this.chips.length > 0;
+  }
+
+  // Enter answers a card only once it has shown for a moment, and while the box holds no draft.
+  enterArmed() {
+    return !this.hasDraft() && Date.now() - this.askSince >= CARD_WAIT_MS;
+  }
+
   // Other code reads the shared flag "lead.draft": true while the box holds text or a file. It is set only on a change.
   syncDraft() {
-    const waiting = this.text.value().length > 0 || this.chips.length > 0;
+    const waiting = this.hasDraft();
     if (waiting === this.draftShared) return;
     this.draftShared = waiting;
     setShared("lead.draft", waiting);
@@ -390,11 +405,17 @@ export default class Composer extends View {
     const askId = this.ask?.id ?? null;
     if (askId !== this.askId) {
       this.askId = askId;
+      this.askSince = askId ? Date.now() : 0;
       this.noteOpen = false;
       this.noteInput = null;
       this.noteAction = null;
       this.answers = {};
       if (askId) cx.timer.after(0, () => this.handle.focus());
+      // A card takes the box's place, so the box grows and the list above it shrinks: keep the newest item in view.
+      if (this.stickToBottom) {
+        cx.timer.after(0, (cx) => { this.scroll.scroll_to_end(); cx.notify(); });
+        cx.timer.after(120, (cx) => { this.scroll.scroll_to_end(); cx.notify(); });
+      }
     }
     this.fit(cx);
     const root = v_flex()
@@ -421,6 +442,7 @@ export default class Composer extends View {
       return root.child(this.bar(t, cx));
     }
     if (this.terminalShown()) {
+      if (!this.leadReady()) return root.child(this.startingRow(t));
       return root
         .when(Boolean(this.revealNote(t)), (el) => el.child(this.revealNote(t)))
         .child(this.bar(t, cx));
@@ -432,11 +454,15 @@ export default class Composer extends View {
   fit(cx) {
     if (!this.terminal || this.ask) return;
     if (this.terminalShown() !== true) return;
-    const perLine = Math.max(12, Math.floor(((this.width ?? 640) - 46) / 7.3));
-    const lines = String(this.text?.value?.() ?? "")
-      .split(/\r?\n/)
-      .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / perLine)), 0);
-    const px = BOX_PX + Math.min(6, Math.max(1, lines)) * LINE_PX + (this.chips.length ? CHIPS_PX : 0);
+    // Before the lead starts, its terminal may be asking something: the pane is one row for that.
+    let px = STARTING_PX;
+    if (this.leadReady()) {
+      const perLine = Math.max(12, Math.floor(((this.width ?? 640) - 46) / 7.3));
+      const lines = String(this.text?.value?.() ?? "")
+        .split(/\r?\n/)
+        .reduce((n, line) => n + Math.max(1, Math.ceil(line.length / perLine)), 0);
+      px = BOX_PX + Math.min(6, Math.max(1, lines)) * LINE_PX + (this.chips.length ? CHIPS_PX : 0);
+    }
     if (px === this.fitPx) return;
     this.fitPx = px;
     cx.timer.after(0, () => run("lead.fit", { terminal: this.terminal, px }));

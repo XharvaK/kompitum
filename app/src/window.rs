@@ -8928,7 +8928,7 @@ fn composed_terminals(mods: &[(String, Instance)]) -> Vec<String> {
 /// lead's ask needs (a plan's text and a question's options take more than a permission).
 fn composer_height(asking: Option<crate::lead::AskKind>, wanted: Option<f32>) -> f32 {
     match asking {
-        None => wanted.unwrap_or(COMPOSER_LINE).clamp(80.0, 320.0),
+        None => wanted.unwrap_or(COMPOSER_LINE).clamp(44.0, 320.0),
         Some(crate::lead::AskKind::Permission) => 300.0,
         Some(_) => 440.0,
     }
@@ -9343,6 +9343,7 @@ mod tests {
         assert_eq!(line, super::COMPOSER_LINE, "one line until the composer says");
         assert_eq!(super::composer_height(None, Some(180.0)), 180.0, "what its text needs");
         assert_eq!(super::composer_height(None, Some(2000.0)), 320.0, "never taller than six lines");
+        assert_eq!(super::composer_height(None, Some(10.0)), 44.0, "the one row a lead asks in before it starts");
         assert_eq!(super::composer_height(Some(AskKind::Permission), Some(180.0)), permission, "an ask decides");
         assert!(line < permission, "a card needs more room than the line");
         for kind in [AskKind::Plan, AskKind::Question] {

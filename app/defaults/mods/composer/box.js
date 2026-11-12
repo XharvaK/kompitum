@@ -119,17 +119,29 @@ export default {
       .child(
         h_flex()
           .id(`composer-chip-remove-${index}`)
-          .w(14)
-          .h(14)
+          // A 28 px hit area with negative margins: it takes the 14 px the × took in the chip's row and height.
+          .w(28)
+          .h(28)
+          .ml(-7)
+          .mr(-7)
+          .mt(-3)
+          .mb(-3)
           .items_center()
           .justify_center()
-          .rounded(4)
-          .text_size(11)
-          .text_color(t.dim)
           .cursor_pointer()
-          .hover((style) => style.bg(t.hover).text_color(t.foreground))
           .on_click((_e, cx) => this.removeChip(index, cx))
-          .child("×"),
+          .child(
+            h_flex()
+              .w(14)
+              .h(14)
+              .items_center()
+              .justify_center()
+              .rounded(4)
+              .text_size(11)
+              .text_color(t.dim)
+              .hover((style) => style.bg(t.hover).text_color(t.foreground))
+              .child("×"),
+          ),
       );
   },
 
@@ -221,7 +233,7 @@ export default {
               .when(!panel, (asks) => asks.flex_1().min_h(0))
               .overflow_y_scrollbar().child(this.card(t, cx))))
           .when(!first && !this.ask, (el) =>
-            el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full())))
+            el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full().text_size(13.5).line_height("20px"))))
           .child(
             h_flex()
               .w_full()
@@ -291,6 +303,20 @@ export default {
             el.child(div().text_size(12).text_color(t.dim).child(model.hint)))))
       .when(effortIds(entry).length > 0, (el) => el.child(this.effortBody(t, entry, this.person?.lead ?? {})))
       .child(button);
+  },
+
+  // The lead asks something in its terminal before it starts (the trust prompt): the box can't answer that, so one row says so.
+  startingRow(t) {
+    const entry = this.leadProgram();
+    return h_flex()
+      .id("composer-starting")
+      .w_full()
+      .h(44)
+      .items_center()
+      .justify_center()
+      .text_size(12.5)
+      .text_color(t.muted)
+      .child(`${leadName(entry, entry.key)} is asking something before it starts. Answer it above.`);
   },
 
   // No live lead: one quiet line and the way to start it, in the middle of whatever room it has.

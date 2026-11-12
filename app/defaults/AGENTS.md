@@ -621,7 +621,7 @@ The main ones:
   `lead.setup` (add Kompitum's MCP tools and kom skill to the `claude` lead),
   `lead.terminal {terminal, show?}` (show or hide the lead's terminal by hand; omitted `show` toggles it; a
   reveal by hand stays until this hides it),
-  `lead.fit {terminal, px}` (the composer's height for its text, 80 to 320 px, while the lead isn't asking),
+  `lead.fit {terminal, px}` (the composer's height for its text, 44 to 320 px, while the lead isn't asking),
   `lead.compact {terminal}` (have the lead compact its conversation now: the app sends Claude's own `/compact`,
   the one text it ever sends the lead; refused unless the lead is waiting with no card open; the app also sends
   it by itself once the lead has waited ten minutes with 333K tokens or more, or with 222K or more in the five

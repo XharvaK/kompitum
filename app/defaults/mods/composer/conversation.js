@@ -3,6 +3,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, Scrollbar } from "gpui-base";
 import { lead as leadOf, conversation as conversationFrom, settings } from "kompitum";
+import { codePieces } from "./util.js";
 
 export default {
   syncConversation() {
@@ -119,6 +120,22 @@ export default {
     return svg("mods/workspace-chrome/check.svg").size(14).text_color(t.muted);
   },
 
+  // A tool's summary: its words as they are, and its code (a command) in the code font, cut at the row's edge.
+  toolSummary(t, text) {
+    return h_flex()
+      .min_w(0)
+      .gap(4)
+      .children(codePieces(text).map((piece) => piece.code
+        ? div()
+          .min_w(0)
+          .truncate()
+          .text_size(12)
+          .font_family(settings()?.font_family ?? "Google Sans Code")
+          .text_color(t.muted)
+          .child(piece.text)
+        : div().min_w(0).text_size(12.5).text_color(t.muted).child(piece.text)));
+  },
+
   toolItem(t, item, cx) {
     const open = Boolean(this.openTools[item.id]);
     const result = typeof item.result === "string" && item.result ? item.result : "";
@@ -137,7 +154,7 @@ export default {
             cx.notify();
           })
           .child(this.toolIcon(t, item.state))
-          .child(div().text_size(12.5).text_color(t.muted).child(item.summary ?? item.name ?? "A tool")),
+          .child(this.toolSummary(t, item.summary ?? item.name ?? "A tool")),
       )
       .when(open && result, (el) =>
         el.child(

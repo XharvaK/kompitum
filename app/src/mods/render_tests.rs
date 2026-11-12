@@ -1061,7 +1061,7 @@ fn allow_always_says_where_the_rule_is_kept(cx: &mut TestAppContext) {
 }
 
 /// A permission card says where the command runs and which keys answer it;
-/// Deny is a quiet text button, not one of the bordered answers.
+/// Deny is an outlined button beside Allow, the same height.
 #[gpui::test]
 fn the_permission_card_says_where_it_runs_and_how_to_answer(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -1085,8 +1085,8 @@ fn the_permission_card_says_where_it_runs_and_how_to_answer(cx: &mut TestAppCont
         .unwrap_or_else(|| panic!("no deny button: {tree}"));
     let base = deny.split(":hover").next().unwrap();
     assert!(
-        !base.contains("border") && !base.contains(".bg["),
-        "Deny is quiet text, not a bordered button: {deny}"
+        base.contains("border_color"),
+        "Deny is an outlined button beside Allow: {deny}"
     );
 }
 
@@ -1131,21 +1131,15 @@ fn each_card_says_its_kind(cx: &mut TestAppContext) {
             .lines()
             .find(|line| line.contains("composer-card"))
             .unwrap_or_else(|| panic!("no card for {kind}: {tree}"));
-        if kind == "permission" {
-            assert!(
-                card.contains(&format!(".border_color[Str(\"{blocked}\")]")),
-                "the permission card uses the blocked border: {card}"
-            );
-        } else {
-            assert!(
-                card.contains(&format!(".border_color[Str(\"{border}\")]")),
-                "{kind} keeps the plain border: {card}"
-            );
-            assert!(
-                !card.contains(&format!(".border_color[Str(\"{blocked}\")]")),
-                "{kind} keeps the plain border: {card}"
-            );
-        }
+        // Every card has the plain border; the box around a permission turns red instead.
+        assert!(
+            card.contains(&format!(".border_color[Str(\"{border}\")]")),
+            "{kind} keeps the plain border: {card}"
+        );
+        assert!(
+            !card.contains(&format!(".border_color[Str(\"{blocked}\")]")),
+            "{kind} keeps the plain border: {card}"
+        );
     }
 }
 
@@ -1321,7 +1315,7 @@ fn send_answers_waits_for_every_question(cx: &mut TestAppContext) {
         cx,
         composer_with_ask("question", two_questions()),
         "enter",
-        Some("this.askId = 'a1'; this.answers = {'Which database?': 'Postgres', 'Which checks?': ['Tests']};"),
+        Some("this.askId = 'a1'; this.askSince = 0; this.answers = {'Which database?': 'Postgres', 'Which checks?': ['Tests']};"),
     );
     assert!(
         answered.iter().any(|args| {
@@ -1416,11 +1410,12 @@ fn up_moves_the_caret_in_a_non_empty_draft(cx: &mut TestAppContext) {
 /// reply through `lead.answer`, not a message typed into the terminal.
 #[gpui::test]
 fn enter_answers_a_permission_card(cx: &mut TestAppContext) {
+    // The snippet sets askId as well: compose would otherwise restart the card's wait on its first draw.
     let answered = composer_run_effects_after_keys(
         cx,
         composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
         "enter",
-        None,
+        Some("this.askId = 'a1'; this.askSince = 0;"),
     );
     assert!(
         answered.iter().any(|args| {
@@ -1439,7 +1434,7 @@ fn escape_denies_a_permission_card(cx: &mut TestAppContext) {
         cx,
         composer_with_ask("permission", json!({"tool_name": "Bash", "tool_input": {"command": "ls"}})),
         "escape",
-        None,
+        Some("this.askId = 'a1'; this.askSince = 0;"),
     );
     assert!(
         answered.iter().any(|args| {

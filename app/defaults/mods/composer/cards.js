@@ -3,6 +3,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
 import { run, settings } from "kompitum";
+import { CARD_WAIT_MS } from "./util.js";
 
 function planText(ask) {
   const plan = ask?.input?.tool_input?.plan;
@@ -86,18 +87,19 @@ export default {
       }
       return;
     }
+    // A key held back by the wait or by a draft is still stopped here, so it reaches nothing else.
     if (ask.kind === "question") {
       if (/^[1-4]$/.test(event.keystroke)) {
-        this.pickOption(ask, Number(event.keystroke) - 1, cx);
+        if (Date.now() - this.askSince >= CARD_WAIT_MS) this.pickOption(ask, Number(event.keystroke) - 1, cx);
         cx.stop_propagation();
       } else if (event.keystroke === "enter" && this.allAnswered(ask)) {
-        this.sendAnswers(ask, cx);
+        if (this.enterArmed()) this.sendAnswers(ask, cx);
         cx.stop_propagation();
       }
       return;
     }
     if (event.keystroke === "enter") {
-      this.answer(ask, ask.kind === "plan" ? { action: "approve" } : { action: "allow" }, cx);
+      if (this.enterArmed()) this.answer(ask, ask.kind === "plan" ? { action: "approve" } : { action: "allow" }, cx);
       cx.stop_propagation();
     } else if (event.keystroke === "escape") {
       this.cardEscape(ask, cx);
@@ -261,6 +263,11 @@ export default {
       .child(this.cardButton("composer-note-send", "Send", (_e, cx) => this.sendNote(cx), t, { filled: true }));
   },
 
+  // The line under a card's buttons: what Enter and Esc do, or a note that the box holds a draft.
+  cardHint(t, idle, typing) {
+    return div().text_size(11).text_color(t.dim).child(this.hasDraft() ? typing : idle);
+  },
+
   permissionCard(t, cx, ask) {
     const summary = permissionSummary(ask.input?.tool_name, ask.input?.tool_input);
     const suggestions = Array.isArray(ask.input?.permission_suggestions) ? ask.input.permission_suggestions : [];
@@ -284,7 +291,7 @@ export default {
       );
     }
     if (ask.input?.cwd) head.child(div().text_size(11.5).text_color(t.dim).child(`Runs in ${ask.input.cwd}`));
-    const buttons = h_flex().w_full().gap(6).items_center()
+    const buttons = h_flex().w_full().gap(8).items_center()
       .child(this.cardButton("composer-allow", "Allow", (_e, cx) => this.answer(ask, { action: "allow" }, cx), t, { filled: true }))
       .when(suggestions.length > 0, (el) => el.child(
         this.cardButton(
@@ -295,13 +302,16 @@ export default {
           { tooltip: permissionDestination(ask) ?? "where Claude keeps its rules" },
         ),
       ))
-      .child(div().flex_1())
-      .child(this.textButton("composer-deny", "Deny", (_e, cx) => this.openNote("deny", cx), t));
-    return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.blocked).bg(t.surface)
+      .child(this.cardButton("composer-deny", "Deny", (_e, cx) => this.openNote("deny", cx), t));
+    return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
       .child(head)
       .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
       .when(!this.noteOpen, (el) => el.child(buttons))
-      .when(!this.noteOpen, (el) => el.child(div().text_size(11).text_color(t.dim).child("Enter to allow · Esc to deny")))
+      .when(!this.noteOpen, (el) => el.child(this.cardHint(
+        t,
+        "Enter to allow · Esc to deny",
+        "You were typing. Click Allow, or press Esc to deny.",
+      )))
       .child(this.terminalAnswerLink(ask, t, cx));
   },
 
@@ -327,6 +337,11 @@ export default {
       ))
       .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
       .when(!this.noteOpen, (el) => el.child(buttons))
+      .when(!this.noteOpen, (el) => el.child(this.cardHint(
+        t,
+        "Enter to approve · Esc to change the plan",
+        "You were typing. Click Approve, or press Esc to change the plan.",
+      )))
       .child(this.terminalAnswerLink(ask, t, cx));
   },
 
@@ -407,8 +422,16 @@ export default {
   },
 
   card(t, cx) {
-    if (this.ask.kind === "plan") return this.planCard(t, cx, this.ask);
-    if (this.ask.kind === "question") return this.questionCard(t, cx, this.ask);
-    return this.permissionCard(t, cx, this.ask);
+    const card = this.ask.kind === "plan"
+      ? this.planCard(t, cx, this.ask)
+      : this.ask.kind === "question"
+        ? this.questionCard(t, cx, this.ask)
+        : this.permissionCard(t, cx, this.ask);
+    if (!this.hasDraft()) return card;
+    return v_flex()
+      .w_full()
+      .gap(6)
+      .child(div().id("composer-draft-kept").text_size(11.5).text_color(t.dim).child("Your draft is kept."))
+      .child(card);
   },
 };
