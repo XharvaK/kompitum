@@ -52,6 +52,24 @@ function noteToOpus(note) {
   return note?.to === "opus" || (Array.isArray(note?.to) && note.to.includes("opus"));
 }
 
+// Who a waiting system joined as, from the notes sent to the lead since its prompt was
+// copied: the sender of a note titled "Joined", else the one agent that has written since
+// and belongs to no other system. Two such agents is not an answer, so it keeps waiting.
+function joinedAgent(notes, since, claimed) {
+  const after = notes.filter(
+    (note) =>
+      noteToOpus(note) &&
+      note?.from &&
+      note.from !== "opus" &&
+      Number.isFinite(Date.parse(note.date)) &&
+      Date.parse(note.date) > since,
+  );
+  const hello = after.find((note) => note.title === "Joined");
+  if (hello) return String(hello.from);
+  const senders = [...new Set(after.map((note) => String(note.from)))].filter((name) => !claimed.includes(name));
+  return senders.length === 1 ? senders[0] : null;
+}
+
 // Called from the Settings view's init.
 export function initConnect(view, cx) {
   view.connect = {
@@ -104,6 +122,8 @@ export function loadConnect(view, cx) {
       connect.loading = false;
       cx.notify();
     }
+    // A system that joined while this page was closed shows as joined when it opens.
+    checkJoined(view, cx);
   });
 }
 
@@ -126,23 +146,25 @@ function checkJoined(view, cx) {
       try {
         notes = JSON.parse(found.stdout).notes ?? [];
       } catch {}
+      // The newest notes too: a system that never said "Joined" has still joined once it writes.
+      const recent = await kom(["vault", "find", "--json", "--limit", "60", "--as", "opus"]);
+      if (recent.code === 0) {
+        try {
+          notes = notes.concat(JSON.parse(recent.stdout).notes ?? []);
+        } catch {}
+      }
       for (const system of pending) {
         const saved = view.person?.connect?.[system.id];
         if (!saved?.since || saved.agent) continue;
-        const since = Date.parse(saved.since);
-        const note = notes.find(
-          (note) =>
-            note?.title === "Joined" &&
-            noteToOpus(note) &&
-            Number.isFinite(Date.parse(note.date)) &&
-            Date.parse(note.date) > since,
-        );
-        if (!note?.from) continue;
+        const claimed = Object.values(view.person?.connect ?? {}).map((entry) => entry?.agent).filter(Boolean);
+        // With two systems waiting, only a note titled "Joined" says which one wrote.
+        const agent = joinedAgent(pending.length === 1 ? notes : notes.filter((note) => note?.title === "Joined"), Date.parse(saved.since), claimed);
+        if (!agent) continue;
         view.change((person) => {
           const connect = person.connect ?? (person.connect = {});
           connect[system.id] = {
             ...(connect[system.id] ?? {}),
-            agent: String(note.from),
+            agent,
           };
         }, cx);
       }
@@ -293,7 +315,7 @@ export function connectPage(view, t, cx) {
     )
     .when(connect.showHow, (el) =>
       el.child(div().pt(4).pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
-        .child("Connect copies a prompt for them; they show as connected once their Joined note reaches the vault")),
+        .child("Connect copies a prompt for them; they show as joined once their first note reaches the vault")),
     )
     .children(connect.found.map((system) => systemRow(view, t, system, cx)))
     .child(otherRow(view, t, cx))

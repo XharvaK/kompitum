@@ -979,6 +979,28 @@ fn connect_system_with_only_since_waits_for_it_to_join(cx: &mut TestAppContext) 
     assert!(!tree.contains("Not connected"), "{tree}");
 }
 
+/// A waiting system has joined once one agent has written to the lead since its prompt was
+/// copied, with or without a note titled "Joined". The fixture's note is from 09:00 UTC.
+#[gpui::test]
+fn connect_system_that_wrote_since_the_prompt_has_joined(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let found = json!({"program": "C:\\Program Files\\Grok Bot\\grokbot.exe", "icon": null});
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        connect_values(
+            found,
+            json!({"connect": {"grokbot": {"since": "2026-11-11T08:00:00.000Z"}}}),
+        ),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Joined as manager"), "{tree}");
+    assert!(!tree.contains("Waiting for it to join"), "{tree}");
+}
+
 /// An entry with an agent says it joined as that agent.
 #[gpui::test]
 fn connect_system_with_an_agent_says_joined_as(cx: &mut TestAppContext) {

@@ -447,6 +447,11 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                 "kom" if first == json!(["vault", "find", "Joined", "--kind", "report", "--json"]) => Some(json!({"code":0,"stdout":json!({
                     "vault": "/fixture/vault", "agent": "opus", "unpushed": 0, "problems": [], "notes": []
                 }).to_string(),"stderr":""})),
+                // Settings › Connect: the newest notes, where a system that wrote has joined.
+                "kom" if first == json!(["vault", "find", "--json", "--limit", "60", "--as", "opus"]) => Some(json!({"code":0,"stdout":json!({
+                    "agent": "opus", "problems": [],
+                    "notes": [{"path": "manager/to/opus/2026-11-11_0900_ready.md", "from": "manager", "to": ["opus"], "kind": "report", "title": "Ready", "date": "2026-11-11T12:00:00+03:00", "status": "open"}]
+                }).to_string(),"stderr":""})),
                 // The files panel lists a folder with sh: kind and name pairs.
                 "exec" if first == "sh" && a.get(1).map(from_host).and_then(|v| v.get(2).cloned()) == Some(json!("files")) => {
                     Some(json!({"code":0,"stdout":"d\u{0}src\u{0}f\u{0}README.md\u{0}","stderr":""}))
@@ -2425,7 +2430,7 @@ fn connect_opens_with_one_line_and_hides_how_it_works(cx: &mut TestAppContext) {
     )
     .unwrap();
     assert!(
-        tree.contains("Connect copies a prompt for them; they show as connected once their Joined note reaches the vault"),
+        tree.contains("Connect copies a prompt for them; they show as joined once their first note reaches the vault"),
         "{tree}"
     );
 }
