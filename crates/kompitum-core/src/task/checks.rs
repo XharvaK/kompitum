@@ -41,8 +41,17 @@ pub struct ChecksFile {
     pub second_reader: bool,
     /// This repository builds one task at a time, whatever their scopes.
     pub one_at_a_time: bool,
+    /// The repository lets tasks share one checkout: None means each task gets its own worktree.
+    pub workshop: Option<Workshop>,
     /// Keys whose values were unusable: said, but never a failed check.
     pub warnings: Vec<String>,
+}
+
+/// How a repository's shared workshop is run.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Workshop {
+    /// Globs only one task at a time may write under, e.g. sources that must compile together.
+    pub one_writer: Vec<String>,
 }
 
 impl Default for ChecksFile {
@@ -59,6 +68,7 @@ impl Default for ChecksFile {
             focused_glob: DEFAULT_FOCUSED_GLOB.iter().map(|glob| glob.to_string()).collect(),
             second_reader: false,
             one_at_a_time: false,
+            workshop: None,
             warnings: Vec::new(),
         }
     }
@@ -140,6 +150,25 @@ pub fn parse_checks(text: &str) -> (ChecksFile, Vec<String>) {
         None | Some(Value::Null) => {}
         Some(Value::Bool(flag)) => file.one_at_a_time = *flag,
         Some(_) => file.warnings.push(format!("{SOURCE_FILE}: one_at_a_time must be a boolean")),
+    }
+    match spec.get("workshop") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => {}
+        Some(Value::Bool(true)) => file.workshop = Some(Workshop::default()),
+        Some(Value::Object(object)) => {
+            // A glob list is read whole or not at all: one bad entry leaves the list empty.
+            let mut one_writer = Vec::new();
+            match object.get("one_writer") {
+                None | Some(Value::Null) => {}
+                Some(Value::Array(items))
+                    if items.iter().all(|item| item.as_str().is_some_and(|glob| !glob.trim().is_empty())) =>
+                {
+                    one_writer = items.iter().filter_map(Value::as_str).map(str::to_string).collect();
+                }
+                Some(_) => file.warnings.push(format!("{SOURCE_FILE}: workshop.one_writer must be a list of globs")),
+            }
+            file.workshop = Some(Workshop { one_writer });
+        }
+        Some(_) => file.warnings.push(format!("{SOURCE_FILE}: workshop must be true, false or an object")),
     }
     (file, problems)
 }

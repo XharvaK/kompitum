@@ -1901,6 +1901,11 @@
             "description": "The repository's committed checks asked for one builder at a time.",
             "type": "boolean"
           },
+          "one_writer": {
+            "default": false,
+            "description": "Its scope touches files the repository lets one task write at a time.",
+            "type": "boolean"
+          },
           "owner_said": {
             "default": null,
             "description": "The Owner's words that let a manager accept it.",
@@ -1950,6 +1955,11 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "shared": {
+            "default": false,
+            "description": "It works in the repository's shared workshop, inside its scope, and has no worktree of its own.",
+            "type": "boolean"
           },
           "started_by": {
             "default": null,

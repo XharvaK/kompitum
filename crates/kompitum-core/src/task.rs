@@ -27,6 +27,7 @@ pub mod types;
 pub mod updates;
 pub mod worker;
 pub mod workers;
+pub mod workshop;
 
 use crate::api::{Label, RunParams};
 use crate::rpc::RpcError;

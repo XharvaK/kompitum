@@ -259,6 +259,29 @@ fn one_at_a_time_is_a_boolean() {
 }
 
 #[test]
+fn the_workshop_key_is_off_true_or_an_object() {
+    let (file, _) = parse_checks("{}");
+    assert_eq!(file.workshop, None, "absent is off");
+    assert_eq!(parse_checks(r#"{"workshop": null}"#).0.workshop, None);
+    assert_eq!(parse_checks(r#"{"workshop": false}"#).0.workshop, None);
+    let (file, problems) = parse_checks(r#"{"workshop": true}"#);
+    assert_eq!(file.workshop, Some(Workshop::default()));
+    assert!(problems.is_empty() && file.warnings.is_empty());
+    let (file, _) = parse_checks(r#"{"workshop": {"one_writer": ["src/core/**", "Cargo.toml"]}}"#);
+    assert_eq!(file.workshop, Some(Workshop { one_writer: vec!["src/core/**".into(), "Cargo.toml".into()] }));
+    assert!(file.warnings.is_empty());
+    assert_eq!(parse_checks("{\"workshop\": {}}").0.workshop, Some(Workshop::default()), "an object alone is on");
+    let (file, problems) = parse_checks(r#"{"workshop": {"one_writer": "src/**"}}"#);
+    assert_eq!(file.workshop, Some(Workshop::default()), "a bad glob list is empty, the workshop stays on");
+    assert!(problems.is_empty(), "a bad flag never fails a check: {problems:?}");
+    assert_eq!(file.warnings, [".kompitum/checks.json@HEAD: workshop.one_writer must be a list of globs"]);
+    let (file, problems) = parse_checks(r#"{"workshop": "yes"}"#);
+    assert_eq!(file.workshop, None);
+    assert!(problems.is_empty());
+    assert_eq!(file.warnings, [".kompitum/checks.json@HEAD: workshop must be true, false or an object"]);
+}
+
+#[test]
 fn a_wrong_type_is_a_problem_in_words_and_the_rest_still_counts() {
     let text = r#"{"test_cmd": 5, "forbid": ["a", 7], "require": ["x::y"], "warn": "rules", "qa_rounds": 9,
                    "test_timeout_seconds": 0, "second_reader": "yes"}"#;

@@ -204,6 +204,12 @@ pub struct Task {
     /// The repository's committed checks asked for one builder at a time.
     #[serde(default)]
     pub one_at_a_time: bool,
+    /// It works in the repository's shared workshop, inside its scope, and has no worktree of its own.
+    #[serde(default)]
+    pub shared: bool,
+    /// Its scope touches files the repository lets one task write at a time.
+    #[serde(default)]
+    pub one_writer: bool,
     /// One report per checked turn, in order.
     pub checks: Vec<CheckReport>,
     /// The test a check has running.

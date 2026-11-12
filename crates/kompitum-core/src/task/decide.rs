@@ -164,7 +164,7 @@ pub fn may_start(task: &Task, others: &[&Task], cap: Option<usize>) -> Result<()
             });
         }
     }
-    Ok(())
+    crate::task::workshop::may_start(task, others)
 }
 
 /// What the core last knew of a turn's terminal.

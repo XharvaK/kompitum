@@ -295,6 +295,8 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         review: None,
         asked,
         one_at_a_time,
+        shared: false,
+        one_writer: false,
         checks: Vec::new(),
         check: None,
         qa_used: 0,
