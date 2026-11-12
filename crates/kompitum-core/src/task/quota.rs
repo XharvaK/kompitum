@@ -53,6 +53,7 @@ static CODEX_DATE: OnceLock<Regex> = OnceLock::new();
 static CODEX_CLOCK: OnceLock<Regex> = OnceLock::new();
 static CLAUDE_EPOCH: OnceLock<Regex> = OnceLock::new();
 static CLAUDE_RESETS: OnceLock<Regex> = OnceLock::new();
+static CLAUDE_LIMIT: OnceLock<Regex> = OnceLock::new();
 
 /// The longest wait a worker's words can set: a garbled number must neither
 /// overflow nor take a worker away for good.
@@ -507,7 +508,10 @@ pub fn claude_refusal(errors: &[String], now_ms: u64, offset_min: i32) -> Option
 fn claude_refusal_of(message: &str, now_ms: u64, offset_min: i32) -> Option<Refusal> {
     let low = message.to_lowercase();
     let text = cut(message.trim(), 300);
-    if ["usage limit reached", "limit reached", "hit your limit"].iter().any(|phrase| low.contains(phrase)) {
+    // "Claude AI usage limit reached", "Weekly limit reached", "You've hit your limit" and, since
+    // November 2026, "You've hit your 5-hour limit": the window's name may sit before "limit".
+    let limit = re(&CLAUDE_LIMIT, r"limit reached|(?:hit|reached) your (?:[\w-]+ ){0,3}limit\b");
+    if limit.is_match(&low) {
         let (until_ms, source) = claude_reset(message, now_ms, offset_min);
         let far = source == Source::Named && until_ms.saturating_sub(now_ms) > 5 * 3_600_000;
         let window = if low.contains("week") || far { "weekly" } else { "5-hour" };
@@ -748,6 +752,18 @@ mod tests {
         let refusal = claude_refusal(&["Claude AI usage limit reached|1793000000".to_string()], now(), 0).unwrap();
         assert_eq!((refusal.until_ms, refusal.source), (1_793_000_000_000, Source::Named));
         assert_eq!(refusal.window, "5-hour", "no week in the text, and the reset is not five hours away");
+    }
+
+    #[test]
+    fn claude_naming_the_window_in_its_limit_sentence_is_still_a_refusal() {
+        // 13:00 UTC is 16:00 at UTC+3, so 10:20 pm is today's, six hours and twenty minutes on.
+        let text = "You've hit your 5-hour limit · resets 10:20pm (Europe/Istanbul)";
+        let refusal = claude_refusal(&[text.to_string()], now(), 180).unwrap();
+        assert_eq!(refusal.source, Source::Named);
+        assert_eq!(refusal.until_ms - now(), (6 * 60 + 20) * 60_000);
+        let weekly = claude_refusal(&["You've reached your weekly usage limit".to_string()], now(), 180).unwrap();
+        assert_eq!(weekly.window, "weekly");
+        assert!(claude_refusal(&["the rate limiter test hit your branch".to_string()], now(), 180).is_none());
     }
 
     #[test]
