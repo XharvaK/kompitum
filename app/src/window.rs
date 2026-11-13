@@ -11562,9 +11562,10 @@ export default class Probe extends View {
         let desk = super::default_layout("desk");
         let work = desk.find("work").expect("desk: no work");
         assert!(work.find("topbar").is_some(), "desk: the top bar holds the window controls");
-        for gone in ["board", "line", "spaces", "tabs"] {
+        for gone in ["board", "line", "spaces", "tabs", "status-row", "status", "lead"] {
             assert!(desk.find(gone).is_none(), "desk: {gone} is no longer a block");
         }
+        assert!(desk.find("nav").is_some() && desk.find("sidebar-footer").is_some(), "desk: the sidebar has its rows and its foot");
         assert!(
             super::default_layout("focus").find("board").is_none(),
             "Focus is the terminal alone"

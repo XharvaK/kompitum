@@ -4,9 +4,10 @@
 
 use super::*;
 
-/// The top bar carries the Board's bell, the mailbox and the Files panel button.
+/// The top bar is a breadcrumb of where you are, and it still holds the Files panel button; the bell and
+/// the mailbox moved to the sidebar's foot.
 #[gpui::test]
-fn the_top_bar_shows_the_bell_the_mailbox_and_files(cx: &mut TestAppContext) {
+fn the_top_bar_is_a_breadcrumb_and_the_panel_toggles(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let tree = describe(
@@ -19,32 +20,15 @@ fn the_top_bar_shows_the_bell_the_mailbox_and_files(cx: &mut TestAppContext) {
         None,
     )
     .unwrap();
-    for id in ["topbar-bell", "topbar-mail", "panel-files"] {
+    for id in ["topbar-crumbs", "panel-files"] {
         assert!(tree.contains(id), "missing {id}: {tree}");
+    }
+    for gone in ["topbar-bell", "topbar-mail", "topbar-back"] {
+        assert!(!tree.contains(gone), "{gone} moved out of the top bar: {tree}");
     }
 }
 
-/// Back belongs to a live lead that is not the tab on screen.
-#[gpui::test]
-fn the_top_bar_shows_back_only_when_the_lead_is_elsewhere(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let staged = Staged::new();
-    let mut elsewhere = fixture(true, props(), updates("current", "current"));
-    elsewhere.get_mut("terminals").unwrap()[1]["labels"] = json!({ "lead": "claude" });
-    let tree = describe_with_values(cx, &staged, "mods/topbar", elsewhere, None).unwrap();
-    assert!(tree.contains("topbar-back"), "the lead is in another tab: {tree}");
-    assert!(tree.contains("Back to the lead"), "{tree}");
-
-    let mut here = fixture(true, props(), updates("current", "current"));
-    here.get_mut("terminals").unwrap()[0]["labels"] = json!({ "lead": "claude" });
-    let tree = describe_with_values(cx, &staged, "mods/topbar", here, None).unwrap();
-    assert!(
-        !tree.contains("topbar-back"),
-        "the lead's tab is the active one: {tree}"
-    );
-}
-
-/// The brand row holds the space's "+" beside search and the sidebar toggle; the
+/// The brand row holds the space's "+" beside the sidebar toggle; the
 /// menu shows the current space, a new terminal and the installed agents only.
 #[gpui::test]
 fn the_brand_row_shows_the_space_menu(cx: &mut TestAppContext) {
@@ -81,44 +65,124 @@ fn the_brand_row_shows_the_space_menu(cx: &mut TestAppContext) {
     );
 }
 
-/// The bell's badge counts what waits: blocked agents, the lead's ask and the
-/// tasks waiting for review; it stays away at zero and caps at 99+.
+/// The brand row no longer holds a search button: Search is the first row of the sidebar's nav.
 #[gpui::test]
-fn the_top_bar_bell_badge_counts_what_waits(cx: &mut TestAppContext) {
+fn the_brand_row_has_no_search_button(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-
-    let mut values = fixture(true, props(), updates("current", "current"));
-    values.insert(
-        "statusJson".into(),
-        json!({"tasks": {"review": [], "running": [], "queued": []}, "waiting": {"review": 120}}),
-    );
-    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
-    assert!(tree.contains("topbar-bell-count"), "120 waiting: {tree}");
-    assert!(tree.contains("99+"), "the count caps at 99+: {tree}");
-
-    let mut values = fixture(true, props(), updates("current", "current"));
-    values.get_mut("agents").unwrap()[0]["status"] = json!("blocked");
-    values.insert(
-        "lead".into(),
-        json!({"state": "asking", "ask": {"id": "a1", "terminal": "t1", "kind": "permission", "input": {}}}),
-    );
-    values.insert(
-        "statusJson".into(),
-        json!({"tasks": {"review": [], "running": [], "queued": []}, "waiting": {"review": 2}}),
-    );
-    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
-    assert!(tree.contains("topbar-bell-count"), "blocked + ask + review: {tree}");
-
-    let tree = describe_settled(
+    let tree = describe_with_values(
         cx,
         &staged,
-        "mods/topbar",
+        "mods/workspace-chrome",
         fixture(true, props(), updates("current", "current")),
         None,
     )
     .unwrap();
-    assert!(!tree.contains("topbar-bell-count"), "nothing waits: {tree}");
+    assert!(tree.contains("space-menu"), "the brand row still has the space menu: {tree}");
+    assert!(!tree.contains("\"search\""), "the brand row has no search button: {tree}");
+
+    // The control: the same id, quoted, is what the nav's Search row shows.
+    let nav = describe_with_values(
+        cx,
+        &staged,
+        "mods/workspace-chrome",
+        fixture(true, json!({"nav": true}), updates("current", "current")),
+        None,
+    )
+    .unwrap();
+    assert!(nav.contains("\"sidebar-search\""), "ids show quoted: {nav}");
+}
+
+/// The sidebar's nav offers Search and Tasks; with no tasks it says so and shows no counts.
+#[gpui::test]
+fn the_sidebar_offers_search_and_tasks(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, json!({"nav": true}), updates("current", "current"));
+    values.insert(
+        "statusJson".into(),
+        json!({"tasks": {"review": [], "running": [], "queued": []}}),
+    );
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    for shown in ["sidebar-search", "Search", "sidebar-tasks", "Tasks", "No tasks"] {
+        assert!(tree.contains(shown), "missing {shown}: {tree}");
+    }
+    for gone in ["sidebar-tasks-review", "sidebar-tasks-count"] {
+        assert!(!tree.contains(gone), "{gone} with no tasks: {tree}");
+    }
+}
+
+/// The sidebar's foot holds Settings, Notes and the bell; with a joined system, Notes names it.
+#[gpui::test]
+fn the_foot_holds_settings_notes_and_the_bell(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_with_values(
+        cx,
+        &staged,
+        "mods/workspace-chrome",
+        fixture(true, json!({"footer": true}), updates("current", "current")),
+        None,
+    )
+    .unwrap();
+    for shown in ["settings", "sidebar-notes", "sidebar-bell", "Notes", "Nothing needs you"] {
+        assert!(tree.contains(shown), "missing {shown}: {tree}");
+    }
+
+    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.get_mut("settings").unwrap()["connect"] = json!({
+        "grokbot": { "since": "2026-11-01T00:00:00Z", "agent": "manager", "name": "Grok Bot", "link": "grokbot://" }
+    });
+    let tree = describe_with_values(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    assert!(tree.contains("Notes with Manager"), "{tree}");
+}
+
+/// The bell at the sidebar's foot counts what needs you: blocked agents and the lead's ask. Tasks waiting
+/// for review don't count; it stays away at zero and caps at 99+.
+#[gpui::test]
+fn the_bell_at_the_foot_counts_what_needs_you(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+
+    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert(
+        "statusJson".into(),
+        json!({"tasks": {"review": [{"name": "fix-docs"}], "running": [], "queued": []}, "waiting": {"review": 120}}),
+    );
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    assert!(!tree.contains("sidebar-bell-count"), "tasks for review don't count: {tree}");
+
+    let blocked: Vec<Value> = (0..100)
+        .map(|i| json!({"address": format!("b{i}"), "pane": "p1", "status": "blocked", "title": "Stuck"}))
+        .collect();
+    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert("agents".into(), Value::Array(blocked));
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    assert!(tree.contains("99+"), "the count caps at 99+: {tree}");
+
+    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert(
+        "agents".into(),
+        json!([{"address": "t1", "pane": "p1", "status": "blocked", "title": "Build"}]),
+    );
+    values.insert(
+        "lead".into(),
+        json!({"state": "asking", "ask": {"id": "a1", "terminal": "t1", "kind": "permission", "input": {}}}),
+    );
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    assert!(tree.contains("sidebar-bell-count"), "blocked + ask: {tree}");
+    assert!(tree.contains(r#"text "2""#), "one blocked agent and the ask make 2: {tree}");
+    assert!(tree.contains("The lead is asking you · 1 more"), "{tree}");
+
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/workspace-chrome",
+        fixture(true, json!({"footer": true}), updates("current", "current")),
+        None,
+    )
+    .unwrap();
+    assert!(!tree.contains("sidebar-bell-count"), "nothing waits: {tree}");
 }
 
 /// Until an agent joins through Connect, the status bar's right end holds nothing.
@@ -142,8 +206,8 @@ fn the_status_bar_is_empty_until_an_agent_joins(cx: &mut TestAppContext) {
     }
 }
 
-/// Once an agent joined, Notes sits at the status bar's right end; the joined system's app
-/// is offered only when an app answers its link.
+/// Once an agent joined, Notes sits at the status bar's right end; the joined system's app is offered only
+/// when an app answers its link.
 #[gpui::test]
 fn the_status_bar_offers_notes_and_the_joined_systems_app(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -168,6 +232,30 @@ fn the_status_bar_offers_notes_and_the_joined_systems_app(cx: &mut TestAppContex
     let tree = describe_with_values(cx, &staged, "mods/lead", joined(), None).unwrap();
     assert!(tree.contains("lead-notes"), "{tree}");
     assert!(!tree.contains("lead-door"), "{tree}");
+}
+
+/// The Notes window links to the joined system's app in its header, when an app answers the link.
+#[gpui::test]
+fn the_notes_window_links_to_the_joined_systems_app(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let window_props = json!({ "with": "manager", "name": "Grok Bot", "link": "grokbot://" });
+    let mut values = fixture(true, window_props.clone(), updates("current", "current"));
+    values.insert("appLink".into(), json!({ "name": "Grok Bot", "icon": null }));
+    let tree = describe_with_values(cx, &staged, "mods/line", values, None).unwrap();
+    for shown in ["line-door", "Open Grok Bot"] {
+        assert!(tree.contains(shown), "missing {shown}: {tree}");
+    }
+
+    let tree = describe_with_values(
+        cx,
+        &staged,
+        "mods/line",
+        fixture(true, window_props, updates("current", "current")),
+        None,
+    )
+    .unwrap();
+    assert!(!tree.contains("line-door"), "no app answers the link: {tree}");
 }
 
 /// The top bar names the shown tab's folder: its focused pane's, with the home folder as "~".
@@ -196,6 +284,19 @@ fn the_top_bar_shows_the_shown_tabs_folder(cx: &mut TestAppContext) {
     windows.get_mut("panes").unwrap()[0]["cwd"] = json!("C:\\Users\\merlin");
     let tree = describe_with_values(cx, &staged, "mods/topbar", windows, None).unwrap();
     assert!(!tree.contains("~rlin"), "{tree}");
+}
+
+/// The breadcrumb names the shown tab's branch and the space's machine, each with its icon.
+#[gpui::test]
+fn the_top_bar_names_the_branch_and_the_machine(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.get_mut("spaces").unwrap()[0]["machine"] = json!("laptop");
+    let tree = describe_with_values(cx, &staged, "mods/topbar", values, None).unwrap();
+    for shown in ["topbar-branch", "main", "topbar-machine", "laptop"] {
+        assert!(tree.contains(shown), "missing {shown}: {tree}");
+    }
 }
 
 /// A terminal tab that is no agent and not the lead gets a row under "Terminals".
@@ -236,18 +337,13 @@ fn the_sidebar_has_no_terminals_section_without_one(cx: &mut TestAppContext) {
     assert!(!tree.contains("Terminals"), "{tree}");
 }
 
-/// A failed `kom status --json` must not wipe the last review count, and the
-/// bell's tooltip must name the failure's first line.
+/// A failed `kom status --json` keeps the last counts, and the Tasks row's tooltip must name the failure's
+/// first line.
 #[gpui::test]
-fn a_failed_status_read_keeps_the_bells_other_counts(cx: &mut TestAppContext) {
+fn a_failed_status_read_names_the_error_on_tasks(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let mut values = fixture(true, props(), updates("current", "current"));
-    values.get_mut("agents").unwrap()[0]["status"] = json!("blocked");
-    values.insert(
-        "lead".into(),
-        json!({"state": "asking", "ask": {"id": "a1", "terminal": "t1", "kind": "permission", "input": {}}}),
-    );
+    let mut values = fixture(true, json!({"nav": true}), updates("current", "current"));
     values.insert(
         "statusFail".into(),
         json!("could not lock the vault\nand a stack dump"),
@@ -255,21 +351,21 @@ fn a_failed_status_read_keeps_the_bells_other_counts(cx: &mut TestAppContext) {
     let tree = describe_settled(
         cx,
         &staged,
-        "mods/topbar",
+        "mods/workspace-chrome",
         values,
         Some("this.review = 5;"),
     )
     .unwrap();
     assert!(
-        tree.contains("topbar-bell-count"),
-        "the last review count is kept with the other waits: {tree}"
+        tree.contains("sidebar-tasks-review"),
+        "the last review count is kept: {tree}"
     );
     assert!(
-        tree.contains(r#"text "7""#),
-        "blocked + ask + last review (5) is 7: {tree}"
+        tree.contains(r#"text "5""#),
+        "the last review count (5) is still shown: {tree}"
     );
     assert!(
-        tree.contains("Board · couldn't read the tasks waiting for review: could not lock the vault"),
+        tree.contains("Tasks · couldn't read them: could not lock the vault"),
         "{tree}"
     );
     assert!(
@@ -278,29 +374,27 @@ fn a_failed_status_read_keeps_the_bells_other_counts(cx: &mut TestAppContext) {
     );
 }
 
-/// A status read that works again drops the error from the tooltip.
+/// A status read that works again counts the tasks: 2 running and 1 queued make 3 running, and 1 to review
+/// makes the review pill; the error goes.
 #[gpui::test]
-fn a_working_status_read_clears_the_bells_error(cx: &mut TestAppContext) {
+fn a_working_status_read_counts_the_tasks(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let mut values = fixture(true, props(), updates("current", "current"));
+    let mut values = fixture(true, json!({"nav": true}), updates("current", "current"));
     values.insert(
         "statusJson".into(),
-        json!({"tasks": {"review": [], "running": [], "queued": []}, "waiting": {"review": 3}}),
+        json!({"tasks": {
+            "review": [{"name": "fix-docs"}],
+            "running": [{"name": "a"}, {"name": "b"}],
+            "queued": [{"name": "c"}]
+        }}),
     );
-    let tree = describe_settled(
-        cx,
-        &staged,
-        "mods/topbar",
-        values,
-        Some("this.reviewError = 'stale dump';"),
-    )
-    .unwrap();
-    assert!(tree.contains("topbar-bell-count"), "{tree}");
-    assert!(tree.contains(r#"text "3""#), "{tree}");
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    assert!(tree.contains("sidebar-tasks-review"), "{tree}");
+    assert!(tree.contains(r#"text "1""#), "{tree}");
+    assert!(tree.contains("3 running · 1 to review"), "{tree}");
     assert!(
-        !tree.contains("couldn't read the tasks waiting for review"),
-        "a good read clears the error: {tree}"
+        !tree.contains("couldn't read them"),
+        "a good read has no error: {tree}"
     );
 }
-

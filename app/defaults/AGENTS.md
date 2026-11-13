@@ -172,10 +172,12 @@ the highlighted line shows where it will land.
 
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
-shown one's name. A window starts on `desk` ("Desk": the agents list on the
-left, the lead or one terminal in the middle with Back, the top bar with the
-Board's bell, the mailbox, Files and Changes, and, once an agent has joined
-through Connect, Notes and that system's app at the status bar's right end);
+shown one's name. A window starts on `desk` ("Desk": Search and Tasks, then
+the agents list on the left, with Settings, Notes and the bell at its foot;
+the lead or one terminal in the middle; above it a top bar with where you
+are (folder / tab, branch, machine), Files and Changes. Notes open with the
+agent that joined through Connect, and their window links to that system's
+app);
 the others are there to try or start from. Kompitum ships `main` ("Kompitum": spaces by machine and the
 agents list on the left, `workspace-chrome`; tabs as pills with a + menu
 that starts a terminal or any installed agent, `new-menu`; panes as cards

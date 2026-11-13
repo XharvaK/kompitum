@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
-import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, run } from "kompitum";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, run, appLink, openLink } from "kompitum";
 
 // The same two colors the Board's chips use: the lead's, and the other agent's.
 const OWN = "accent";
@@ -128,6 +128,7 @@ export default class Line extends View {
     this.unpushed = 0;
     this.problems = [];
     this.seen = new Set();
+    this.apps = {};
     this.loaded = false;
     this.loading = false;
     this.error = null;
@@ -304,8 +305,35 @@ export default class Line extends View {
     this.refresh(cx);
   }
 
+  // Whether an app answers the link's scheme, asked once per link.
+  appFor(link) {
+    if (!(link in this.apps)) {
+      let app = null;
+      try {
+        app = appLink(link.split(":")[0]);
+      } catch {
+        app = null;
+      }
+      this.apps[link] = Boolean(app);
+    }
+    return this.apps[link];
+  }
+
+  // Opens the joined system's link, asking again now; without an app, says so.
+  openDoor(link, name) {
+    const scheme = link.split(":")[0];
+    let app = null;
+    try {
+      app = appLink(scheme);
+    } catch {}
+    if (app) return openLink(link);
+    notify({ title: `Could not open ${name}`, body: `Nothing on this computer opens ${scheme}:// links.`, level: "error" });
+  }
+
   renderPanel() {
     const t = theme();
+    const link = typeof props()?.link === "string" ? props().link : "";
+    const name = props()?.name ? String(props().name) : cap(this.other);
     const behind = behindProblems(this.problems);
     const details = behind;
     const filed = this.problems.filter((problem) => !isSyncProblem(problemText(problem)));
@@ -321,6 +349,12 @@ export default class Line extends View {
         .child(this.other
           ? div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(`with ${cap(this.other)}`)
           : div().flex_1())
+        .when(Boolean(link) && this.appFor(link), (el) => el.child(h_flex().id("line-door").px(6).py(2).gap(4).items_center().rounded(5)
+          .text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
+          .tooltip(`Open ${name}`)
+          .on_click(() => this.openDoor(link, name))
+          .child(name)
+          .child(svg("mods/lead/arrow-up-right.svg").size(11))))
         .child(div()
           .id("line-refresh")
           .px(6)

@@ -1,6 +1,6 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex, Popover } from "gpui-base";
-import { theme, run, props, window, shared, setShared, updates, layout, spaces, knownAgents, pickFolder, notify } from "kompitum";
+import { theme, run, props, window, shared, setShared, updates, layout, spaces, knownAgents, pickFolder, notify, kom, agents, lead, settings, openOverlay } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -23,10 +23,67 @@ function toggleSidebar() {
   run("layout.resize", { id: "sidebar", px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
 }
 
+function firstLine(text) {
+  return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+}
+
+const cap = (word) => (word ? word[0].toUpperCase() + word.slice(1) : "");
+
+// A blocked agent's name: its own title, else its tab's, else its program's.
+const agentName = (a) => a.title || a.tab_name || a.program?.name || "An agent";
+
+// The first system that joined through Connect, or null: who the notes are with, and its app's link.
+function joined() {
+  const connect = settings()?.connect ?? {};
+  const id = Object.keys(connect).sort().find((key) => connect[key]?.agent);
+  if (!id) return null;
+  const agent = String(connect[id].agent);
+  return { id, agent, name: connect[id].name || cap(agent), link: connect[id].link || `${id}://` };
+}
+
 export default class WorkspaceChrome extends View {
-  init() {
+  // Only the nav copy reads the tasks: the foot and the brand row never need them.
+  init(_props, cx) {
     this.spaceOpen = false;
     this.agents = [];
+    this.review = 0;
+    this.busy = 0;
+    this.tasksError = null;
+    if (!props()?.nav) return;
+    this.readTasks(cx);
+    cx.timer.every(10000, (cx) => this.readTasks(cx));
+  }
+
+  // The tasks from `kom status --json`: those waiting for review, and those running or queued. A failed
+  // read keeps the last counts and names its error on the Tasks row.
+  readTasks(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const r = await kom(["status", "--json"]);
+        if (r?.code !== 0) {
+          this.tasksError = firstLine(r?.stderr || r?.stdout) || `exit ${r?.code ?? "?"}`;
+          cx.notify();
+          return;
+        }
+        const data = JSON.parse(r.stdout || "{}");
+        const review = Array.isArray(data?.tasks?.review) ? data.tasks.review.length : data?.waiting?.review;
+        this.review = typeof review === "number" ? review : 0;
+        this.busy = ["running", "queued"].reduce((n, key) => n + (Array.isArray(data?.tasks?.[key]) ? data.tasks[key].length : 0), 0);
+        this.tasksError = null;
+      } catch (error) {
+        this.tasksError = firstLine(error?.message ?? error) || "It didn't work.";
+      }
+      cx.notify();
+    });
+  }
+
+  // The Tasks row's tooltip: what runs and what waits for review, or the read's error.
+  tasksTip() {
+    if (this.tasksError) return `Tasks · couldn't read them: ${this.tasksError}`;
+    const parts = [];
+    if (this.busy > 0) parts.push(`${this.busy} running`);
+    if (this.review > 0) parts.push(`${this.review} to review`);
+    return parts.length ? parts.join(" · ") : "No tasks";
   }
 
   // Which agents are installed, read each time the menu opens, so one installed meanwhile shows.
@@ -133,26 +190,73 @@ export default class WorkspaceChrome extends View {
       .trigger(trigger)
       .content(content);
   }
+  // A sidebar row: an icon, and its label beside it unless the rail is narrow.
+  navRow(t, collapsed, id, icon, label, tip, action) {
+    return h_flex().id(id).h(36).px(8).gap(10).items_center().rounded(8).cursor_pointer().relative()
+      .text_size(14).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .when(collapsed, (el) => el.justify_center().px(0))
+      .tooltip(tip)
+      .on_click(action)
+      .child(svg(icon).size(16).flex_none())
+      .when(!collapsed, (el) => el.child(label));
+  }
+
+  // The sidebar's rows (the nav block): Search opens the palette; Tasks opens the Board and says what it holds.
+  nav(t, collapsed) {
+    const { review, busy } = this;
+    const tasks = this.navRow(t, collapsed, "sidebar-tasks", "mods/workspace-chrome/list-checks.svg", "Tasks", this.tasksTip(),
+      () => openOverlay({ mod: "board", kind: "popup", width: 420, height: 560 }))
+      .when(!collapsed, (el) => el.child(div().flex_1()))
+      .when(!collapsed && review > 0, (el) => el.child(div().id("sidebar-tasks-review").h(18).min_w(18).px(5).rounded(9).flex().items_center().justify_center()
+        .bg(t.accent_fill).text_color(t.accent_foreground).text_size(11).font_semibold().child(review > 99 ? "99+" : String(review))))
+      .when(!collapsed && review <= 0 && busy > 0, (el) => el.child(div().id("sidebar-tasks-count").text_size(12).text_color(t.dim).child(String(busy))))
+      .when(collapsed && review > 0, (el) => el.child(div().size(6).rounded_full().bg(t.accent).absolute().top(8).right(8)));
+    return v_flex().size_full().bg(t.chrome).px(8).py(4)
+      .child(this.navRow(t, collapsed, "sidebar-search", "mods/workspace-chrome/search.svg", "Search", "Search", () => run("app.palette")))
+      .child(tasks);
+  }
+
+  // The sidebar's foot: Settings, Notes with the joined system, and the bell, which counts what needs you
+  // (blocked agents and the lead's question; tasks don't count). The rail keeps only the bell.
+  foot(t, collapsed) {
+    const iconButton = (id, icon, tip, action) => h_flex().id(id).w(28).h(28).flex_none().items_center().justify_center().rounded(7)
+      .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip)
+      .on_click(action).child(svg(icon).size(16));
+    const blocked = agents().filter((a) => a.status === "blocked");
+    const first = blocked[0];
+    const asking = Boolean(lead()?.ask);
+    const count = blocked.length + (asking ? 1 : 0);
+    const who = asking ? "The lead is asking you" : `${first ? agentName(first) : ""} needs you`;
+    const bellTip = count === 0 ? "Nothing needs you" : count > 1 ? `${who} · ${count - 1} more` : who;
+    const bell = iconButton("sidebar-bell", "mods/topbar/bell.svg", bellTip, () => {
+      if (asking) run("lead.open");
+      else if (first) run("pane.focus", { pane: first.pane });
+    })
+      .relative()
+      .when(count > 0, (el) => el.child(div().id("sidebar-bell-count").absolute().top(-2).right(-2).h(15).min_w(15).px(4).rounded(8).flex().items_center().justify_center()
+        .bg(t.accent_fill).text_color(t.accent_foreground).text_size(10.5).font_semibold().child(count > 99 ? "99+" : String(count))));
+    if (collapsed) return h_flex().size_full().bg(t.chrome).px(0).justify_center().items_center().child(bell);
+    const other = joined();
+    const notes = other
+      ? iconButton("sidebar-notes", "mods/topbar/inbox.svg", `Notes with ${cap(other.agent)}`, () => openOverlay({ mod: "line", kind: "popup", width: 420, height: 460, props: { with: other.agent, name: other.name, link: other.link } }))
+      : iconButton("sidebar-notes", "mods/topbar/inbox.svg", "Notes", () => run("app.mailbox"));
+    const settingsButton = iconButton("settings", "mods/workspace-chrome/settings.svg", "Settings", () => run("app.settings"))
+      .when(Boolean(updates().app.ready), (el) => el.relative().child(div().size(6).rounded_full().bg(t.accent).absolute().top(4).right(4)));
+    return h_flex().size_full().bg(t.chrome).px(10).gap(2).items_center()
+      .child(settingsButton)
+      .child(div().flex_1())
+      .child(notes)
+      .child(bell);
+  }
+
   render() {
     const t = theme();
     const collapsed = narrow();
-    if (props()?.footer) {
-      const row = (id, icon, label, action) => h_flex().id(id).h(22).px(8).gap(8).items_center().rounded(6)
-        .when(collapsed, el => el.relative().w(32).px(0).justify_center().tooltip(label))
-        .text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).cursor_pointer()
-        .on_click(action).child(svg(`mods/workspace-chrome/${icon}.svg`).size(14))
-        .when(!collapsed, el => el.child(label));
-      const ready = div().size(6).rounded_full().bg(t.accent);
-      // One row, centred in a footer as tall as the status bar beside it.
-      return h_flex().size_full().bg(t.chrome).border_t(1).border_color(t.border).px(6).items_center().text_size(12)
-        .when(collapsed, el => el.px(0).justify_center())
-        .child(row("settings", "settings", "Settings", () => run("app.settings"))
-          .when(Boolean(updates().app.ready), el => el.child(collapsed ? ready.absolute().top(5).right(6) : ready)));
-    }
-    return h_flex().size_full().bg(t.chrome).pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(13.5)
+    if (props()?.nav) return this.nav(t, collapsed);
+    if (props()?.footer) return this.foot(t, collapsed);
+    return h_flex().size_full().bg(t.chrome).pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(14)
       .when(window()?.platform === "macos" && !window()?.fullscreen && !collapsed, el => el.pl(76))
       .when(!collapsed, el => el.child(h_flex().flex_1().gap(8).items_center().child(image("frame/welcome/kompitum.png").size(20).rounded(5)).child(div().font_semibold().text_color(t.foreground).child("Kompitum"))))
-      .when(!collapsed, el => el.child(this.button("search", svg("mods/workspace-chrome/search.svg").size(15), () => run("mod.open", { name: "picker" }))))
       .when(!collapsed, el => el.child(this.spaceMenu(t)))
       // On the macOS rail the traffic lights fill the row; the agents list's » unfolds it.
       .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/workspace-chrome/sidebar.svg").size(15), toggleSidebar)));

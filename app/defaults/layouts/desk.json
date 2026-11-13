@@ -18,8 +18,9 @@
       "resizable": false,
       "children": [
         { "id": "brand", "type": "block", "size": { "px": 46 }, "window_drag": true, "content": { "mod": "workspace-chrome" } },
+        { "id": "nav", "type": "block", "size": { "px": 80 }, "content": { "mod": "workspace-chrome", "props": { "nav": true } } },
         { "id": "agents", "type": "block", "size": { "weight": 1 }, "min": 90, "content": { "mod": "agents" } },
-        { "id": "sidebar-footer", "type": "block", "size": { "px": 28 }, "content": { "mod": "workspace-chrome", "props": { "footer": true } } }
+        { "id": "sidebar-footer", "type": "block", "size": { "px": 44 }, "content": { "mod": "workspace-chrome", "props": { "footer": true } } }
       ]
     },
     {
@@ -68,16 +69,6 @@
                 }
               ]
             }
-          ]
-        },
-        {
-          "id": "status-row",
-          "type": "row",
-          "size": { "px": 28 },
-          "resizable": false,
-          "children": [
-            { "id": "status", "type": "block", "content": { "mod": "workspace-status" } },
-            { "id": "lead", "type": "block", "size": { "px": 300 }, "content": { "mod": "lead" } }
           ]
         }
       ]

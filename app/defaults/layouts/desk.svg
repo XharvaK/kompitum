@@ -1,20 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">
   <rect width="320" height="200" fill="#131619"/>
-  <!-- sidebar: the brand row, then the agents -->
+  <!-- sidebar: the brand row, Search and Tasks, the agents, then the foot's three squares -->
   <rect width="64" height="200" fill="#17191c"/>
   <rect x="8" y="10" width="30" height="5" rx="2" fill="#a9adb3"/>
   <rect x="50" y="9" width="7" height="7" rx="2" fill="#3a3e44"/>
-  <circle cx="11" cy="32" r="2.5" fill="#3b82f6"/><rect x="17" y="30" width="34" height="4" rx="2" fill="#5a5f66"/>
-  <circle cx="11" cy="42" r="2.5" fill="#22c55e"/><rect x="17" y="40" width="28" height="4" rx="2" fill="#5a5f66"/>
-  <circle cx="11" cy="52" r="2.5" fill="#f59e0b"/><rect x="17" y="50" width="31" height="4" rx="2" fill="#5a5f66"/>
-  <circle cx="11" cy="62" r="2.5" fill="#5a5f66"/><rect x="17" y="60" width="25" height="4" rx="2" fill="#3a3e44"/>
+  <rect x="8" y="22" width="26" height="4" rx="2" fill="#5a5f66"/>
+  <rect x="8" y="29" width="26" height="4" rx="2" fill="#5a5f66"/>
+  <circle cx="11" cy="42" r="2.5" fill="#3b82f6"/><rect x="17" y="40" width="34" height="4" rx="2" fill="#5a5f66"/>
+  <circle cx="11" cy="52" r="2.5" fill="#22c55e"/><rect x="17" y="50" width="28" height="4" rx="2" fill="#5a5f66"/>
+  <circle cx="11" cy="62" r="2.5" fill="#f59e0b"/><rect x="17" y="60" width="31" height="4" rx="2" fill="#5a5f66"/>
+  <circle cx="11" cy="72" r="2.5" fill="#5a5f66"/><rect x="17" y="70" width="25" height="4" rx="2" fill="#3a3e44"/>
+  <rect x="8" y="188" width="6" height="6" rx="2" fill="#3a3e44"/>
+  <rect x="40" y="188" width="6" height="6" rx="2" fill="#3a3e44"/>
+  <rect x="50" y="188" width="6" height="6" rx="2" fill="#3a3e44"/>
   <rect x="64" width="1" height="200" fill="#25282c"/>
-  <!-- the top bar: what's shown, then the bell with its count, the mailbox, Files and Changes -->
+  <!-- the top bar: the breadcrumb (folder / tab), then Files and Changes -->
   <rect x="65" width="255" height="18" fill="#17191c"/>
   <rect x="65" y="18" width="255" height="1" fill="#25282c"/>
   <rect x="72" y="7" width="5" height="5" rx="1" fill="#8b8f95"/><rect x="80" y="7" width="30" height="5" rx="2" fill="#a9adb3"/>
-  <rect x="252" y="6" width="7" height="7" rx="2" fill="#3a3e44"/><circle cx="259" cy="6" r="2.5" fill="#3b82f6"/>
-  <rect x="265" y="6" width="7" height="7" rx="2" fill="#3a3e44"/>
   <rect x="278" y="6" width="16" height="7" rx="2" fill="#3a3e44"/><rect x="298" y="6" width="16" height="7" rx="2" fill="#3a3e44"/>
   <!-- the main pane: the lead -->
   <rect x="71" y="25" width="243" height="157" rx="6" fill="#0f1113" stroke="#25282c" stroke-width="1"/>
@@ -23,8 +26,4 @@
   <!-- the composer -->
   <rect x="79" y="150" width="227" height="24" rx="6" fill="#17191c" stroke="#25282c" stroke-width="1"/>
   <circle cx="298" cy="162" r="5" fill="#3b82f6"/>
-  <!-- status bar with the Lead pill and the Line beside it -->
-  <rect x="65" y="188" width="255" height="12" fill="#17191c"/>
-  <rect x="250" y="191" width="40" height="6" rx="3" fill="#3b82f6" opacity="0.8"/>
-  <rect x="294" y="191" width="8" height="6" rx="2" fill="#3a3e44"/>
 </svg>

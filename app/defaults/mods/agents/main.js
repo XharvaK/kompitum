@@ -205,11 +205,11 @@ export default class Agents extends View {
       .pl(39)
       .pr(8)
       .rounded(8)
-      .h(26)
+      .h(30)
       .flex_none()
       .gap(0)
       .items_center()
-      .text_size(12.5)
+      .text_size(13.5)
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
       .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
@@ -328,7 +328,7 @@ export default class Agents extends View {
       if (collapsed) {
         return h_flex()
           .id(`ag-${a.address}`)
-          .h(26)
+          .h(32)
           .px(8)
           .flex_none()
           .items_center()
@@ -365,7 +365,7 @@ export default class Agents extends View {
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
-        .h(30)
+        .h(36)
         .flex_none()
         .rounded(8)
         .items_center()
@@ -391,7 +391,7 @@ export default class Agents extends View {
         .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
         .when(this.hovered === a.address, el => el.child(pin))
-        .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))
+        .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(12).text_color(t.dim).child(duration(now - when))))
         .child(this.status(t, a, byPriority && !isPinned));
     };
 
@@ -413,11 +413,11 @@ export default class Agents extends View {
         .id(g.id)
         .px(8)
         .pt(8)
-        .h(30)
+        .h(32)
         .flex_none()
         .gap(6)
         .items_center()
-        .text_size(11)
+        .text_size(12)
         .font_medium()
         .cursor_pointer()
         .hover((s) => s.text_color(t.foreground))
@@ -445,7 +445,7 @@ export default class Agents extends View {
       if (collapsed) {
         return h_flex()
           .id("ag-lead")
-          .h(26)
+          .h(32)
           .px(8)
           .flex_none()
           .items_center()
@@ -458,7 +458,7 @@ export default class Agents extends View {
       return h_flex()
         .id("ag-lead")
         .px(8)
-        .h(30)
+        .h(36)
         .flex_none()
         .rounded(8)
         .items_center()
@@ -469,7 +469,7 @@ export default class Agents extends View {
         .on_click(() => run("lead.open"))
         .when(Boolean(icon(program, 16, t.foreground)), (el) => el.child(icon(program, 16, t.foreground)))
         .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
-        .when(Boolean(word), (el) => el.child(div().flex_none().text_size(11)
+        .when(Boolean(word), (el) => el.child(div().flex_none().text_size(12)
           .text_color(leadQuiet ? t.muted : leadColor(t, leadState))
           .when(leadQuiet, (w) => w.tooltip("No word from the lead for 10 minutes."))
           .child(word)));
@@ -491,7 +491,7 @@ export default class Agents extends View {
       if (collapsed) {
         return h_flex()
           .id(key)
-          .h(26)
+          .h(32)
           .px(8)
           .flex_none()
           .items_center()
@@ -504,7 +504,7 @@ export default class Agents extends View {
       return h_flex()
         .id(key)
         .px(8)
-        .h(30)
+        .h(36)
         .flex_none()
         .rounded(8)
         .items_center()
@@ -543,8 +543,8 @@ export default class Agents extends View {
     };
     const terminalSection = plainTabs.length
       ? [
-        ...(collapsed ? [] : [h_flex().id("ag-terminals").px(8).h(41).pt(14).pb(5).flex_none().items_center()
-          .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Terminals"))]),
+        ...(collapsed ? [] : [h_flex().id("ag-terminals").px(8).h(36).pt(10).pb(5).flex_none().items_center()
+          .child(div().text_size(12).font_medium().text_color(t.dim).child("Terminals"))]),
         ...plainTabs.map(terminalRow),
       ]
       : [];
@@ -560,20 +560,18 @@ export default class Agents extends View {
       .size_full()
       .min_h(0)
       .bg(t.chrome)
-      .border_t(1)
-      .border_color(t.border)
-      .text_size(13)
+      .text_size(14)
       .when(!collapsed, (el) =>
         el.child(
           h_flex()
             .px(16)
-            .h(41)
-            .pt(14)
+            .h(36)
+            .pt(10)
             .pb(5)
             .flex_none()
             .items_center()
             .justify_between()
-            .child(div().text_size(11.5).font_medium().text_color(t.dim).child("Agents"))
+            .child(div().text_size(12).font_medium().text_color(t.dim).child("Agents"))
             .child(
               div()
                 .id("ag-sort")
@@ -587,7 +585,7 @@ export default class Agents extends View {
         ),
       )
       .when(list.length === 0 && leadRows.length === 0 && !collapsed, (el) =>
-        el.child(div().px(12).text_size(12).text_color(t.dim).child("No agents running.")),
+        el.child(div().px(12).text_size(13).text_color(t.dim).child("No agents running.")),
       )
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
       .when(collapsed, (el) =>
