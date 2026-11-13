@@ -4,6 +4,7 @@
   "titlebar": "none",
   "traffic_lights": [12, 16],
   "background": "canvas",
+  "glass": 0,
   "terminal_padding": [14, 12],
   "divider": { "width": 1, "color": "border" },
   "preview": "layouts/desk.svg",
@@ -15,6 +16,7 @@
       "min": 44,
       "max": 480,
       "background": "chrome",
+      "glass": 0.55,
       "resizable": false,
       "children": [
         { "id": "brand", "type": "block", "size": { "px": 46 }, "window_drag": true, "content": { "mod": "workspace-chrome" } },
@@ -26,6 +28,7 @@
     {
       "id": "work",
       "type": "column",
+      "background": "canvas",
       "resizable": false,
       "children": [
         { "id": "topbar", "type": "block", "size": { "px": 42 }, "window_drag": true, "content": { "mod": "topbar" } },

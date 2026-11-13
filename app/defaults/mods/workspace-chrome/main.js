@@ -211,7 +211,7 @@ export default class WorkspaceChrome extends View {
         .bg(t.accent_fill).text_color(t.accent_foreground).text_size(11).font_semibold().child(review > 99 ? "99+" : String(review))))
       .when(!collapsed && review <= 0 && busy > 0, (el) => el.child(div().id("sidebar-tasks-count").text_size(12).text_color(t.dim).child(String(busy))))
       .when(collapsed && review > 0, (el) => el.child(div().size(6).rounded_full().bg(t.accent).absolute().top(8).right(8)));
-    return v_flex().size_full().bg(t.chrome).px(8).py(4)
+    return v_flex().size_full().px(8).py(4)
       .child(this.navRow(t, collapsed, "sidebar-search", "mods/workspace-chrome/search.svg", "Search", "Search", () => run("app.palette")))
       .child(tasks);
   }
@@ -235,14 +235,14 @@ export default class WorkspaceChrome extends View {
       .relative()
       .when(count > 0, (el) => el.child(div().id("sidebar-bell-count").absolute().top(-2).right(-2).h(15).min_w(15).px(4).rounded(8).flex().items_center().justify_center()
         .bg(t.accent_fill).text_color(t.accent_foreground).text_size(10.5).font_semibold().child(count > 99 ? "99+" : String(count))));
-    if (collapsed) return h_flex().size_full().bg(t.chrome).px(0).justify_center().items_center().child(bell);
+    if (collapsed) return h_flex().size_full().px(0).justify_center().items_center().child(bell);
     const other = joined();
     const notes = other
       ? iconButton("sidebar-notes", "mods/topbar/inbox.svg", `Notes with ${cap(other.agent)}`, () => openOverlay({ mod: "line", kind: "popup", width: 420, height: 460, props: { with: other.agent, name: other.name, link: other.link } }))
       : iconButton("sidebar-notes", "mods/topbar/inbox.svg", "Notes", () => run("app.mailbox"));
     const settingsButton = iconButton("settings", "mods/workspace-chrome/settings.svg", "Settings", () => run("app.settings"))
       .when(Boolean(updates().app.ready), (el) => el.relative().child(div().size(6).rounded_full().bg(t.accent).absolute().top(4).right(4)));
-    return h_flex().size_full().bg(t.chrome).px(10).gap(2).items_center()
+    return h_flex().size_full().px(10).gap(2).items_center()
       .child(settingsButton)
       .child(div().flex_1())
       .child(notes)
@@ -254,7 +254,7 @@ export default class WorkspaceChrome extends View {
     const collapsed = narrow();
     if (props()?.nav) return this.nav(t, collapsed);
     if (props()?.footer) return this.foot(t, collapsed);
-    return h_flex().size_full().bg(t.chrome).pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(14)
+    return h_flex().size_full().pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(14)
       .when(window()?.platform === "macos" && !window()?.fullscreen && !collapsed, el => el.pl(76))
       .when(!collapsed, el => el.child(h_flex().flex_1().gap(8).items_center().child(image("frame/welcome/kompitum.png").size(20).rounded(5)).child(div().font_semibold().text_color(t.foreground).child("Kompitum"))))
       .when(!collapsed, el => el.child(this.spaceMenu(t)))

@@ -245,6 +245,9 @@ Properties any node can have:
   the home folder), `border` (`{ "width": 1, "color": "border" }`), `radius`,
   `shadow` (`"sm" | "md" | "lg"`), `focus` (`{ "border": {...} }` when the
   focused pane is inside).
+- `glass` (0..1): under a glass window (`KOMPITUM_GLASS`), this node's
+  background is drawn at this opacity and the window's material shows through
+  the rest. Ignored on an opaque window.
 - `padding`: space inside the node's edge, px: `16` or `[vertical, horizontal]`.
 - row/column: `gap` (px between children), `divider` (`{ "width": 1, "color": "border" }`),
   `resizable` (default true: drag the boundary). This applies to that row/column only.

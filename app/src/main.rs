@@ -246,6 +246,8 @@ pub fn open_main(
 ) {
     tray::start();
     let (window_bounds, display_id) = place::initial(cx);
+    let glass = window::glass_kind(std::env::var("KOMPITUM_GLASS").ok().as_deref());
+    window::set_glass(glass != WindowBackgroundAppearance::Opaque);
     let options = WindowOptions {
         window_bounds: Some(window_bounds),
         display_id,
@@ -262,6 +264,8 @@ pub fn open_main(
         // system's off on the first render, while KWin maps the window, shrinks
         // it to 20x20; turning it on later (a "system" layout) is fine.
         window_decorations: Some(WindowDecorations::Client),
+        // `KOMPITUM_GLASS` (window.rs): the material the sidebar shows through; opaque otherwise.
+        window_background: glass,
         // Kompitum Dev and other side-by-side builds get their own dock icon.
         app_id: Some(
             std::env::var("KOMPITUM_APP_ID")

@@ -559,7 +559,6 @@ export default class Agents extends View {
     return v_flex()
       .size_full()
       .min_h(0)
-      .bg(t.chrome)
       .text_size(14)
       .when(!collapsed, (el) =>
         el.child(

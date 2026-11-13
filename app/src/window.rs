@@ -89,6 +89,39 @@ fn c(name: &str) -> Hsla {
     settings::color_or_literal(name)
 }
 
+/// The window material the prototype asks for in `KOMPITUM_GLASS`: `blur`, `mica` or `mica-alt`; anything else is opaque.
+pub fn glass_kind(value: Option<&str>) -> gpui::WindowBackgroundAppearance {
+    use gpui::WindowBackgroundAppearance as W;
+    match value.map(|v| v.trim().to_lowercase()).as_deref() {
+        Some("blur") => W::Blurred,
+        Some("mica") => W::MicaBackdrop,
+        Some("mica-alt") => W::MicaAltBackdrop,
+        _ => W::Opaque,
+    }
+}
+
+static GLASS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Set once, when the main window opens (`KOMPITUM_GLASS` asks for a material).
+pub fn set_glass(on: bool) {
+    let _ = GLASS.set(on);
+}
+
+pub fn glass_on() -> bool {
+    GLASS.get().copied().unwrap_or(false)
+}
+
+/// A colour under a glass window: its alpha times `glass` (clamped to 0..1). Off, or with no `glass`, it is unchanged.
+pub fn glass_color(color: Hsla, glass: Option<f32>, on: bool) -> Hsla {
+    match glass {
+        Some(a) if on => Hsla {
+            a: color.a * a.clamp(0.0, 1.0),
+            ..color
+        },
+        _ => color,
+    }
+}
+
 /// The focused pane's ring: the border colour with a little accent, or the
 /// whole accent when its agent needs the person.
 fn focus_ring_color(blocked: bool) -> Hsla {
@@ -9132,6 +9165,8 @@ fn apply_look(el: Div, n: &Node, focused: bool) -> Div {
     let focus = n.focus.as_ref().filter(|_| focused);
     if let Some(bg) = focus.and_then(|f| f.background.as_ref()) {
         el = el.bg(c(bg));
+    } else if let Some(Paint::Color(name)) = &n.background {
+        el = el.bg(glass_color(c(name), n.glass, glass_on()));
     } else if let Some(bg) = &n.background {
         el = paint(el, bg);
     }
@@ -9241,7 +9276,7 @@ impl Render for AppWindow {
             .key_context(format!("Kompitum layout = {}", self.layout_name).as_str())
             .size_full()
             .relative()
-            .bg(c("background"))
+            .when(!glass_on(), |d| d.bg(c("background")))
             .text_color(c("foreground"))
             .font_family(settings::get().ui_font_family.clone())
             .on_action(cx.listener(|this, a: &ShellAction, w, cx| {
@@ -11562,6 +11597,8 @@ export default class Probe extends View {
         let desk = super::default_layout("desk");
         let work = desk.find("work").expect("desk: no work");
         assert!(work.find("topbar").is_some(), "desk: the top bar holds the window controls");
+        assert!(work.background.is_some(), "desk: work paints its canvas");
+        assert_eq!(desk.find("sidebar").and_then(|s| s.glass), Some(0.55), "desk: the sidebar is glass");
         for gone in ["board", "line", "spaces", "tabs", "status-row", "status", "lead"] {
             assert!(desk.find(gone).is_none(), "desk: {gone} is no longer a block");
         }
@@ -11570,6 +11607,27 @@ export default class Probe extends View {
             super::default_layout("focus").find("board").is_none(),
             "Focus is the terminal alone"
         );
+    }
+
+    #[test]
+    fn glass_kind_reads_the_three_words() {
+        use gpui::WindowBackgroundAppearance as W;
+        assert_eq!(super::glass_kind(Some("blur")), W::Blurred);
+        assert_eq!(super::glass_kind(Some(" Mica ")), W::MicaBackdrop);
+        assert_eq!(super::glass_kind(Some("mica-alt")), W::MicaAltBackdrop);
+        for other in [Some(""), None, Some("glass")] {
+            assert_eq!(super::glass_kind(other), W::Opaque, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn glass_color_fades_only_under_glass() {
+        let base = gpui::hsla(0.6, 0.5, 0.5, 0.8);
+        let alpha = |glass, on| super::glass_color(base, glass, on).a;
+        assert_eq!(alpha(Some(0.55), false), 0.8, "off: unchanged");
+        assert!((alpha(Some(0.55), true) - 0.8 * 0.55).abs() < 1e-6, "on: alpha times glass");
+        assert_eq!(alpha(None, true), 0.8, "no glass: unchanged");
+        assert_eq!(alpha(Some(0.0), true), 0.0, "glass 0 draws nothing");
     }
 
     #[test]

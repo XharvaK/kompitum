@@ -337,6 +337,10 @@ pub struct Node {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<Background>,
+    /// 0..1: under a glass window (`KOMPITUM_GLASS`), this node's background is drawn at this opacity and the
+    /// window's material shows through the rest. Ignored on an opaque window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub border: Option<Line>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -402,6 +406,7 @@ impl Node {
             hidden: false,
             title: None,
             background: None,
+            glass: None,
             border: None,
             radius: None,
             shadow: None,
@@ -837,7 +842,7 @@ mod tests {
         let json = r##"{ "id": "root", "type": "column", "theme": "ink", "font": "Berkeley Mono", "font_size": 13,
           "terminal_opacity": 0.85, "padding": [16, 12], "shadow": "lg",
           "background": { "gradient": ["#123a6e", "#2a6db3"], "angle": 160 },
-          "children": [ { "id": "a", "type": "block", "content": { "mod": "x" }, "background": "surface", "padding": 8 },
+          "children": [ { "id": "a", "type": "block", "content": { "mod": "x" }, "background": "surface", "glass": 0.55, "padding": 8 },
                         { "id": "b", "type": "block", "content": { "mod": "y" }, "background": { "image": "bg/sky.jpg" } } ] }"##;
         let n: Node = serde_json::from_str(json).unwrap();
         assert_eq!(
@@ -854,6 +859,7 @@ mod tests {
             n.find("a").unwrap().background,
             Some(Background::Color("surface".into()))
         );
+        assert_eq!((n.find("a").unwrap().glass, n.find("b").unwrap().glass), (Some(0.55), None));
         assert!(matches!(
             &n.find("b").unwrap().background,
             Some(Background::Image {
