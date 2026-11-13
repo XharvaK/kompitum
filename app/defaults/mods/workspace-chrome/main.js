@@ -215,11 +215,28 @@ export default class WorkspaceChrome extends View {
       .when(!collapsed, (el) => el.child(label));
   }
 
+  // Tasks shows in Desk's side panel when the layout has the panel's Tasks surface (a click hides the panel
+  // when it already shows Tasks); other layouts open the Board as a popup.
+  openTasks() {
+    const body = find(layout(), "panel-body");
+    if (!body?.children?.some((child) => child.id === "tasks")) {
+      openOverlay({ mod: "board", kind: "popup", width: 420, height: 560 });
+      return;
+    }
+    const panel = find(layout(), "panel");
+    if (panel && !panel.hidden && body.active === "tasks") {
+      run("layout.hide", { id: "panel" });
+      return;
+    }
+    run("layout.select", { stack: "panel-body", child: "tasks" });
+    run("layout.show", { id: "panel" });
+  }
+
   // The sidebar's rows (the nav block): Search opens the palette; Tasks opens the Board and says what it holds.
   nav(t, collapsed) {
     const { review, busy } = this;
     const tasks = this.navRow(t, collapsed, "sidebar-tasks", "mods/workspace-chrome/list-checks.svg", "Tasks", this.tasksTip(),
-      () => openOverlay({ mod: "board", kind: "popup", width: 420, height: 560 }))
+      () => this.openTasks())
       .when(!collapsed, (el) => el.child(div().flex_1()))
       .when(!collapsed && review > 0, (el) => el.child(div().id("sidebar-tasks-review").h(18).min_w(18).px(5).rounded(9).flex().items_center().justify_center()
         .bg(t.accent_fill).text_color(t.accent_foreground).text_size(11).font_semibold().child(review > 99 ? "99+" : String(review))))

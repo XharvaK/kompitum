@@ -4,7 +4,7 @@
 
 use super::*;
 
-/// The top bar is a breadcrumb of where you are, and it still holds the Files panel button; the bell and
+/// The top bar is a breadcrumb of where you are, and it holds one toggle for the side panel; the bell and
 /// the mailbox moved to the sidebar's foot.
 #[gpui::test]
 fn the_top_bar_is_a_breadcrumb_and_the_panel_toggles(cx: &mut TestAppContext) {
@@ -20,12 +20,105 @@ fn the_top_bar_is_a_breadcrumb_and_the_panel_toggles(cx: &mut TestAppContext) {
         None,
     )
     .unwrap();
-    for id in ["topbar-crumbs", "panel-files"] {
+    for id in ["topbar-crumbs", "panel-toggle", "Show the side panel"] {
         assert!(tree.contains(id), "missing {id}: {tree}");
     }
-    for gone in ["topbar-bell", "topbar-mail", "topbar-back"] {
+    for gone in ["topbar-bell", "topbar-mail", "topbar-back", "panel-files", "panel-changes"] {
         assert!(!tree.contains(gone), "{gone} moved out of the top bar: {tree}");
     }
+}
+
+/// The side panel's header picks Files, Changes or Tasks, and holds the terminal button and close.
+#[gpui::test]
+fn the_panel_head_picks_a_surface(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe(
+        cx,
+        &staged,
+        "mods/topbar",
+        true,
+        json!({"panel": true}),
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    for id in [
+        "panel-pick-files",
+        "panel-pick-changes",
+        "panel-pick-tasks",
+        "panel-terminal",
+        "panel-close",
+    ] {
+        assert!(tree.contains(id), "missing {id}: {tree}");
+    }
+    for shown in ["Files", "Changes", "Tasks", "Open a terminal beside it"] {
+        assert!(tree.contains(shown), "missing {shown}: {tree}");
+    }
+    assert!(!tree.contains("panel-toggle"), "the header has no toggle: {tree}");
+}
+
+/// Mounts the top bar with `values`, runs `setup` after its init, clicks `id`, and returns the `run` effects.
+fn topbar_run_effects_after_click(
+    cx: &mut TestAppContext,
+    values: BTreeMap<String, Value>,
+    setup: &str,
+    id: &'static str,
+) -> Vec<Vec<Value>> {
+    use gpui::{Modifiers, MouseButton};
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-toggle.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/topbar", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let at = visual
+        .debug_bounds(id)
+        .unwrap_or_else(|| panic!("{id} is laid out"))
+        .center();
+    visual.simulate_mouse_move(at, None, Modifiers::default());
+    visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+    visual.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+    visual.run_until_parked();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    calls
+        .effects
+        .iter()
+        .filter(|(name, _)| name == "run")
+        .map(|(_, args)| args.clone())
+        .collect()
+}
+
+/// With the panel hidden, the toggle shows the panel on the surface the space last showed, Files when it has
+/// none: it selects that surface, then shows the panel.
+#[gpui::test]
+fn the_toggle_reopens_the_last_surface(cx: &mut TestAppContext) {
+    let shown = |surface: &str| {
+        vec![
+            vec![json!("layout.select"), json!({"stack": "panel-body", "child": surface})],
+            vec![json!("layout.show"), json!({"id": "panel"})],
+        ]
+    };
+    let values = || fixture(true, props(), updates("current", "current"));
+    let effects = topbar_run_effects_after_click(cx, values(), "", "panel-toggle");
+    assert_eq!(effects, shown("files"), "no surface remembered: Files");
+    let effects = topbar_run_effects_after_click(cx, values(), "this.last = {s1: 'changes'};", "panel-toggle");
+    assert_eq!(effects, shown("changes"), "the space's last surface reopens");
 }
 
 /// The brand row holds the space's "+" beside the sidebar toggle; the

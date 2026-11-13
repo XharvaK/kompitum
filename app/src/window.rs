@@ -11603,6 +11603,15 @@ export default class Probe extends View {
             assert!(desk.find(gone).is_none(), "desk: {gone} is no longer a block");
         }
         assert!(desk.find("nav").is_some() && desk.find("sidebar-footer").is_some(), "desk: the sidebar has its rows and its foot");
+        // The side panel: a header that is the top bar's mod, and a body of Files, Changes and Tasks.
+        let head = desk.find("panel-head").expect("desk: no panel-head");
+        assert!(
+            matches!(head.content(), Some(super::Content::Mod { name, .. }) if name == "topbar"),
+            "desk: the panel's header is the topbar mod"
+        );
+        let body = desk.find("panel-body").expect("desk: no panel-body");
+        let surfaces: Vec<&str> = body.children().iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(surfaces, ["files", "changes", "tasks"], "desk: the panel's surfaces");
         assert!(
             super::default_layout("focus").find("board").is_none(),
             "Focus is the terminal alone"

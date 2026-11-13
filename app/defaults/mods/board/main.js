@@ -476,7 +476,7 @@ export default class Board extends View {
       .id("board")
       .size_full()
       .min_h(0)
-      .bg(t.chrome)
+      .bg(props()?.embedded ? t.background : t.chrome)
       .text_size(13)
       .text_color(t.foreground)
       .track_focus(this.handle)
