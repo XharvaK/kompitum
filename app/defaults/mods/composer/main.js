@@ -63,7 +63,6 @@ export default class Composer extends View {
     this.historyAt = -1;
     this.draft = "";
     this.draftShared = null;
-    this.usageOpen = false;
     this.askAt = null;
     // The lead's state and its open ask, from Claude Code's hooks.
     this.state = null;

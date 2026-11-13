@@ -27,6 +27,15 @@ function firstLine(text) {
   return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 }
 
+// Claude's windows that count, as the composer counts them: a percentage, and a reset not yet past.
+function claudeWindows(usage) {
+  const now = Date.now() / 1000;
+  return [{ short: "5h", limit: usage?.five_hour }, { short: "week", limit: usage?.seven_day }]
+    .map(({ short, limit }) => ({ short, pct: limit?.used_percentage, resets: limit?.resets_at }))
+    .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
+    .filter((w) => !(typeof w.resets === "number" && w.resets < now));
+}
+
 export default class WorkspaceChrome extends View {
   // Only the nav copy reads the tasks, and only the foot reads the notes: the brand row needs neither.
   init(_props, cx) {
@@ -221,8 +230,9 @@ export default class WorkspaceChrome extends View {
       .child(tasks);
   }
 
-  // The sidebar's foot: Settings and the bell. The bell counts what needs you (the lead's question, blocked
+  // The sidebar's foot: Settings, Limits and the bell. The bell counts what needs you (the lead's question, blocked
   // agents, ready updates) plus the notes waiting for the Owner; tasks don't count. The rail keeps only the bell.
+  // Limits names the Claude windows in its tooltip, and a dot shows when the higher one is at 75 or more.
   foot(t, collapsed) {
     const iconButton = (id, icon, tip, action) => h_flex().id(id).w(28).h(28).flex_none().items_center().justify_center().rounded(7)
       .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip)
@@ -242,8 +252,16 @@ export default class WorkspaceChrome extends View {
     if (collapsed) return h_flex().size_full().px(0).justify_center().items_center().child(bell);
     const settingsButton = iconButton("settings", "mods/workspace-chrome/settings.svg", "Settings", () => run("app.settings"))
       .when(Boolean(u.app.ready), (el) => el.relative().child(div().size(6).rounded_full().bg(t.accent).absolute().top(4).right(4)));
+    const windows = claudeWindows(lead()?.usage);
+    const top = Math.max(0, ...windows.map((w) => w.pct));
+    const tip = ["Limits", ...windows.map((w) => `${w.short} ${Math.round(w.pct)}%`)].join(" · ");
+    const limits = iconButton("sidebar-usage", "mods/workspace-chrome/gauge.svg", tip,
+      () => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "pointer" }))
+      .when(top >= 75, (el) => el.relative().child(div().size(6).rounded_full().absolute().top(4).right(4)
+        .bg(top >= 100 ? t.blocked : t.working)));
     return h_flex().size_full().px(10).gap(2).items_center()
       .child(settingsButton)
+      .child(limits)
       .child(div().flex_1())
       .child(bell);
   }

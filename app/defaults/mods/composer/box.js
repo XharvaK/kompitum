@@ -234,7 +234,7 @@ export default {
     const fraction = contextFraction(usage);
     const windows = usage ? usageWindows(usage) : [];
     const limit = usage ? this.usageLimit(t, windows) : null;
-    const ring = fraction == null ? null : this.usageControl(t, usage, fraction, windows);
+    const ring = fraction == null ? null : this.usageRing(t, fraction);
     const frame = div()
       .when(panel, (el) => el.w_full().flex_none().px(20).py(10))
       .when(!panel, (el) => el.size_full().p(10))

@@ -173,7 +173,8 @@ the highlighted line shows where it will land.
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
 shown one's name. A window starts on `desk` ("Desk": Search and Tasks, then
-the agents list on the left, with Settings and the bell at its foot (the
+the agents list on the left, with Settings, Limits and the bell at its foot
+(Limits shows the context, Claude's limits and what the workers cost; the
 bell lists what needs you and the notes waiting for you); the lead or one
 terminal in the middle; above it a top bar with where you are (folder / tab,
 branch, machine), Files and Changes. Notes with the agent that joined
@@ -873,7 +874,7 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
   (tinted with the text color). Saving an asset under `mods/` updates every
   mod showing it, including images that were missing or invalid on first load.
 - The defaults are mods too, read them as examples: `spaces`, `agents`,
-  `bell`, `tabs` (the tab bar), `menu`, `prompt`, `confirm`, `help`,
+  `bell`, `limits`, `tabs` (the tab bar), `menu`, `prompt`, `confirm`, `help`,
   `toast`, Terminals' `picker`, `peek`, and `pane` (the pane header the
   shipped layouts use, except Desk, which names the shown tab in its top
   bar), and `worktree`

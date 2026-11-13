@@ -2,7 +2,7 @@
 
 import { div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb } from "gpui-base";
-import { run, lead as leadOf, shared } from "kompitum";
+import { run, lead as leadOf, shared, openOverlay } from "kompitum";
 import { hairline } from "./util.js";
 
 export function modelLabel(entry, id) {
@@ -51,11 +51,6 @@ const pad2 = (n) => String(n).padStart(2, "0");
 export function leadUsage() {
   const usage = leadOf()?.usage;
   return usage && typeof usage === "object" ? usage : null;
-}
-
-// Tokens as thousands: 271000 is "271K".
-function kTokens(tokens) {
-  return `${Math.round(tokens / 1000)}K`;
 }
 
 // The clock time when a reset is today, the weekday within a week, else "23 Nov" (the rule of Settings > Agents).
@@ -433,95 +428,9 @@ export default {
       .rounded(6)
       .cursor_pointer()
       .hover((s) => s.bg(t.hover))
-      .tooltip(`Context ${Math.round(fraction * 100)}%`)
+      .tooltip(`Context ${Math.round(fraction * 100)}% · Limits`)
+      .on_click(() => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "pointer", props: { terminal: this.terminal } }))
       .child(drawing);
-  },
-
-  // Compact now is live only while the lead waits, no card is open, Claude is not compacting and the count is known.
-  compactReady() {
-    return (
-      this.state === "waiting"
-      && !this.ask
-      && leadOf()?.compacting !== true
-      && typeof leadUsage()?.context_tokens === "number"
-    );
-  },
-
-  compactNow(cx) {
-    this.usageOpen = false;
-    run("lead.compact", { terminal: this.terminal });
-    cx.notify();
-  },
-
-  // The card the ring opens: the context, one row per present limit, and Compact now.
-  usageCard(t, usage, windows) {
-    const compact = this.compactReady();
-    const rows = windows.map((w) => {
-      const when = resetWords(w.resets);
-      const over = w.pct >= 100;
-      const words = over
-        ? (when ? `Used up · back ${when}` : "Used up")
-        : (when ? `${Math.round(w.pct)}% · resets ${when}` : `${Math.round(w.pct)}%`);
-      return h_flex()
-        .w_full()
-        .justify_between()
-        .items_center()
-        .child(div().text_size(12.5).text_color(t.muted).child(w.long))
-        .child(div().text_size(12.5).text_color(over ? t.blocked : t.foreground).child(words));
-    });
-    return v_flex()
-      .w(260)
-      .p(12)
-      .gap(8)
-      .rounded(10)
-      .border_1()
-      .border_color(t.border)
-      .bg(t.popover)
-      .child(
-        v_flex()
-          .gap(4)
-          .child(
-            h_flex()
-              .w_full()
-              .justify_between()
-              .items_center()
-              .child(div().text_size(12.5).text_color(t.muted).child("Context"))
-              .child(
-                div()
-                  .text_size(12.5)
-                  .text_color(t.foreground)
-                  .child(`${kTokens(usage.context_tokens)} of ${kTokens(usage.compact_at)}`),
-              ),
-          )
-          .child(div().text_size(12).text_color(t.dim).child("Kompitum tidies up by itself while you're away.")),
-      )
-      .children(rows)
-      .child(
-        h_flex()
-          .id("composer-compact-now")
-          .w_full()
-          .h(30)
-          .rounded(8)
-          .border_1()
-          .border_color(t.border)
-          .items_center()
-          .justify_center()
-          .when(compact, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.compactNow(cx)))
-          .child(div().text_size(12.5).text_color(compact ? t.foreground : t.dim).child("Compact now")),
-      );
-  },
-
-  // The ring and the card it opens: a popover whose trigger is the ring.
-  usageControl(t, usage, fraction, windows) {
-    return Popover.new("composer-usage-card")
-      .anchor("bottom_right")
-      .open(Boolean(this.usageOpen))
-      .on_open_change((open, cx) => {
-        this.usageOpen = open;
-        cx.notify();
-      })
-      .trigger(this.usageRing(t, fraction))
-      .content(this.usageCard(t, usage, windows));
   },
 
   // The limit in words, only when a present window is at 75% or more.

@@ -16,6 +16,7 @@ mod agents_page;
 mod bell;
 mod cli_errors;
 mod composer;
+mod limits;
 mod machines;
 mod mailbox;
 mod palette_keys;

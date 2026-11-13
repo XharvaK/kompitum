@@ -112,18 +112,37 @@ fn the_sidebar_offers_search_and_tasks(cx: &mut TestAppContext) {
     }
 }
 
-/// The sidebar's foot holds Settings and the bell; the notes moved into the bell, so no Notes button is here.
+/// The sidebar's foot holds Settings, Limits and the bell; the notes moved into the bell, so no Notes button is here.
 #[gpui::test]
-fn the_foot_holds_settings_and_the_bell(cx: &mut TestAppContext) {
+fn the_foot_holds_settings_limits_and_the_bell(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
     values.insert("vaultJson".into(), vault_notes(vec![]));
     let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
-    for shown in ["settings", "sidebar-bell", "Nothing needs you"] {
+    for shown in ["settings", "sidebar-usage", "Limits", "sidebar-bell", "Nothing needs you"] {
         assert!(tree.contains(shown), "missing {shown}: {tree}");
     }
     assert!(!tree.contains("sidebar-notes"), "the notes moved into the bell: {tree}");
+}
+
+/// Limits' tooltip names Claude's windows that have a percentage, so the Owner sees the higher one at a glance.
+#[gpui::test]
+fn limits_names_claudes_windows_in_its_tooltip(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert("vaultJson".into(), vault_notes(vec![]));
+    values.insert(
+        "lead".into(),
+        json!({"state": "waiting", "ask": null, "usage": {
+            "context_tokens": 300000, "compact_at": 444000,
+            "five_hour": {"used_percentage": 82, "resets_at": null}, "seven_day": null
+        }}),
+    );
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    assert!(tree.contains("sidebar-usage"), "{tree}");
+    assert!(tree.contains("5h 82%"), "{tree}");
 }
 
 /// The bell at the sidebar's foot counts what needs you (blocked agents, the lead's ask, ready updates) and

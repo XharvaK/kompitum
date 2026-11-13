@@ -378,6 +378,7 @@ fn composer_live_run_after_clicks(
                 || name == "pickFiles"
                 || name == "pickFolder"
                 || name == "writeTextFile"
+                || name == "openOverlay"
         })
         .map(|(_, args)| args.clone())
         .collect()
@@ -752,7 +753,7 @@ fn the_context_ring_draws_when_the_context_is_counted(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let tree = composer_draws(cx, usage_values(usage_with(300000, Value::Null), json!({})), None);
     assert!(tree.contains("composer-usage"), "{tree}");
-    assert!(tree.contains("Context 68%"), "{tree}");
+    assert!(tree.contains("Context 68% · Limits"), "{tree}");
 
     let none = composer_draws(cx, usage_values(Value::Null, json!({})), None);
     assert!(!none.contains("composer-usage"), "{none}");
@@ -819,17 +820,21 @@ fn while_compacting_the_composer_holds_the_message(cx: &mut TestAppContext) {
     );
 }
 
-/// The ring opens a card with the context in K and the Compact now button, which is live when the lead waits.
+/// The ring opens the Limits sheet for this lead's terminal, so the sheet can offer Compact now.
 #[gpui::test]
-fn the_card_shows_the_context_and_compact_now(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let values = usage_values(usage_with(271000, Value::Null), json!({}));
-    let tree = composer_draws(cx, values, Some("this.usageOpen = true;"));
-    assert!(tree.contains("of 444K"), "{tree}");
-    assert!(tree.contains("271K"), "{tree}");
-    assert!(tree.contains("Compact now"), "{tree}");
-    assert!(tree.contains("composer-compact-now"), "{tree}");
-    assert!(tree.contains("Kompitum tidies up by itself while you're away."), "{tree}");
+fn the_ring_opens_the_limits_sheet(cx: &mut TestAppContext) {
+    let effects = composer_live_run_after_clicks(
+        cx,
+        usage_values(usage_with(300000, Value::Null), json!({})),
+        "",
+        &["composer-usage"],
+    );
+    assert!(
+        effects.iter().any(|args| args.first().is_some_and(|spec| {
+            spec.get("mod") == Some(&json!("limits")) && spec.pointer("/props/terminal") == Some(&json!("t1"))
+        })),
+        "the ring opens the limits sheet with the terminal: {effects:?}"
+    );
 }
 
 /// The composer reports a draft through the shared flag, set only when it changes.
