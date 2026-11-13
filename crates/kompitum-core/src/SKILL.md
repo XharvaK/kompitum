@@ -348,7 +348,10 @@ paths start at your current folder. Prefer explicit paths for remote work.
 - Programs get the login session's environment. A local `DISPLAY` or
   `WAYLAND_DISPLAY` is left out only when its socket is missing or refuses
   connections. Host displays (including SSH forwarding) stay as they are.
-  A missing `XAUTHORITY` file does not remove a display.
+  A missing `XAUTHORITY` file does not remove a display. A core started
+  inside a Claude Code session (`CLAUDECODE` set) passes none of its
+  `CLAUDE*` variables on, so a Claude started in a terminal is its own
+  session and saves its transcript.
 - `kom keep <t>` (or `run --keep`) replaces a lost program with a shell,
   never reruns a task. `kom keep <t> --off` disables recovery. Signal death
   without an exit code is loss too. After a grace delay, recovery runs on

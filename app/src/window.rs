@@ -764,6 +764,8 @@ pub struct AppWindow {
     folders_checked: HashMap<String, FolderCheck>,
     /// When Kompitum started each terminal: a listing already in flight can't know them yet.
     born: RefCell<HashMap<String, Instant>>,
+    /// Leads started with a resume: the resume watch retries a failed one, so their launch failure gets no toast.
+    lead_resuming: HashSet<String>,
     /// Connection epoch: ignore replies from an old connection.
     core_generation: u64,
     checking_closed: bool,
@@ -896,6 +898,7 @@ impl AppWindow {
             cwds: HashMap::new(),
             folders_checked: HashMap::new(),
             born: RefCell::new(HashMap::new()),
+            lead_resuming: HashSet::new(),
             core_generation: 0,
             checking_closed: false,
             documents_watching: false,
@@ -3519,7 +3522,7 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.born.borrow_mut().remove(address).is_none() {
+        if self.born.borrow_mut().remove(address).is_none() || self.lead_resuming.remove(address) {
             return;
         }
         let core = self.core.clone();
@@ -4010,6 +4013,8 @@ impl AppWindow {
             self.check_lead_auth(terminal.clone(), window, cx);
         }
         if choice.is_resume_or_continue() {
+            // The watch below starts a fresh conversation when the resume fails, so no launch toast for it.
+            self.lead_resuming.insert(terminal.clone());
             self.watch_lead_resume(
                 terminal.clone(),
                 program,
@@ -4075,15 +4080,22 @@ impl AppWindow {
         let core = self.core.clone();
         let watched = terminal.clone();
         cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_secs(10))
-                .await;
-            let record = cx
-                .background_executor()
-                .spawn(async move {
-                    core.call("terminal.get", json!({ "terminal": watched }))
-                })
-                .await;
+            // A resume that fails ends within seconds ("No conversation found"): look every second for ten,
+            // so the retry starts as soon as it ends instead of after the whole wait.
+            let mut looks = 0;
+            let record = loop {
+                looks += 1;
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let (core, watched) = (core.clone(), watched.clone());
+                let got = cx
+                    .background_executor()
+                    .spawn(async move { core.call("terminal.get", json!({ "terminal": watched })) })
+                    .await;
+                let ended = got.as_ref().map_or(true, |record| record.get("reason").is_some_and(|why| !why.is_null()));
+                if ended || looks == 10 {
+                    break got;
+                }
+            };
             let record = match record {
                 Ok(record) => record,
                 Err(error) => {

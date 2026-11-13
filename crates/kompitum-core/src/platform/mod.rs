@@ -179,6 +179,7 @@ pub fn utf8_vars() -> impl Iterator<Item = (String, String)> {
 pub async fn program_env() -> std::collections::BTreeMap<String, String> {
     #[allow(unused_mut)]
     let mut env: std::collections::BTreeMap<String, String> = utf8_vars().collect();
+    drop_claude_session(&mut env);
     #[cfg(target_os = "linux")]
     {
         env.retain(|k, _| !systemd::SERVICE.contains(&k.as_str()));
@@ -202,6 +203,17 @@ pub async fn program_env() -> std::collections::BTreeMap<String, String> {
     env
 }
 
+/// What a Claude Code session sets for the programs it starts; `CLAUDECODE` marks them. A core started inside one
+/// (by `kom` from Claude's own shell) would hand that session to every terminal, and a Claude started there then takes
+/// itself for that session's child and saves no transcript, so the lead can't resume its conversation. Every `CLAUDE*`
+/// goes while `CLAUDECODE` is set (the Owner's call, 2026-11-13). On Windows the registry's values are added back
+/// afterwards, so a variable the user set for themselves stays.
+pub fn drop_claude_session(env: &mut std::collections::BTreeMap<String, String>) {
+    if env.keys().any(|key| key.eq_ignore_ascii_case("CLAUDECODE")) {
+        env.retain(|key, _| !key.to_ascii_uppercase().starts_with("CLAUDE"));
+    }
+}
+
 /// 32 random hex digits (ids, socket and folder names).
 pub fn random_hex() -> String {
     let mut bytes = [0u8; 16];
@@ -216,4 +228,21 @@ pub mod signal {
     pub const INT: i32 = 2;
     pub const KILL: i32 = 9;
     pub const TERM: i32 = 15;
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_claude_session_that_started_the_core_reaches_no_terminal() {
+        let vars = |pairs: &[(&str, &str)]| -> std::collections::BTreeMap<String, String> {
+            pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect()
+        };
+        let mut env = vars(&[("CLAUDECODE", "1"), ("CLAUDE_CODE_CHILD_SESSION", "1"), ("Claude_Pid", "7"), ("PATH", "/bin")]);
+        super::drop_claude_session(&mut env);
+        assert_eq!(env, vars(&[("PATH", "/bin")]));
+
+        let mut own = vars(&[("CLAUDE_CONFIG_DIR", "/mine"), ("PATH", "/bin")]);
+        super::drop_claude_session(&mut own);
+        assert_eq!(own.len(), 2, "without a session's mark, nothing goes: {own:?}");
+    }
 }
