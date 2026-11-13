@@ -478,6 +478,29 @@ fn the_attach_button_opens_the_file_picker_on_a_click(cx: &mut TestAppContext) {
     );
 }
 
+/// On Windows the mic is there, and a click runs dictation.start (Windows' voice typing).
+#[gpui::test]
+fn the_mic_opens_windows_voice_typing(cx: &mut TestAppContext) {
+    let mut values = conversation_values(json!([]), "hidden", Value::Null, None);
+    values.insert(
+        "window".into(),
+        json!({"platform":"windows","titlebar":"none","buttons":true,"maximized":false,"fullscreen":false,"active":true}),
+    );
+    let effects = composer_live_run_after_clicks(cx, values, "", &["composer-voice"]);
+    assert!(
+        effects.iter().any(|args| args.first() == Some(&json!("dictation.start"))),
+        "the mic should run dictation.start: {effects:?}"
+    );
+}
+
+/// Off Windows (the default fixture is Linux) the composer draws no mic.
+#[gpui::test]
+fn no_mic_off_windows(cx: &mut TestAppContext) {
+    let tree = composer_draws(cx, conversation_values(json!([]), "hidden", Value::Null, None), None);
+    assert!(tree.contains("composer-attach"), "{tree}");
+    assert!(!tree.contains("composer-voice"), "{tree}");
+}
+
 /// Send on a click sends the typed words.
 #[gpui::test]
 fn send_on_a_click_sends_the_typed_words(cx: &mut TestAppContext) {

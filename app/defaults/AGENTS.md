@@ -642,6 +642,8 @@ The main ones:
   next permission mode; refused while it asks, shows a menu or tidies up). `lead()` carries `permission_mode` (from
   Claude Code's hooks) and `mode_guessed` (true from a click until the next hook says the mode).
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
+  `dictation.start` (open Windows' voice typing, Win+H, for the focused text box; the composer's mic runs it
+  after focusing its box; Windows only).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`
   (personal tree edits; on shipped layouts only click/look fields change),

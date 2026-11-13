@@ -2,7 +2,7 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
-import { run, pickFiles, pasteImage, lead as leadOf } from "kompitum";
+import { run, pickFiles, pasteImage, lead as leadOf, window } from "kompitum";
 import { errorText, hairline, COMPACT_FIRST_TOKENS } from "./util.js";
 import { effortIds, leadUsage, modelLabel } from "./model.js";
 
@@ -86,6 +86,17 @@ export default {
     if (path) {
       this.addChip(path);
       this.text.focus();
+    }
+    cx.notify();
+  },
+
+  dictate(cx) {
+    this.text.focus();
+    try {
+      run("dictation.start", {});
+      this.error = null;
+    } catch (error) {
+      this.error = errorText(error);
     }
     cx.notify();
   },
@@ -222,6 +233,23 @@ export default {
       .tooltip("Attach files")
       .on_click((_e, cx) => this.attach(cx))
       .child(svg("mods/composer/paperclip.svg").size(16));
+    // Voice: Windows' own voice typing, opened by Win+H for the focused box. Its words wait in the box like typed ones.
+    const voice = window()?.platform === "windows" && !first && !this.ask
+      ? h_flex()
+        .id("composer-voice")
+        .w(28)
+        .h(28)
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .rounded(14)
+        .cursor_pointer()
+        .text_color(t.muted)
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .tooltip("Dictate (Win+H)")
+        .on_click((_e, cx) => this.dictate(cx))
+        .child(svg("mods/composer/mic.svg").size(16))
+      : null;
     const note = this.error
       ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)
       : this.compactThenSend
@@ -280,6 +308,7 @@ export default {
               .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
               .when(Boolean(limit), (el) => el.child(limit))
               .when(Boolean(pill), (el) => el.child(pill))
+              .when(Boolean(voice), (el) => el.child(voice))
               .when(Boolean(ring), (el) => el.child(ring))
               .when(!first && !this.ask, (el) => el.child(send)),
           );

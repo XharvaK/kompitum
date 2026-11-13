@@ -275,6 +275,11 @@ pub const COMMANDS: &[Command] = &[
         "Answer the lead's open ask: its id and the Owner's answer ({ action: allow, allow_always, deny, approve, keep_planning, answers, or terminal, with note or answers }).",
     ),
     cmd(
+        "dictation.start",
+        &[],
+        "Open Windows' voice typing (Win+H) for the focused text box: the words land there like typed ones. Windows only.",
+    ),
+    cmd(
         "layout.switch",
         &[opt("name")],
         "Show a layout (layouts/<name>.json), or the next one.",

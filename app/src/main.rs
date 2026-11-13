@@ -5,6 +5,7 @@ mod bench;
 mod commands;
 mod control;
 mod core_bin;
+mod dictation;
 mod feedback;
 mod files;
 mod inflight;

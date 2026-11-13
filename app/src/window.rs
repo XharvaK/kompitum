@@ -6618,6 +6618,12 @@ impl AppWindow {
                 crate::update::relaunch();
                 cx.quit();
             }
+            "dictation.start" => {
+                if let Err(why) = crate::dictation::start() {
+                    return self.fail(why);
+                }
+                return;
+            }
             "window.close" | "window.minimize" | "window.maximize" => {
                 return self.window_command(name, window, cx);
             }
