@@ -72,6 +72,7 @@ export default class Settings extends View {
     this.filter = "";
     this.search = "";
     this.highlight = null; // { section, key } while a search result's row is lit
+    this.advancedOpen = {}; // which pages' Advanced folds the person opened
     this.searchInput = InputState.new({ placeholder: "Search or ask" });
     this.searchInput.on("change", (_e, cx) => { this.search = this.searchInput.value(); cx.notify(); });
     this.searchInput.on("submit", (_e, cx) => {
@@ -258,6 +259,32 @@ export default class Settings extends View {
           .when(Boolean(about), (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.dim).child(about))),
       )
       .child(div().flex_none().child(control));
+  }
+
+  // The rarely used rows of a page, folded under "Advanced". The fold opens by
+  // itself while a search result for one of its rows is lit (`keys`).
+  advanced(t, key, rows, keys) {
+    const hit = Boolean(this.highlight) && this.highlight.section === this.sectionNow() && keys.includes(this.highlight.key);
+    const open = Boolean(this.advancedOpen[key]) || hit;
+    return v_flex()
+      .w_full()
+      .child(
+        h_flex()
+          .id(`st-adv-${key}`)
+          .w_full()
+          .py(12)
+          .gap(6)
+          .items_center()
+          .cursor_pointer()
+          .hover((s) => s.text_color(t.foreground))
+          .on_click((_e, cx) => {
+            this.advancedOpen[key] = !this.advancedOpen[key];
+            cx.notify();
+          })
+          .child(div().text_size(13).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child("Advanced"))
+          .child(div().text_size(13).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child(open ? "⌄" : "›")),
+      )
+      .when(open, (el) => el.child(v_flex().w_full().children(rows)));
   }
 
   button(t, id, label, onClick) {
@@ -748,7 +775,21 @@ export default class Settings extends View {
           .items_center()
           .border_b(1)
           .border_color(t.border)
-          .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Settings"))
+          .child(
+            // Where the person is: Settings › the page's title, or Search while the field has text.
+            h_flex()
+              .id("st-crumbs")
+              .items_center()
+              .child(div().text_size(15).font_semibold().text_color(t.dim).child("Settings"))
+              .child(div().px(6).text_size(15).font_semibold().text_color(t.dim).child("›"))
+              .child(
+                div()
+                  .text_size(15)
+                  .font_semibold()
+                  .text_color(t.foreground)
+                  .child(query ? "Search" : SECTIONS.find((s) => s.id === section)?.title ?? ""),
+              ),
+          )
           .child(div().flex_1())
           .child(
             div()

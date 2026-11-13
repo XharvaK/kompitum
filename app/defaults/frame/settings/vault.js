@@ -137,16 +137,24 @@ export function vaultSection(view, t, cx) {
   } else {
     state = value(`Up to date${view.vaultCheckedAt ? ` \u00b7 ${ago(view.vaultCheckedAt)}` : ""}`);
   }
+  // Folder and Unfiled are the rarely used rows: they sit under Advanced, except a folder that isn't set,
+  // which stays in sight.
+  const folderRow = view.row(t, "Folder", null, folderControl);
+  const unset = !folder && Boolean(vault || view.vaultError);
+  const advancedRows = unset ? [] : [folderRow];
+  if (filed.length > 0) {
+    advancedRows.push(view.row(t, "Unfiled", null, h_flex().gap(8).items_center()
+      // The problems' own words stay in the tooltip, as git's words do under Sync.
+      .child(value(`${filed.length} ${filed.length === 1 ? "note" : "notes"}`).tooltip(filed.join("\n")))
+      .child(view.textButton(t, "st-vault-unfiled", "Show", () => run("app.mailbox")))));
+  }
   return v_flex()
     .w_full()
     .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
       .child("The notes your agents leave each other."))
-    .child(view.row(t, "Folder", null, folderControl))
+    .when(unset, (el) => el.child(folderRow))
     .child(view.row(t, "Sync", null, state))
-    .when(filed.length > 0, (el) => el.child(view.row(t, "Unfiled", null, h_flex().gap(8).items_center()
-      // The problems' own words stay in the tooltip, as git's words do under Sync.
-      .child(value(`${filed.length} ${filed.length === 1 ? "note" : "notes"}`).tooltip(filed.join("\n")))
-      .child(view.textButton(t, "st-vault-unfiled", "Show", () => run("app.mailbox"))))))
     .child(view.row(t, "Needs you", null, value(`${needs} ${needs === 1 ? "note" : "notes"}`)))
+    .child(view.advanced(t, "vault", advancedRows, ["Folder", "Unfiled"]))
     .child(h_flex().pt(16).child(view.button(t, "st-open-mailbox", "Open the mailbox", () => run("app.mailbox"))));
 }

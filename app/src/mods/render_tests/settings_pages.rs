@@ -835,7 +835,14 @@ fn a_note_problem_is_not_a_failed_pull(cx: &mut TestAppContext) {
             "notes": []
         }),
     );
-    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        values,
+        Some("this.advancedOpen = { vault: true };"),
+    )
+    .unwrap();
     assert!(tree.contains("Up to date"), "{tree}");
     assert!(!tree.contains("Couldn't pull"), "{tree}");
     assert!(
@@ -1111,3 +1118,107 @@ fn notifications_ask_the_lead_for_sounds(cx: &mut TestAppContext) {
     assert!(!tree.contains("MP3"), "{tree}");
 }
 
+/// The title bar says where the person is: Settings › the page, or Search while the field has text.
+#[gpui::test]
+fn settings_shows_where_you_are(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for (section, title) in [("appearance", "Appearance"), ("vault", "Vault")] {
+        let mut p = props();
+        p["section"] = json!(section);
+        let tree = describe(
+            cx,
+            &staged,
+            "frame/settings",
+            true,
+            p,
+            updates("current", "current"),
+            None,
+        )
+        .unwrap();
+        let crumbs = crumb_lines(&tree);
+        assert!(crumbs.contains(&format!("text \"{title}\"")), "{section}: {tree}");
+    }
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        props(),
+        updates("current", "current"),
+        Some("this.search = 'zoom';"),
+    )
+    .unwrap();
+    assert!(crumb_lines(&tree).contains("text \"Search\""), "{tree}");
+}
+
+/// The breadcrumb's own lines (`st-crumbs` and what is nested in it), found by indentation.
+fn crumb_lines(tree: &str) -> String {
+    let lines: Vec<&str> = tree.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.contains("st-crumbs"))
+        .unwrap_or_else(|| panic!("no st-crumbs: {tree}"));
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let mut crumbs = vec![lines[at]];
+    crumbs.extend(lines[at + 1..].iter().copied().take_while(|line| indent(line) > indent(lines[at])));
+    crumbs.join("\n")
+}
+
+/// The rarely used rows sit under Advanced: shown only when the fold is opened.
+#[gpui::test]
+fn rarely_used_settings_fold_under_advanced(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("appearance");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p.clone(),
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("st-adv-appearance") && tree.contains("Advanced"), "{tree}");
+    assert!(!tree.contains("Interface font"), "{tree}");
+    assert!(!tree.contains("st-layout-reset"), "{tree}");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("current", "current"),
+        Some("this.advancedOpen = { appearance: true };"),
+    )
+    .unwrap();
+    assert!(tree.contains("Interface font"), "{tree}");
+    assert!(tree.contains("st-layout-reset"), "{tree}");
+}
+
+/// Appearance draws the three theme tiles and a sample in the chosen fonts.
+#[gpui::test]
+fn appearance_offers_three_tiles_and_a_sample(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("appearance");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("current", "current"),
+        None,
+    )
+    .unwrap();
+    for id in ["st-ap-System", "st-ap-Light", "st-ap-Dark", "st-sample"] {
+        assert!(tree.contains(id), "{id}: {tree}");
+    }
+    assert!(tree.contains("Fix the login bug, please"), "{tree}");
+    assert!(tree.contains("cargo test login"), "{tree}");
+}

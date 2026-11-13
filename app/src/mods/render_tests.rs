@@ -1809,7 +1809,7 @@ fn font_dropdowns_scroll_their_lists(cx: &mut TestAppContext) {
             "frame/settings",
             values,
             Some(&format!(
-                "this.fontMenus = {{ {which}: {{ open: true }} }};"
+                "this.advancedOpen = {{ appearance: true }}; this.fontMenus = {{ {which}: {{ open: true }} }};"
             )),
         )
         .unwrap();
@@ -2341,7 +2341,16 @@ fn appearance_has_no_layout_or_colour_pickers(cx: &mut TestAppContext) {
     let staged = Staged::new();
     let mut p = props();
     p["section"] = json!("appearance");
-    let tree = describe(cx, &staged, "frame/settings", true, p, updates("current", "current"), None).unwrap();
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        p,
+        updates("current", "current"),
+        Some("this.advancedOpen = { appearance: true };"),
+    )
+    .unwrap();
     assert!(tree.contains("Theme"), "{tree}");
     assert!(tree.contains("st-layout-reset"), "{tree}");
     assert!(!tree.contains("Colours"), "{tree}");
@@ -3572,7 +3581,7 @@ fn the_vault_section_draws_its_folder_and_mailbox_button(cx: &mut TestAppContext
         &staged,
         "frame/settings",
         fixture(true, p, updates("current", "current")),
-        None,
+        Some("this.advancedOpen = { vault: true };"),
     )
     .unwrap();
     assert!(tree.contains("st-s-vault"), "{tree}");

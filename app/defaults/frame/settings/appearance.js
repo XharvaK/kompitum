@@ -15,34 +15,131 @@ const APPEARANCES = [
 const DEFAULT_FONT = "Google Sans Code";
 const DEFAULT_UI_FONT = "Google Sans Flex";
 
-function appearancePicker(view, t, cx) {
+// The fixed colours of each tile's picture, so it shows the look whatever is chosen.
+const WINDOW_LOOKS = {
+  Light: { window: "#f4f3ef", sidebar: "#e9e7e1", bars: "#cfccc4", lines: "#bdb9b0", composer: "#ffffff" },
+  Dark: { window: "#1c1e23", sidebar: "#15171a", bars: "#33373e", lines: "#454a53", composer: "#2a2d33" },
+};
+
+// A small window: a sidebar with three bars, and a main area with two message lines and a composer.
+function windowArt(c) {
+  return h_flex()
+    .w(112)
+    .h(72)
+    .bg(c.window)
+    .child(v_flex().w(28).h_full().p(6).gap(5).bg(c.sidebar).children([0, 1, 2].map(() => div().h(4).w(16).rounded(2).bg(c.bars))))
+    .child(
+      v_flex()
+        .flex_1()
+        .h_full()
+        .justify_end()
+        .child(v_flex().px(8).pt(10).gap(5).child(div().h(4).w(52).rounded(2).bg(c.lines)).child(div().h(4).w(36).rounded(2).bg(c.lines)))
+        .child(div().h(12).rounded(4).mx(8).mb(8).bg(c.composer)),
+    );
+}
+
+// System: the left half of Light's window and the right half of Dark's.
+function tileArt(which) {
+  if (which !== "System") return windowArt(WINDOW_LOOKS[which]);
+  return h_flex()
+    .w(112)
+    .h(72)
+    .child(div().w(56).h_full().overflow_hidden().child(windowArt(WINDOW_LOOKS.Light)))
+    .child(div().w(56).h_full().overflow_hidden().child(div().ml(-56).child(windowArt(WINDOW_LOOKS.Dark))));
+}
+
+// The Theme row's three tiles: a picture and its name. A click does what the old picker did.
+function appearanceTiles(view, t) {
   const now = view.person.appearance ?? null;
   return h_flex()
-    .p(2)
-    .gap(2)
-    .rounded(8)
-    .border_1()
-    .border_color(t.border)
-    .bg(t.background)
+    .gap(12)
     .children(
-      APPEARANCES.map(([value, label]) =>
-        div()
+      APPEARANCES.map(([value, label]) => {
+        const chosen = now === value;
+        return v_flex()
           .id(`st-ap-${label}`)
-          .px(12)
-          .py(4)
-          .rounded(6)
-          .text_size(13)
+          .gap(6)
+          .items_center()
           .cursor_pointer()
-          .when(now === value, (el) => el.bg(t.raised).text_color(t.foreground).border_1().border_color(t.border))
-          .when(now !== value, (el) => el.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
           .on_click((_e, cx) =>
             view.change((p) => {
               if (value === null) delete p.appearance;
               else p.appearance = value;
             }, cx),
           )
-          .child(label),
-      ),
+          .child(
+            div()
+              .w(112)
+              .h(72)
+              .rounded(8)
+              .overflow_hidden()
+              .border_2()
+              .border_color(chosen ? t.accent : t.border)
+              .when(!chosen, (el) => el.hover((s) => s.border_color(t.input)))
+              .child(tileArt(label)),
+          )
+          .child(div().text_size(12.5).text_color(chosen ? t.foreground : t.muted).child(label));
+      }),
+    );
+}
+
+// The fonts' sample: a reply, a diff and a terminal, in the chosen fonts and sizes.
+function sample(t, s) {
+  const ui = s.ui_font_family ?? DEFAULT_UI_FONT;
+  const mono = s.font_family ?? DEFAULT_FONT;
+  const size = Math.floor((s.font_size ?? 14) * 0.85);
+  const diffLine = (text, color) =>
+    div()
+      .px(10)
+      .py(2)
+      .text_size(size)
+      .font_family(mono)
+      .text_color(color)
+      .bg(color + "1f")
+      .child(text);
+  return v_flex()
+    .id("st-sample")
+    .w_full()
+    .gap(10)
+    .p(14)
+    .rounded(10)
+    .border_1()
+    .border_color(t.border)
+    .bg(t.background)
+    .child(
+      h_flex()
+        .justify_end()
+        .child(
+          div()
+            .px(12)
+            .py(7)
+            .rounded(12)
+            .bg(t.raised)
+            .text_size(13)
+            .text_color(t.foreground)
+            .font_family(ui)
+            .child("Fix the login bug, please"),
+        ),
+    )
+    .child(div().text_size(13).text_color(t.foreground).font_family(ui).child("Found it: the token check ran before the session loaded."))
+    .child(
+      v_flex()
+        .rounded(6)
+        .overflow_hidden()
+        .border_1()
+        .border_color(t.border)
+        .child(diffLine("- if (!token) return deny();", t.ansi1))
+        .child(diffLine("+ if (!session || !token) return deny();", t.ansi2)),
+    )
+    .child(
+      v_flex()
+        .p(10)
+        .rounded(6)
+        .bg(t.canvas ?? t.background)
+        .text_size(size)
+        .font_family(mono)
+        .child(div().text_color(t.foreground).child("$ cargo test login"))
+        .child(div().text_color(t.ansi2).child("test result: ok. 12 passed")),
     );
 }
 
@@ -135,8 +232,17 @@ export function appearancePage(view, t, cx) {
       );
   return v_flex()
     .w_full()
-    .child(view.row(t, "Theme", null, appearancePicker(view, t, cx), "theme"))
-    .child(view.row(t, "Window", "Puts the window back as Kompitum ships it: its panes, sizes and drawers.", layoutReset(view, t), "layout"))
+    .child(
+      v_flex()
+        .w_full()
+        .gap(10)
+        .py(12)
+        .border_b(1)
+        .border_color(t.border)
+        .when(view.lit("theme"), (el) => el.bg(t.selected).rounded(7))
+        .child(div().text_size(14).text_color(t.foreground).child("Theme"))
+        .child(appearanceTiles(view, t)),
+    )
     .child(div().h(18))
     .child(view.heading(t, "Size and fonts"))
     .child(
@@ -153,5 +259,17 @@ export function appearancePage(view, t, cx) {
       ),
     )
     .child(fontRow("font", "font_size", "Terminal font", s.font_family, DEFAULT_FONT, s.font_size))
-    .child(fontRow("ui_font", null, "Interface font", s.ui_font_family, DEFAULT_UI_FONT));
+    .child(view.heading(t, "Sample"))
+    .child(sample(t, s))
+    .child(
+      view.advanced(
+        t,
+        "appearance",
+        [
+          view.row(t, "Window", "Puts the window back as Kompitum ships it: its panes, sizes and drawers.", layoutReset(view, t), "layout"),
+          fontRow("ui_font", null, "Interface font", s.ui_font_family, DEFAULT_UI_FONT),
+        ],
+        ["layout", "ui_font"],
+      ),
+    );
 }
