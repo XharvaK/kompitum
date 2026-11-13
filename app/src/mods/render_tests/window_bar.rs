@@ -112,39 +112,29 @@ fn the_sidebar_offers_search_and_tasks(cx: &mut TestAppContext) {
     }
 }
 
-/// The sidebar's foot holds Settings, Notes and the bell; with a joined system, Notes names it.
+/// The sidebar's foot holds Settings and the bell; the notes moved into the bell, so no Notes button is here.
 #[gpui::test]
-fn the_foot_holds_settings_notes_and_the_bell(cx: &mut TestAppContext) {
+fn the_foot_holds_settings_and_the_bell(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let tree = describe_with_values(
-        cx,
-        &staged,
-        "mods/workspace-chrome",
-        fixture(true, json!({"footer": true}), updates("current", "current")),
-        None,
-    )
-    .unwrap();
-    for shown in ["settings", "sidebar-notes", "sidebar-bell", "Notes", "Nothing needs you"] {
+    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert("vaultJson".into(), vault_notes(vec![]));
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    for shown in ["settings", "sidebar-bell", "Nothing needs you"] {
         assert!(tree.contains(shown), "missing {shown}: {tree}");
     }
-
-    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
-    values.get_mut("settings").unwrap()["connect"] = json!({
-        "grokbot": { "since": "2026-11-01T00:00:00Z", "agent": "manager", "name": "Grok Bot", "link": "grokbot://" }
-    });
-    let tree = describe_with_values(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
-    assert!(tree.contains("Notes with Manager"), "{tree}");
+    assert!(!tree.contains("sidebar-notes"), "the notes moved into the bell: {tree}");
 }
 
-/// The bell at the sidebar's foot counts what needs you: blocked agents and the lead's ask. Tasks waiting
-/// for review don't count; it stays away at zero and caps at 99+.
+/// The bell at the sidebar's foot counts what needs you (blocked agents, the lead's ask, ready updates) and
+/// the notes waiting. Tasks waiting for review don't count; it stays away at zero and caps at 99+.
 #[gpui::test]
 fn the_bell_at_the_foot_counts_what_needs_you(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
 
     let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert("vaultJson".into(), vault_notes(vec![]));
     values.insert(
         "statusJson".into(),
         json!({"tasks": {"review": [{"name": "fix-docs"}], "running": [], "queued": []}, "waiting": {"review": 120}}),
@@ -156,11 +146,13 @@ fn the_bell_at_the_foot_counts_what_needs_you(cx: &mut TestAppContext) {
         .map(|i| json!({"address": format!("b{i}"), "pane": "p1", "status": "blocked", "title": "Stuck"}))
         .collect();
     let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert("vaultJson".into(), vault_notes(vec![]));
     values.insert("agents".into(), Value::Array(blocked));
     let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
     assert!(tree.contains("99+"), "the count caps at 99+: {tree}");
 
     let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert("vaultJson".into(), vault_notes(vec![]));
     values.insert(
         "agents".into(),
         json!([{"address": "t1", "pane": "p1", "status": "blocked", "title": "Build"}]),
@@ -172,16 +164,29 @@ fn the_bell_at_the_foot_counts_what_needs_you(cx: &mut TestAppContext) {
     let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
     assert!(tree.contains("sidebar-bell-count"), "blocked + ask: {tree}");
     assert!(tree.contains(r#"text "2""#), "one blocked agent and the ask make 2: {tree}");
-    assert!(tree.contains("The lead is asking you · 1 more"), "{tree}");
+    assert!(tree.contains("2 need you"), "{tree}");
 
-    let tree = describe_settled(
-        cx,
-        &staged,
-        "mods/workspace-chrome",
-        fixture(true, json!({"footer": true}), updates("current", "current")),
-        None,
-    )
-    .unwrap();
+    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert(
+        "vaultJson".into(),
+        vault_notes(vec![vault_owner_note(), vault_agent_note()]),
+    );
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    assert!(tree.contains(r#"text "2""#), "two notes make 2: {tree}");
+    assert!(tree.contains("2 notes"), "{tree}");
+
+    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert("vaultJson".into(), vault_notes(vec![vault_owner_note()]));
+    values.insert(
+        "agents".into(),
+        json!([{"address": "t1", "pane": "p1", "status": "blocked", "title": "Build"}]),
+    );
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    assert!(tree.contains("1 needs you · 1 note"), "{tree}");
+
+    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    values.insert("vaultJson".into(), vault_notes(vec![]));
+    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
     assert!(!tree.contains("sidebar-bell-count"), "nothing waits: {tree}");
 }
 

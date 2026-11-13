@@ -173,24 +173,24 @@ the highlighted line shows where it will land.
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
 shown one's name. A window starts on `desk` ("Desk": Search and Tasks, then
-the agents list on the left, with Settings, Notes and the bell at its foot;
-the lead or one terminal in the middle; above it a top bar with where you
-are (folder / tab, branch, machine), Files and Changes. Notes open with the
-agent that joined through Connect, and their window links to that system's
-app);
-the others are there to try or start from. Kompitum ships `main` ("Kompitum": spaces by machine and the
-agents list on the left, `workspace-chrome`; tabs as pills with a + menu
-that starts a terminal or any installed agent, `new-menu`; panes as cards
-with a header; Files and Changes panels on the right, `files` and
-`changes`, opened from the tab bar and remembered per space (which ones:
-shared `"workspace.panels"`); a status bar,
-`workspace-status`), and as examples `terminals` ("Terminals": tabs in
-the title bar, panes as cards, a space picker) and `win98`
-("Kompitum 98": a whole desktop in one mod, `win98`). Add a layout by
-writing a new file. The Files panel supports Windows folder paths with spaces,
-parentheses and apostrophes, and preserves Unicode file and folder names
-(including Chinese). Directory links expand as folders; their contents load
-only when expanded.
+the agents list on the left, with Settings and the bell at its foot (the
+bell lists what needs you and the notes waiting for you); the lead or one
+terminal in the middle; above it a top bar with where you are (folder / tab,
+branch, machine), Files and Changes. Notes with the agent that joined
+through Connect open from the bell, and their window links to that system's
+app); the others are there to try or start from. Kompitum ships `main`
+("Kompitum": spaces by machine and the agents list on the left,
+`workspace-chrome`; tabs as pills with a + menu that starts a terminal or
+any installed agent, `new-menu`; panes as cards with a header; Files and
+Changes panels on the right, `files` and `changes`, opened from the tab bar
+and remembered per space (which ones: shared `"workspace.panels"`); a status
+bar, `workspace-status`), and as examples `terminals` ("Terminals": tabs in
+the title bar, panes as cards, a space picker) and `win98` ("Kompitum 98": a
+whole desktop in one mod, `win98`). Add a layout by writing a new file. The
+Files panel supports Windows folder paths with spaces, parentheses and
+apostrophes, and preserves Unicode file and folder names (including
+Chinese). Directory links expand as folders; their contents load only when
+expanded.
 
 **Kompitum's own layouts and mods are read-only.** They are replaced whole
 on every start. Use settings.json for look (fonts, sizes, theme, colors,
@@ -873,10 +873,10 @@ has 120 programs (agents, editors, runtimes, tools, databases, infra);
   (tinted with the text color). Saving an asset under `mods/` updates every
   mod showing it, including images that were missing or invalid on first load.
 - The defaults are mods too, read them as examples: `spaces`, `agents`,
-  `tabs` (the tab bar), `menu`, `prompt`, `confirm`, `help`, `toast`,
-  Terminals' `picker`, `peek`, and `pane` (the pane header the shipped
-  layouts use, except Desk, which names the shown tab in its top bar), and
-  `worktree`
+  `bell`, `tabs` (the tab bar), `menu`, `prompt`, `confirm`, `help`,
+  `toast`, Terminals' `picker`, `peek`, and `pane` (the pane header the
+  shipped layouts use, except Desk, which names the shown tab in its top
+  bar), and `worktree`
   (git worktrees as spaces: the space menu's and the + menu's New worktree,
   Open worktree (the repo's checkouts, filtered; one already shown is gone
   to) and Remove worktree open it as a dialog with props `{space, folder?,

@@ -1,6 +1,6 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex, Popover } from "gpui-base";
-import { theme, run, props, window, shared, setShared, updates, layout, spaces, knownAgents, pickFolder, notify, kom, agents, lead, settings, openOverlay } from "kompitum";
+import { theme, run, props, window, shared, setShared, updates, layout, spaces, knownAgents, pickFolder, notify, kom, agents, lead, openOverlay } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -27,31 +27,36 @@ function firstLine(text) {
   return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 }
 
-const cap = (word) => (word ? word[0].toUpperCase() + word.slice(1) : "");
-
-// A blocked agent's name: its own title, else its tab's, else its program's.
-const agentName = (a) => a.title || a.tab_name || a.program?.name || "An agent";
-
-// The first system that joined through Connect, or null: who the notes are with, and its app's link.
-function joined() {
-  const connect = settings()?.connect ?? {};
-  const id = Object.keys(connect).sort().find((key) => connect[key]?.agent);
-  if (!id) return null;
-  const agent = String(connect[id].agent);
-  return { id, agent, name: connect[id].name || cap(agent), link: connect[id].link || `${id}://` };
-}
-
 export default class WorkspaceChrome extends View {
-  // Only the nav copy reads the tasks: the foot and the brand row never need them.
+  // Only the nav copy reads the tasks, and only the foot reads the notes: the brand row needs neither.
   init(_props, cx) {
     this.spaceOpen = false;
     this.agents = [];
     this.review = 0;
     this.busy = 0;
     this.tasksError = null;
+    this.notes = 0;
+    if (props()?.footer) {
+      this.readNotes(cx);
+      cx.timer.every(60000, (cx) => this.readNotes(cx));
+    }
     if (!props()?.nav) return;
     this.readTasks(cx);
     cx.timer.every(10000, (cx) => this.readTasks(cx));
+  }
+
+  // The notes waiting for the Owner, counted from the vault for the bell. A failed read keeps the last count.
+  readNotes(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const r = await kom(["vault", "open", "--json", "--as", "owner"]);
+        if (r?.code === 0) {
+          const data = JSON.parse(r.stdout || "{}");
+          this.notes = Array.isArray(data?.notes) ? data.notes.filter((n) => n && typeof n === "object").length : 0;
+        }
+      } catch {}
+      cx.notify();
+    });
   }
 
   // The tasks from `kom status --json`: those waiting for review, and those running or queued. A failed
@@ -216,36 +221,30 @@ export default class WorkspaceChrome extends View {
       .child(tasks);
   }
 
-  // The sidebar's foot: Settings, Notes with the joined system, and the bell, which counts what needs you
-  // (blocked agents and the lead's question; tasks don't count). The rail keeps only the bell.
+  // The sidebar's foot: Settings and the bell. The bell counts what needs you (the lead's question, blocked
+  // agents, ready updates) plus the notes waiting for the Owner; tasks don't count. The rail keeps only the bell.
   foot(t, collapsed) {
     const iconButton = (id, icon, tip, action) => h_flex().id(id).w(28).h(28).flex_none().items_center().justify_center().rounded(7)
       .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip)
       .on_click(action).child(svg(icon).size(16));
-    const blocked = agents().filter((a) => a.status === "blocked");
-    const first = blocked[0];
-    const asking = Boolean(lead()?.ask);
-    const count = blocked.length + (asking ? 1 : 0);
-    const who = asking ? "The lead is asking you" : `${first ? agentName(first) : ""} needs you`;
-    const bellTip = count === 0 ? "Nothing needs you" : count > 1 ? `${who} · ${count - 1} more` : who;
-    const bell = iconButton("sidebar-bell", "mods/topbar/bell.svg", bellTip, () => {
-      if (asking) run("lead.open");
-      else if (first) run("pane.focus", { pane: first.pane });
-    })
+    const u = updates();
+    const needs = agents().filter((a) => a.status === "blocked").length + (lead()?.ask ? 1 : 0)
+      + (u.app.ready ? 1 : 0) + (u.core.ready && !u.core.updating ? 1 : 0);
+    const count = needs + this.notes;
+    const parts = [needs > 1 ? `${needs} need you` : needs === 1 ? "1 needs you" : "",
+      this.notes > 1 ? `${this.notes} notes` : this.notes === 1 ? "1 note" : ""];
+    const bellTip = count === 0 ? "Nothing needs you" : parts.filter(Boolean).join(" · ");
+    const bell = iconButton("sidebar-bell", "mods/topbar/bell.svg", bellTip,
+      () => openOverlay({ mod: "bell", kind: "popup", width: 360, height: 440, at: "pointer" }))
       .relative()
       .when(count > 0, (el) => el.child(div().id("sidebar-bell-count").absolute().top(-2).right(-2).h(15).min_w(15).px(4).rounded(8).flex().items_center().justify_center()
         .bg(t.accent_fill).text_color(t.accent_foreground).text_size(10.5).font_semibold().child(count > 99 ? "99+" : String(count))));
     if (collapsed) return h_flex().size_full().px(0).justify_center().items_center().child(bell);
-    const other = joined();
-    const notes = other
-      ? iconButton("sidebar-notes", "mods/topbar/inbox.svg", `Notes with ${cap(other.agent)}`, () => openOverlay({ mod: "line", kind: "popup", width: 420, height: 460, props: { with: other.agent, name: other.name, link: other.link } }))
-      : iconButton("sidebar-notes", "mods/topbar/inbox.svg", "Notes", () => run("app.mailbox"));
     const settingsButton = iconButton("settings", "mods/workspace-chrome/settings.svg", "Settings", () => run("app.settings"))
-      .when(Boolean(updates().app.ready), (el) => el.relative().child(div().size(6).rounded_full().bg(t.accent).absolute().top(4).right(4)));
+      .when(Boolean(u.app.ready), (el) => el.relative().child(div().size(6).rounded_full().bg(t.accent).absolute().top(4).right(4)));
     return h_flex().size_full().px(10).gap(2).items_center()
       .child(settingsButton)
       .child(div().flex_1())
-      .child(notes)
       .child(bell);
   }
 

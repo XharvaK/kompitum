@@ -13,6 +13,7 @@ use std::{
 
 // One file per area of the rework, so workers on different areas never share a file.
 mod agents_page;
+mod bell;
 mod cli_errors;
 mod composer;
 mod machines;
@@ -149,6 +150,11 @@ fn vault_report(notes: Vec<Value>, unpushed: u32, problems: Vec<&str>) -> String
         "problems": problems, "notes": notes
     })
     .to_string()
+}
+
+/// The vault's answer to `vault open` as a value: the given notes, none filed as problems.
+fn vault_notes(notes: Vec<Value>) -> Value {
+    json!({"vault": "/fixture/vault", "agent": "owner", "unpushed": 0, "problems": [], "notes": notes})
 }
 
 fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostModule {
