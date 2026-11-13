@@ -8,9 +8,9 @@
 import { View } from "gpui-kit";
 import { v_flex, TextareaState, VirtualListScrollHandle } from "gpui-base";
 import { kom, run, theme, props, shared, setShared, terminals, knownAgents, appHome, readTextFile, writeTextFile, pickFolder, lead as leadOf, nextCommand } from "kompitum";
-import { errorText, CARD_WAIT_MS } from "./util.js";
+import { errorText, CARD_WAIT_MS, COMPACT_FIRST_TOKENS } from "./util.js";
 import cards from "./cards.js";
-import model from "./model.js";
+import model, { leadUsage } from "./model.js";
 import conversation from "./conversation.js";
 import box from "./box.js";
 
@@ -76,7 +76,9 @@ export default class Composer extends View {
     this.noteAction = null;
     this.answers = {};
     this.modelOpen = false;
-    this.pickerView = "models";
+    // Compact first: the pill's state, and the send that waits for the lead's compaction (`at` in ms, `started` once it runs).
+    this.compactFirst = false;
+    this.compactThenSend = null;
     this.effortSlider = null;
     this.effortSliderMax = null;
     this.effortPreview = null;
@@ -121,6 +123,8 @@ export default class Composer extends View {
     });
     cx.timer.every(500, (cx) => {
       this.takeAsk(cx);
+      // A send waiting for the lead's compaction is noticed here.
+      if (this.compactThenSend) cx.notify();
     });
     // The window hands over the keyboard ("focus") when the lead asks or the composer should type.
     cx.spawn(async (cx) => {
@@ -313,6 +317,7 @@ export default class Composer extends View {
   }
 
   send(cx) {
+    if (this.compactThenSend) return;
     if (this.sending) return;
     if (this.state === "asking") return;
     if (leadOf()?.compacting) return;
@@ -322,6 +327,14 @@ export default class Composer extends View {
     if (!text.trim() && paths.length === 0) return;
     if (!this.leadLive()) {
       this.error = "The lead isn't running";
+      cx.notify();
+      return;
+    }
+    // Compact first: the lead compacts now and the text stays in the box; send runs again once it has tidied up.
+    if (this.compactFirst && this.state === "waiting") {
+      this.compactFirst = false;
+      this.compactThenSend = { at: Date.now(), started: false };
+      run("lead.compact", { terminal: this.terminal });
       cx.notify();
       return;
     }
@@ -398,6 +411,26 @@ export default class Composer extends View {
     });
   }
 
+  // Compact first, settled at each draw: the send waits for the lead's compaction (started, then sent), gives up after
+  // 15 s with the text kept, and the pill goes when the box empties or the context drops under the threshold.
+  settleCompactFirst(cx) {
+    const wait = this.compactThenSend;
+    if (wait) {
+      if (leadOf()?.compacting === true) {
+        wait.started = true;
+      } else if (wait.started) {
+        this.compactThenSend = null;
+        cx.timer.after(0, (cx) => this.send(cx));
+      } else if (Date.now() - wait.at > 15000) {
+        this.compactThenSend = null;
+        this.error = "Couldn't tidy up first. Your message is still here.";
+      }
+    }
+    if (this.compactFirst && (!this.hasDraft() || !((leadUsage()?.context_tokens ?? 0) >= COMPACT_FIRST_TOKENS))) {
+      this.compactFirst = false;
+    }
+  }
+
   compose(t, cx) {
     const lead = leadOf();
     this.state = lead?.state ?? null;
@@ -438,6 +471,7 @@ export default class Composer extends View {
         cx.notify();
       });
     this.syncConversation();
+    this.settleCompactFirst(cx);
     if (this.needsFirstPick()) {
       return root.child(this.bar(t, cx));
     }
@@ -447,6 +481,7 @@ export default class Composer extends View {
         .when(Boolean(this.revealNote(t)), (el) => el.child(this.revealNote(t)))
         .child(this.bar(t, cx));
     }
+    if (this.items.length === 0 && this.leadReady() && !this.ask) return root.child(this.startView(t, cx));
     return root.child(this.conversationPanel(t, cx)).child(this.bar(t, cx, true));
   }
 

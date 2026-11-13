@@ -212,21 +212,10 @@ export default {
     return null;
   },
 
-  // The empty state: the lead CLI's catalog name, centred in the panel's space above the box.
-  conversationEmpty(t) {
-    const entry = this.leadProgram();
-    return v_flex()
-      .id("composer-conversation-empty")
-      .size_full()
-      .items_center()
-      .justify_center()
-      .child(div().text_size(20).font_semibold().text_color(t.foreground).child(entry?.name || entry?.key));
-  },
-
   conversationPanel(t, cx) {
-    // No items: the empty state fills the panel itself, outside the scroll area, so it can centre.
+    // No items: an empty panel. A started lead's new conversation is drawn by startView instead.
     if (this.items.length === 0) {
-      return div().id("composer-panel").flex_1().min_h(0).relative().child(this.conversationEmpty(t));
+      return div().id("composer-panel").flex_1().min_h(0).relative();
     }
     // The padding sits on an inner column: on the scroll area itself it would count as content to scroll past.
     // The conversation and the box share one column: at most 760 px, centred, with 20 px gutters when narrower.

@@ -3,7 +3,7 @@
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
 import { run, pickFiles, pasteImage, lead as leadOf } from "kompitum";
-import { errorText } from "./util.js";
+import { errorText, hairline, COMPACT_FIRST_TOKENS } from "./util.js";
 import { effortIds, leadUsage, modelLabel } from "./model.js";
 
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
@@ -51,6 +51,16 @@ function usageWindows(usage) {
     .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
     .filter((w) => !(typeof w.resets === "number" && w.resets < now));
 }
+
+// Claude Code's permission modes (its hooks' `permission_mode`): the word the box shows, and what the mode does.
+const MODES = {
+  default: { word: "Ask first", line: "Asks before it edits files or runs commands." },
+  acceptEdits: { word: "Accept edits", line: "Edits files without asking; asks before commands." },
+  plan: { word: "Plan first", line: "Plans and changes nothing until you approve." },
+  auto: { word: "Auto", line: "Approves routine actions itself; asks about risky ones." },
+  bypassPermissions: { word: "Full access", line: "Runs everything without asking." },
+  dontAsk: { word: "Don't ask", line: "Runs only what is already allowed and refuses the rest." },
+};
 
 export default {
   addChip(path) {
@@ -177,7 +187,9 @@ export default {
   bar(t, cx, panel = false) {
     const first = this.needsFirstPick();
     const compacting = leadOf()?.compacting === true;
-    const canSend = this.leadReady() && !this.sending && !compacting
+    const mode = first ? null : this.modeControl(t);
+    const pill = first ? null : this.compactFirstPill(t);
+    const canSend = this.leadReady() && !this.sending && !compacting && !this.compactThenSend
       && (Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0);
     const send = h_flex()
       .id("composer-send")
@@ -190,7 +202,8 @@ export default {
       .cursor_pointer()
       .tooltip(!this.leadReady()
         ? "Claude is asking something before it starts."
-        : compacting ? "Claude is tidying up. Your message waits in the box." : this.sending ? "Sending…" : "Send (Enter)")
+        : compacting ? "Claude is tidying up. Your message waits in the box." : this.sending ? "Sending…"
+          : this.compactFirst ? "Compact, then send (Enter)" : "Send (Enter)")
       .when(canSend, (el) => el.bg(t.foreground).hover((s) => s.opacity(0.85)))
       .when(!canSend, (el) => el.border_1().border_color(t.input))
       .on_click((_e, cx) => this.send(cx))
@@ -208,12 +221,14 @@ export default {
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
       .tooltip("Attach files")
       .on_click((_e, cx) => this.attach(cx))
-      .child(svg("mods/composer/plus.svg").size(16));
+      .child(svg("mods/composer/paperclip.svg").size(16));
     const note = this.error
       ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)
-      : compacting
-        ? div().text_size(11.5).text_color(t.dim).child("Tidying up…")
-        : this.state ? this.statusWord(t) : null;
+      : this.compactThenSend
+        ? div().text_size(11.5).text_color(t.dim).child("Tidying up, then sending…")
+        : compacting
+          ? div().text_size(11.5).text_color(t.dim).child("Tidying up…")
+          : this.state ? this.statusWord(t) : null;
     // The limit and the ring read the lead's usage; neither is drawn on the first-start card.
     const usage = first ? null : leadUsage();
     const fraction = contextFraction(usage);
@@ -229,11 +244,11 @@ export default {
           .id("composer-box")
           .when(panel, (el) => el.w_full().max_w(760))
           .when(!panel, (el) => el.size_full())
-          .px(12)
-          .pt(10)
+          .px(14)
+          .pt(12)
           .pb(8)
           .gap(6)
-          .rounded(16)
+          .rounded(20)
           .border_1()
           .border_color(this.ask ? (this.ask.kind === "permission" ? t.blocked : t.input) : t.border)
           .bg(t.raised)
@@ -252,15 +267,120 @@ export default {
               .w_full()
               .gap(6)
               .items_center()
-              .child(plus)
-              .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
+              .child(
+                h_flex()
+                  .gap(6)
+                  .items_center()
+                  .min_w(0)
+                  .child(plus)
+                  .when(!first, (el) => el.child(hairline(t)).child(this.modelChip(t)))
+                  .when(Boolean(mode), (el) => el.child(hairline(t)).child(mode)),
+              )
               .child(div().flex_1())
-              .when(!first, (el) => el.child(this.modelChip(t)))
+              .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
               .when(Boolean(limit), (el) => el.child(limit))
+              .when(Boolean(pill), (el) => el.child(pill))
               .when(Boolean(ring), (el) => el.child(ring))
               .when(!first && !this.ask, (el) => el.child(send)),
           );
     return frame.child(panel ? h_flex().w_full().justify_center().child(box) : box);
+  },
+
+  // A new conversation: the headline and the box sit a little above the middle. The first item moves the box down.
+  // Two equal spacers centre the block; the 120 px under it lifts it a little above the middle.
+  startView(t, cx) {
+    const entry = this.leadProgram();
+    const parts = String(this.person?.lead?.folder ?? "").split(/[\\/]/).filter(Boolean);
+    const place = parts.length > 0 ? parts[parts.length - 1] : "your home folder";
+    return v_flex()
+      .id("composer-start")
+      .size_full()
+      .min_h(0)
+      .items_center()
+      .child(div().flex_1())
+      .child(
+        v_flex()
+          .w_full()
+          .items_center()
+          .mb(120)
+          .child(
+            div()
+              .id("composer-start-title")
+              .text_size(26)
+              .font_semibold()
+              .text_color(t.foreground)
+              .child("What's next?"),
+          )
+          .child(
+            div()
+              .id("composer-start-where")
+              .mt(6)
+              .text_size(13.5)
+              .text_color(t.muted)
+              .child(`${leadName(entry, entry.key)} in ${place}`),
+          )
+          .child(div().w_full().mt(18).child(this.bar(t, cx, true))),
+      )
+      .child(div().flex_1());
+  },
+
+  // The mode word after the model: live while the lead waits (a click presses Shift+Tab in its terminal), dim while
+  // it works, asks or tidies up, and dim while a guessed mode waits for the next hook.
+  modeControl(t) {
+    const mode = leadOf()?.permission_mode;
+    if (typeof mode !== "string" || !mode) return null;
+    const { word, line = "" } = MODES[mode] ?? { word: mode };
+    const guessed = leadOf()?.mode_guessed === true;
+    const live = this.leadReady() && !this.ask && leadOf()?.compacting !== true;
+    const tip = live ? [line, "Click for the next mode (Shift+Tab)."].filter(Boolean).join(" ") : line;
+    return h_flex()
+      .id("composer-mode")
+      .h(28)
+      .px(6)
+      .items_center()
+      .rounded(7)
+      .text_size(12.5)
+      .text_color(live && !guessed ? t.muted : t.dim)
+      .when(live, (el) => el
+        .cursor_pointer()
+        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .on_click((_e, cx) => {
+          run("lead.mode", { terminal: this.terminal });
+          cx.notify();
+        }))
+      .when(Boolean(tip), (el) => el.tooltip(tip))
+      .child(word);
+  },
+
+  // "Compact first" beside Send, from COMPACT_FIRST_TOKENS of context, while a draft waits and the lead waits.
+  // On: the next Send compacts the lead first (send does that); off: it keeps the context.
+  compactFirstPill(t) {
+    const tokens = leadUsage()?.context_tokens;
+    if (!this.leadReady() || this.ask || this.state !== "waiting" || leadOf()?.compacting === true) return null;
+    if (!this.hasDraft() || this.compactThenSend || !(tokens >= COMPACT_FIRST_TOKENS)) return null;
+    const k = Math.round(tokens / 1000);
+    const on = Boolean(this.compactFirst);
+    return h_flex()
+      .id("composer-compact-first")
+      .h(24)
+      .px(9)
+      .flex_none()
+      .items_center()
+      .rounded(12)
+      .border_1()
+      .border_color(on ? t.accent : t.border)
+      .text_size(11.5)
+      .text_color(on ? t.accent : t.muted)
+      .cursor_pointer()
+      .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+      .tooltip(on
+        ? `Your next message compacts ${k}K tokens first. Click to keep them.`
+        : `Your next message keeps all ${k}K tokens. Click to compact first.`)
+      .on_click((_e, cx) => {
+        this.compactFirst = !this.compactFirst;
+        cx.notify();
+      })
+      .child("Compact first");
   },
 
   startLabel() {

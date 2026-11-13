@@ -305,3 +305,78 @@ fn a_restart_by_hand_waits_for_an_idle_lead_and_says_why_not() {
         "an open ask is said before anything else"
     );
 }
+
+#[test]
+fn next_mode_walks_the_cycle_without_the_optional_modes() {
+    let none = BTreeSet::new();
+    assert_eq!(next_mode(Some("default"), &none), "acceptEdits");
+    assert_eq!(next_mode(Some("acceptEdits"), &none), "plan");
+    assert_eq!(next_mode(Some("plan"), &none), "default", "plan skips the modes never seen");
+    assert_eq!(next_mode(Some("bypassPermissions"), &none), "default");
+}
+
+#[test]
+fn next_mode_takes_an_optional_mode_only_once_seen() {
+    let bypass: BTreeSet<String> = ["bypassPermissions".to_owned()].into();
+    assert_eq!(next_mode(Some("plan"), &bypass), "bypassPermissions");
+    let auto: BTreeSet<String> = ["auto".to_owned()].into();
+    assert_eq!(next_mode(Some("plan"), &auto), "auto");
+    assert_eq!(next_mode(Some("bypassPermissions"), &auto), "auto");
+    assert_eq!(next_mode(Some("bypassPermissions"), &BTreeSet::new()), "default");
+}
+
+#[test]
+fn next_mode_from_no_mode_or_an_unlisted_one_is_the_first_step() {
+    let none = BTreeSet::new();
+    assert_eq!(next_mode(None, &none), "acceptEdits");
+    assert_eq!(next_mode(Some("auto"), &none), "default");
+    assert_eq!(next_mode(Some("dontAsk"), &none), "default");
+    assert_eq!(next_mode(Some("something-new"), &none), "default");
+}
+
+#[test]
+fn mode_refusal_says_why_the_mode_cannot_switch_now() {
+    assert_eq!(mode_refusal(None), Some("the lead hasn't started yet"));
+    let mut session = Session::default();
+    assert_eq!(mode_refusal(Some(&session)), Some("the lead hasn't started yet"));
+    session.started = true;
+    session.ask = Some(Ask {
+        id: "a1".into(),
+        terminal: "t1".into(),
+        kind: AskKind::Permission,
+        input: json!({}),
+    });
+    assert_eq!(mode_refusal(Some(&session)), Some("Claude is asking something: answer it first"));
+    session.ask = None;
+    session.conversation.reveal = Some(Reveal::Auto);
+    assert_eq!(mode_refusal(Some(&session)), Some("Claude is showing a menu in its terminal: answer it first"));
+    session.conversation.reveal = None;
+    session.compacting = true;
+    assert_eq!(mode_refusal(Some(&session)), Some("Claude is tidying up: switch when it's done"));
+    session.compacting = false;
+    session.state = Some(State::Working);
+    assert_eq!(mode_refusal(Some(&session)), None, "a working lead can switch its mode");
+}
+
+#[test]
+fn a_hook_sets_the_mode_marks_it_seen_and_clears_a_guess() {
+    let mut session = Session::default();
+    assert!(apply_permission_mode(&mut session, &json!({ "permission_mode": "plan" })));
+    assert_eq!(session.permission_mode.as_deref(), Some("plan"));
+    assert!(session.modes_seen.contains("plan"));
+    let same = json!({ "permission_mode": "plan" });
+    assert!(!apply_permission_mode(&mut session, &same), "the same mode changes nothing");
+
+    session.mode_guessed = true;
+    assert!(apply_permission_mode(&mut session, &same), "a confirmed guess changes what mods see");
+    assert!(!session.mode_guessed);
+}
+
+#[test]
+fn a_hook_without_a_permission_mode_changes_nothing() {
+    let mut session = Session { permission_mode: Some("default".into()), mode_guessed: true, ..Session::default() };
+    assert!(!apply_permission_mode(&mut session, &json!({ "tool_name": "Bash" })));
+    assert_eq!(session.permission_mode.as_deref(), Some("default"));
+    assert!(session.mode_guessed, "a guess waits for a hook that names a mode");
+    assert!(session.modes_seen.is_empty());
+}

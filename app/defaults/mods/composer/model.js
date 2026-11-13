@@ -3,6 +3,7 @@
 import { div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb } from "gpui-base";
 import { run, lead as leadOf, shared } from "kompitum";
+import { hairline } from "./util.js";
 
 export function modelLabel(entry, id) {
   return entry?.models?.find((model) => model.id === id)?.label ?? id;
@@ -173,14 +174,6 @@ export default {
       .child(button.child("Restart now"));
   },
 
-  resetEffort(cx) {
-    this.saveLead({ effort: null }, cx);
-    this.effortTouched = false;
-    this.effortPreview = null;
-    this.effortSlider?.set_value(0);
-    cx.notify();
-  },
-
   // Dots sit on the track; those already on the fill use the accent at half strength.
   effortDots(t, count, filledThrough) {
     return h_flex()
@@ -289,11 +282,11 @@ export default {
     return body;
   },
 
-  // The models, then (when the program has levels) a hairline and the Reasoning row that opens the effort card.
+  // The models column: the Model label, then one row per model. The check sits on the saved model.
   modelsView(t, entry, lead) {
     const models = entry?.models ?? [];
-    const reasoning = effortIds(entry).length > 0;
     return v_flex()
+      .w(220)
       .child(div().px(8).pt(4).pb(2).text_size(11.5).text_color(t.dim).child("Model"))
       .children(models.map((model) =>
         h_flex()
@@ -307,77 +300,33 @@ export default {
           .on_click((_e, cx) => this.pickModel(model.id, cx))
           .child(div().flex_1().text_size(13).text_color(t.foreground).child(model.label ?? model.id))
           .when(model.id === lead.model, (el) =>
-            el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)))))
-      .when(reasoning, (el) => el
-        .child(div().h(1).my(4).bg(t.border))
-        .child(
-          h_flex()
-            .id("composer-reasoning-row")
-            .h(32)
-            .px(8)
-            .items_center()
-            .rounded(7)
-            .cursor_pointer()
-            .hover((s) => s.bg(t.hover))
-            .on_click((_e, cx) => {
-              this.pickerView = "effort";
-              this.ensureEffortSlider(entry);
-              cx.notify();
-            })
-            .child(div().flex_1().text_size(13).text_color(t.foreground).child("Reasoning"))
-            .child(h_flex()
-              .gap(4)
-              .items_center()
-              .child(div().text_size(12.5).text_color(t.dim).child(effortWord(lead.effort) ?? "Default"))
-              .child(div().text_size(12.5).text_color(t.dim).child("›")))))
-      .when(this.leadPending().pending, (el) => el.child(this.restartStrip(t)));
+            el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)))));
   },
 
-  // The effort card: a top row (back to the models, and the reset when a level is saved), then the body.
-  effortView(t, entry, lead) {
+  // The reasoning column: Default (Claude Code's own setting), then the program's levels. A click saves its row
+  // and the menu stays open. The check sits on the saved level, or on Default when none is saved.
+  levelsView(t, entry, lead) {
+    const saved = effortIds(entry).includes(lead.effort) ? lead.effort : null;
+    const row = (id, label, level, tooltip) => h_flex()
+      .id(id)
+      .h(32)
+      .px(8)
+      .items_center()
+      .rounded(7)
+      .cursor_pointer()
+      .hover((s) => s.bg(t.hover))
+      .when(Boolean(tooltip), (el) => el.tooltip(tooltip))
+      .on_click((_e, cx) => {
+        this.saveLead({ effort: level }, cx);
+        cx.notify();
+      })
+      .child(div().flex_1().text_size(13).text_color(t.foreground).child(label))
+      .when(level === saved, (el) => el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)));
     return v_flex()
-      .id("composer-effort")
-      .w_full()
-      .gap(10)
-      .child(
-        h_flex()
-          .w_full()
-          .h(24)
-          .items_center()
-          .justify_between()
-          .child(
-            h_flex()
-              .id("composer-effort-model")
-              .items_center()
-              .cursor_pointer()
-              .text_size(12.5)
-              .text_color(t.muted)
-              .hover((s) => s.text_color(t.foreground))
-              .on_click((_e, cx) => {
-                this.pickerView = "models";
-                cx.notify();
-              })
-              .child("‹ ")
-              .child(lead.model ? modelLabel(entry, lead.model) : ""),
-          )
-          .when(Boolean(lead.effort), (el) => el.child(
-            h_flex()
-              .id("composer-effort-reset")
-              .w(24)
-              .h(24)
-              .items_center()
-              .justify_center()
-              .rounded(6)
-              .cursor_pointer()
-              .text_color(t.muted)
-              .hover((s) => s.bg(t.hover).text_color(t.foreground))
-              .tooltip("Use Claude Code's own setting")
-              .on_click((_e, cx) => this.resetEffort(cx))
-              .child(svg("mods/composer/rotate-ccw.svg").size(14)),
-          )),
-      )
-      .child(this.effortBody(t, entry, lead))
-      .when(this.leadPending().pending, (el) => el.child(this.restartStrip(t)));
+      .w(150)
+      .child(div().px(8).pt(4).pb(2).text_size(11.5).text_color(t.dim).child("Reasoning"))
+      .child(row("composer-level-default", "Default", null, "Claude Code's own setting"))
+      .children(effortIds(entry).map((level) => row(`composer-level-${level}`, effortWord(level), level, null)));
   },
 
   // The lead program's icon at 14 px, as the agents list draws it: a one-colour glyph or a picture. It pulses
@@ -409,8 +358,8 @@ export default {
     let trigger = h_flex()
       .id("composer-model")
       .h(28)
-      .px(8)
-      .gap(5)
+      .px(6)
+      .gap(6)
       .items_center()
       .rounded(7)
       .cursor_pointer()
@@ -420,31 +369,35 @@ export default {
     let name = h_flex().gap(6).items_center();
     if (icon) name = name.child(icon);
     if (model) {
-      trigger = trigger.child(name.child(div().text_size(12.5).font_medium().text_color(t.foreground).child(model)));
-      if (level) trigger = trigger.child(div().text_size(12.5).text_color(t.dim).child(level));
+      trigger = trigger.child(name.child(div().text_size(12.5).text_color(t.foreground).child(model)));
+      if (level) trigger = trigger.child(hairline(t)).child(div().text_size(12.5).text_color(t.muted).child(level));
     } else {
       trigger = trigger.child(name.child(div().text_size(12.5).text_color(t.muted).child("Choose a model")));
     }
     if (pending) trigger = trigger.child(div().id("composer-model-pending").w(6).h(6).rounded(3).bg(t.working));
-    trigger = trigger.child(svg("mods/workspace-chrome/chevron-down.svg").size(11).text_color(t.dim));
-    const effort = this.pickerView === "effort" && effortIds(entry).length > 0;
-    // The effort card is 280 wide with 16 px padding; the models list stays 260 wide with 6.
+    // The models and the reasoning levels side by side; the strip under both while a saved change waits.
     const content = v_flex()
-      .when(effort, (el) => el.w(280).p(16).rounded(14))
-      .when(!effort, (el) => el.w(260).p(6).rounded(12))
+      .id("composer-menu")
+      .p(6)
+      .rounded(12)
       .border_1()
       .border_color(t.border)
       .bg(t.popover)
-      .child(effort
-        ? this.effortView(t, entry, lead)
-        : this.modelsView(t, entry, lead));
+      .child(
+        h_flex()
+          .items_start()
+          .child(this.modelsView(t, entry, lead))
+          .when(effortIds(entry).length > 0, (el) => el
+            .child(div().id("composer-menu-divider").w(1).self_stretch().mx(4).bg(t.border))
+            .child(this.levelsView(t, entry, lead))),
+      )
+      .when(this.leadPending().pending, (el) => el.child(this.restartStrip(t)));
     return Popover.new("composer-model-menu")
-      .anchor("bottom_right")
+      .anchor("bottom_left")
       .open(Boolean(this.modelOpen))
       .on_open_change((open, cx) => {
         this.modelOpen = open;
         if (open) {
-          this.pickerView = "models";
           this.effortPreview = lead.effort ?? null;
           this.effortTouched = Boolean(lead.effort);
           this.saveEffortOnRelease = true;

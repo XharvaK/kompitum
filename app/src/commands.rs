@@ -255,6 +255,11 @@ pub const COMMANDS: &[Command] = &[
         "End the lead and start it again with the saved model and reasoning, in the same conversation. Refused while the lead is working, asking or tidying up.",
     ),
     cmd(
+        "lead.mode",
+        &[req("terminal")],
+        "Press Shift+Tab in the lead's terminal: Claude Code's next permission mode. The one key the app presses for the Owner, on their click. Refused while the lead asks, shows a menu or tidies up.",
+    ),
+    cmd(
         "lead.fit",
         &[req("terminal"), req("px")],
         "Size the lead's composer to its text while its lead isn't asking: px from 44 to 320.",

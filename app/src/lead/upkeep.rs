@@ -3,6 +3,7 @@
 
 use super::{AUTO_COMPACT_WINDOW, Reveal, Session, State, TerminalVis, is_compact_command, is_lead_record};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// The model and usage a status line JSON says, as `Session` keeps them; `seen_ms` is when it arrived.
@@ -88,6 +89,50 @@ pub fn restart_refusal(session: Option<&Session>) -> Option<&'static str> {
         return Some("The lead is tidying up: restart it when it's done");
     }
     (session.state == Some(State::Working)).then_some("The lead is working: restart it when it's done")
+}
+
+/// Folds a hook's `permission_mode` into the session. Returns whether what mods see changed.
+pub fn apply_permission_mode(session: &mut Session, input: &Value) -> bool {
+    let Some(mode) = input.get("permission_mode").and_then(Value::as_str) else {
+        return false;
+    };
+    session.modes_seen.insert(mode.to_owned());
+    let changed = session.permission_mode.as_deref() != Some(mode) || session.mode_guessed;
+    session.permission_mode = Some(mode.to_owned());
+    session.mode_guessed = false;
+    changed
+}
+
+/// The mode Claude Code shows after one Shift+Tab from `current`. Optional modes count only once seen.
+pub fn next_mode(current: Option<&str>, seen: &BTreeSet<String>) -> &'static str {
+    match current {
+        None | Some("default") => "acceptEdits",
+        Some("acceptEdits") => "plan",
+        Some("plan") if seen.contains("bypassPermissions") => "bypassPermissions",
+        Some("plan") if seen.contains("auto") => "auto",
+        Some("bypassPermissions") if seen.contains("auto") => "auto",
+        _ => "default",
+    }
+}
+
+/// Why the mode can't be switched now; None when it can (working is fine).
+pub fn mode_refusal(session: Option<&Session>) -> Option<&'static str> {
+    let Some(session) = session else {
+        return Some("the lead hasn't started yet");
+    };
+    if !session.started {
+        return Some("the lead hasn't started yet");
+    }
+    if session.ask.is_some() {
+        return Some("Claude is asking something: answer it first");
+    }
+    if session.conversation.reveal == Some(Reveal::Auto) {
+        return Some("Claude is showing a menu in its terminal: answer it first");
+    }
+    if session.compacting {
+        return Some("Claude is tidying up: switch when it's done");
+    }
+    None
 }
 
 /// The app compacts a waiting lead by itself from this many tokens, once it has waited `COMPACT_IDLE_MS`.

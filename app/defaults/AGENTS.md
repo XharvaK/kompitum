@@ -631,6 +631,9 @@ The main ones:
   conversation; refused while it is working, asking or tidying up). The app sets the shared value
   `lead.running`, `{program, terminal, model, effort}`: what the running lead was started with, which the composer's
   chip reads (`shared("lead.running")`) to show its reasoning and a dot while a saved change waits for a restart.
+  `lead.mode {terminal}` (press Shift+Tab in the lead's terminal for the Owner's click on the mode word: Claude Code's
+  next permission mode; refused while it asks, shows a menu or tidies up). `lead()` carries `permission_mode` (from
+  Claude Code's hooks) and `mode_guessed` (true from a click until the next hook says the mode).
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`

@@ -79,7 +79,7 @@ fn the_models_view_lists_fable_opus_sonnet_haiku(cx: &mut TestAppContext) {
     }
 }
 
-/// Picking a model keeps the models view: the reasoning level is its own row.
+/// Picking a model keeps the menu open: the reasoning column stays beside the models (there is no second step).
 #[gpui::test]
 fn picking_a_model_keeps_the_models_view(cx: &mut TestAppContext) {
     let found = composer_laid_out_after_clicks(
@@ -87,38 +87,49 @@ fn picking_a_model_keeps_the_models_view(cx: &mut TestAppContext) {
         composer_person(Some("sonnet"), None),
         "this.modelOpen = true;",
         &["composer-model-opus"],
-        &["composer-effort", "composer-model-opus"],
+        &["composer-menu-divider", "composer-model-opus"],
     );
-    assert!(!found[0].1, "a model pick must not open the effort view: {found:?}");
-    assert!(found[1].1, "the models view stays: {found:?}");
+    assert!(found[0].1, "the reasoning column stays beside the models: {found:?}");
+    assert!(found[1].1, "the models stay: {found:?}");
 }
 
-/// The Reasoning row opens the effort card; the reset shows only when a level is saved.
+/// The menu holds the models and the reasoning levels side by side, with Default first and no effort card.
 #[gpui::test]
-fn the_effort_reset_shows_only_when_a_level_is_saved(cx: &mut TestAppContext) {
-    let found = composer_laid_out_after_clicks(
-        cx,
-        composer_person(Some("sonnet"), Some("high")),
-        "this.modelOpen = true;",
-        &["composer-reasoning-row"],
-        &["composer-effort", "composer-effort-reset"],
-    );
-    assert!(found[0].1, "the effort view should show: {found:?}");
-    assert!(found[1].1, "reset should show when a level is saved: {found:?}");
-}
-
-/// The models view has the Reasoning row and no footer sentence about the next start.
-#[gpui::test]
-fn the_models_view_has_a_reasoning_row_and_no_footer(cx: &mut TestAppContext) {
+fn the_model_menu_has_two_columns(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let tree = composer_tree(
         cx,
         composer_person(Some("sonnet"), Some("low")),
         Some("this.modelOpen = true;"),
     );
-    assert!(tree.contains("composer-reasoning-row"), "{tree}");
+    for id in ["composer-model-opus", "composer-menu-divider", "composer-level-default", "composer-level-high"] {
+        assert!(tree.contains(id), "{id}: {tree}");
+    }
     assert!(tree.contains("Reasoning"), "{tree}");
-    assert!(!tree.contains("For the lead's next start"), "{tree}");
+    assert!(!tree.contains("composer-effort-slider"), "{tree}");
+    assert!(!tree.contains("composer-reasoning-row"), "{tree}");
+}
+
+/// A level row saves that level and the menu stays open; the save writes the lead's effort to settings.
+#[gpui::test]
+fn picking_a_level_saves_it_and_keeps_the_menu_open(cx: &mut TestAppContext) {
+    let found = composer_laid_out_after_clicks(
+        cx,
+        composer_person(Some("sonnet"), Some("low")),
+        "this.modelOpen = true;",
+        &["composer-level-high"],
+        &["composer-menu-divider", "composer-level-high", "composer-model-sonnet"],
+    );
+    assert!(found.iter().all(|(_, shown)| *shown), "the menu stays open: {found:?}");
+    let mut values = usage_values(Value::Null, json!({}));
+    values.insert("person".into(), saved_lead_with_folder("sonnet", "low"));
+    let effects = composer_live_run_after_clicks(cx, values, "this.modelOpen = true;", &["composer-level-high"]);
+    assert!(
+        effects.iter().any(|args| args
+            .iter()
+            .any(|arg| arg.as_str().is_some_and(|text| text.contains("\"effort\": \"high\"")))),
+        "the high level is written to settings: {effects:?}"
+    );
 }
 
 /// A helper's shared values for the fixture: `lead.running` as the app sets it at each start.
@@ -444,9 +455,10 @@ fn the_conversation_has_no_terminal_toggle(cx: &mut TestAppContext) {
     )
     .unwrap();
     assert!(!tree.contains("lead-terminal"), "{tree}");
-    // The empty state is the catalog name alone, outside the scroll column.
-    assert!(tree.contains("composer-conversation-empty"), "{tree}");
-    assert!(tree.contains("Claude Code"), "{tree}");
+    // The empty conversation is the start view (the catalog name it showed is gone); no scroll column.
+    assert!(tree.contains("composer-start"), "{tree}");
+    assert!(!tree.contains("composer-conversation-empty"), "{tree}");
+    assert!(tree.contains("Claude in your home folder"), "{tree}");
     assert!(!tree.contains("Ask the lead anything."), "{tree}");
 }
 
@@ -478,43 +490,6 @@ fn send_on_a_click_sends_the_typed_words(cx: &mut TestAppContext) {
         effects.iter().any(|args| args.first() == Some(&json!(["send", "t1", "hello"]))),
         "Send should send the typed words: {effects:?}"
     );
-}
-
-/// The setup that opens the effort card as the picker does. The catalog is handed over first: the first load
-/// hasn't run when a setup runs, and the slider needs the levels.
-fn effort_card_setup() -> String {
-    format!(
-        "this.agents = {}; this.modelOpen = true; this.pickerView = 'effort'; this.ensureEffortSlider(this.leadProgram());",
-        agent_catalog()
-    )
-}
-
-/// The effort card explains the saved level in one line under its word, and offers the reset.
-#[gpui::test]
-fn the_effort_card_explains_the_saved_level(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let tree = composer_tree(
-        cx,
-        composer_person(Some("sonnet"), Some("high")),
-        Some(effort_card_setup().as_str()),
-    );
-    assert!(tree.contains("Thinks it through."), "{tree}");
-    assert!(tree.contains("composer-effort-reset"), "{tree}");
-    assert!(tree.contains("Use Claude Code's own setting"), "{tree}");
-}
-
-/// With no level saved the card says Default and that Claude Code's own setting applies; no reset.
-#[gpui::test]
-fn the_effort_card_says_default_when_none_is_saved(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let tree = composer_tree(
-        cx,
-        composer_person(Some("sonnet"), None),
-        Some(effort_card_setup().as_str()),
-    );
-    assert!(tree.contains("Default"), "{tree}");
-    assert!(tree.contains("Claude Code's own setting."), "{tree}");
-    assert!(!tree.contains("composer-effort-reset"), "{tree}");
 }
 
 /// Sending a bare /model is still kom send; the hook's auto reveal draws the note.
@@ -1077,4 +1052,212 @@ fn a_chip_remove_target_is_28_px_wide(cx: &mut TestAppContext) {
     assert_eq!(remove.size.width, gpui::px(28.0), "the hit area is 28 px wide: {remove:?}");
     assert_eq!(remove.size.height, gpui::px(28.0), "the hit area is 28 px tall: {remove:?}");
     assert_eq!(chip.size.height, gpui::px(22.0), "the chip keeps its 22 px height: {chip:?}");
+}
+
+/// Mounts the composer with `values`, runs `setup`, draws it settled, and returns the window's width and height
+/// with the laid-out bounds of each id in `ids` (None when it isn't laid out).
+fn composer_layout(
+    cx: &mut TestAppContext,
+    values: BTreeMap<String, Value>,
+    setup: &str,
+    ids: &[&'static str],
+) -> (f32, f32, Vec<Option<gpui::Bounds<gpui::Pixels>>>) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-layout.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let (width, height) = visual.update(|window, _| {
+        let size = window.viewport_size();
+        (f32::from(size.width), f32::from(size.height))
+    });
+    let found = ids.iter().map(|id| visual.debug_bounds(id)).collect();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    (width, height, found)
+}
+
+/// A new conversation: the headline and the box sit a little above the middle, the box's top below a quarter of
+/// the window and its bottom above 85% of it.
+#[gpui::test]
+fn a_new_conversation_starts_in_the_middle(cx: &mut TestAppContext) {
+    let values = conversation_values(json!([]), "hidden", Value::Null, None);
+    let (_, height, found) = composer_layout(cx, values, "", &["composer-box"]);
+    let tree = composer_draws(cx, conversation_values(json!([]), "hidden", Value::Null, None), None);
+    assert!(tree.contains("composer-start"), "{tree}");
+    assert!(tree.contains("What's next?"), "{tree}");
+    let boxed = found[0].expect("the box is laid out");
+    assert!(f32::from(boxed.top()) > height / 4.0, "the box starts below a quarter of {height}: {boxed:?}");
+    assert!(f32::from(boxed.bottom()) < height * 0.85, "the box ends above 85% of {height}: {boxed:?}");
+}
+
+/// The start names the lead and the last part of its saved folder.
+#[gpui::test]
+fn the_start_names_the_folder(cx: &mut TestAppContext) {
+    let mut values = conversation_values(json!([]), "hidden", Value::Null, None);
+    values.insert(
+        "person".into(),
+        json!({"lead": {"program": "claude", "model": "opus", "folder": "C:\\Users\\x\\Projects\\kompitum"}}),
+    );
+    let tree = composer_draws(cx, values, None);
+    assert!(tree.contains("Claude in kompitum"), "{tree}");
+}
+
+/// The first item moves the box to the bottom: no start view is drawn once there is an item.
+#[gpui::test]
+fn the_first_message_moves_the_box_to_the_bottom(cx: &mut TestAppContext) {
+    let items = json!([{"kind": "owner", "id": "o1", "text": "Hello"}]);
+    let tree = composer_draws(cx, conversation_values(items, "hidden", Value::Null, None), None);
+    assert!(tree.contains("composer-item-o1"), "{tree}");
+    assert!(!tree.contains("composer-start"), "{tree}");
+    assert!(!tree.contains("What's next?"), "{tree}");
+}
+
+/// The model menu opens inside the window: its left edge at 0 or more, its right edge within the window's width.
+#[gpui::test]
+fn the_model_menu_opens_inside_the_window(cx: &mut TestAppContext) {
+    let values = usage_values(Value::Null, json!({}));
+    let (width, _, found) = composer_layout(cx, values, "this.modelOpen = true;", &["composer-menu"]);
+    let menu = found[0].expect("the menu is laid out");
+    assert!(f32::from(menu.left()) >= 0.0, "the menu's left edge is inside the window: {menu:?}");
+    assert!(f32::from(menu.right()) <= width, "the menu's right edge is inside the {width}-wide window: {menu:?}");
+}
+
+/// The dump line of the mode word: it names its id, and says `on_click` only while the word is live.
+fn mode_line(tree: &str) -> &str {
+    tree.lines().find(|line| line.contains("Str(\"composer-mode\")")).unwrap_or_default()
+}
+
+/// The text colour the dump gives a line (its first `text_color`).
+fn text_color_of(line: &str) -> &str {
+    line.split("text_color[").nth(1).and_then(|rest| rest.split(']').next()).unwrap_or_default()
+}
+
+/// A lead whose hooks named `mode`, with the mode's guess flag; `extra` adds to the lead.
+fn with_permission_mode(mode: &str, guessed: bool) -> BTreeMap<String, Value> {
+    usage_values(Value::Null, json!({"permission_mode": mode, "mode_guessed": guessed}))
+}
+
+/// A lead with a permission card open: the box can't take a click on the mode word.
+fn with_open_card(mode: &str) -> BTreeMap<String, Value> {
+    usage_values(
+        Value::Null,
+        json!({
+            "permission_mode": mode,
+            "ask": {"id": "a1", "terminal": "t1", "kind": "permission", "input": {"tool_name": "Bash", "tool_input": {"command": "ls"}}}
+        }),
+    )
+}
+
+/// The box's bottom row: attach, then the model, the mode word, and Send at the far right.
+#[gpui::test]
+fn the_row_reads_model_level_and_mode(cx: &mut TestAppContext) {
+    let tree = composer_draws(cx, with_permission_mode("default", false), None);
+    assert!(tree.contains("Ask first"), "{tree}");
+    assert!(!mode_line(&tree).is_empty(), "{tree}");
+    let ids = ["composer-attach", "composer-model", "composer-mode", "composer-send"];
+    let (_, _, found) = composer_layout(cx, with_permission_mode("default", false), "", &ids);
+    let [attach, model, mode, send] = [0, 1, 2, 3].map(|i| found[i].unwrap_or_else(|| panic!("{} is laid out", ids[i])));
+    assert!(f32::from(attach.left()) < f32::from(model.left()), "attach, then model: {attach:?} {model:?}");
+    assert!(f32::from(model.left()) < f32::from(mode.left()), "model, then mode: {model:?} {mode:?}");
+    assert!(f32::from(mode.left()) < f32::from(send.left()), "send is the rightmost: {mode:?} {send:?}");
+}
+
+/// Before Claude has reported a mode there is no mode word: no hook has named one.
+#[gpui::test]
+fn no_mode_word_before_claude_reports_one(cx: &mut TestAppContext) {
+    let tree = composer_draws(cx, usage_values(Value::Null, json!({})), None);
+    assert!(mode_line(&tree).is_empty(), "{tree}");
+}
+
+/// A click on the mode word runs lead.mode for this terminal.
+#[gpui::test]
+fn clicking_the_mode_runs_lead_mode(cx: &mut TestAppContext) {
+    let effects = composer_live_run_after_clicks(cx, with_permission_mode("default", false), "", &["composer-mode"]);
+    assert!(
+        effects
+            .iter()
+            .any(|args| args.first() == Some(&json!("lead.mode")) && args.get(1) == Some(&json!({"terminal": "t1"}))),
+        "{effects:?}"
+    );
+}
+
+/// While a card is open the mode word is drawn but has no click: Claude is asking, so the mode can't switch.
+#[gpui::test]
+fn the_mode_word_waits_while_a_card_is_open(cx: &mut TestAppContext) {
+    let tree = composer_draws(cx, with_open_card("default"), None);
+    assert!(tree.contains("Ask first"), "{tree}");
+    let line = mode_line(&tree);
+    assert!(!line.is_empty(), "{tree}");
+    assert!(!line.contains("on_click"), "{tree}");
+}
+
+/// A guessed mode is drawn dim, the colour a not-live mode word has; a confirmed live one is drawn muted.
+#[gpui::test]
+fn a_guessed_mode_is_drawn_dim(cx: &mut TestAppContext) {
+    let guessed = composer_draws(cx, with_permission_mode("plan", true), None);
+    let confirmed = composer_draws(cx, with_permission_mode("plan", false), None);
+    let asking = composer_draws(cx, with_open_card("plan"), None);
+    let dim = text_color_of(mode_line(&asking));
+    assert!(!dim.is_empty(), "{asking}");
+    assert_eq!(text_color_of(mode_line(&guessed)), dim, "a guessed mode is dim: {guessed}");
+    assert_ne!(text_color_of(mode_line(&confirmed)), dim, "a confirmed live mode is not dim: {confirmed}");
+}
+
+/// "Compact first" shows only from 222K tokens, with a draft waiting: not below 222K, and not without a draft.
+#[gpui::test]
+fn compact_first_shows_only_from_222k_with_a_draft(cx: &mut TestAppContext) {
+    let draft = "this.text.set_value('hello');";
+    let below = composer_draws(cx, usage_values(usage_with(221999, Value::Null), json!({})), Some(draft));
+    assert!(!below.contains("composer-compact-first"), "{below}");
+    let no_draft = composer_draws(cx, usage_values(usage_with(300000, Value::Null), json!({})), None);
+    assert!(!no_draft.contains("composer-compact-first"), "{no_draft}");
+    let at = composer_draws(cx, usage_values(usage_with(222000, Value::Null), json!({})), Some(draft));
+    assert!(at.contains("composer-compact-first"), "{at}");
+}
+
+/// With "Compact first" on, Send runs lead.compact and sends nothing; the text stays in the box while it waits.
+#[gpui::test]
+fn compact_first_then_send_compacts_and_keeps_the_text(cx: &mut TestAppContext) {
+    let effects = composer_live_run_after_clicks(
+        cx,
+        usage_values(usage_with(300000, Value::Null), json!({})),
+        "this.text.set_value('hello'); this.compactFirst = true;",
+        &["composer-send"],
+    );
+    assert!(
+        effects.iter().any(|args| args.first() == Some(&json!("lead.compact"))
+            && args.get(1) == Some(&json!({"terminal": "t1"}))),
+        "{effects:?}"
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|args| args.first().and_then(Value::as_array).and_then(|words| words.first()) == Some(&json!("send"))),
+        "nothing is sent while the lead tidies up: {effects:?}"
+    );
+    let waiting = composer_draws(
+        cx,
+        usage_values(usage_with(300000, Value::Null), json!({})),
+        Some("this.text.set_value('hello'); this.compactThenSend = { at: Date.now(), started: false };"),
+    );
+    assert!(waiting.contains("Tidying up, then sending…"), "{waiting}");
+    // The box's text is not in the render dump, so "the text stays" is not asserted here (see the report's Gaps).
 }

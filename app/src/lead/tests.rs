@@ -1128,3 +1128,14 @@ fn a_compact_command_makes_no_owner_item_and_keeps_the_terminal_as_it_is() {
     assert_eq!(owners("/compact keep the schema"), (0, Some(Reveal::Auto)));
     assert_eq!(owners("/compacting is slow"), (1, None));
 }
+
+#[test]
+fn published_session_carries_the_permission_mode_and_whether_it_is_guessed() {
+    let mut session = Session::default();
+    assert_eq!(published_session(&session)["permission_mode"], Value::Null);
+    assert_eq!(published_session(&session)["mode_guessed"], json!(false));
+    session.permission_mode = Some("acceptEdits".into());
+    session.mode_guessed = true;
+    assert_eq!(published_session(&session)["permission_mode"], json!("acceptEdits"));
+    assert_eq!(published_session(&session)["mode_guessed"], json!(true));
+}

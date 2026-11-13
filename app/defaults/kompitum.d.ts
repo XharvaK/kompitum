@@ -149,7 +149,7 @@ export function openLink(url: string): void;
  *   terminal.right_click {to: "program" | "menu", terminal?} (right-clicks to a program that takes the mouse; Shift: the menu).
  *   terminal.scroll {lines | pages | to: "top" | "bottom", terminal?} (Kompitum's view of the history: negative goes up; pages may be fractional).
  * Agents: agent.next, agent.prev (the agents list's order), agent.focus {terminal} (sub-agents too),
- *   lead.open (focus or start the lead, with the composer under it), lead.restart {terminal} (end the lead and start it again with the saved model and reasoning).
+ *   lead.open (focus or start the lead, with the composer under it), lead.restart {terminal} (end the lead and start it again with the saved model and reasoning), lead.mode {terminal} (Shift+Tab in the lead's terminal: Claude Code's next permission mode).
  * Layout (the shown layout's nodes by id): layout.toggle|show|hide {id}, layout.resize {id, px | weight},
  *   layout.select {stack, child}, layout.set {layout} (personal trees; shipped layouts: click/look fields only), layout.switch {name?} (no name: the next one).
  *   layout.clone {name, as?} duplicates and switches; mod.clone {name, as?} duplicates a mod.
@@ -353,6 +353,10 @@ export function lead(): {
   } | null;
   /** Whether Claude is compacting the conversation right now. */
   compacting: boolean;
+  /** Claude Code's permission mode (default, acceptEdits, plan, auto, dontAsk, bypassPermissions); null until a hook names it. */
+  permission_mode?: string | null;
+  /** True from a click on the mode word until the next hook says the mode. */
+  mode_guessed?: boolean;
 } | null;
 
 /** Conversation items from index `from` (0-based). The panel asks only for

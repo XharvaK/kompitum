@@ -593,6 +593,15 @@ pub struct Session {
     /// When the lead last sent a hook or a status line (ms since the Unix epoch). Not saved.
     #[serde(skip)]
     pub heard_ms: Option<u64>,
+    /// Claude Code's permission mode, from its hooks' `permission_mode`. Not saved.
+    #[serde(skip)]
+    pub permission_mode: Option<String>,
+    /// True from a click on the mode word until the next hook says the mode. Not saved.
+    #[serde(skip)]
+    pub mode_guessed: bool,
+    /// Every permission mode a hook has named in this session: the optional modes count once seen. Not saved.
+    #[serde(skip)]
+    pub modes_seen: std::collections::BTreeSet<String>,
 }
 
 impl Session {
@@ -644,6 +653,8 @@ pub fn published_session(session: &Session) -> Value {
         "usage": session.usage,
         "compacting": session.compacting,
         "heard_ms": session.heard_ms,
+        "permission_mode": session.permission_mode,
+        "mode_guessed": session.mode_guessed,
         "conversation": {
             "version": session.conversation.version,
             "length": session.conversation.items.len(),

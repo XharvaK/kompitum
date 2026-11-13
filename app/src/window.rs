@@ -4251,7 +4251,12 @@ impl AppWindow {
         let from_lead = self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program));
         if from_lead {
             // Every hook and status line from the lead says it is still there (the composer's "Working?").
-            self.lead_sessions.entry(terminal.clone()).or_default().heard_ms = Some(model::now_ms());
+            let session = self.lead_sessions.entry(terminal.clone()).or_default();
+            session.heard_ms = Some(model::now_ms());
+            // Claude Code's hooks say its permission mode; a change shows in the composer's mode word.
+            if crate::lead::apply_permission_mode(session, &input) {
+                self.publish_lead(cx);
+            }
         }
         if event == "SessionStart" {
             let mut streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
@@ -4660,6 +4665,45 @@ impl AppWindow {
                     window,
                     cx,
                 ),
+            });
+        })
+        .detach();
+    }
+
+    /// Presses Shift+Tab in the lead's terminal for the Owner's click on the mode word, off the UI thread. When the
+    /// core refuses the key, the old mode comes back and a toast says so.
+    fn press_lead_mode_key(&mut self, terminal: String, old: Option<String>, window: &Window, cx: &mut Context<Self>) {
+        let core = self.core.clone();
+        let guard = crate::inflight::track();
+        let address = terminal.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let pressed = cx
+                .background_executor()
+                .spawn(async move {
+                    let _guard = guard;
+                    core.call("terminal.keys", json!({ "terminal": address, "keys": ["shift+tab"] }))
+                })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Err(error) = pressed else {
+                    return;
+                };
+                if let Some(session) = this.lead_sessions.get_mut(&terminal) {
+                    session.permission_mode = old;
+                    session.mode_guessed = false;
+                }
+                this.publish_lead(cx);
+                let notification = json!({
+                    "title": format!("Couldn't switch Claude's mode: {error}"),
+                    "body": "The mode stays as it was.",
+                    "level": "error",
+                });
+                this.open_overlay(
+                    mods::new_overlay_id(),
+                    json!({ "kind": "toast", "notification": notification }),
+                    window,
+                    cx,
+                );
             });
         })
         .detach();
@@ -6206,6 +6250,31 @@ impl AppWindow {
                 let name = spec["name"].as_str().unwrap_or(&program).to_owned();
                 self.restart_lost_lead(terminal, name, true, window, cx);
                 self.reply = Some(json!({ "restarting": true }));
+            }
+            "lead.mode" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let person = settings::load_person().ok();
+                let program = person
+                    .and_then(|person| person.lead)
+                    .and_then(|lead| lead.program)
+                    .filter(|program| !program.is_empty())
+                    .unwrap_or_else(|| "claude".to_owned());
+                if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
+                    return self.fail(format!("{terminal:?} isn't the lead's terminal"));
+                }
+                if let Some(why) = crate::lead::mode_refusal(self.lead_sessions.get(&terminal)) {
+                    return self.fail(why);
+                }
+                let Some(session) = self.lead_sessions.get_mut(&terminal) else {
+                    return self.fail("the lead hasn't started yet");
+                };
+                let old = session.permission_mode.clone();
+                let next = crate::lead::next_mode(old.as_deref(), &session.modes_seen).to_owned();
+                session.permission_mode = Some(next.clone());
+                session.mode_guessed = true;
+                self.publish_lead(cx);
+                self.press_lead_mode_key(terminal, old, window, cx);
+                self.reply = Some(json!({ "mode": next }));
             }
             "lead.fit" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
