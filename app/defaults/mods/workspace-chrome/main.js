@@ -1,6 +1,6 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex, Popover } from "gpui-base";
-import { theme, run, props, window, shared, setShared, updates, layout, spaces, knownAgents, pickFolder, notify, kom, agents, lead, openOverlay } from "kompitum";
+import { theme, run, props, window, shared, setShared, updates, layout, spaces, knownAgents, pickFolder, notify, kom, openOverlay } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -27,45 +27,17 @@ function firstLine(text) {
   return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 }
 
-// Claude's windows that count, as the composer counts them: a percentage, and a reset not yet past.
-function claudeWindows(usage) {
-  const now = Date.now() / 1000;
-  return [{ short: "5h", limit: usage?.five_hour }, { short: "week", limit: usage?.seven_day }]
-    .map(({ short, limit }) => ({ short, pct: limit?.used_percentage, resets: limit?.resets_at }))
-    .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
-    .filter((w) => !(typeof w.resets === "number" && w.resets < now));
-}
-
 export default class WorkspaceChrome extends View {
-  // Only the nav copy reads the tasks, and only the foot reads the notes: the brand row needs neither.
+  // Only the nav copy reads the tasks: the brand row and the foot don't need them.
   init(_props, cx) {
     this.spaceOpen = false;
     this.agents = [];
     this.review = 0;
     this.busy = 0;
     this.tasksError = null;
-    this.notes = 0;
-    if (props()?.footer) {
-      this.readNotes(cx);
-      cx.timer.every(60000, (cx) => this.readNotes(cx));
-    }
     if (!props()?.nav) return;
     this.readTasks(cx);
     cx.timer.every(10000, (cx) => this.readTasks(cx));
-  }
-
-  // The notes waiting for the Owner, counted from the vault for the bell. A failed read keeps the last count.
-  readNotes(cx) {
-    cx.spawn(async (cx) => {
-      try {
-        const r = await kom(["vault", "open", "--json", "--as", "owner"]);
-        if (r?.code === 0) {
-          const data = JSON.parse(r.stdout || "{}");
-          this.notes = Array.isArray(data?.notes) ? data.notes.filter((n) => n && typeof n === "object").length : 0;
-        }
-      } catch {}
-      cx.notify();
-    });
   }
 
   // The tasks from `kom status --json`: those waiting for review, and those running or queued. A failed
@@ -112,7 +84,7 @@ export default class WorkspaceChrome extends View {
 
   button(id, label, action) {
     const t = theme();
-    return div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground))
+    return div().id(id).size(28).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click(action).child(label);
   }
 
@@ -149,7 +121,7 @@ export default class WorkspaceChrome extends View {
       .rounded(6)
       .cursor_pointer()
       .text_size(13)
-      .hover((s) => s.bg(t.hover))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(action);
     const content = v_flex()
@@ -169,7 +141,7 @@ export default class WorkspaceChrome extends View {
               .flex_1()
               .min_w(0)
               .child(div().truncate().font_semibold().text_color(t.foreground).child(space?.name ?? ""))
-              .child(div().truncate().text_size(11.5).text_color(t.dim).child(space?.folder ?? "")),
+              .child(div().truncate().text_size(12).text_color(t.dim).child(space?.folder ?? "")),
           ),
       )
       .child(div().h(1).my(4).bg(t.border))
@@ -190,7 +162,7 @@ export default class WorkspaceChrome extends View {
             .child(div().text_color(t.foreground).child(agent.name))),
       );
     const trigger = h_flex().id("space-menu").w(28).h(28).flex_none().items_center().justify_center().rounded(7)
-      .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .tooltip("Space and new terminals")
       .child(svg("mods/workspace-chrome/plus.svg").size(16));
     return Popover.new("space-menu-menu")
@@ -207,7 +179,7 @@ export default class WorkspaceChrome extends View {
   // A sidebar row: an icon, and its label beside it unless the rail is narrow.
   navRow(t, collapsed, id, icon, label, tip, action) {
     return h_flex().id(id).h(36).px(8).gap(10).items_center().rounded(8).cursor_pointer().relative()
-      .text_size(14).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .text_size(13).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .when(collapsed, (el) => el.justify_center().px(0))
       .tooltip(tip)
       .on_click(action)
@@ -247,40 +219,17 @@ export default class WorkspaceChrome extends View {
       .child(tasks);
   }
 
-  // The sidebar's foot: Settings, Limits and the bell. The bell counts what needs you (the lead's question, blocked
-  // agents, ready updates) plus the notes waiting for the Owner; tasks don't count. The rail keeps only the bell.
-  // Limits names the Claude windows in its tooltip, and a dot shows when the higher one is at 75 or more.
+  // The sidebar's foot: Settings, with a dot when an update is ready; its 16 px icon lines up with the rows'
+  // icons above. Limits and the bell are in the top bar, so the rail keeps Settings too.
   foot(t, collapsed) {
-    const iconButton = (id, icon, tip, action) => h_flex().id(id).w(28).h(28).flex_none().items_center().justify_center().rounded(7)
-      .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip(tip)
-      .on_click(action).child(svg(icon).size(16));
     const u = updates();
-    const needs = agents().filter((a) => a.status === "blocked").length + (lead()?.ask ? 1 : 0)
-      + (u.app.ready ? 1 : 0) + (u.core.ready && !u.core.updating ? 1 : 0);
-    const count = needs + this.notes;
-    const parts = [needs > 1 ? `${needs} need you` : needs === 1 ? "1 needs you" : "",
-      this.notes > 1 ? `${this.notes} notes` : this.notes === 1 ? "1 note" : ""];
-    const bellTip = count === 0 ? "Nothing needs you" : parts.filter(Boolean).join(" · ");
-    const bell = iconButton("sidebar-bell", "mods/topbar/bell.svg", bellTip,
-      () => openOverlay({ mod: "bell", kind: "popup", width: 360, height: 440, at: "pointer" }))
-      .relative()
-      .when(count > 0, (el) => el.child(div().id("sidebar-bell-count").absolute().top(-2).right(-2).h(15).min_w(15).px(4).rounded(8).flex().items_center().justify_center()
-        .bg(t.accent_fill).text_color(t.accent_foreground).text_size(10.5).font_semibold().child(count > 99 ? "99+" : String(count))));
-    if (collapsed) return h_flex().size_full().px(0).justify_center().items_center().child(bell);
-    const settingsButton = iconButton("settings", "mods/workspace-chrome/settings.svg", "Settings", () => run("app.settings"))
+    const settingsButton = h_flex().id("settings").w(32).h(32).flex_none().items_center().justify_center().rounded(8)
+      .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tooltip("Settings")
+      .on_click(() => run("app.settings"))
+      .child(svg("mods/workspace-chrome/settings.svg").size(16))
       .when(Boolean(u.app.ready), (el) => el.relative().child(div().size(6).rounded_full().bg(t.accent).absolute().top(4).right(4)));
-    const windows = claudeWindows(lead()?.usage);
-    const top = Math.max(0, ...windows.map((w) => w.pct));
-    const tip = ["Limits", ...windows.map((w) => `${w.short} ${Math.round(w.pct)}%`)].join(" · ");
-    const limits = iconButton("sidebar-usage", "mods/workspace-chrome/gauge.svg", tip,
-      () => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "pointer" }))
-      .when(top >= 75, (el) => el.relative().child(div().size(6).rounded_full().absolute().top(4).right(4)
-        .bg(top >= 100 ? t.blocked : t.working)));
-    return h_flex().size_full().px(10).gap(2).items_center()
-      .child(settingsButton)
-      .child(limits)
-      .child(div().flex_1())
-      .child(bell);
+    return h_flex().size_full().px(collapsed ? 0 : 8).items_center().when(collapsed, (el) => el.justify_center())
+      .child(settingsButton);
   }
 
   render() {
@@ -288,7 +237,7 @@ export default class WorkspaceChrome extends View {
     const collapsed = narrow();
     if (props()?.nav) return this.nav(t, collapsed);
     if (props()?.footer) return this.foot(t, collapsed);
-    return h_flex().size_full().pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(14)
+    return h_flex().size_full().pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(13)
       .when(window()?.platform === "macos" && !window()?.fullscreen && !collapsed, el => el.pl(76))
       .when(!collapsed, el => el.child(h_flex().flex_1().gap(8).items_center().child(image("frame/welcome/kompitum.png").size(20).rounded(5)).child(div().font_semibold().text_color(t.foreground).child("Kompitum"))))
       .when(!collapsed, el => el.child(this.spaceMenu(t)))

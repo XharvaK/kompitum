@@ -78,7 +78,7 @@ function appearanceTiles(view, t) {
               .when(!chosen, (el) => el.hover((s) => s.border_color(t.input)))
               .child(tileArt(label)),
           )
-          .child(div().text_size(12.5).text_color(chosen ? t.foreground : t.muted).child(label));
+          .child(div().text_size(12).text_color(chosen ? t.foreground : t.muted).child(label));
       }),
     );
 }
@@ -156,7 +156,7 @@ function stepper(t, id, value, onMinus, onPlus) {
       .cursor_pointer()
       .text_size(15)
       .text_color(t.muted)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_click(f)
       .child(label);
   return h_flex()
@@ -240,7 +240,7 @@ export function appearancePage(view, t, cx) {
         .border_b(1)
         .border_color(t.border)
         .when(view.lit("theme"), (el) => el.bg(t.selected).rounded(7))
-        .child(div().text_size(14).text_color(t.foreground).child("Theme"))
+        .child(div().text_size(13).text_color(t.foreground).child("Theme"))
         .child(appearanceTiles(view, t)),
     )
     .child(div().h(18))

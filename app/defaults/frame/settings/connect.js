@@ -249,14 +249,14 @@ function systemRow(view, t, system, cx) {
       .gap(8)
       .items_center()
       .child(div().w(7).h(7).rounded(4).bg(t.ansi2))
-      .child(div().text_size(12.5).text_color(t.muted).child(`Joined as ${saved.agent}`))
+      .child(div().text_size(12).text_color(t.muted).child(`Joined as ${saved.agent}`))
       .child(view.button(t, `st-c-open-${system.id}`, "Open", () => openLink(`${system.scheme}://`)))
       .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
   } else if (saved.since) {
     state = h_flex()
       .gap(8)
       .items_center()
-      .child(div().text_size(12.5).text_color(t.muted).child("Waiting for it to join"))
+      .child(div().text_size(12).text_color(t.muted).child("Waiting for it to join"))
       .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
   } else {
     state = h_flex()
@@ -273,7 +273,7 @@ function systemRow(view, t, system, cx) {
     .border_b(1)
     .border_color(t.border)
     .child(icon)
-    .child(v_flex().flex_1().min_w(0).gap(3).child(div().text_size(14).text_color(t.foreground).child(system.name)).child(state));
+    .child(v_flex().flex_1().min_w(0).gap(3).child(div().text_size(13).text_color(t.foreground).child(system.name)).child(state));
 }
 
 function otherRow(view, t, cx) {
@@ -284,8 +284,8 @@ function otherRow(view, t, cx) {
     .gap(3)
     .border_b(1)
     .border_color(t.border)
-    .child(div().text_size(14).text_color(t.foreground).child("Any other agent"))
-    .child(div().text_size(12.5).line_height("18px").text_color(t.dim).child("Any agent that can run a command on a computer you added."))
+    .child(div().text_size(13).text_color(t.foreground).child("Any other agent"))
+    .child(div().text_size(12).line_height("18px").text_color(t.dim).child("Any agent that can run a command on a computer you added."))
     .child(
       h_flex()
         .pt(8)
@@ -319,7 +319,7 @@ export function connectPage(view, t, cx) {
     .w_full()
     .child(view.machines(t))
     .child(view.heading(t, "Agents from other systems"))
-    .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim).child("Bring another agent into Kompitum."))
+    .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim).child("Bring another agent into Kompitum."))
     .child(
       h_flex()
         .id("st-c-how")
@@ -331,16 +331,16 @@ export function connectPage(view, t, cx) {
           connect.showHow = !connect.showHow;
           cx.notify();
         })
-        .child(div().text_size(11.5).text_color(t.dim).child(connect.showHow ? "\u25be" : "\u25b8"))
-        .child(div().text_size(12.5).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child("How it works")),
+        .child(div().text_size(12).text_color(t.dim).child(connect.showHow ? "\u25be" : "\u25b8"))
+        .child(div().text_size(12).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child("How it works")),
     )
     .when(connect.showHow, (el) =>
-      el.child(div().pt(4).pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
+      el.child(div().pt(4).pb(8).text_size(12).line_height("18px").text_color(t.dim)
         .child("Connect copies a prompt for them; they show as joined once their first note reaches the vault")),
     )
     .children(connect.found.map((system) => systemRow(view, t, system, cx)))
     .child(otherRow(view, t, cx))
-    .when(Boolean(connect.error), (el) => el.child(div().py(10).text_size(12.5).text_color(t.blocked).tooltip(connect.error).child(firstLine(connect.error) || connect.error)))
-    .when(Boolean(connect.message), (el) => el.child(div().py(10).text_size(12.5).text_color(t.muted).child(connect.message)))
+    .when(Boolean(connect.error), (el) => el.child(div().py(10).text_size(12).text_color(t.blocked).tooltip(connect.error).child(firstLine(connect.error) || connect.error)))
+    .when(Boolean(connect.message), (el) => el.child(div().py(10).text_size(12).text_color(t.muted).child(connect.message)))
     .when(connect.showPrompt, (el) => el.child(promptBox(view, t)));
 }

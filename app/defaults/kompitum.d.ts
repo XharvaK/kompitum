@@ -499,7 +499,8 @@ export interface OverlaySpec {
   /** px, or up to 1: a share of the window. */
   width?: number;
   height?: number;
-  at?: "pointer" | { x: number; y: number };
+  /** "top-right": in the corner where toasts show, under the bell (the bell's list and Limits open there). */
+  at?: "pointer" | "top-right" | { x: number; y: number };
 }
 
 /** Shows a mod (or a layout) above everything. Returns its id. The mod gets `props().overlay` = that id. */
@@ -510,7 +511,10 @@ export function openOverlay(spec: OverlaySpec): string;
 export function closeOverlay(id: string): null;
 
 /** Posts a notification. Shown by the `toast` mod (replaceable), which runs `action` when clicked.
- *  Kompitum posts one itself when an agent needs you or finished while you weren't looking. Returns its id. */
+ *  Kompitum posts one itself when an agent needs you or finished while you weren't looking. Toasts show at
+ *  the top right, newest first, three at a time; one that leaves is listed in the bell under Earlier, and
+ *  one with the same title as a toast still up replaces it. `timeout: 0` keeps it until it's clicked or
+ *  closed. Returns its id. */
 export function notify(n: {
   title: string;
   body?: string;

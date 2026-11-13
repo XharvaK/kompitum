@@ -318,7 +318,7 @@ export default class Board extends View {
         .text_color(t.muted)
         .cursor_pointer()
         .tooltip("Close")
-        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => closeOverlay(props().overlay))
         .child(svg("mods/workspace-chrome/x.svg").size(12)));
@@ -333,7 +333,7 @@ export default class Board extends View {
       .items_center()
       .rounded(4)
       .bg(color + "1f")
-      .text_size(10)
+      .text_size(11)
       .font_medium()
       .text_color(color)
       .child(label);
@@ -362,11 +362,12 @@ export default class Board extends View {
       .rounded(5)
       .bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground)
-      .text_size(10.5)
+      .text_size(11)
       .font_medium()
       .cursor_pointer()
-      .hover((s) => s.opacity(0.85))
+      .relative()
       .on_click(onClick)
+      .child(div().absolute().inset_0().rounded(5).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
       .child(label);
   }
 
@@ -426,7 +427,7 @@ export default class Board extends View {
       .when(accepting, (el) => el.child(h_flex().pt(2).gap(6).items_center()
         .child(div().flex_1().min_w(0).h(24).px(6).rounded(5).border_1().border_color(t.accent).bg(t.background)
           .child(Input.new(this.accepting.input).h_full().text_size(11).text_color(t.foreground)))
-        .child(div().text_size(10).text_color(t.dim).child("Enter accepts · Esc closes"))));
+        .child(div().text_size(11).text_color(t.dim).child("Enter accepts · Esc closes"))));
   }
 
   section(t, title, list, kind, cx) {
@@ -518,7 +519,7 @@ export default class Board extends View {
         .overflow_y_scrollbar()
         .p(12)
         .font_family(settings()?.font_family ?? "Google Sans Code")
-        .text_size(11.5)
+        .text_size(12)
         .child(v_flex().w_full().children(lines(review.body))));
   }
 

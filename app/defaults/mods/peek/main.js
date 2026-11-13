@@ -36,7 +36,7 @@ export default class Peek extends View {
       .rounded(5)
       .text_color(t.muted)
       .cursor_pointer()
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_click(onClick)
       .child(label);
   }

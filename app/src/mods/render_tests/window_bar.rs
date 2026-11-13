@@ -4,28 +4,34 @@
 
 use super::*;
 
-/// The top bar is a breadcrumb of where you are, and it holds one toggle for the side panel; the bell and
-/// the mailbox moved to the sidebar's foot.
+/// The top bar is a breadcrumb of where you are; on its right, Limits and the bell, then the side panel's
+/// toggle and the window's buttons. The mailbox lives in the bell.
 #[gpui::test]
-fn the_top_bar_is_a_breadcrumb_and_the_panel_toggles(cx: &mut TestAppContext) {
+fn the_top_bar_is_a_breadcrumb_with_limits_and_the_bell_on_the_right(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let tree = describe(
-        cx,
-        &staged,
-        "mods/topbar",
-        true,
-        props(),
-        updates("current", "current"),
-        None,
-    )
-    .unwrap();
-    for id in ["topbar-crumbs", "panel-toggle", "Show the side panel"] {
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("vaultJson".into(), vault_notes(vec![]));
+    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
+    for id in ["topbar-crumbs", "topbar-limits", "topbar-bell", "Nothing needs you", "panel-toggle", "Show the side panel"] {
         assert!(tree.contains(id), "missing {id}: {tree}");
     }
-    for gone in ["topbar-bell", "topbar-mail", "topbar-back", "panel-files", "panel-changes"] {
-        assert!(!tree.contains(gone), "{gone} moved out of the top bar: {tree}");
+    let order = ["topbar-crumbs", "topbar-limits", "topbar-bell", "panel-toggle", "minimize"].map(|id| tree.find(id).unwrap());
+    assert!(order.windows(2).all(|w| w[0] < w[1]), "crumbs, then Limits, the bell, the toggle and the window: {tree}");
+    for gone in ["topbar-mail", "topbar-back", "panel-files", "panel-changes"] {
+        assert!(!tree.contains(gone), "{gone} isn't in the top bar: {tree}");
     }
+}
+
+/// The bell opens its list at the top right, where toasts show, not at the pointer.
+#[gpui::test]
+fn the_bell_opens_its_list_where_toasts_show(cx: &mut TestAppContext) {
+    let mut values = fixture(true, props(), updates("current", "current"));
+    values.insert("vaultJson".into(), vault_notes(vec![]));
+    let opened = topbar_effects_after_click(cx, values, "", "topbar-bell", "openOverlay");
+    assert_eq!(opened.len(), 1, "{opened:?}");
+    assert_eq!(opened[0][0]["mod"], "bell", "{opened:?}");
+    assert_eq!(opened[0][0]["at"], "top-right", "{opened:?}");
 }
 
 /// The side panel's header picks Files, Changes or Tasks, and holds the terminal button and close.
@@ -65,6 +71,17 @@ fn topbar_run_effects_after_click(
     setup: &str,
     id: &'static str,
 ) -> Vec<Vec<Value>> {
+    topbar_effects_after_click(cx, values, setup, id, "run")
+}
+
+/// Mounts the top bar with `values`, runs `setup` after its init, clicks `id`, and returns the `name` effects.
+fn topbar_effects_after_click(
+    cx: &mut TestAppContext,
+    values: BTreeMap<String, Value>,
+    setup: &str,
+    id: &'static str,
+    name: &str,
+) -> Vec<Vec<Value>> {
     use gpui::{Modifiers, MouseButton};
     cx.update(gpui_shell::init);
     let staged = Staged::new();
@@ -99,7 +116,7 @@ fn topbar_run_effects_after_click(
     calls
         .effects
         .iter()
-        .filter(|(name, _)| name == "run")
+        .filter(|(effect, _)| effect == name)
         .map(|(_, args)| args.clone())
         .collect()
 }
@@ -205,18 +222,17 @@ fn the_sidebar_offers_search_and_tasks(cx: &mut TestAppContext) {
     }
 }
 
-/// The sidebar's foot holds Settings, Limits and the bell; the notes moved into the bell, so no Notes button is here.
+/// The sidebar's foot holds Settings alone: Limits and the bell moved to the top bar, and the notes live in the bell.
 #[gpui::test]
-fn the_foot_holds_settings_limits_and_the_bell(cx: &mut TestAppContext) {
+fn the_foot_holds_settings(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
-    values.insert("vaultJson".into(), vault_notes(vec![]));
+    let values = fixture(true, json!({"footer": true}), updates("current", "current"));
     let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
-    for shown in ["settings", "sidebar-usage", "Limits", "sidebar-bell", "Nothing needs you"] {
-        assert!(tree.contains(shown), "missing {shown}: {tree}");
+    assert!(tree.contains("settings"), "{tree}");
+    for gone in ["sidebar-usage", "sidebar-bell", "sidebar-notes"] {
+        assert!(!tree.contains(gone), "{gone} isn't in the foot: {tree}");
     }
-    assert!(!tree.contains("sidebar-notes"), "the notes moved into the bell: {tree}");
 }
 
 /// Limits' tooltip names Claude's windows that have a percentage, so the Owner sees the higher one at a glance.
@@ -224,7 +240,7 @@ fn the_foot_holds_settings_limits_and_the_bell(cx: &mut TestAppContext) {
 fn limits_names_claudes_windows_in_its_tooltip(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
-    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("vaultJson".into(), vault_notes(vec![]));
     values.insert(
         "lead".into(),
@@ -233,37 +249,37 @@ fn limits_names_claudes_windows_in_its_tooltip(cx: &mut TestAppContext) {
             "five_hour": {"used_percentage": 82, "resets_at": null}, "seven_day": null
         }}),
     );
-    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
-    assert!(tree.contains("sidebar-usage"), "{tree}");
+    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
+    assert!(tree.contains("topbar-limits"), "{tree}");
     assert!(tree.contains("5h 82%"), "{tree}");
 }
 
-/// The bell at the sidebar's foot counts what needs you (blocked agents, the lead's ask, ready updates) and
+/// The bell in the top bar counts what needs you (blocked agents, the lead's ask, ready updates) and
 /// the notes waiting. Tasks waiting for review don't count; it stays away at zero and caps at 99+.
 #[gpui::test]
-fn the_bell_at_the_foot_counts_what_needs_you(cx: &mut TestAppContext) {
+fn the_bell_in_the_top_bar_counts_what_needs_you(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();
 
-    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("vaultJson".into(), vault_notes(vec![]));
     values.insert(
         "statusJson".into(),
         json!({"tasks": {"review": [{"name": "fix-docs"}], "running": [], "queued": []}, "waiting": {"review": 120}}),
     );
-    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
-    assert!(!tree.contains("sidebar-bell-count"), "tasks for review don't count: {tree}");
+    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
+    assert!(!tree.contains("topbar-bell-count"), "tasks for review don't count: {tree}");
 
     let blocked: Vec<Value> = (0..100)
         .map(|i| json!({"address": format!("b{i}"), "pane": "p1", "status": "blocked", "title": "Stuck"}))
         .collect();
-    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("vaultJson".into(), vault_notes(vec![]));
     values.insert("agents".into(), Value::Array(blocked));
-    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
     assert!(tree.contains("99+"), "the count caps at 99+: {tree}");
 
-    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("vaultJson".into(), vault_notes(vec![]));
     values.insert(
         "agents".into(),
@@ -273,33 +289,33 @@ fn the_bell_at_the_foot_counts_what_needs_you(cx: &mut TestAppContext) {
         "lead".into(),
         json!({"state": "asking", "ask": {"id": "a1", "terminal": "t1", "kind": "permission", "input": {}}}),
     );
-    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
-    assert!(tree.contains("sidebar-bell-count"), "blocked + ask: {tree}");
+    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
+    assert!(tree.contains("topbar-bell-count"), "blocked + ask: {tree}");
     assert!(tree.contains(r#"text "2""#), "one blocked agent and the ask make 2: {tree}");
     assert!(tree.contains("2 need you"), "{tree}");
 
-    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    let mut values = fixture(true, props(), updates("current", "current"));
     values.insert(
         "vaultJson".into(),
         vault_notes(vec![vault_owner_note(), vault_agent_note()]),
     );
-    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
     assert!(tree.contains(r#"text "2""#), "two notes make 2: {tree}");
     assert!(tree.contains("2 notes"), "{tree}");
 
-    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("vaultJson".into(), vault_notes(vec![vault_owner_note()]));
     values.insert(
         "agents".into(),
         json!([{"address": "t1", "pane": "p1", "status": "blocked", "title": "Build"}]),
     );
-    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
+    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
     assert!(tree.contains("1 needs you · 1 note"), "{tree}");
 
-    let mut values = fixture(true, json!({"footer": true}), updates("current", "current"));
+    let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("vaultJson".into(), vault_notes(vec![]));
-    let tree = describe_settled(cx, &staged, "mods/workspace-chrome", values, None).unwrap();
-    assert!(!tree.contains("sidebar-bell-count"), "nothing waits: {tree}");
+    let tree = describe_settled(cx, &staged, "mods/topbar", values, None).unwrap();
+    assert!(!tree.contains("topbar-bell-count"), "nothing waits: {tree}");
 }
 
 /// Until an agent joins through Connect, the status bar's right end holds nothing.

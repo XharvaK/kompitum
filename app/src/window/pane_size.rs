@@ -12,8 +12,17 @@ pub(super) fn padding(n: &Node) -> (f32, f32) {
     n.padding.map_or((0.0, 0.0), |p| p.axes())
 }
 
-pub(super) fn frame_border(frame: &PaneFrame, focused: bool) -> Option<&Line> {
+/// A framed pane's line: its focus ring when focused, else its border. A pane alone in its tab draws neither:
+/// its tone against the canvas is its edge, and a ring around the only pane points at nothing.
+pub(super) fn frame_border(frame: &PaneFrame, focused: bool, alone: bool) -> Option<&Line> {
+    if alone { return None; }
     if focused { frame.focus.as_ref().or(frame.border.as_ref()) } else { frame.border.as_ref() }
+}
+
+/// How far a rounded frame keeps its content in from the edge. GPUI clips children to rectangles, so a
+/// terminal's or a mod's square background would show past the corner's curve; this far in, it can't.
+pub(super) fn corner_inset(frame: &PaneFrame) -> f32 {
+    frame.radius.map_or(0.0, |r| (r * (1.0 - std::f32::consts::FRAC_1_SQRT_2)).ceil())
 }
 
 pub(super) fn header_height(header: &Header) -> f32 {
@@ -84,15 +93,17 @@ fn shares(children: &[&Node], available: f32, zoom: f32) -> Vec<f32> {
     sizes
 }
 
-fn pane_size(n: &Node, size: Size<Pixels>, target: &str, frame: Option<&PaneFrame>, focused: &HashSet<String>, zoom: f32) -> Option<Size<Pixels>> {
+/// `alone`: the tab has one pane (its frame then draws no line).
+fn pane_size(n: &Node, size: Size<Pixels>, target: &str, frame: Option<&PaneFrame>, alone: bool, focused: &HashSet<String>, zoom: f32) -> Option<Size<Pixels>> {
     if n.hidden { return None; }
     let mut size = content_size(n, size, focused.contains(&n.id), zoom);
     match &n.kind {
         Kind::Block { .. } if n.id == target => {
             if let Some(frame) = frame.filter(|_| n.is_pane()) {
-                let border = frame_border(frame, focused.contains(&n.id)).map_or(0.0, |line| line.width) * zoom;
+                let border = frame_border(frame, focused.contains(&n.id), alone).map_or(0.0, |line| line.width);
+                let edge = (border + corner_inset(frame)) * zoom;
                 let header = frame.header.as_ref().filter(|h| !h.hover()).map_or(0.0, header_height) * zoom;
-                size = inset(size, 2.0 * border, 2.0 * border + header);
+                size = inset(size, 2.0 * edge, 2.0 * edge + header);
             }
             Some(size)
         }
@@ -103,13 +114,13 @@ fn pane_size(n: &Node, size: Size<Pixels>, target: &str, frame: Option<&PaneFram
             let available = f32::from(if row { size.width } else { size.height }) - separators;
             for (child, span) in children.iter().zip(shares(&children, available, zoom)) {
                 let size = if row { gpui::size(px(span), size.height) } else { gpui::size(size.width, px(span)) };
-                if let Some(size) = pane_size(child, size, target, frame, focused, zoom) { return Some(size); }
+                if let Some(size) = pane_size(child, size, target, frame, alone, focused, zoom) { return Some(size); }
             }
             None
         }
         Kind::Stack { header, .. } => {
             let height = header.as_ref().map_or(0.0, header_height) * zoom;
-            pane_size(n.active_child()?, inset(size, 0.0, height), target, frame, focused, zoom)
+            pane_size(n.active_child()?, inset(size, 0.0, height), target, frame, alone, focused, zoom)
         }
         _ => None,
     }
@@ -151,7 +162,8 @@ impl AppWindow {
         // The absolute bounds canvas already excludes the context border (padding box).
         let (y, x) = padding(context);
         let size = inset(area, 2.0 * x * zoom, 2.0 * y * zoom);
-        let size = pane_size(shown, size, pane, frame, focused, zoom)?;
+        // Alone means alone on screen, as `frame_pane` draws it: a hidden lead terminal doesn't count.
+        let size = pane_size(shown, size, pane, frame, shown.shown_panes() == 1, focused, zoom)?;
         Some(crate::terminal::grid_size(size, crate::terminal::cell_size(window)))
     }
 

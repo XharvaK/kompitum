@@ -3,7 +3,6 @@
 import { div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb } from "gpui-base";
 import { run, lead as leadOf, shared, openOverlay } from "kompitum";
-import { hairline } from "./util.js";
 
 export function modelLabel(entry, id) {
   return entry?.models?.find((model) => model.id === id)?.label ?? id;
@@ -165,7 +164,7 @@ export default {
       .items_center()
       .border_t_1()
       .border_color(t.border)
-      .child(div().flex_1().text_size(11.5).text_color(t.dim).child("Applies when the lead restarts."))
+      .child(div().flex_1().text_size(12).text_color(t.dim).child("Applies when the lead restarts."))
       .child(button.child("Restart now"));
   },
 
@@ -270,8 +269,8 @@ export default {
     let body = v_flex()
       .w_full()
       .gap(2)
-      .child(div().text_size(17).font_semibold().text_color(t.foreground).child(effortWord(preview) ?? "Default"))
-      .child(div().text_size(12.5).text_color(t.dim).child(effortLine(preview)));
+      .child(div().text_size(18).font_semibold().text_color(t.foreground).child(effortWord(preview) ?? "Default"))
+      .child(div().text_size(12).text_color(t.dim).child(effortLine(preview)));
     const slider = this.effortSliderEl(t, entry);
     if (slider) body = body.child(slider).child(this.effortLevelWords(t, levels, preview));
     return body;
@@ -282,7 +281,7 @@ export default {
     const models = entry?.models ?? [];
     return v_flex()
       .w(220)
-      .child(div().px(8).pt(4).pb(2).text_size(11.5).text_color(t.dim).child("Model"))
+      .child(div().px(8).pt(4).pb(2).text_size(12).text_color(t.dim).child("Model"))
       .children(models.map((model) =>
         h_flex()
           .id(`composer-model-${model.id}`)
@@ -291,7 +290,7 @@ export default {
           .items_center()
           .rounded(7)
           .cursor_pointer()
-          .hover((s) => s.bg(t.hover))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click((_e, cx) => this.pickModel(model.id, cx))
           .child(div().flex_1().text_size(13).text_color(t.foreground).child(model.label ?? model.id))
           .when(model.id === lead.model, (el) =>
@@ -309,7 +308,7 @@ export default {
       .items_center()
       .rounded(7)
       .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .when(Boolean(tooltip), (el) => el.tooltip(tooltip))
       .on_click((_e, cx) => {
         this.saveLead({ effort: level }, cx);
@@ -319,7 +318,7 @@ export default {
       .when(level === saved, (el) => el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)));
     return v_flex()
       .w(150)
-      .child(div().px(8).pt(4).pb(2).text_size(11.5).text_color(t.dim).child("Reasoning"))
+      .child(div().px(8).pt(4).pb(2).text_size(12).text_color(t.dim).child("Reasoning"))
       .child(row("composer-level-default", "Default", null, "Claude Code's own setting"))
       .children(effortIds(entry).map((level) => row(`composer-level-${level}`, effortWord(level), level, null)));
   },
@@ -335,8 +334,7 @@ export default {
       .w(14)
       .h(14)
       .flex_none()
-      .child(glyph)
-      .when(this.state === "working", (el) => el.loop("opacity", { from: 0.45, to: 1, period: 1200 }));
+      .child(glyph);
   },
 
   // The lead's model and reasoning: models first, then Codex-style effort.
@@ -358,16 +356,17 @@ export default {
       .items_center()
       .rounded(7)
       .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .tooltip(pending ? "Changes wait for the lead's restart" : "The lead's model and reasoning");
     // The icon sits 6 px left of the name.
     let name = h_flex().gap(6).items_center();
     if (icon) name = name.child(icon);
     if (model) {
-      trigger = trigger.child(name.child(div().text_size(12.5).text_color(t.foreground).child(model)));
-      if (level) trigger = trigger.child(hairline(t)).child(div().text_size(12.5).text_color(t.muted).child(level));
+      trigger = trigger.child(name.child(div().text_size(12).text_color(t.foreground).child(model)));
+      // The level follows the model after the row's gap, set apart by its color.
+      if (level) trigger = trigger.child(div().text_size(12).text_color(t.muted).child(level));
     } else {
-      trigger = trigger.child(name.child(div().text_size(12.5).text_color(t.muted).child("Choose a model")));
+      trigger = trigger.child(name.child(div().text_size(12).text_color(t.muted).child("Choose a model")));
     }
     if (pending) trigger = trigger.child(div().id("composer-model-pending").w(6).h(6).rounded(3).bg(t.working));
     // The models and the reasoning levels side by side; the strip under both while a saved change waits.
@@ -387,8 +386,9 @@ export default {
             .child(this.levelsView(t, entry, lead))),
       )
       .when(this.leadPending().pending, (el) => el.child(this.restartStrip(t)));
+    // It sits by Send, so its menu opens upward from its right edge, inside the box.
     return Popover.new("composer-model-menu")
-      .anchor("bottom_left")
+      .anchor("bottom_right")
       .open(Boolean(this.modelOpen))
       .on_open_change((open, cx) => {
         this.modelOpen = open;
@@ -427,7 +427,7 @@ export default {
       .justify_center()
       .rounded(6)
       .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .tooltip(`Context ${Math.round(fraction * 100)}% · Limits`)
       .on_click(() => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "pointer", props: { terminal: this.terminal } }))
       .child(drawing);
@@ -441,7 +441,7 @@ export default {
       .id("composer-limit")
       .min_w(0)
       .truncate()
-      .text_size(11.5)
+      .text_size(12)
       .text_color(line.blocked ? t.blocked : t.working)
       .child(line.text);
   },

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 200">
   <rect width="320" height="200" fill="#131619"/>
-  <!-- sidebar: the brand row, Search and Tasks, the agents, then the foot's three squares -->
+  <!-- sidebar: the brand row, Search and Tasks, the agents, then Settings at the foot -->
   <rect width="64" height="200" fill="#17191c"/>
   <rect x="8" y="10" width="30" height="5" rx="2" fill="#a9adb3"/>
   <rect x="50" y="9" width="7" height="7" rx="2" fill="#3a3e44"/>
@@ -11,13 +11,13 @@
   <circle cx="11" cy="62" r="2.5" fill="#f59e0b"/><rect x="17" y="60" width="31" height="4" rx="2" fill="#5a5f66"/>
   <circle cx="11" cy="72" r="2.5" fill="#5a5f66"/><rect x="17" y="70" width="25" height="4" rx="2" fill="#3a3e44"/>
   <rect x="8" y="188" width="6" height="6" rx="2" fill="#3a3e44"/>
-  <rect x="40" y="188" width="6" height="6" rx="2" fill="#3a3e44"/>
-  <rect x="50" y="188" width="6" height="6" rx="2" fill="#3a3e44"/>
   <rect x="64" width="1" height="200" fill="#25282c"/>
-  <!-- the top bar: the breadcrumb (folder / tab), then the side panel's toggle -->
+  <!-- the top bar: the breadcrumb (folder / tab), then Limits, the bell and the side panel's toggle -->
   <rect x="65" width="255" height="18" fill="#17191c"/>
   <rect x="65" y="18" width="255" height="1" fill="#25282c"/>
   <rect x="72" y="7" width="5" height="5" rx="1" fill="#8b8f95"/><rect x="80" y="7" width="30" height="5" rx="2" fill="#a9adb3"/>
+  <rect x="272" y="6" width="7" height="7" rx="2" fill="#3a3e44"/>
+  <rect x="283" y="6" width="7" height="7" rx="2" fill="#3a3e44"/>
   <rect x="298" y="5" width="9" height="9" rx="2" fill="#3a3e44"/>
   <!-- the main pane: the lead -->
   <rect x="71" y="25" width="243" height="157" rx="6" fill="#0f1113" stroke="#25282c" stroke-width="1"/>

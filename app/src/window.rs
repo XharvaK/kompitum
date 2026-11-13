@@ -624,6 +624,131 @@ pub(crate) fn sweepable(expires: Option<Instant>, now: Instant) -> bool {
     expires.is_some_and(|e| e <= now)
 }
 
+/// How a toast or a corner popup comes in: from the bell's side, `ARRIVE_RISE` px higher, fading in, on a spring
+/// with no overshoot that settles in 320 ms (UD's `smooth`). With reduced motion on, it is simply there.
+const ARRIVE: Duration = Duration::from_millis(320);
+const ARRIVE_RISE: f32 = 8.0;
+
+/// A critically damped spring over `ARRIVE`, x = 1 − (1 + ωt)e^(−ωt) with ω = 2π per response, scaled so it ends
+/// exactly at 1: it starts fast and settles without passing the end.
+pub(crate) fn arrive_curve(delta: f32) -> f32 {
+    use std::f32::consts::TAU;
+    let spring = |w: f32| 1.0 - (1.0 + w) * (-w).exp();
+    (spring(TAU * delta.clamp(0.0, 1.0)) / spring(TAU)).min(1.0)
+}
+
+/// `el`, arriving (see `ARRIVE`) the first time it is drawn under `id`.
+fn arrive<E: IntoElement + Styled + 'static>(el: E, id: String, cx: &App) -> AnyElement {
+    if cx.reduce_motion() {
+        return el.into_any_element();
+    }
+    el.with_animation(SharedString::from(id), Animation::new(ARRIVE).with_easing(arrive_curve), |el, t| {
+        el.opacity(t).mt(settings::z(-(1.0 - t) * ARRIVE_RISE))
+    })
+    .into_any_element()
+}
+
+/// The shared key of the bell's Earlier list: the toasts that left, newest first.
+pub(crate) const RECENT_TOASTS: &str = "notifications.recent";
+
+/// At most this many toasts show at once; older ones wait under "+N more", which opens the bell.
+pub(crate) const TOAST_MAX: usize = 3;
+/// As wide as the bell's list, so the toasts and the list share one column.
+pub(crate) const TOAST_WIDTH: f32 = 360.0;
+const TOAST_GAP: f32 = 8.0;
+/// About how many characters of 12 px body text fit on one line of a toast.
+const TOAST_LINE: usize = 44;
+
+/// A toast's height, with 12 px above and below what's tallest inside: its 24 px close button, or an 18 px
+/// title over a 16 px line of body for each line the body wraps to, two at most.
+pub(crate) fn toast_height(note: &Value) -> f32 {
+    let body = note.get("body").and_then(Value::as_str).unwrap_or("");
+    let first = body.lines().map(str::trim).find(|line| !line.is_empty()).unwrap_or("");
+    match first.chars().count() {
+        0 => 48.0,
+        n if n <= TOAST_LINE => 60.0,
+        _ => 76.0,
+    }
+}
+
+/// Where the shown toasts sit below the corner, newest first: (index in `heights`, offset). And how many
+/// older ones don't fit.
+pub(crate) fn toast_stack(heights: &[f32]) -> (Vec<(usize, f32)>, usize) {
+    let mut y = 0.0;
+    let shown = (0..heights.len())
+        .rev()
+        .take(TOAST_MAX)
+        .map(|i| {
+            let at = (i, y);
+            y += heights[i] + TOAST_GAP;
+            at
+        })
+        .collect();
+    (shown, heights.len().saturating_sub(TOAST_MAX))
+}
+
+/// "a", "a and b", "a, b and c".
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// One toast for the edits that installing layouts kept: the copy by name, or several in one list.
+pub(crate) fn kept_edits_note(clones: &[String]) -> Option<Value> {
+    let (title, body) = match clones {
+        [] => return None,
+        [one] => (
+            format!("Your edits are in {one}"),
+            "Kompitum's own layouts and mods can't be changed: clone one to make it yours.".to_owned(),
+        ),
+        many => (
+            format!("Your edits are in {} copies", many.len()),
+            format!("{}. Kompitum's own layouts and mods can't be changed.", and_list(many)),
+        ),
+    };
+    Some(json!({ "title": title, "body": body, "level": "info", "timeout": 12000 }))
+}
+
+/// The bell's Earlier list once a toast leaves: the toast goes first, and the list keeps 20. A toast that
+/// asked for a person isn't kept: the bell lists what needs you for as long as it does.
+pub(crate) fn remember_toast(recent: Option<&Value>, note: &Value, now_ms: i64) -> Option<Value> {
+    let title = note.get("title").and_then(Value::as_str).filter(|t| !t.is_empty())?;
+    if note.get("needs").is_some_and(|n| !n.is_null()) {
+        return None;
+    }
+    let mut entry = json!({ "title": title, "at": now_ms });
+    for key in ["body", "level"] {
+        if let Some(text) = note.get(key).and_then(Value::as_str).filter(|t| !t.is_empty()) {
+            entry[key] = json!(text);
+        }
+    }
+    if let Some(action) = note.get("action").filter(|a| a.is_object()) {
+        entry["action"] = action.clone();
+    }
+    let older = recent.and_then(Value::as_array).into_iter().flatten().take(19).cloned();
+    Some(Value::Array(std::iter::once(entry).chain(older).collect()))
+}
+
+/// A "needs you" toast (one that names the terminal it waits on) is answered once that terminal no longer
+/// needs you, or is gone.
+pub(crate) fn answered(needs: Option<&str>, status: Option<&str>) -> bool {
+    needs.is_some() && status != Some("blocked")
+}
+
+/// The toast for an agent's alert. "Needs you" stays until the agent no longer needs you, so it names the
+/// terminal it waits on; "finished" leaves on the usual clock.
+pub(crate) fn alert_note(blocked: bool, name: &str, place: Option<String>, addr: &str) -> Value {
+    let action = json!({ "name": "agent.focus", "args": { "terminal": addr } });
+    if blocked {
+        json!({ "title": format!("{name} needs you"), "body": place, "level": "error", "timeout": 0, "needs": addr, "action": action })
+    } else {
+        json!({ "title": format!("{name} finished"), "body": place, "level": "info", "action": action })
+    }
+}
+
 struct Overlay {
     id: String,
     kind: OverlayKind,
@@ -639,6 +764,11 @@ struct Overlay {
     layout: Option<Node>,
     /// `at: "top"`: centered, this far below the window's top.
     top: Option<f32>,
+    /// `at: "top-right"`: in the corner where toasts show (the bell's list, Limits).
+    corner: bool,
+    /// A toast's notification: the bell keeps it once the toast leaves, and a "needs you" one leaves once
+    /// it's answered.
+    note: Option<Value>,
     /// As tall as its content (size.height is the most).
     fit: bool,
     /// A click beside it doesn't close it (the first-run welcome).
@@ -1680,8 +1810,8 @@ impl AppWindow {
 
     /// What installing layouts kept of the person's own, as toasts.
     fn show_layout_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        for clone in mods::take_sync_notes() {
-            let n = json!({ "title": format!("Your edits are in {clone}"), "body": "Kompitum's own layouts and mods can't be changed: clone one to make it yours.", "level": "info", "timeout": 12000 });
+        let clones = mods::take_sync_notes();
+        if let Some(n) = kept_edits_note(&clones) {
             self.open_overlay(
                 mods::new_overlay_id(),
                 json!({ "kind": "toast", "notification": n }),
@@ -3207,14 +3337,7 @@ impl AppWindow {
                 self.model.tab_name(p, c)
             ))
         });
-        let (title, level) = match alert {
-            model::Alert::Blocked => (format!("{name} needs you"), "error"),
-            model::Alert::Done => (format!("{name} finished"), "info"),
-        };
-        let notification = json!({
-            "title": title, "body": place, "level": level,
-            "action": { "name": "agent.focus", "args": { "terminal": addr } },
-        });
+        let notification = alert_note(matches!(alert, model::Alert::Blocked), &name, place, addr);
         self.open_overlay(
             mods::new_overlay_id(),
             json!({ "kind": "toast", "notification": notification }),
@@ -6876,7 +6999,7 @@ impl AppWindow {
         props["overlay"] = json!(id);
         let num = |k: &str, d: f32| spec.get(k).and_then(Value::as_f64).map_or(d, |v| v as f32);
         let size = match kind {
-            OverlayKind::Toast => size(340.0, num("height", 72.0)),
+            OverlayKind::Toast => size(TOAST_WIDTH, num("height", toast_height(&props))),
             // No size: as big as its content (0 = unset).
             OverlayKind::Window => size(num("width", 0.0), num("height", 0.0)),
             // No height: as tall as the content, up to most of the window.
@@ -6888,6 +7011,19 @@ impl AppWindow {
         };
         let top =
             (spec.get("at").and_then(Value::as_str) == Some("top")).then(|| num("offset", 0.0));
+        let corner = spec.get("at").and_then(Value::as_str) == Some("top-right");
+        let note = (kind == OverlayKind::Toast).then(|| props.clone());
+        // A toast saying the same thing as one still up replaces it (and restarts its clock), and the bell
+        // doesn't keep the one replaced.
+        if let Some(title) = note.as_ref().and_then(|n| n.get("title")).and_then(Value::as_str)
+            && let Some(old) = self.overlays.iter_mut().find(|o| {
+                o.note.as_ref().and_then(|n| n.get("title")).and_then(Value::as_str) == Some(title)
+            })
+        {
+            old.note = None;
+            let old = old.id.clone();
+            self.remove_overlay(&old, window, cx);
+        }
         let fit = layout.is_none()
             && (kind == OverlayKind::Popup
                 || (matches!(kind, OverlayKind::Dialog | OverlayKind::Window)
@@ -6938,6 +7074,8 @@ impl AppWindow {
             mod_name,
             layout,
             top,
+            corner,
+            note,
             fit,
             modal: spec.get("modal").and_then(Value::as_bool).unwrap_or(false),
             bare: spec.get("frame").and_then(Value::as_str) == Some("none"),
@@ -7014,6 +7152,15 @@ impl AppWindow {
             let o = self.overlays.remove(i);
             if self.win_drag.as_ref().is_some_and(|d| d.id == o.id) {
                 self.win_drag = None;
+            }
+            // A toast that leaves (its clock ran out, it was clicked or closed) stays in the bell's Earlier list.
+            if let Some(note) = &o.note {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as i64);
+                if let Some(list) = remember_toast(mods::shared(RECENT_TOASTS).as_ref(), note, now) {
+                    mods::set_shared(RECENT_TOASTS.to_owned(), list);
+                }
             }
             self.bounds.borrow_mut().remove(&o.slot);
             self.remove_copy(&o.slot, window, cx);
@@ -7255,7 +7402,10 @@ impl AppWindow {
         let expired: Vec<String> = self
             .overlays
             .iter()
-            .filter(|o| sweepable(o.expires, now))
+            .filter(|o| {
+                let needs = o.note.as_ref().and_then(|n| n.get("needs")).and_then(Value::as_str);
+                sweepable(o.expires, now) || answered(needs, needs.and_then(|t| self.model.status(t)))
+            })
             .map(|o| o.id.clone())
             .collect();
         for id in expired {
@@ -7491,7 +7641,8 @@ impl AppWindow {
         inner: AnyElement,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let line = pane_size::frame_border(f, on);
+        let alone = self.model.active_tab().is_some_and(|t| t.shown().shown_panes() == 1);
+        let line = pane_size::frame_border(f, on, alone);
         let group = SharedString::from(format!("pane-{}", n.id));
         let mut el = div()
             .size_full()
@@ -7501,7 +7652,7 @@ impl AppWindow {
             .overflow_hidden()
             .group(group.clone());
         if let Some(r) = f.radius {
-            el = el.rounded(settings::z(r));
+            el = el.rounded(settings::z(r)).p(settings::z(pane_size::corner_inset(f)));
         }
         if let Some(bg) = &f.background {
             el = paint(el, bg);
@@ -8121,9 +8272,30 @@ impl AppWindow {
         }
     }
 
+    /// The corner where notifications show, as (right inset, top) from the window's edges: the top right of
+    /// the block tabs show in, 8 px in, under the bell. With no such block, the window's top right below its bar.
+    fn notice_corner(&self, viewport: Size<Pixels>) -> (Pixels, Pixels) {
+        let inset = settings::z(8.0);
+        let area = self
+            .chrome
+            .visible_blocks()
+            .into_iter()
+            .find(|n| matches!(n.content(), Some(Content::Context { .. })))
+            .and_then(|n| self.bounds.borrow().get(&n.id).cloned());
+        match area {
+            Some(b) => (viewport.width - (b.origin.x + b.size.width) + inset, b.origin.y + inset),
+            None => (settings::z(16.0), settings::z(48.0)),
+        }
+    }
+
+    /// The bell's list, in the corner where toasts show.
+    fn open_bell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let spec = json!({ "kind": "popup", "mod": "bell", "width": TOAST_WIDTH, "height": 440, "at": "top-right" });
+        self.open_overlay(mods::new_overlay_id(), spec, window, cx);
+    }
+
     fn render_overlays(&self, viewport: Size<Pixels>, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out = Vec::new();
-        let mut toast_y = 16.0;
         // Drawn last, so they stay clickable over an open dialog.
         let link = self.render_link_pill(cx);
         let pill = self.render_update_pill(
@@ -8134,11 +8306,18 @@ impl AppWindow {
                 16.0
             },
         );
-        if pill.is_some() {
-            toast_y += UPDATE_PILL_HEIGHT + 8.0;
-        }
-        if link.is_some() {
-            toast_y += UPDATE_PILL_HEIGHT + 8.0;
+        // Toasts hang from the corner under the bell, newest first, where the bell's list opens too. In a
+        // conversation or a terminal the newest text and the input are at the bottom; up here a toast covers
+        // only what scrolled away.
+        let (right, top) = self.notice_corner(viewport);
+        let toasts: Vec<&Overlay> = self.overlays.iter().filter(|o| o.kind == OverlayKind::Toast).collect();
+        let (stack, more) = toast_stack(&toasts.iter().map(|o| o.size.height).collect::<Vec<_>>());
+        let mut toast_at = HashMap::new();
+        // How far below `top` the stack ends, in design px.
+        let mut below = 0.0;
+        for (i, y) in stack {
+            toast_at.insert(toasts[i].id.clone(), y);
+            below = y + toasts[i].size.height + TOAST_GAP;
         }
         // Windows under dialogs, popups and toasts; each kind in the order opened
         // (a window pressed last is last: on top).
@@ -8214,6 +8393,8 @@ impl AppWindow {
                     let at = match o.top {
                         // Centered, hanging from `offset` px below the top (a drop-down from a bar).
                         Some(off) => point((viewport.width - w) / 2.0, settings::z(off)),
+                        // In the corner where toasts show, its right edge on theirs.
+                        None if o.corner => point(viewport.width - right - w, top),
                         None => o.at,
                     };
                     out.push(
@@ -8231,29 +8412,60 @@ impl AppWindow {
                                     move |this, _, w, cx| this.close_overlay(&id, w, cx)
                                 }),
                             )
-                            .child(position_popup(at, body))
+                            .child(if o.corner {
+                                position_popup(at, arrive(body, format!("arrive-{}", o.id), cx))
+                            } else {
+                                position_popup(at, body)
+                            })
                             .into_any_element(),
                     );
                 }
                 OverlayKind::Toast => {
-                    out.push(
-                        div()
-                            .absolute()
-                            .right(settings::z(16.0))
-                            .bottom(settings::z(toast_y))
-                            .child(body)
-                            .into_any_element(),
-                    );
-                    toast_y += o.size.height + 8.0;
+                    // Older toasts past the first three wait (their clocks still run) under "+N more".
+                    if let Some(&y) = toast_at.get(&o.id) {
+                        out.push(
+                            div()
+                                .absolute()
+                                .right(right)
+                                .top(top + settings::z(y))
+                                .child(arrive(body, format!("arrive-{}", o.id), cx))
+                                .into_any_element(),
+                        );
+                    }
                 }
             }
+        }
+        if more > 0 {
+            out.push(
+                div()
+                    .id("toasts-more")
+                    .absolute()
+                    .right(right)
+                    .top(top + settings::z(below))
+                    .h(settings::z(28.0))
+                    .px(settings::z(12.0))
+                    .flex()
+                    .items_center()
+                    .rounded(settings::z(14.0))
+                    .bg(c("popover"))
+                    .border_1()
+                    .border_color(c("border"))
+                    .text_size(settings::z(12.0))
+                    .text_color(c("muted"))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(c("foreground")))
+                    .on_click(cx.listener(|this, _, w, cx| this.open_bell(w, cx)))
+                    .child(format!("{more} more in the bell"))
+                    .into_any_element(),
+            );
+            below += 28.0 + TOAST_GAP;
         }
         if let Some(error) = crate::update::core().error {
             out.push(
                 div()
                     .absolute()
-                    .right(settings::z(16.0))
-                    .bottom(settings::z(toast_y))
+                    .right(right)
+                    .top(top + settings::z(below))
                     .max_w(settings::z(540.0))
                     .p(settings::z(12.0))
                     .rounded_lg()
@@ -8510,7 +8722,7 @@ fn nearest(
         .map(|(_, _, _, id)| id)
 }
 
-fn position_popup(at: Point<Pixels>, body: Stateful<Div>) -> Anchored {
+fn position_popup(at: Point<Pixels>, body: impl IntoElement) -> Anchored {
     anchored()
         .position(point(at.x.max(px(8.0)), at.y.max(px(8.0))))
         .snap_to_window_with_margin(px(8.0))
@@ -10620,6 +10832,85 @@ mod tests {
                 assert!(this.pane_term("pa").unwrap().focus.is_focused(window));
             })
         });
+    }
+
+    /// Toasts and corner popups arrive on a spring that starts at 0, ends exactly at 1 and never passes it.
+    #[test]
+    fn the_arrival_settles_without_overshoot() {
+        assert_eq!(super::arrive_curve(0.0), 0.0);
+        assert_eq!(super::arrive_curve(1.0), 1.0);
+        let steps: Vec<f32> = (0..=100).map(|i| super::arrive_curve(i as f32 / 100.0)).collect();
+        assert!(steps.windows(2).all(|w| w[1] >= w[0] && w[1] <= 1.0), "{steps:?}");
+        assert!(super::arrive_curve(0.25) > 0.4, "it starts fast: {}", super::arrive_curve(0.25));
+    }
+
+    /// Toasts stack down from the corner, newest first; three show, and the rest wait under "+N more".
+    #[test]
+    fn toasts_stack_newest_first_three_at_most() {
+        let (shown, more) = super::toast_stack(&[44.0, 60.0]);
+        assert_eq!(shown, vec![(1, 0.0), (0, 68.0)]);
+        assert_eq!(more, 0);
+        let (shown, more) = super::toast_stack(&[44.0, 44.0, 60.0, 76.0, 44.0]);
+        assert_eq!(shown, vec![(4, 0.0), (3, 52.0), (2, 136.0)]);
+        assert_eq!(more, 2);
+    }
+
+    /// A toast is as tall as its words: a title alone, or a body on one line or wrapped to two.
+    #[test]
+    fn a_toast_is_as_tall_as_its_words() {
+        use serde_json::json;
+        assert_eq!(super::toast_height(&json!({"title": "Saved"})), 48.0);
+        assert_eq!(super::toast_height(&json!({"title": "Saved", "body": null})), 48.0);
+        assert_eq!(super::toast_height(&json!({"title": "Pi finished", "body": "Local / Build"})), 60.0);
+        let long = "Kompitum's own layouts and mods can't be changed: clone one to make it yours.";
+        assert_eq!(super::toast_height(&json!({"title": "Your edits are in bell-edited", "body": long})), 76.0);
+    }
+
+    /// The edits that installing layouts kept make one toast, however many copies there are.
+    #[test]
+    fn kept_edits_make_one_toast() {
+        assert!(super::kept_edits_note(&[]).is_none());
+        let one = super::kept_edits_note(&["bell-edited".into()]).unwrap();
+        assert_eq!(one["title"], "Your edits are in bell-edited");
+        let many = super::kept_edits_note(&["limits-edited".into(), "composer-edited".into(), "bell-edited".into()]).unwrap();
+        assert_eq!(many["title"], "Your edits are in 3 copies");
+        let body = many["body"].as_str().unwrap();
+        assert!(body.starts_with("limits-edited, composer-edited and bell-edited."), "{body}");
+    }
+
+    /// A toast that leaves goes first in the bell's Earlier list, which keeps 20; one that asked for a person
+    /// isn't kept, since the bell lists what needs you for as long as it does.
+    #[test]
+    fn a_toast_that_leaves_goes_to_the_bell() {
+        use serde_json::json;
+        let action = json!({"name": "agent.focus", "args": {"terminal": "t1"}});
+        let note = json!({"title": "Pi finished", "body": "Local / Build", "level": "info", "overlay": "o1", "action": action});
+        let list = super::remember_toast(None, &note, 5).unwrap();
+        let kept = json!([{"title": "Pi finished", "body": "Local / Build", "level": "info", "at": 5, "action": action}]);
+        assert_eq!(list, kept);
+        let full = serde_json::Value::Array((0..20).map(|i| json!({"title": format!("n{i}"), "at": i})).collect());
+        let list = super::remember_toast(Some(&full), &note, 99).unwrap();
+        assert_eq!(list.as_array().unwrap().len(), 20);
+        assert_eq!(list[0]["title"], "Pi finished");
+        assert_eq!(list[19]["title"], "n18");
+        assert!(super::remember_toast(None, &json!({"title": "Pi needs you", "needs": "t1"}), 5).is_none());
+    }
+
+    /// "Needs you" stays up until the agent no longer needs you; "finished" leaves on the usual clock.
+    #[test]
+    fn needs_you_stays_until_answered() {
+        let needs = super::alert_note(true, "Pi", Some("Local / Build".into()), "t1");
+        assert_eq!(needs["title"], "Pi needs you");
+        assert_eq!(needs["timeout"], 0);
+        assert_eq!(needs["needs"], "t1");
+        assert!(super::toast_expiry(true, 0.0).is_none());
+        let done = super::alert_note(false, "Pi", None, "t1");
+        assert_eq!(done["title"], "Pi finished");
+        assert!(done.get("needs").is_none() && done.get("timeout").is_none(), "{done}");
+        assert!(!super::answered(Some("t1"), Some("blocked")));
+        assert!(super::answered(Some("t1"), Some("working")));
+        assert!(super::answered(Some("t1"), None), "a terminal that ended doesn't need you");
+        assert!(!super::answered(None, None), "a toast that asked for no one isn't answered");
     }
 
     #[test]

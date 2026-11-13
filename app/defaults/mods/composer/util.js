@@ -1,17 +1,12 @@
 // Helpers that more than one file of the composer uses.
 
-import { div } from "gpui-kit";
-
-// A 1 px divider between the words of the box's bottom row: 12 px tall, in the border colour.
-export function hairline(t) {
-  return div().flex_none().w(1).h(12).bg(t.border);
-}
-
 // A card's Enter and digit keys wait this long after the card shows, so a key pressed in passing can't answer it.
 export const CARD_WAIT_MS = 600;
 
 // From this many tokens in the lead's context, the box offers "Compact first" for the Owner's next message.
 export const COMPACT_FIRST_TOKENS = 222000;
+// How long a pulse may run before it stops and the word or glyph carries the state alone (UD's pulseLimit).
+export const PULSE_MS = 3000;
 
 // A tool summary split on its backticks: the even pieces are words, the odd ones are code. Empty pieces are dropped.
 export function codePieces(text) {

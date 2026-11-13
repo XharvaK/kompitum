@@ -573,6 +573,11 @@ impl Node {
         self.walk().into_iter().filter(|n| n.is_pane()).collect()
     }
 
+    /// How many panes are on screen: hidden ones and inactive stack children don't count.
+    pub fn shown_panes(&self) -> usize {
+        self.visible_blocks().into_iter().filter(|n| n.is_pane()).count()
+    }
+
     /// Visible blocks (hidden nodes and inactive stack children skipped).
     pub fn visible_blocks(&self) -> Vec<&Node> {
         if self.hidden {

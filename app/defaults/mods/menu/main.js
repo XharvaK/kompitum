@@ -122,7 +122,7 @@ export default class Menu extends View {
       .min_h(0)
       .p(5)
       .bg(t.popover)
-      .text_size(12.8)
+      .text_size(13)
       .on_key_down((e, cx) => {
         if (e.key === "down") this.at = (this.at + 1) % list.length;
         else if (e.key === "up") this.at = (this.at + list.length - 1) % list.length;
@@ -145,7 +145,7 @@ export default class Menu extends View {
             .justify_between()
             .text_color(t.foreground)
             .when(i === this.at, (el) => el.bg(t.selected))
-            .hover((s) => s.bg(t.hover))
+            .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
             .on_click((_e, cx) => this.choose(i, cx))
             .child(svg(menuIcon(it[1])).size(14).flex_none().text_color(t.muted))
             .child(div().flex_1().child(it[0]))

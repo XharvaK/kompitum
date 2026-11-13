@@ -1283,7 +1283,7 @@ fn send_answers_waits_for_every_question(cx: &mut TestAppContext) {
     let staged = Staged::new();
     let theme = fixture(false, props(), updates("current", "current"))["theme"].clone();
     let accent_fill = theme["accent_fill"].as_str().unwrap();
-    let hover = theme["hover"].as_str().unwrap();
+    let edge = theme["input"].as_str().unwrap();
     let disabled = describe_settled(
         cx,
         &staged,
@@ -1300,7 +1300,11 @@ fn send_answers_waits_for_every_question(cx: &mut TestAppContext) {
         !button.contains(accent_fill),
         "not every question is answered: {button}"
     );
-    assert!(button.contains(hover), "it is drawn disabled: {button}");
+    // Disabled, the UD way: the fill goes and an outline in the edge color keeps the shape.
+    assert!(
+        button.contains(".border_1") && button.contains(edge) && !button.contains(".bg["),
+        "it is drawn disabled: {button}"
+    );
 
     let enabled = describe_settled(
         cx,
@@ -2586,7 +2590,14 @@ fn setting_search_finds_rows_and_says_when_nothing_matches(cx: &mut TestAppConte
         Some("this.search = 'zoom';"),
     )
     .unwrap();
-    assert!(tree.contains("Appearance › Zoom"), "{tree}");
+    // A result is the setting's name over its section, each a line that truncates, with the whole path as the
+    // tooltip: as one long line it ran out of the 190 px column and over the page.
+    let row = tree.lines().position(|l| l.contains("st-search-0")).unwrap_or_else(|| panic!("{tree}"));
+    let lines: Vec<&str> = tree.lines().collect();
+    assert!(lines[row].contains(r#":tooltip[Str("Appearance › Zoom")]"#), "{}", lines[row]);
+    assert_eq!(tree.matches("Appearance › Zoom").count(), 1, "only the tooltip says the whole path: {tree}");
+    let texts = &lines[row + 1..(row + 5).min(lines.len())];
+    assert!(texts.iter().filter(|l| l.contains(".truncate")).count() >= 2, "{texts:?}");
     let tree = describe(
         cx,
         &staged,

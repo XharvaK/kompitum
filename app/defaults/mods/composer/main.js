@@ -8,7 +8,7 @@
 import { View } from "gpui-kit";
 import { v_flex, TextareaState, VirtualListScrollHandle } from "gpui-base";
 import { kom, run, theme, props, shared, setShared, terminals, knownAgents, appHome, readTextFile, writeTextFile, pickFolder, lead as leadOf, nextCommand } from "kompitum";
-import { errorText, CARD_WAIT_MS, COMPACT_FIRST_TOKENS } from "./util.js";
+import { errorText, CARD_WAIT_MS, COMPACT_FIRST_TOKENS, PULSE_MS } from "./util.js";
 import cards from "./cards.js";
 import model, { leadUsage } from "./model.js";
 import conversation from "./conversation.js";
@@ -124,6 +124,12 @@ export default class Composer extends View {
       this.takeAsk(cx);
       // A send waiting for the lead's compaction is noticed here.
       if (this.compactThenSend) cx.notify();
+      // The working pulse ends PULSE_MS into the work: redraw once then, so the word stays still.
+      if (this.workingSince && !this.pulseEnded && Date.now() - this.workingSince >= PULSE_MS) {
+        this.pulseEnded = true;
+        cx.notify();
+      }
+      if (!this.workingSince) this.pulseEnded = false;
     });
     // The window hands over the keyboard ("focus") when the lead asks or the composer should type.
     cx.spawn(async (cx) => {
@@ -433,6 +439,9 @@ export default class Composer extends View {
   compose(t, cx) {
     const lead = leadOf();
     this.state = lead?.state ?? null;
+    // When work started, for the pulse that says so (it stops after PULSE_MS).
+    if (this.state !== "working") this.workingSince = 0;
+    else if (!this.workingSince) this.workingSince = Date.now();
     this.ask = lead?.ask ?? null;
     const askId = this.ask?.id ?? null;
     if (askId !== this.askId) {

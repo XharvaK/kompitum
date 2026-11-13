@@ -324,7 +324,7 @@ export default class Welcome extends View {
   // Pieces ---------------------------------------------------------------
 
   para(t, text) {
-    return div().w_full().text_size(13.5).line_height("20px").text_color(t.muted).child(text);
+    return div().w_full().text_size(13).line_height("20px").text_color(t.muted).child(text);
   }
 
   // A step's heading: the title, then the sub-text when it has one.
@@ -332,7 +332,7 @@ export default class Welcome extends View {
     return v_flex()
       .w_full()
       .gap(6)
-      .child(div().text_size(20).font_semibold().text_color(t.foreground).child(text))
+      .child(div().text_size(18).font_semibold().text_color(t.foreground).child(text))
       .when(Boolean(sub), (el) => el.child(this.para(t, sub)));
   }
 
@@ -346,9 +346,10 @@ export default class Welcome extends View {
       .text_size(13)
       .font_medium()
       .when(enabled, (el) =>
-        el.cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).hover((s) => s.opacity(0.88)).on_click(onClick),
+        el.relative().cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).on_click(onClick).child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))),
       )
-      .when(!enabled, (el) => el.bg(t.hover).text_color(t.dim))
+      // Not ready yet: the fill goes and an outline keeps the shape (UD's disabled state).
+      .when(!enabled, (el) => el.border_1().border_color(t.input).text_color(t.dim))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(label);
   }
@@ -361,9 +362,9 @@ export default class Welcome extends View {
       .py(3)
       .rounded(6)
       .cursor_pointer()
-      .text_size(12.5)
+      .text_size(12)
       .text_color(t.muted)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(onClick)
       .child(label);
@@ -400,7 +401,7 @@ export default class Welcome extends View {
   }
 
   errorLine(t, text) {
-    return div().text_size(12.5).line_height("18px").text_color(t.blocked).tooltip(text).child(firstLine(text) || text);
+    return div().text_size(12).line_height("18px").text_color(t.blocked).tooltip(text).child(firstLine(text) || text);
   }
 
   agentIcon(t, agent) {
@@ -413,7 +414,7 @@ export default class Welcome extends View {
   // What the app has observed about a program, and nothing more.
   stateOf(t, agent, cx) {
     if (this.runs[agent.key]) {
-      return div().text_size(12.5).text_color(t.dim).child("Running in the tab behind this window.");
+      return div().text_size(12).text_color(t.dim).child("Running in the tab behind this window.");
     }
     if (!agent.installed) {
       const argv = this.installArgv(agent);
@@ -427,27 +428,27 @@ export default class Welcome extends View {
       });
     }
     if (!agent.signed_in?.length) {
-      return div().text_size(12.5).text_color(t.dim).child("Installed");
+      return div().text_size(12).text_color(t.dim).child("Installed");
     }
     if (this.signedIn[agent.key] === true) {
       return h_flex()
         .gap(6)
         .items_center()
         .child(svg(W("check")).size(13).text_color(t.ansi2))
-        .child(div().text_size(12.5).text_color(t.muted).child("Signed in"));
+        .child(div().text_size(12).text_color(t.muted).child("Signed in"));
     }
     if (this.signedIn[agent.key] === false) {
       return h_flex()
         .gap(8)
         .items_center()
-        .child(div().text_size(12.5).text_color(t.muted).child("Not signed in"))
+        .child(div().text_size(12).text_color(t.muted).child("Not signed in"))
         .child(
           this.rowButton(t, `w-signin-${agent.key}`, "Sign in", (_e, cx) =>
             this.startRun("Sign in", agent, agent.login, cx),
           ),
         );
     }
-    return div().text_size(12.5).text_color(t.dim).child("Checking…");
+    return div().text_size(12).text_color(t.dim).child("Checking…");
   }
 
   agentRow(t, agent, cx) {
@@ -470,14 +471,14 @@ export default class Welcome extends View {
           .border_color(chosen ? t.accent : t.border)
           .bg(chosen ? t.selected : t.background)
           .cursor_pointer()
-          .hover((s) => s.bg(t.hover))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click((_e, cx) => {
             this.chosen = agent.key;
             cx.notify();
           })
           .child(this.radio(t, chosen))
           .child(this.agentIcon(t, agent))
-          .child(div().flex_1().min_w(0).truncate().text_size(14).text_color(t.foreground).child(agent.name))
+          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(agent.name))
           .child(this.stateOf(t, agent, cx)),
       )
       .when(chosen && !agent.installed && !running && Boolean(argv), (el) =>
@@ -491,7 +492,7 @@ export default class Welcome extends View {
         ),
       )
       .when(Boolean(this.notes[agent.key]), (el) =>
-        el.child(div().pl(38).text_size(12.5).line_height("18px").text_color(t.blocked).child(this.notes[agent.key])),
+        el.child(div().pl(38).text_size(12).line_height("18px").text_color(t.blocked).child(this.notes[agent.key])),
       );
   }
 
@@ -514,7 +515,7 @@ export default class Welcome extends View {
           .w_full()
           .gap(8)
           .when(rows.length === 0, (el) =>
-            el.child(div().py(12).text_size(12.5).text_color(t.dim).child("Reading agents…")),
+            el.child(div().py(12).text_size(12).text_color(t.dim).child("Reading agents…")),
           )
           .children(rows.map((agent) => this.agentRow(t, agent, cx))),
       );
@@ -536,14 +537,14 @@ export default class Welcome extends View {
       .border_color(on ? t.accent : t.border)
       .bg(on ? t.selected : t.background)
       .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_click(onClick)
       .child(this.radio(t, on))
       .child(
         v_flex()
           .flex_1()
           .min_w(0)
-          .child(div().truncate().text_size(14).text_color(t.foreground).child(row.label))
+          .child(div().truncate().text_size(13).text_color(t.foreground).child(row.label))
           .when(Boolean(row.path), (el) => el.child(div().truncate().text_size(12).text_color(t.dim).child(row.path))),
       );
   }
@@ -608,7 +609,7 @@ export default class Welcome extends View {
                   .flex_1()
                   .min_w(0)
                   .gap(2)
-                  .child(div().text_size(14).text_color(t.foreground).child("Let Claude Code use Kompitum"))
+                  .child(div().text_size(13).text_color(t.foreground).child("Let Claude Code use Kompitum"))
                   .child(
                     div()
                       .text_size(13)
@@ -667,7 +668,7 @@ export default class Welcome extends View {
           .justify_center()
           .text_color(t.muted)
           .cursor_pointer()
-          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click(() => this.done("skipped"))
           .child(svg(W("x")).size(14)),

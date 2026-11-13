@@ -22,7 +22,10 @@ export default class Confirm extends View {
     const t = theme();
     const p = props() ?? {};
     const button = (id, label, bg, fg, onClick) =>
-      h_flex().id(id).h(32).px(14).items_center().rounded(8).border_1().border_color(id === "no" ? t.input : bg).bg(bg).text_color(fg).cursor_pointer().hover((s) => s.opacity(0.88)).on_click(onClick).child(label);
+      h_flex().id(id).relative().h(32).px(14).items_center().rounded(8).border_1().border_color(id === "no" ? t.input : bg).bg(bg).text_color(fg).cursor_pointer().on_click(onClick)
+        // Hover and press: the theme's state layers over the fill (a style sets only one background).
+        .child(div().absolute().top(-1).left(-1).right(-1).bottom(-1).rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
+        .child(label);
     return v_flex()
       .id("confirm")
       .track_focus(this.handle)

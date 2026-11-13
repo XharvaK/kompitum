@@ -86,7 +86,7 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
       .items_center()
       .rounded(6)
       .cursor_pointer()
-      .hover((s) => s.bg(t.hover))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .when(index === high, (el) => el.bg(t.hover))
       .on_hover((hovered, cx) => {
         if (!hovered || state.hi === index) return;
@@ -100,7 +100,7 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
           .flex_1()
           .min_w(0)
           .child(div().truncate().text_size(13).text_color(t.foreground).when(Boolean(item.font), (el) => el.font_family(item.font)).child(item.label))
-          .when(Boolean(item.detail), (el) => el.child(div().truncate().text_size(11.5).text_color(t.dim).child(item.detail))),
+          .when(Boolean(item.detail), (el) => el.child(div().truncate().text_size(12).text_color(t.dim).child(item.detail))),
       )
       .child(div().w(14).flex_none().when(on, (el) => el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent))));
   };
@@ -112,9 +112,9 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .gap(1)
     .overflow_y_scrollbar()
     .children(shown.map(row))
-    .when(matching.length === 0, (el) => el.child(div().px(8).py(6).text_size(12.5).text_color(t.dim).child("Nothing matches.")))
+    .when(matching.length === 0, (el) => el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child("Nothing matches.")))
     .when(limit > 0 && matching.length > limit, (el) =>
-      el.child(div().px(8).py(6).text_size(12.5).text_color(t.dim).child("Type to narrow the list.")));
+      el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child("Type to narrow the list.")));
   // The list sits 4 px under the trigger: the Popover binding has no offset, so the gap is the list's own top margin.
   // Its right edge is the trigger's (`anchor`, top_right), and the trigger is never wider than `width`, so the list is at least as wide.
   const content = v_flex()
@@ -149,7 +149,7 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .border_color(state.open || state.accent ? t.accent : t.input)
     .bg(t.raised)
     .cursor_pointer()
-    .hover((s) => s.bg(t.hover))
+    .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
     .when(Boolean(picked?.icon), (el) => el.child(itemIcon(picked, 15, t)))
     .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(picked ? t.foreground : t.muted)
       .when(Boolean(picked?.font), (el) => el.font_family(picked.font))
@@ -199,7 +199,7 @@ export function iconButton(t, id, icon, tooltip, onClick) {
     .rounded(7)
     .cursor_pointer()
     .text_color(t.muted)
-    .hover((s) => s.bg(t.hover).text_color(t.foreground))
+    .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
     .tooltip(tooltip)
     .on_click(onClick)
     .child(svg(icon).size(16));

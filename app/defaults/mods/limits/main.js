@@ -7,6 +7,7 @@ import { h_flex, v_flex } from "gpui-base";
 import { kom, exec, knownAgents, window, theme, run, props, closeOverlay, settings, lead } from "kompitum";
 
 const BAR = 316;
+const INDENT = 20; // a worker row's number column and its gap
 const USAGE_EVERY_MS = 60000;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAY_WORDS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -28,14 +29,7 @@ function errorText(result) {
   return firstLine(result?.stderr) || firstLine(result?.stdout) || `kom exited ${result?.code ?? "?"}`;
 }
 
-// A worker's out-until time, as the board says it: today "09:10", another day "Nov 4 18:26".
-function untilText(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) return "";
-  const d = new Date(n > 1e12 ? n : n * 1000);
-  const clock = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  return d.toDateString() === new Date().toDateString() ? clock : `${MONTHS[d.getMonth()]} ${d.getDate()} ${clock}`;
-}
+const runWords = (runs) => `${runs} ${runs === 1 ? "run" : "runs"}`;
 
 // The clock time when a reset is today, the weekday within a week, else "23 Nov" (the rule of Settings > Agents).
 function resetWords(seconds) {
@@ -47,6 +41,13 @@ function resetWords(seconds) {
   if (days === 0) return `${pad(when.getHours())}:${pad(when.getMinutes())}`;
   if (Math.abs(days) < 7) return WEEKDAY_WORDS[when.getDay()];
   return `${when.getDate()} ${MONTHS[when.getMonth()]}`;
+}
+
+// When an out worker is back, in the same words; its until is milliseconds (or seconds from an older core).
+function backWords(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return resetWords(n > 1e12 ? n / 1000 : n);
 }
 
 // npm installs agent CLIs as `.cmd` shims on Windows; CreateProcess won't
@@ -122,19 +123,19 @@ function claudeWords(w) {
 // 100% and over is blocked, from 75% working, else muted.
 const limitColor = (t, share) => (share >= 1 ? t.blocked : share >= 0.75 ? t.working : t.muted);
 
-// One bar: its label and words over a track of BAR px, a fill, and a pace mark when the window has a clock.
-function meter(t, id, label, words, fraction, pace, color, wordsColor) {
+// One bar: its label and words over a track `width` px wide, a fill, and a pace mark when the window has a clock.
+function meter(t, id, label, words, fraction, pace, color, wordsColor, width = BAR) {
   const share = Math.min(1, Math.max(0, fraction));
-  const fill = Math.round(BAR * share);
-  const track = div().id(`${id}-bar`).relative().w(BAR).h(6).rounded(3).bg(t.hover)
+  const fill = Math.round(width * share);
+  const track = div().id(`${id}-bar`).relative().w(width).h(6).rounded(3).bg(t.hover)
     .when(fill > 0, (el) => el.child(div().absolute().top(0).left(0).h(6).w(fill).rounded(3).bg(color)))
     .when(pace != null, (el) => el
-      .child(div().id(`${id}-pace`).absolute().top(-2).left(Math.round(BAR * pace) - 1).w(2).h(10).rounded(1).bg(t.foreground).opacity(0.55))
+      .child(div().id(`${id}-pace`).absolute().top(-2).left(Math.round(width * pace) - 1).w(2).h(10).rounded(1).bg(t.foreground).opacity(0.55))
       .tooltip(`${Math.round(pace * 100)}% of this window has passed`));
-  return v_flex().id(id).gap(5).py(4)
+  return v_flex().id(id).gap(6).py(4)
     .child(h_flex().justify_between().items_center()
-      .child(div().text_size(12.5).text_color(t.muted).child(label))
-      .child(div().text_size(12.5).text_color(wordsColor).child(words)))
+      .child(div().text_size(12).text_color(t.muted).child(label))
+      .child(div().text_size(12).text_color(wordsColor).child(words)))
     .child(track);
 }
 
@@ -200,12 +201,9 @@ export default class Limits extends View {
     }
   }
 
-  sectionHeader(t, label, right) {
-    if (!right) return div().pt(6).pb(2).text_size(11.5).font_medium().text_color(t.dim).child(label);
-    return h_flex().pt(6).pb(2).items_center()
-      .child(div().text_size(11.5).font_medium().text_color(t.dim).child(label))
-      .child(div().flex_1())
-      .child(right);
+  // A section's name: the label size, in the secondary text color, so it reads as a heading over its rows.
+  sectionHeader(t, label) {
+    return div().pt(8).pb(2).text_size(12).font_medium().text_color(t.muted).child(label);
   }
 
   contextParts(t, usage, terminal) {
@@ -214,7 +212,7 @@ export default class Limits extends View {
     const fraction = tokens / max;
     const color = fraction >= 0.95 ? t.blocked : fraction >= 0.75 ? t.working : t.muted;
     const parts = [
-      this.sectionHeader(t, "Context", null),
+      this.sectionHeader(t, "Context"),
       meter(t, "limits-context", "Context", `${kTokens(tokens)} of ${kTokens(max)}`, fraction, null, color,
         fraction >= 1 ? t.blocked : t.foreground),
       div().text_size(12).text_color(t.dim).child("Kompitum tidies up by itself while you're away."),
@@ -229,16 +227,16 @@ export default class Limits extends View {
     const live = current?.state === "waiting" && !current?.ask && current?.compacting !== true;
     return h_flex().id("limits-compact").w_full().h(30).rounded(8).border_1().border_color(t.border)
       .items_center().justify_center()
-      .when(live, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => {
+      .when(live, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).on_click(() => {
         run("lead.compact", { terminal });
         closeOverlay(props().overlay);
       }))
-      .child(div().text_size(12.5).text_color(live ? t.foreground : t.dim).child("Compact now"));
+      .child(div().text_size(12).text_color(live ? t.foreground : t.dim).child("Compact now"));
   }
 
   claudeParts(t, usage) {
     const windows = claudeWindows(usage);
-    const parts = [this.sectionHeader(t, "Claude", null)];
+    const parts = [this.sectionHeader(t, "Claude")];
     for (const w of windows) {
       const share = w.pct / 100;
       parts.push(meter(t, `limits-claude-${w.key}`, w.label, claudeWords(w), share, paceOf(w.resets, w.seconds),
@@ -250,34 +248,42 @@ export default class Limits extends View {
     return parts;
   }
 
+  // The chain, numbered in the order tasks try it, then the week's spend once, as a footer.
   workerParts(t) {
     const rows = chainWorkers(this.status);
-    const total = rows.reduce((sum, worker) => sum + (Number(worker.spend?.week?.cost_usd) || 0), 0);
-    const right = this.status
-      ? div().id("limits-spend-total").text_size(11.5).text_color(t.muted).child(`${dollars(total)} this week`)
-      : null;
-    const parts = [this.sectionHeader(t, "Workers", right)];
+    const parts = [this.sectionHeader(t, "Workers")];
     if (!this.status && !this.statusError) {
       parts.push(div().id("limits-reading").py(4).text_size(12).text_color(t.dim).child("Reading the workers…"));
     }
     if (this.statusError) {
-      parts.push(div().id("limits-error").py(4).text_size(11.5).text_color(t.dim).child(this.statusError));
+      parts.push(div().id("limits-error").py(4).text_size(12).text_color(t.dim).child(this.statusError));
     }
-    parts.push(...rows.map((worker) => this.workerRow(t, worker)));
+    parts.push(...rows.map((worker, i) => this.workerRow(t, worker, i + 1)));
+    if (this.status && rows.length) parts.push(this.weekTotal(t, rows));
     return parts;
   }
 
-  workerRow(t, worker) {
-    const next = this.status?.workers?.next;
-    const until = untilText(worker.until_ms);
-    const state = worker.state === "out"
-      ? div().text_size(12).text_color(t.blocked).child(until ? `Out until ${until}` : "Out")
-      : worker.key === next
-        ? div().text_size(12).text_color(t.accent).child("Next up")
+  weekTotal(t, rows) {
+    const sum = (pick) => rows.reduce((total, worker) => total + (Number(pick(worker.spend?.week)) || 0), 0);
+    const cost = sum((week) => week?.cost_usd);
+    const runs = sum((week) => week?.runs);
+    return h_flex().id("limits-spend-total").mt(4).pt(10).border_t_1().border_color(t.border).justify_between().items_center()
+      .child(div().text_size(12).text_color(t.muted).child("This week"))
+      .child(div().text_size(12).text_color(runs > 0 ? t.foreground : t.dim)
+        .child(runs > 0 ? `${dollars(cost)} · ${runWords(runs)}` : "No runs yet"));
+  }
+
+  // Only a worker that is out gets a color; the next one is said in plain bright words, the rest are quiet.
+  workerRow(t, worker, index) {
+    const out = worker.state === "out";
+    const back = backWords(worker.until_ms);
+    const state = out
+      ? div().text_size(12).text_color(t.blocked).child(back ? `Out · back ${back}` : "Out")
+      : worker.key === this.status?.workers?.next
+        ? div().text_size(12).font_medium().text_color(t.foreground).child("Next up")
         : div().text_size(12).text_color(t.dim).child("Ready");
     const cost = Number(worker.spend?.week?.cost_usd) || 0;
     const runs = Number(worker.spend?.week?.runs) || 0;
-    const detail = runs > 0 ? `${dollars(cost)} this week · ${runs} ${runs === 1 ? "run" : "runs"}` : "Nothing this week";
     const entry = this.catalog.find((item) => item.worker === worker.cli);
     const meters = entry ? this.usage[entry.key] : null;
     const bars = [];
@@ -288,14 +294,16 @@ export default class Limits extends View {
       const used = reported.limited || share >= 1;
       const words = used ? "Used up" : `${pct}%`;
       bars.push(meter(t, `limits-worker-${worker.key}-${key}`, label, words, share, null,
-        used ? t.blocked : limitColor(t, share), used ? t.blocked : t.foreground));
+        used ? t.blocked : limitColor(t, share), used ? t.blocked : t.foreground, BAR - INDENT));
     }
-    return v_flex().id(`limits-worker-${worker.key}`).py(6).gap(2)
-      .child(h_flex().justify_between().items_center()
-        .child(div().text_size(13).text_color(t.foreground).child(worker.label ?? worker.key))
-        .child(state))
-      .child(div().text_size(11.5).text_color(t.dim).child(detail))
-      .children(bars);
+    return h_flex().id(`limits-worker-${worker.key}`).py(6).gap(8).items_start()
+      .child(div().w(INDENT - 8).flex_none().text_size(13).text_color(t.dim).child(String(index)))
+      .child(v_flex().flex_1().min_w(0).gap(2)
+        .child(h_flex().justify_between().items_center().gap(8)
+          .child(div().text_size(13).text_color(out ? t.muted : t.foreground).truncate().child(worker.label ?? worker.key))
+          .child(state))
+        .when(runs > 0, (el) => el.child(div().text_size(11).text_color(t.dim).child(`${dollars(cost)} · ${runWords(runs)}`)))
+        .children(bars));
   }
 
   render() {
@@ -309,7 +317,7 @@ export default class Limits extends View {
     if ((settings()?.lead?.program ?? "claude") === "claude") parts.push(...this.claudeParts(t, usage));
     parts.push(...this.workerParts(t));
     return v_flex().id("limits").size_full().min_h(0).bg(t.chrome).text_color(t.foreground).text_size(13)
-      .p(12).gap(4).overflow_y_scroll()
+      .px(12).pt(4).pb(12).gap(4).overflow_y_scroll()
       .children(parts);
   }
 }

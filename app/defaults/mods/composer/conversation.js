@@ -83,7 +83,7 @@ export default {
           .rounded(14)
           .max_w("80%")
           .bg(t.selected)
-          .text_size(13.5)
+          .text_size(13)
           .text_color(t.foreground)
           .selectable(true)
           .child(item.text ?? ""),
@@ -97,7 +97,7 @@ export default {
       .gap(6)
       .child(
         TextView.markdown(`composer-md-${item.id}`, item.text ?? "")
-          .text_size(13.5)
+          .text_size(13)
           .text_color(t.foreground)
           .selectable(true),
       )
@@ -108,8 +108,8 @@ export default {
             .mt(2)
             .size(6)
             .rounded(3)
-            .bg(t.accent)
-            .loop("opacity", { from: 0.35, to: 1, period: 900 }),
+            // Still: the words arriving show the reply is coming.
+            .bg(t.accent),
         ),
       );
   },
@@ -133,7 +133,7 @@ export default {
           .font_family(settings()?.font_family ?? "Google Sans Code")
           .text_color(t.muted)
           .child(piece.text)
-        : div().min_w(0).text_size(12.5).text_color(t.muted).child(piece.text)));
+        : div().min_w(0).text_size(12).text_color(t.muted).child(piece.text)));
   },
 
   toolItem(t, item, cx) {
@@ -195,7 +195,7 @@ export default {
           cx.notify();
         })
         .child(svg("mods/workspace-chrome/check.svg").size(14).text_color(t.muted))
-        .child(div().text_size(12.5).text_color(t.muted).child(`Used ${group.items.length} tools`));
+        .child(div().text_size(12).text_color(t.muted).child(`Used ${group.items.length} tools`));
     }
     return v_flex()
       .id("composer-tools-used")

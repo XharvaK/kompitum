@@ -257,7 +257,7 @@ export default class Worktree extends View {
         .rounded(7)
         .cursor_pointer()
         .when(on, (el) => el.bg(t.selected))
-        .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+        .when(!on, (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
         .on_click(() => this.open(c))
         .child(
           h_flex()
@@ -268,7 +268,7 @@ export default class Worktree extends View {
             .when(Boolean(there), (el) => el.child(div().flex_none().text_size(11).text_color(t.accent).child("open")))
             .when(!there && c.at > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(ago(c.at)))),
         )
-        .child(div().truncate().text_size(11.5).text_color(t.dim).child(tilde(c.path, this.userHome ?? "")));
+        .child(div().truncate().text_size(12).text_color(t.dim).child(tilde(c.path, this.userHome ?? "")));
     };
     const count = rows.length === all.length ? `${all.length} checkouts` : `${rows.length}/${all.length} checkouts`;
     return v_flex()

@@ -111,6 +111,13 @@ fn initial_pane_size(cx: &mut gpui::TestAppContext) {
             "header": {"height": 23, "content": {"mod": "size-probe"}}
         }}
     });
+    // Rounded like the desk: content keeps in from the corners, and a pane alone draws no line.
+    let rounded = json!({"id": "context", "type": "block", "padding": 8,
+        "content": {"tab": "active", "pane": {
+            "gap": 8, "radius": 10, "lone": true,
+            "border": {"width": 1, "color": "border"}, "focus": {"width": 1, "color": "accent"}
+        }}
+    });
     let main: serde_json::Value = serde_json::from_str(include_str!("../../defaults/layouts/main.json")).unwrap();
     let (view, cx) = open_window(cx, "size-probe", "export default () => null;", plain.clone());
     for (label, layout, steps) in [
@@ -124,6 +131,8 @@ fn initial_pane_size(cx: &mut gpui::TestAppContext) {
         ("thick-border", json!({"id": "context", "type": "block", "padding": [8, 10],
             "border": {"width": 20, "color": "border"}, "content": {"tab": "active"}}), vec![Row]),
         ("headers-padding", framed, vec![Row, Column]),
+        ("rounded-lone", rounded.clone(), vec![]),
+        ("rounded-split", rounded, vec![Row]),
         ("main-right", main.clone(), vec![Row]),
         ("main-down", main.clone(), vec![Column]),
         ("main-nested", main, vec![Row, Column, Row]),
@@ -218,4 +227,33 @@ fn hidden_tabs_follow(cx: &mut gpui::TestAppContext) {
     });
     cx.update(|window, cx| window.draw(cx).clear(cx));
     assert_eq!(dims(cx), fitted, "hidden tabs must have been sized as their panes draw them");
+}
+
+#[test]
+fn a_lone_pane_draws_no_line_and_rounded_frames_keep_content_off_the_corners() {
+    let line = |color: &str| crate::layout::Line { width: 1.0, color: color.into() };
+    use super::pane_size::{corner_inset, frame_border};
+    let frame = crate::layout::PaneFrame { radius: Some(10.0), border: Some(line("border")), focus: Some(line("accent")), ..Default::default() };
+    assert!(frame_border(&frame, true, true).is_none(), "alone: no focus ring");
+    assert!(frame_border(&frame, false, true).is_none(), "alone: no border");
+    assert_eq!(frame_border(&frame, true, false).map(|l| l.color.as_str()), Some("accent"));
+    assert_eq!(frame_border(&frame, false, false).map(|l| l.color.as_str()), Some("border"));
+    // A square corner this far in sits inside a 10 px curve: 10 * (1 - 1/sqrt 2) is 2.93.
+    assert_eq!(corner_inset(&frame), 3.0);
+    assert_eq!(corner_inset(&crate::layout::PaneFrame::default()), 0.0);
+}
+
+/// A pane is alone when no other pane is on screen: the lead's hidden terminal and a zoomed tab's other panes
+/// don't count, so the composer over a hidden lead terminal draws no line either.
+#[test]
+fn a_pane_is_alone_when_no_other_pane_is_on_screen() {
+    let mut tab = super::Tab::new("tab", "", "a", "probe-a");
+    assert_eq!(tab.shown().shown_panes(), 1);
+    tab.root.split("a", super::Axis::Row, crate::model::pane("b", "probe-b"), "split".into());
+    assert_eq!(tab.shown().shown_panes(), 2);
+    tab.root.find_mut("b").unwrap().hidden = true;
+    assert_eq!(tab.shown().shown_panes(), 1, "a hidden pane doesn't count");
+    tab.root.find_mut("b").unwrap().hidden = false;
+    tab.zoomed = Some("a".into());
+    assert_eq!(tab.shown().shown_panes(), 1, "a zoomed pane is alone on screen");
 }

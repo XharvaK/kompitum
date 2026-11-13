@@ -1439,8 +1439,9 @@ fn materialize_component(
             // still wins and an icon in a dark button comes out light.
             warn_unhonoured_a11y(&behavior, "svg", &[]);
             let path = crate::AppAssets::cache_key(&path);
-            // KOMPITUM: `spin`.
-            if let Some(ms) = behavior.spin
+            // KOMPITUM: `spin`, which stands still with reduced motion on (the glyph and its color still say it).
+            let spin = behavior.spin.filter(|_| !cx.reduce_motion());
+            if let Some(ms) = spin
                 && HOSTED.with(|h| h.get())
                 && !checking()
             {
@@ -1449,7 +1450,7 @@ fn materialize_component(
             let mut image = gpui::svg().path(path);
             image.style().refine(&refinement);
             image.style().text.color = Some(inherited);
-            if let Some(ms) = behavior.spin {
+            if let Some(ms) = spin {
                 let turn = (loop_clock_ms() % ms) / ms;
                 image = image.with_transformation(gpui::Transformation::rotate(gpui::radians((turn * std::f64::consts::TAU) as f32)));
                 // ~10 fps: a small spinner looks the same, and each step redraws its whole view.
@@ -2971,6 +2972,11 @@ fn apply_loops<'a>(behavior: &'a Behavior, refinement: &mut StyleRefinement, win
     if behavior.frames.is_none() && behavior.loops.is_empty() {
         return None;
     }
+    // KOMPITUM: with reduced motion on, loops leave the element as drawn and frames rest on the first, with no
+    // wake to keep redrawing (Universal Design UD-MOT-005).
+    if cx.reduce_motion() {
+        return behavior.frames.as_ref().map(|(_, list)| (0, list.as_slice()));
+    }
     let now = loop_clock_ms();
     let mut next = f64::INFINITY;
     let text = behavior.frames.as_ref().map(|(ms, list)| {
@@ -3677,6 +3683,32 @@ mod motion_identity_tests {
             motion_element_id(41, None, &Component::Input(23)),
             gpui::ElementId::NamedInteger("gpui-shell-input".into(), 23)
         );
+    }
+
+    /// With reduced motion on, loops leave the element as drawn and frames rest on the first.
+    #[gpui::test]
+    fn reduced_motion_stops_loops_and_frames(cx: &mut gpui::TestAppContext) {
+        use gpui::{Empty, VisualTestContext};
+        use std::ops::Deref;
+
+        let mut behavior = Behavior::default();
+        behavior.loops.push(Loop {
+            property: MotionProperty::Opacity,
+            from: 0.2,
+            to: 1.0,
+            period: 1000.0,
+            easing: "linear".to_owned(),
+        });
+        behavior.frames = Some((100.0, vec!["a".to_owned(), "b".to_owned()]));
+        let window = cx.add_window(|_, _| Empty);
+        let mut context = VisualTestContext::from_window(*window.deref(), cx);
+        context.update(|window, cx| {
+            cx.set_reduce_motion(true);
+            let mut refinement = StyleRefinement::default();
+            let frame = apply_loops(&behavior, &mut refinement, window, cx);
+            assert_eq!(refinement.opacity, None, "the loop left the opacity alone");
+            assert_eq!(frame.map(|(index, _)| index), Some(0), "the frames rest on the first");
+        });
     }
 
     #[test]

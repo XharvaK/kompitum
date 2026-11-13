@@ -319,12 +319,12 @@ export default class Palette extends View {
           .items_center()
           .rounded(7)
           .cursor_pointer()
-          .text_size(12.8)
+          .text_size(13)
           .when(on, (el) => el.bg(t.selected))
-          .hover((s) => s.bg(t.hover))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click(() => this.go(r.e))
           .child(div().flex_1().min_w(0).child(this.title(t, r.e.title, r.hits, on)))
-          .when(Boolean(this.query), (el) => el.child(div().text_size(11.5).text_color(t.dim).child(r.e.group)))
+          .when(Boolean(this.query), (el) => el.child(div().text_size(12).text_color(t.dim).child(r.e.group)))
           .when(Boolean(k), (el) => el.child(key(k))),
       );
     });
@@ -360,7 +360,7 @@ export default class Palette extends View {
           .border_color(t.accent)
           .bg(t.background)
           .child(svg(win()?.platform === "macos" ? "frame/palette/command.svg" : "mods/workspace-chrome/search.svg").size(16).text_color(t.dim))
-          .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground))
+          .child(Input.new(this.input).flex_1().h_full().text_size(13).text_color(t.foreground))
           .child(div().text_size(11).text_color(t.dim).child("Esc")),
       )
       .child(

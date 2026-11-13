@@ -107,7 +107,8 @@ fn claudes_windows_have_bars_and_a_pace_mark(cx: &mut TestAppContext) {
     assert!(!none.contains("limits-claude-5h"), "{none}");
 }
 
-/// Each worker shows its state and its week's cost, in the chain's order; the header sums the week.
+/// The workers are numbered in the chain's order with their state; only one that ran shows its cost, and a
+/// footer sums the week once.
 #[gpui::test]
 fn the_workers_show_state_and_cost_in_chain_order(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -122,17 +123,17 @@ fn the_workers_show_state_and_cost_in_chain_order(cx: &mut TestAppContext) {
     let tree = sheet_draws(cx, sheet_values(Value::Null, status, json!({"overlay": "o1"})));
     for shown in [
         "limits-worker-cc",
-        "Out until",
+        "Out · back",
         "limits-worker-go",
         "Next up",
         "limits-worker-haiku",
-        "$8.88 this week · 22 runs",
-        "Nothing this week",
+        "$8.88 · 22 runs",
         "limits-spend-total",
-        "$8.88 this week",
+        "This week",
     ] {
         assert!(tree.contains(shown), "missing {shown}: {tree}");
     }
+    assert!(!tree.contains("Nothing this week"), "a worker that didn't run says nothing: {tree}");
     let cc = tree.find("limits-worker-cc").unwrap();
     let go = tree.find("limits-worker-go").unwrap();
     assert!(cc < go, "cc's row comes before go's: {tree}");

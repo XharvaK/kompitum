@@ -1122,18 +1122,23 @@ fn composer_layout(
     (width, height, found)
 }
 
-/// A new conversation: the headline and the box sit a little above the middle, the box's top below a quarter of
-/// the window and its bottom above 85% of it.
+/// A new conversation keeps the box at the bottom, where the conversation keeps it, so the first message doesn't
+/// move it; the headline sits above the box.
 #[gpui::test]
-fn a_new_conversation_starts_in_the_middle(cx: &mut TestAppContext) {
+fn a_new_conversation_keeps_the_box_where_the_conversation_does(cx: &mut TestAppContext) {
     let values = conversation_values(json!([]), "hidden", Value::Null, None);
-    let (_, height, found) = composer_layout(cx, values, "", &["composer-box"]);
+    let (_, height, start) = composer_layout(cx, values, "", &["composer-box", "composer-start-title"]);
     let tree = composer_draws(cx, conversation_values(json!([]), "hidden", Value::Null, None), None);
     assert!(tree.contains("composer-start"), "{tree}");
     assert!(tree.contains("What's next?"), "{tree}");
-    let boxed = found[0].expect("the box is laid out");
-    assert!(f32::from(boxed.top()) > height / 4.0, "the box starts below a quarter of {height}: {boxed:?}");
-    assert!(f32::from(boxed.bottom()) < height * 0.85, "the box ends above 85% of {height}: {boxed:?}");
+    let boxed = start[0].expect("the box is laid out");
+    let title = start[1].expect("the headline is laid out");
+    assert!(f32::from(boxed.bottom()) > height * 0.9, "the box ends in the bottom tenth of {height}: {boxed:?}");
+    assert!(title.bottom() < boxed.top(), "the headline sits above the box: {title:?} {boxed:?}");
+    let items = json!([{"kind": "owner", "id": "o1", "text": "Hello"}]);
+    let talk = conversation_values(items, "hidden", Value::Null, None);
+    let (_, _, after) = composer_layout(cx, talk, "", &["composer-box"]);
+    assert_eq!(after[0], Some(boxed), "the first message leaves the box where it was");
 }
 
 /// The start names the lead and the last part of its saved folder.
@@ -1146,11 +1151,52 @@ fn the_start_names_the_folder(cx: &mut TestAppContext) {
     );
     let tree = composer_draws(cx, values, None);
     assert!(tree.contains("Claude in kompitum"), "{tree}");
+    // The home folder is named as such, not by the account's name.
+    let mut values = conversation_values(json!([]), "hidden", Value::Null, None);
+    values.insert("person".into(), json!({"lead": {"program": "claude", "model": "opus", "folder": "/fixture/"}}));
+    let tree = composer_draws(cx, values, None);
+    assert!(tree.contains("Claude in your home folder"), "{tree}");
 }
 
-/// The first item moves the box to the bottom: no start view is drawn once there is an item.
+/// The working word pulses when the lead starts and is still after three seconds (loops stop); the model's icon
+/// doesn't pulse with it.
 #[gpui::test]
-fn the_first_message_moves_the_box_to_the_bottom(cx: &mut TestAppContext) {
+fn the_working_pulse_stops_after_three_seconds(cx: &mut TestAppContext) {
+    let working = || {
+        let items = json!([{"kind": "owner", "id": "o1", "text": "Hello"}]);
+        let mut values = conversation_values(items, "hidden", Value::Null, None);
+        values.get_mut("lead").unwrap()["state"] = json!("working");
+        values.get_mut("lead").unwrap()["heard_ms"] = json!(chrono_now_ms());
+        values
+    };
+    let fresh = composer_draws(cx, working(), None);
+    assert_eq!(fresh.matches("loop").count(), 1, "one pulse, on the word: {fresh}");
+    let later = composer_draws(cx, working(), Some("this.workingSince = Date.now() - 4000;"));
+    assert!(!later.contains("loop"), "{later}");
+}
+
+fn chrono_now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
+}
+
+/// The bar splits by job: attach on the left, and who answers (the model and its reasoning) beside Send on
+/// the right.
+#[gpui::test]
+fn the_model_sits_beside_send(cx: &mut TestAppContext) {
+    let items = json!([{"kind": "owner", "id": "o1", "text": "Hello"}]);
+    let values = conversation_values(items, "hidden", Value::Null, None);
+    let ids = ["composer-box", "composer-attach", "composer-model", "composer-send"];
+    let (_, _, at) = composer_layout(cx, values, "", &ids);
+    let [boxed, attach, model, send] = [at[0], at[1], at[2], at[3]].map(|b| b.expect("laid out"));
+    let middle = boxed.left() + boxed.size.width / 2.0;
+    assert!(attach.right() < middle, "attach stays on the left: {attach:?} {boxed:?}");
+    assert!(model.left() > middle, "the model sits on the right: {model:?} {boxed:?}");
+    assert!(model.right() <= send.left(), "the model comes before Send: {model:?} {send:?}");
+}
+
+/// The first item replaces the start view: no headline is drawn once there is an item.
+#[gpui::test]
+fn the_first_message_replaces_the_start_view(cx: &mut TestAppContext) {
     let items = json!([{"kind": "owner", "id": "o1", "text": "Hello"}]);
     let tree = composer_draws(cx, conversation_values(items, "hidden", Value::Null, None), None);
     assert!(tree.contains("composer-item-o1"), "{tree}");
@@ -1194,18 +1240,18 @@ fn with_open_card(mode: &str) -> BTreeMap<String, Value> {
     )
 }
 
-/// The box's bottom row: attach, then the model, the mode word, and Send at the far right.
+/// The box's bottom row: attach and the mode word on the left; the model, then Send at the far right.
 #[gpui::test]
-fn the_row_reads_model_level_and_mode(cx: &mut TestAppContext) {
+fn the_row_reads_mode_then_model_and_send(cx: &mut TestAppContext) {
     let tree = composer_draws(cx, with_permission_mode("default", false), None);
     assert!(tree.contains("Ask first"), "{tree}");
     assert!(!mode_line(&tree).is_empty(), "{tree}");
     let ids = ["composer-attach", "composer-model", "composer-mode", "composer-send"];
     let (_, _, found) = composer_layout(cx, with_permission_mode("default", false), "", &ids);
     let [attach, model, mode, send] = [0, 1, 2, 3].map(|i| found[i].unwrap_or_else(|| panic!("{} is laid out", ids[i])));
-    assert!(f32::from(attach.left()) < f32::from(model.left()), "attach, then model: {attach:?} {model:?}");
-    assert!(f32::from(model.left()) < f32::from(mode.left()), "model, then mode: {model:?} {mode:?}");
-    assert!(f32::from(mode.left()) < f32::from(send.left()), "send is the rightmost: {mode:?} {send:?}");
+    assert!(f32::from(attach.left()) < f32::from(mode.left()), "attach, then mode: {attach:?} {mode:?}");
+    assert!(f32::from(mode.left()) < f32::from(model.left()), "mode, then model: {mode:?} {model:?}");
+    assert!(f32::from(model.left()) < f32::from(send.left()), "send is the rightmost: {model:?} {send:?}");
 }
 
 /// Before Claude has reported a mode there is no mode word: no hook has named one.

@@ -44,8 +44,9 @@ fn empty_typed_address_leaves_add_disabled(cx: &mut TestAppContext) {
         .lines()
         .find(|line| line.contains("ma-add-typed"))
         .unwrap_or_else(|| panic!("no typed Add button: {tree}"));
+    // Disabled, the UD way: the fill goes and an outline keeps the shape (never a faded fill).
     assert!(
-        button.contains(".opacity[Number(0.4)]"),
+        button.contains(".border_1") && !button.contains(".bg[") && !button.contains(".opacity"),
         "it is drawn disabled: {button}"
     );
     assert!(

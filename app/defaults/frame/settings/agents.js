@@ -323,7 +323,7 @@ function leadSection(view, t, cx, s) {
   if (!list.length) {
     return v_flex().w_full()
       .child(view.heading(t, "Lead"))
-      .child(div().py(12).text_size(12.5).text_color(t.dim).child(s.known ? "No installed CLI can lead yet." : "Reading agents…"));
+      .child(div().py(12).text_size(12).text_color(t.dim).child(s.known ? "No installed CLI can lead yet." : "Reading agents…"));
   }
   const entry = leadProgram(view, s);
   if (!entry) return v_flex().w_full().child(view.heading(t, "Lead"));
@@ -402,7 +402,7 @@ function leadSection(view, t, cx, s) {
   const usage = entry.key === "claude" ? claudeMeters(t, s.status?.claude) : null;
   return v_flex().w_full()
     .child(view.heading(t, "Lead"))
-    .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
+    .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim)
       .child("The agent you talk to. It plans, asks you, and hands work to the workers below."))
     .child(view.row(t, "Agent", null, cliMenu, "lead"))
     .when(Boolean(usage), (el) => el.child(div().pt(6).child(usage)))
@@ -449,7 +449,7 @@ const ICON_CLOSE = "frame/settings/close.svg";
 function keyButton(t, id, icon, onClick) {
   return div().id(id).w(28).h(28).flex_none().flex().items_center().justify_center().rounded(6)
     .text_color(t.dim)
-    .hover((s) => s.bg(t.hover).text_color(t.foreground))
+    .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
     .on_click(onClick)
     .child(svg(icon).size(14));
@@ -500,7 +500,7 @@ function workerRow(view, t, cx, s, worker, index) {
     .child(h_flex().gap(8).items_center()
       .child(programIcon(entry, 16, t))
       .child(v_flex().flex_1().min_w(0).gap(2)
-        .child(div().text_size(13.5).text_color(t.foreground).truncate().child(worker.label))
+        .child(div().text_size(13).text_color(t.foreground).truncate().child(worker.label))
         .child(div().text_size(12).text_color(t.dim).truncate()
           .when(Boolean(model), (el) => el.tooltip(model))
           .child(modelLabel(entry, model))))
@@ -539,7 +539,7 @@ function subagentRow(view, t, cx, s, name, index) {
     .child(h_flex().gap(8).items_center()
       .child(programIcon(claude, 16, t))
       .child(v_flex().flex_1().min_w(0).gap(2)
-        .child(div().text_size(13.5).text_color(t.foreground).child("Claude Code"))
+        .child(div().text_size(13).text_color(t.foreground).child("Claude Code"))
         .child(div().text_size(12).text_color(t.dim).child(name)))
       .child(keyButton(t, `st-subagent-up-${name}`, ICON_UP, (_e, cx) => workerStep(view, `sub:${index}`, -1, cx)))
       .child(keyButton(t, `st-subagent-down-${name}`, ICON_DOWN, (_e, cx) => workerStep(view, `sub:${index}`, 1, cx)))
@@ -696,13 +696,13 @@ function addReadyRow(t, s, { key, name, iconEntry, onAdd }) {
     .gap(10)
     .items_center()
     .rounded(8)
-    .hover((el) => el.bg(t.hover))
+    .hover((el) => el.bg(t.hover).text_color(t.foreground)).active((el) => el.bg(t.selected))
     .child(programIcon(iconEntry, 16, t))
     .child(
       v_flex()
         .flex_1()
         .min_w(0)
-        .child(div().text_size(13.5).text_color(t.foreground).truncate().child(name))
+        .child(div().text_size(13).text_color(t.foreground).truncate().child(name))
         .when(Boolean(detail), (el) => el.child(div().text_size(12).text_color(t.dim).truncate().child(detail))),
     )
     .child(
@@ -713,9 +713,9 @@ function addReadyRow(t, s, { key, name, iconEntry, onAdd }) {
         .items_center()
         .rounded(6)
         .cursor_pointer()
-        .text_size(12.5)
+        .text_size(12)
         .text_color(t.foreground)
-        .hover((el) => el.bg(t.hover))
+        .hover((el) => el.bg(t.hover).text_color(t.foreground)).active((el) => el.bg(t.selected))
         .on_click((_e, cx) => {
           if (s.addBusy) return;
           onAdd(cx);
@@ -788,12 +788,12 @@ function addPanel(view, t, cx, s) {
     .rounded(6)
     .cursor_pointer()
     .text_color(t.muted)
-    .hover((el) => el.bg(t.hover).text_color(t.foreground))
+    .hover((el) => el.bg(t.hover).text_color(t.foreground)).active((el) => el.bg(t.selected))
     .tooltip("Close")
     .on_click((_e, cx) => { s.addOpen = false; cx.notify(); })
     .child(svg("frame/settings/close.svg").size(14));
 
-  const header = (title) => div().text_size(11.5).font_semibold().text_color(t.dim).child(title);
+  const header = (title) => div().text_size(12).font_semibold().text_color(t.dim).child(title);
 
   let card = v_flex()
     .id("st-add")
@@ -899,8 +899,9 @@ function addPanel(view, t, cx, s) {
           .bg(t.solid)
           .text_color(t.solid_foreground)
           .cursor_pointer()
-          .hover((el) => el.opacity(0.88))
+          .relative()
           .on_click(addOwn)
+          .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
           .child(s.addBusy === "own" ? "Adding…" : "Add"),
       ),
   );
@@ -955,17 +956,17 @@ function workersSection(view, t, cx, s) {
   const clis = Array.isArray(s.workers?.clis) ? s.workers.clis : [];
   return v_flex().w_full()
     .child(view.heading(t, "Workers"))
-    .child(div().pb(6).text_size(12.5).text_color(t.dim).child("Kompitum tries them from the top."))
-    .when(Boolean(s.workerError), (el) => el.child(div().pb(6).text_size(12.5).text_color(t.blocked).truncate()
+    .child(div().pb(6).text_size(12).text_color(t.dim).child("Kompitum tries them from the top."))
+    .when(Boolean(s.workerError), (el) => el.child(div().pb(6).text_size(12).text_color(t.blocked).truncate()
       .tooltip(s.workerError).child(firstLine(s.workerError) || s.workerError)))
     .when(rows.length > 0, (el) => el.children(rows))
-    .when(rows.length === 0, (el) => el.child(div().py(10).text_size(12.5).text_color(t.dim).child(s.workers ? "No workers in the order." : "Reading workers…")))
+    .when(rows.length === 0, (el) => el.child(div().py(10).text_size(12).text_color(t.dim).child(s.workers ? "No workers in the order." : "Reading workers…")))
     .child(h_flex().pt(10).child(view.button(t, "st-add-worker", "Add a worker", (_e, cx) => { s.addOpen = !s.addOpen; cx.notify(); })))
     .when(s.addOpen, (el) => el.child(addPanel(view, t, cx, s)))
     .when(clis.length > 0, (el) => el.child(v_flex().pt(12).gap(3).when(view.lit("clis"), (line) => line.bg(t.selected).rounded(7))
       .children(clis.map((cli) => {
         const line = cliLine(cli, Date.now());
-        return div().text_size(12.5).text_color(t.dim).tooltip(line).child(firstLine(line) || line);
+        return div().text_size(12).text_color(t.dim).tooltip(line).child(firstLine(line) || line);
       }))));
 }
 
@@ -973,7 +974,7 @@ export function agentsPage(view, t, cx) {
   const s = ensureAgents(view);
   return v_flex().w_full()
     .when(s.errors.length > 0, (el) => el.children(s.errors.map((error) =>
-      div().pb(8).text_size(12.5).line_height("18px").text_color(t.blocked).tooltip(error).child(firstLine(error) || error))))
+      div().pb(8).text_size(12).line_height("18px").text_color(t.blocked).tooltip(error).child(firstLine(error) || error))))
     .child(leadSection(view, t, cx, s))
     .child(div().h(24))
     .child(workersSection(view, t, cx, s));

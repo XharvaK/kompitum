@@ -225,7 +225,7 @@ export default class Help extends View {
           .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Keyboard shortcuts"))
           .child(div().text_size(11).text_color(t.dim).child("Esc")),
       )
-      .child(Input.new(this.input).h(36).flex_none().px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(12.8).text_color(t.foreground))
+      .child(Input.new(this.input).h(36).flex_none().px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(13).text_color(t.foreground))
       .child(
         v_flex()
           .flex_1()
@@ -237,7 +237,7 @@ export default class Help extends View {
             groups.map(([name, rows]) =>
               v_flex()
                 .gap(2)
-                .child(div().text_size(11.5).font_medium().text_color(t.dim).child(name))
+                .child(div().text_size(12).font_medium().text_color(t.dim).child(name))
                 .children(
                   rows.map((row) =>
                     h_flex()
@@ -257,7 +257,7 @@ export default class Help extends View {
                                 .gap(3)
                                 .items_center()
                                 .children(keyParts(k.keys).map(keycap))
-                                .when(k.section !== "global", (el) => el.child(div().pl(4).text_size(10.5).text_color(t.dim).child(k.section))),
+                                .when(k.section !== "global", (el) => el.child(div().pl(4).text_size(11).text_color(t.dim).child(k.section))),
                             ),
                           ),
                       )

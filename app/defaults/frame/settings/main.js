@@ -255,8 +255,8 @@ export default class Settings extends View {
           .flex_1()
           .min_w(0)
           .gap(3)
-          .when(Boolean(title), (el) => el.child(div().text_size(14).text_color(t.foreground).child(title)))
-          .when(Boolean(about), (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.dim).child(about))),
+          .when(Boolean(title), (el) => el.child(div().text_size(13).text_color(t.foreground).child(title)))
+          .when(Boolean(about), (el) => el.child(div().text_size(12).line_height("18px").text_color(t.dim).child(about))),
       )
       .child(div().flex_none().child(control));
   }
@@ -299,7 +299,7 @@ export default class Settings extends View {
       .cursor_pointer()
       .text_size(13)
       .text_color(t.foreground)
-      .hover((s) => s.bg(t.hover))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_click(onClick)
       .child(label);
   }
@@ -331,8 +331,9 @@ export default class Settings extends View {
       .text_color(t.accent_foreground)
       .text_size(13)
       .font_semibold()
-      .hover((s) => s.opacity(0.9))
+      .relative()
       .on_click(onClick)
+      .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
       .child(label);
   }
 
@@ -368,7 +369,7 @@ export default class Settings extends View {
         el.child(div().pb(12).text_size(13).text_color(t.dim).child("Use Option for terminal shortcuts or to type accents and special characters.")),
       )
       .when(window()?.platform !== "macos", (el) =>
-        el.child(div().pb(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Option-key settings are for macOS.")),
+        el.child(div().pb(12).text_size(12).line_height("18px").text_color(t.dim).child("Option-key settings are for macOS.")),
       )
       .when(window()?.platform === "macos", (el) =>
         el.children(choices.map(([value, label]) => {
@@ -382,10 +383,10 @@ export default class Settings extends View {
           .items_center()
           .cursor_pointer()
           .when(this.lit("option"), (el) => el.bg(t.selected))
-          .hover((s) => s.bg(t.hover))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click((_e, cx) => this.change((p) => { p.option_as_alt = value; }, cx))
           .child(div().text_color(on ? t.accent : t.muted).child(on ? "◉" : "○"))
-          .child(div().text_size(14).text_color(t.foreground).child(label));
+          .child(div().text_size(13).text_color(t.foreground).child(label));
         })));
   }
 
@@ -484,14 +485,14 @@ export default class Settings extends View {
       .child(h_flex().gap(10).items_center()
         .child(div().w(7).h(7).flex_none().rounded(4).bg(color))
         .child(v_flex().flex_1().min_w(0).gap(3)
-          .child(div().text_size(14).text_color(t.foreground).child(m.name))
-          .child(div().text_size(12.5).text_color(t.dim).child(`${m.target ?? ""} · ${state} · ${m.version ? `kom ${m.version}` : "kom version unknown"}`)))
+          .child(div().text_size(13).text_color(t.foreground).child(m.name))
+          .child(div().text_size(12).text_color(t.dim).child(`${m.target ?? ""} · ${state} · ${m.version ? `kom ${m.version}` : "kom version unknown"}`)))
         .child(controls.flex_none()));
-    if (busy === "update") row.child(div().text_size(12.5).text_color(t.dim).child("Copying this computer's kompitum-core. Its terminals keep running."));
+    if (busy === "update") row.child(div().text_size(12).text_color(t.dim).child("Copying this computer's kompitum-core. Its terminals keep running."));
     if (edit && !busy) {
       const cancel = this.button(t, `st-m-cancel-${m.name}`, "Cancel", (_e, cx) => { this.machineEdit = null; this.handle.focus(); cx.notify(); });
       if (edit.action === "rm") row.child(v_flex().gap(8)
-        .child(div().text_size(12.5).text_color(t.muted).child(`Remove ${m.name}? Its terminals keep running there.`))
+        .child(div().text_size(12).text_color(t.muted).child(`Remove ${m.name}? Its terminals keep running there.`))
         .child(h_flex().gap(6).child(cancel).child(this.button(t, `st-m-confirm-${m.name}`, "Remove machine", (_e, cx) => this.machineAction(m.name, "rm", cx)))));
       else row.child(v_flex().gap(6)
         .child(div().text_size(12).text_color(t.dim).child("New name (addresses using the old name stop working)"))
@@ -499,7 +500,7 @@ export default class Settings extends View {
           .child(Input.new(this.renameInput).flex_1().min_w(0).h(32).px(10).rounded(7).border_1().border_color(this.renameFocused ? t.accent : t.input).bg(t.background).text_size(13).text_color(t.foreground))
           .child(cancel).child(this.button(t, `st-m-save-${m.name}`, "Save", (_e, cx) => this.machineAction(m.name, "rename", cx, edit.name)))));
     }
-    if (result) row.child(div().text_size(12.5).text_color(result.ok ? t.ansi2 : t.blocked).tooltip(result.ok ? null : result.message).child(result.ok ? result.message : firstLine(result.message) || result.message));
+    if (result) row.child(div().text_size(12).text_color(result.ok ? t.ansi2 : t.blocked).tooltip(result.ok ? null : result.message).child(result.ok ? result.message : firstLine(result.message) || result.message));
     return row;
   }
 
@@ -507,13 +508,13 @@ export default class Settings extends View {
     const version = updates().core.version;
     return v_flex().w_full()
       .child(this.heading(t, "Machines"))
-      .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim).child("Your other computers. Their agents keep working when this one sleeps."))
+      .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim).child("Your other computers. Their agents keep working when this one sleeps."))
       .child(this.row(t, "This computer", "Connected", div().w(7).h(7).rounded(4).bg(t.ansi2), "this"))
       .children((this.machineList ?? []).map((m) => this.machineRow(t, m, version)))
-      .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12.5).text_color(t.dim).child("Reading machines…"))))
-      .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(12.5).text_color(t.dim).child("No other machines yet.")))
-      .when(Boolean(this.machineError), (el) => el.child(div().py(10).text_size(12.5).text_color(t.blocked).tooltip(this.machineError).child(firstLine(this.machineError) || this.machineError)))
-      .when(Boolean(this.machineNotice), (el) => el.child(div().py(10).text_size(12.5).text_color(t.ansi2).child(this.machineNotice)))
+      .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12).text_color(t.dim).child("Reading machines…"))))
+      .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(12).text_color(t.dim).child("No other machines yet.")))
+      .when(Boolean(this.machineError), (el) => el.child(div().py(10).text_size(12).text_color(t.blocked).tooltip(this.machineError).child(firstLine(this.machineError) || this.machineError)))
+      .when(Boolean(this.machineNotice), (el) => el.child(div().py(10).text_size(12).text_color(t.ansi2).child(this.machineNotice)))
       .child(this.row(t, "Add a machine", "Another computer, reached over ssh.", this.button(t, "st-m-add", "Add", () => run("mod.open", { name: "machine-add" })), "add"));
   }
 
@@ -543,7 +544,7 @@ export default class Settings extends View {
       .child(this.heading(t, "Pop-ups"))
       .child(this.row(t, "Notes between agents", "Show a note for a few seconds when agents write to each other.", this.toggle(t, "st-notes-between-agents", between, (_e, cx) => this.change((p) => (p.notes_between_agents = !between), cx))))
       .child(this.row(t, "Quiet while a game is fullscreen", "No sounds and no passing notes while another app fills the screen. Notes that need you still wait for you.", this.toggle(t, "st-quiet-fullscreen", quiet, (_e, cx) => this.change((p) => (p.quiet_while_fullscreen = !quiet), cx))))
-      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Want your own sounds? Ask your lead to change them."));
+      .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child("Want your own sounds? Ask your lead to change them."));
   }
 
   // About ----------------------------------------------------------------
@@ -574,7 +575,7 @@ export default class Settings extends View {
                 cx.notify();
               });
     const primary = (id, label, f) =>
-      div().id(id).px(12).py(5).rounded(7).cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).text_size(13).font_semibold().hover((s) => s.opacity(0.9)).on_click(f).child(label);
+      div().id(id).px(12).py(5).rounded(7).cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).text_size(13).font_semibold().relative().on_click(f).child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))).child(label);
     const source = !u.app.updates;
     const app = source
       ? [null, null]
@@ -602,8 +603,8 @@ export default class Settings extends View {
           .gap(9)
           .border_b(1)
           .border_color(t.border)
-          .child(div().text_size(14).text_color(t.foreground).child(`Kompitum ${u.app.version} · core ${c.version ?? ""}`))
-          .child(div().text_size(12.5).line_height("18px").text_color(t.dim)
+          .child(div().text_size(13).text_color(t.foreground).child(`Kompitum ${u.app.version} · core ${c.version ?? ""}`))
+          .child(div().text_size(12).line_height("18px").text_color(t.dim)
             .child(source ? "Built from source; updates come from your checkout." : "Checks for new versions of the app and its core every hour."))
           .child(
             h_flex()
@@ -612,10 +613,10 @@ export default class Settings extends View {
               .items_center()
               .flex_wrap()
               .when(this.lit("app"), (el) => el.bg(t.selected).rounded(7))
-              .child(div().text_size(12.5).text_color(t.dim).child("App"))
-              .when(Boolean(app[0]), (el) => el.child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(t.muted).child(app[0])))
+              .child(div().text_size(12).text_color(t.dim).child("App"))
+              .when(Boolean(app[0]), (el) => el.child(div().flex_1().min_w(0).text_size(12).line_height("18px").text_color(t.muted).child(app[0])))
               .child(div().flex_1())
-              .when(Boolean(u.app.version), (el) => el.child(div().text_size(12.5).text_color(t.muted).child(u.app.version)))
+              .when(Boolean(u.app.version), (el) => el.child(div().text_size(12).text_color(t.muted).child(u.app.version)))
               .child(this.button(t, "st-whats-new", "What's new", () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
               .when(Boolean(app[1]), (el) => el.child(app[1])),
           )
@@ -626,8 +627,8 @@ export default class Settings extends View {
               .items_center()
               .flex_wrap()
               .when(this.lit("core"), (el) => el.bg(t.selected).rounded(7))
-              .child(div().text_size(12.5).text_color(t.dim).child("Core"))
-              .child(div().flex_1().min_w(0).text_size(12.5).line_height("18px").text_color(t.muted).tooltip(core[0]).child(firstLine(core[0]) || core[0]))
+              .child(div().text_size(12).text_color(t.dim).child("Core"))
+              .child(div().flex_1().min_w(0).text_size(12).line_height("18px").text_color(t.muted).tooltip(core[0]).child(firstLine(core[0]) || core[0]))
               .when(Boolean(core[1]), (el) => el.child(core[1])),
           ),
       )
@@ -643,8 +644,8 @@ export default class Settings extends View {
           "welcome",
         ),
       )
-      .child(div().pt(12).text_size(12.5).line_height("18px").text_color(t.dim).child("Kompitum sends nothing: no usage data, no crash reports. Send feedback opens an issue on GitHub."))
-      .child(div().text_size(12.5).line_height("18px").text_color(t.dim).child("Built on herdr (Apache 2.0)."));
+      .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child("Kompitum sends nothing: no usage data, no crash reports. Send feedback opens an issue on GitHub."))
+      .child(div().text_size(12).line_height("18px").text_color(t.dim).child("Built on herdr (Apache 2.0)."));
   }
 
 
@@ -682,19 +683,25 @@ export default class Settings extends View {
         el.children(
           matches.length
             ? matches.map((m, i) => {
-                const target = SECTIONS.find((s) => s.id === m.section);
-                return h_flex()
+                const where = SECTIONS.find((s) => s.id === m.section)?.title ?? m.section;
+                // The setting's name over its section: two short lines that truncate fit the column, where one
+                // long "Section › Setting" ran out over the page. The tooltip keeps the whole path.
+                return v_flex()
                   .id(`st-search-${i}`)
+                  .min_w(0)
                   .px(10)
-                  .py(7)
+                  .py(6)
+                  .gap(2)
                   .rounded(7)
                   .cursor_pointer()
-                  .hover((st) => st.bg(t.raised))
+                  .hover((st) => st.bg(t.hover).text_color(t.foreground)).active((st) => st.bg(t.selected))
+                  .tooltip(`${where} › ${m.title}`)
                   .on_click((_e, cx) => this.openMatch(m, cx))
-                  .child(div().text_size(12.5).text_color(t.muted).child(`${target?.title ?? m.section} › ${m.title}`));
+                  .child(div().truncate().text_size(13).text_color(t.foreground).child(m.title))
+                  .child(div().truncate().text_size(11).text_color(t.dim).child(where));
               })
             : [
-                div().px(10).py(6).text_size(12.5).line_height("18px").text_color(t.dim).child(`No setting matches "${query}".`),
+                div().px(10).py(6).text_size(12).line_height("18px").text_color(t.dim).child(`No setting matches "${query}".`),
                 h_flex()
                   .id("st-ask-lead")
                   .px(10)
@@ -703,10 +710,10 @@ export default class Settings extends View {
                   .items_center()
                   .rounded(7)
                   .cursor_pointer()
-                  .hover((st) => st.bg(t.raised))
+                  .hover((st) => st.bg(t.hover).text_color(t.foreground)).active((st) => st.bg(t.selected))
                   .on_click((_e, cx) => this.askLead(cx))
                   .child(svg(I("bot")).size(14).text_color(t.accent))
-                  .child(div().text_size(12.5).text_color(t.foreground).child("Ask the lead")),
+                  .child(div().text_size(12).text_color(t.foreground).child("Ask the lead")),
               ],
         ),
       )
@@ -721,8 +728,8 @@ export default class Settings extends View {
             .items_center()
             .rounded(7)
             .cursor_pointer()
-            .bg(on ? t.raised : "#00000000")
-            .hover((st) => st.bg(t.raised))
+            .bg(on ? t.selected : "#00000000")
+            .hover((st) => st.bg(t.hover).text_color(t.foreground)).active((st) => st.bg(t.selected))
             .on_click((_e, cx) => {
               this.section = s.id;
               this.picking = null;
@@ -737,7 +744,7 @@ export default class Settings extends View {
               cx.notify();
             })
             .child(svg(I(s.icon)).size(15).text_color(on ? t.accent : t.dim))
-            .child(div().flex_1().text_size(13.5).text_color(on ? t.foreground : t.muted).child(s.title))
+            .child(div().flex_1().text_size(13).text_color(on ? t.foreground : t.muted).child(s.title))
             .when(s.id === "about" && waiting, (el) => el.child(div().w(7).h(7).rounded(4).bg(t.accent)));
         }),
       ));
@@ -802,7 +809,7 @@ export default class Settings extends View {
               .justify_center()
               .text_color(t.muted)
               .cursor_pointer()
-              .hover((s) => s.bg(t.hover).text_color(t.foreground))
+              .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
               .on_click(() => this.close())
               .child(svg("mods/workspace-chrome/x.svg").size(14)),
           ),

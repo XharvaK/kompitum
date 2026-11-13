@@ -182,10 +182,10 @@ export default class MachineAdd extends View {
       .bg(t.blocked + "14")
       .border_1()
       .border_color(t.blocked + "40")
-      .child(div().text_size(12.8).font_semibold().text_color(t.foreground).child(`${mac.name} is a Mac: allow its folders once`))
+      .child(div().text_size(13).font_semibold().text_color(t.foreground).child(`${mac.name} is a Mac: allow its folders once`))
       .child(
         div()
-          .text_size(12.5)
+          .text_size(12)
           .line_height("18px")
           .text_color(t.muted)
           .child("macOS asks on the Mac's own screen before an agent reads Desktop, Documents or Downloads, and waits until someone answers. Give kompitum-core Full Disk Access there and it never asks again: in the list, press + and pick this file:"),
@@ -208,12 +208,13 @@ export default class MachineAdd extends View {
               .text_size(12)
               .font_medium()
               .cursor_pointer()
-              .hover((s) => s.opacity(0.88))
+              .relative()
               .on_click((_e, cx) => {
                 exec("open", ["x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"], { on: mac.name }).catch(() => null);
                 this.opened[target] = true;
                 cx.notify();
               })
+              .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
               .child(`Open the setting on ${mac.name}`),
           )
           .when(Boolean(this.opened[target]), (el) => el.child(div().text_size(12).text_color(t.dim).child("It's open on the Mac's screen."))),
@@ -254,7 +255,7 @@ export default class MachineAdd extends View {
           .text_size(12)
           .font_medium()
           .cursor_pointer()
-          .hover((s) => s.opacity(0.88))
+          .relative()
           .tooltip(`Runs \`kom machine add ${shellQuote(target)}\` in a new tab.`)
           .on_click((_e, cx) => {
             run("terminal.open", {
@@ -267,6 +268,7 @@ export default class MachineAdd extends View {
             this.close();
             cx.stop_propagation();
           })
+          .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
           .child("Finish in a terminal"),
       );
   }
@@ -312,7 +314,7 @@ export default class MachineAdd extends View {
               .font_medium()
               .text_color(t.foreground)
               .cursor_pointer()
-              .hover((s) => s.bg(t.hover))
+              .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
               .on_click((_e, cx) => this.add(target, cx))
               .child("Add");
     const message = this.reply(t, target);
@@ -327,7 +329,7 @@ export default class MachineAdd extends View {
           .items_center()
           .rounded(8)
           .child(svg(I("server")).size(15).text_color(t.muted))
-          .child(div().flex_none().text_size(13.5).text_color(t.foreground).child(label))
+          .child(div().flex_none().text_size(13).text_color(t.foreground).child(label))
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(sub ?? ""))
           .child(right),
       )
@@ -353,12 +355,12 @@ export default class MachineAdd extends View {
       .child(
         div()
           .pt(6)
-          .text_size(12.8)
+          .text_size(13)
           .line_height("19px")
           .text_color(t.muted)
           .child("Kompitum reaches it over SSH. Agents there keep working while this computer sleeps."),
       )
-      .child(div().pt(16).pb(6).text_size(11.5).font_medium().text_color(t.dim).child(hosts.length ? "From your ssh config" : "Your ssh config lists no hosts"))
+      .child(div().pt(16).pb(6).text_size(12).font_medium().text_color(t.dim).child(hosts.length ? "From your ssh config" : "Your ssh config lists no hosts"))
       .child(
         v_flex()
           .id("ma-hosts")
@@ -368,11 +370,11 @@ export default class MachineAdd extends View {
           .overflow_y_scroll()
           .children(
             this.hosts === null
-              ? [div().px(10).py(8).text_size(12.5).text_color(t.dim).child("Reading ~/.ssh/config…")]
+              ? [div().px(10).py(8).text_size(12).text_color(t.dim).child("Reading ~/.ssh/config…")]
               : hosts.map((h) => this.row(t, h.alias, h.alias, [h.user, h.hostname].filter(Boolean).join("@") || (h.aliases.length ? `also ${h.aliases.join(", ")}` : ""))),
           ),
       )
-      .child(div().pt(14).pb(6).text_size(11.5).font_medium().text_color(t.dim).child("Or type its address"))
+      .child(div().pt(14).pb(6).text_size(12).font_medium().text_color(t.dim).child("Or type its address"))
       .child(
         h_flex()
           .gap(8)
@@ -398,12 +400,14 @@ export default class MachineAdd extends View {
               .flex()
               .items_center()
               .rounded(8)
-              .bg(t.solid)
-              .text_color(t.solid_foreground)
-              .text_size(12.5)
+              .relative()
+              .text_size(12)
               .font_medium()
-              .when(!typed, (el) => el.opacity(0.4))
-              .when(Boolean(typed), (el) => el.cursor_pointer().on_click((_e, cx) => this.add(this.typed, cx)))
+              // Nothing typed: the fill goes and an outline keeps the shape (UD's disabled state).
+              .when(!typed, (el) => el.border_1().border_color(t.input).text_color(t.dim))
+              .when(Boolean(typed), (el) => el.bg(t.solid).text_color(t.solid_foreground).cursor_pointer()
+                .on_click((_e, cx) => this.add(this.typed, cx))
+                .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))))
               .child("Add"),
           ),
       )

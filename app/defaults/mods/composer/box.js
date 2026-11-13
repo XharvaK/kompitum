@@ -2,8 +2,8 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
-import { run, pickFiles, pasteImage, lead as leadOf, window } from "kompitum";
-import { errorText, hairline, COMPACT_FIRST_TOKENS } from "./util.js";
+import { run, pickFiles, pasteImage, lead as leadOf, window, home } from "kompitum";
+import { errorText, COMPACT_FIRST_TOKENS, PULSE_MS } from "./util.js";
 import { effortIds, leadUsage, modelLabel } from "./model.js";
 
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
@@ -110,11 +110,12 @@ export default {
       .rounded(7)
       .bg(t.accent_fill)
       .text_color(t.accent_foreground)
-      .text_size(12.5)
+      .text_size(12)
       .font_medium()
       .cursor_pointer()
-      .hover((style) => style.opacity(0.88))
+      .relative()
       .on_click(action)
+      .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
       .child(label);
   },
 
@@ -122,19 +123,26 @@ export default {
     // A working lead that has sent no hook or status line for ten minutes may have lost its closing hook.
     if (this.state === "working" && leadQuiet(leadOf()?.heard_ms)) {
       return div()
-        .text_size(11.5)
+        .text_size(12)
         .text_color(t.muted)
         .tooltip("No word from the lead for 10 minutes.")
         .child("Working?");
     }
     const word = leadStatus(this.state);
     if (!word) return null;
-    // Working pulses; asking is the amber that wants the Owner; waiting is still.
+    // Working pulses for its first seconds, then the word says it alone; asking is the amber that wants the
+    // Owner; waiting is still.
     return div()
-      .text_size(11.5)
+      .text_size(12)
       .text_color(statusColor(t, this.state))
       .child(word)
-      .when(this.state === "working", (el) => el.loop("opacity", { from: 0.35, to: 1, period: 900 }));
+      .when(this.pulsing(), (el) => el.loop("opacity", { from: 0.45, to: 1, period: 1200 }));
+  },
+
+  // Whether the lead started working less than PULSE_MS ago. A pulse says work began; it never runs on (UD: loops
+  // stop), and the word carries the state after it.
+  pulsing() {
+    return this.state === "working" && this.workingSince > 0 && Date.now() - this.workingSince < PULSE_MS;
   },
 
   chip(t, cx, chip, index) {
@@ -149,7 +157,7 @@ export default {
       .border_1()
       .border_color(t.border)
       .bg(t.raised)
-      .child(div().text_size(11.5).text_color(t.muted).child(baseName(chip.path)))
+      .child(div().text_size(12).text_color(t.muted).child(baseName(chip.path)))
       .child(
         h_flex()
           .id(`composer-chip-remove-${index}`)
@@ -173,7 +181,7 @@ export default {
               .rounded(4)
               .text_size(11)
               .text_color(t.dim)
-              .hover((style) => style.bg(t.hover).text_color(t.foreground))
+              .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
               .child("×"),
           ),
       );
@@ -191,7 +199,8 @@ export default {
     });
   },
 
-  // One floating box: files, the text (no placeholder), then "+", the lead's status, its model and Send.
+  // One floating box: files, the text (no placeholder), then attach and the mode on the left; the lead's status,
+  // its model and Send on the right.
   // While the lead asks, its card takes the text's place in the same box, and the text is not drawn.
   // `panel`: under the conversation the box is as tall as its text (an ask's card scrolls past 360 px); in its own
   // pane (under a shown terminal, or the first pick) it fills the pane.
@@ -202,23 +211,26 @@ export default {
     const pill = first ? null : this.compactFirstPill(t);
     const canSend = this.leadReady() && !this.sending && !compacting && !this.compactThenSend
       && (Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0);
+    // Send is the view's one prominent action: the accent fill once there is something to send, an outline until
+    // then. Hover and press lay the theme's state tints over the fill, so it lightens in dark and darkens in light.
     const send = h_flex()
       .id("composer-send")
-      .w(30)
-      .h(30)
+      .relative()
+      .w(32)
+      .h(32)
       .flex_none()
       .items_center()
       .justify_center()
-      .rounded(15)
-      .cursor_pointer()
+      .rounded_full()
       .tooltip(!this.leadReady()
         ? "Claude is asking something before it starts."
         : compacting ? "Claude is tidying up. Your message waits in the box." : this.sending ? "Sending…"
           : this.compactFirst ? "Compact, then send (Enter)" : "Send (Enter)")
-      .when(canSend, (el) => el.bg(t.foreground).hover((s) => s.opacity(0.85)))
+      .when(canSend, (el) => el.bg(t.accent_fill).cursor_pointer().on_click((_e, cx) => this.send(cx))
+        .child(div().id("composer-send-state").absolute().inset_0().rounded_full().hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))))
+      // Nothing to send: an outline and a dim arrow, with no hover or press (UD's disabled state).
       .when(!canSend, (el) => el.border_1().border_color(t.input))
-      .on_click((_e, cx) => this.send(cx))
-      .child(svg("mods/composer/arrow-up.svg").size(16).text_color(canSend ? t.background : t.dim));
+      .child(svg("mods/composer/arrow-up.svg").size(16).text_color(canSend ? t.accent_foreground : t.dim));
     const plus = h_flex()
       .id("composer-attach")
       .w(28)
@@ -229,7 +241,7 @@ export default {
       .rounded(14)
       .cursor_pointer()
       .text_color(t.muted)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .tooltip("Attach files")
       .on_click((_e, cx) => this.attach(cx))
       .child(svg("mods/composer/paperclip.svg").size(16));
@@ -245,17 +257,17 @@ export default {
         .rounded(14)
         .cursor_pointer()
         .text_color(t.muted)
-        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .tooltip("Dictate (Win+H)")
         .on_click((_e, cx) => this.dictate(cx))
         .child(svg("mods/composer/mic.svg").size(16))
       : null;
     const note = this.error
-      ? div().id("composer-error").min_w(0).truncate().text_size(11.5).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)
+      ? div().id("composer-error").min_w(0).truncate().text_size(12).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)
       : this.compactThenSend
-        ? div().text_size(11.5).text_color(t.dim).child("Tidying up, then sending…")
+        ? div().text_size(12).text_color(t.dim).child("Tidying up, then sending…")
         : compacting
-          ? div().text_size(11.5).text_color(t.dim).child("Tidying up…")
+          ? div().text_size(12).text_color(t.dim).child("Tidying up…")
           : this.state ? this.statusWord(t) : null;
     // The limit and the ring read the lead's usage; neither is drawn on the first-start card.
     const usage = first ? null : leadUsage();
@@ -289,53 +301,59 @@ export default {
               .when(!panel, (asks) => asks.flex_1().min_h(0))
               .overflow_y_scrollbar().child(this.card(t, cx))))
           .when(!first && !this.ask, (el) =>
-            el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full().text_size(13.5).line_height("20px"))))
+            el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full().text_size(13).line_height("20px"))))
           .child(
             h_flex()
               .w_full()
               .gap(6)
               .items_center()
+              // What goes into the message on the left (files, the mode); who answers and sending on the right:
+              // the context ring, the model and its reasoning, dictation and Send.
               .child(
                 h_flex()
-                  .gap(6)
+                  .gap(8)
                   .items_center()
                   .min_w(0)
                   .child(plus)
-                  .when(!first, (el) => el.child(hairline(t)).child(this.modelChip(t)))
-                  .when(Boolean(mode), (el) => el.child(hairline(t)).child(mode)),
+                  .when(Boolean(mode), (el) => el.child(mode)),
               )
               .child(div().flex_1())
               .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
               .when(Boolean(limit), (el) => el.child(limit))
               .when(Boolean(pill), (el) => el.child(pill))
-              .when(Boolean(voice), (el) => el.child(voice))
               .when(Boolean(ring), (el) => el.child(ring))
+              .when(!first, (el) => el.child(this.modelChip(t)))
+              .when(Boolean(voice), (el) => el.child(voice))
               .when(!first && !this.ask, (el) => el.child(send)),
           );
     return frame.child(panel ? h_flex().w_full().justify_center().child(box) : box);
   },
 
-  // A new conversation: the headline and the box sit a little above the middle. The first item moves the box down.
-  // Two equal spacers centre the block; the 120 px under it lifts it a little above the middle.
+  // A new conversation: the headline in the middle of the space above, and the box at the bottom, where the
+  // conversation keeps it, so the first item doesn't move it. The home folder is named as such (the top bar
+  // says "~"), not by the account's name.
   startView(t, cx) {
     const entry = this.leadProgram();
-    const parts = String(this.person?.lead?.folder ?? "").split(/[\\/]/).filter(Boolean);
-    const place = parts.length > 0 ? parts[parts.length - 1] : "your home folder";
+    const trim = (path) => String(path ?? "").replace(/[\\/]+$/, "");
+    const folder = trim(this.person?.lead?.folder);
+    const parts = folder.split(/[\\/]/).filter(Boolean);
+    const atHome = parts.length === 0 || folder.toLowerCase() === trim(home()).toLowerCase();
+    const place = atHome ? "your home folder" : parts[parts.length - 1];
     return v_flex()
       .id("composer-start")
       .size_full()
       .min_h(0)
-      .items_center()
-      .child(div().flex_1())
       .child(
         v_flex()
+          .flex_1()
+          .min_h(0)
           .w_full()
           .items_center()
-          .mb(120)
+          .justify_center()
           .child(
             div()
               .id("composer-start-title")
-              .text_size(26)
+              .text_size(22)
               .font_semibold()
               .text_color(t.foreground)
               .child("What's next?"),
@@ -344,13 +362,12 @@ export default {
             div()
               .id("composer-start-where")
               .mt(6)
-              .text_size(13.5)
+              .text_size(13)
               .text_color(t.muted)
               .child(`${leadName(entry, entry.key)} in ${place}`),
-          )
-          .child(div().w_full().mt(18).child(this.bar(t, cx, true))),
+          ),
       )
-      .child(div().flex_1());
+      .child(this.bar(t, cx, true));
   },
 
   // The mode word after the model: live while the lead waits (a click presses Shift+Tab in its terminal), dim while
@@ -368,11 +385,11 @@ export default {
       .px(6)
       .items_center()
       .rounded(7)
-      .text_size(12.5)
+      .text_size(12)
       .text_color(live && !guessed ? t.muted : t.dim)
       .when(live, (el) => el
         .cursor_pointer()
-        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_click((_e, cx) => {
           run("lead.mode", { terminal: this.terminal });
           cx.notify();
@@ -398,10 +415,10 @@ export default {
       .rounded(12)
       .border_1()
       .border_color(on ? t.accent : t.border)
-      .text_size(11.5)
+      .text_size(12)
       .text_color(on ? t.accent : t.muted)
       .cursor_pointer()
-      .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+      .when(!on, (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
       .tooltip(on
         ? `Your next message compacts ${k}K tokens first. Click to keep them.`
         : `Your next message keeps all ${k}K tokens. Click to compact first.`)
@@ -429,21 +446,21 @@ export default {
       .px(14)
       .items_center()
       .rounded(8)
-      .bg(t.solid)
-      .text_color(t.solid_foreground)
+      .relative()
       .text_size(13)
-      .font_medium()
-      .child("Start the lead");
+      .font_medium();
+    // No model picked yet: the fill goes and an outline keeps the shape (UD's disabled state).
     const button = picked
-      ? start.cursor_pointer().hover((s) => s.opacity(0.88)).on_click((_e, cx) => this.startFirstPick(cx))
-      : start.opacity(0.45);
+      ? start.bg(t.solid).text_color(t.solid_foreground).cursor_pointer().on_click((_e, cx) => this.startFirstPick(cx))
+        .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))).child("Start the lead")
+      : start.border_1().border_color(t.input).text_color(t.dim).child("Start the lead");
     return v_flex()
       .id("composer-first")
       .flex_1()
       .min_h(0)
       .gap(6)
-      .child(div().text_size(14).font_semibold().text_color(t.foreground).child("Which model should the lead use?"))
-      .child(div().text_size(12.5).text_color(t.dim).child("You can change it any time from the model menu below."))
+      .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Which model should the lead use?"))
+      .child(div().text_size(12).text_color(t.dim).child("You can change it any time from the model menu below."))
       .children(models.map((model) =>
         v_flex()
           .id(`composer-first-${model.id}`)
@@ -460,7 +477,7 @@ export default {
             this.firstModel = model.id;
             cx.notify();
           })
-          .child(div().text_size(13.5).font_medium().text_color(t.foreground).child(model.label ?? model.id))
+          .child(div().text_size(13).font_medium().text_color(t.foreground).child(model.label ?? model.id))
           .when(Boolean(model.hint), (el) =>
             el.child(div().text_size(12).text_color(t.dim).child(model.hint)))))
       .when(effortIds(entry).length > 0, (el) => el.child(this.effortBody(t, entry, this.person?.lead ?? {})))
@@ -476,7 +493,7 @@ export default {
       .h(44)
       .items_center()
       .justify_center()
-      .text_size(12.5)
+      .text_size(12)
       .text_color(t.muted)
       .child(`${leadName(entry, entry.key)} is asking something before it starts. Answer it above.`);
   },
@@ -493,7 +510,7 @@ export default {
       .border_t(1)
       .border_color(t.border)
       .bg(t.chrome)
-      .child(div().text_size(12.5).text_color(t.muted).child("The lead isn't running"))
+      .child(div().text_size(12).text_color(t.muted).child("The lead isn't running"))
       .child(this.filledButton("composer-open", this.startLabel(), () => run("lead.open"), t));
   },
 };

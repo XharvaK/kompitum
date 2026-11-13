@@ -231,7 +231,7 @@ export default class Line extends View {
         .text_color(t.muted)
         .cursor_pointer()
         .tooltip("Close")
-        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => closeOverlay(props().overlay))
         .child(svg("mods/workspace-chrome/x.svg").size(12)));
@@ -246,7 +246,7 @@ export default class Line extends View {
       .items_center()
       .rounded(4)
       .bg(color + "1f")
-      .text_size(10)
+      .text_size(11)
       .font_medium()
       .text_color(color)
       .child(label);
@@ -281,12 +281,12 @@ export default class Line extends View {
         .child(div().h(16).flex_none().truncate().text_size(11).font_semibold().text_color(this.senderColor(t, from)).child(cap(from) || "Note"))
         .when(Boolean(kind), (el) => el.child(this.chip(t, kind, t.muted)))
         .child(div().flex_1())
-        .when(Boolean(time), (el) => el.child(div().h(16).flex_none().truncate().text_size(10.5).text_color(t.dim).child(time))))
-      .child(div().h(19).w_full().truncate().text_size(12.5).font_medium().text_color(t.foreground).child(title))
-      .when(Boolean(project), (el) => el.child(div().h(15).w_full().truncate().text_size(10.5).text_color(t.dim).child(project)))
+        .when(Boolean(time), (el) => el.child(div().h(16).flex_none().truncate().text_size(11).text_color(t.dim).child(time))))
+      .child(div().h(19).w_full().truncate().text_size(12).font_medium().text_color(t.foreground).child(title))
+      .when(Boolean(project), (el) => el.child(div().h(15).w_full().truncate().text_size(11).text_color(t.dim).child(project)))
       .when(lines.length > 0, (el) => el.child(v_flex().w_full().children(lines.map((line) =>
-        div().h(16).w_full().truncate().text_size(11.5).text_color(t.muted).child(line)))))
-      .when(meta.length > 0, (el) => el.child(div().h(15).w_full().truncate().text_size(10.5).text_color(t.dim).child(meta.join(" · "))));
+        div().h(16).w_full().truncate().text_size(12).text_color(t.muted).child(line)))))
+      .when(meta.length > 0, (el) => el.child(div().h(15).w_full().truncate().text_size(11).text_color(t.dim).child(meta.join(" · "))));
   }
 
   openNote(note) {
@@ -363,7 +363,7 @@ export default class Line extends View {
           .text_color(t.muted)
           .cursor_pointer()
           .tooltip("Refresh")
-          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click((_e, cx) => this.refresh(cx))
           .child(svg("frame/settings/refresh.svg").size(13))))
       .when(this.unpushed > 0, (el) => el.child(div().px(12).pt(6).text_size(11).text_color(t.muted)
@@ -442,12 +442,12 @@ export default class Line extends View {
         .p(14)
         .gap(8)
         .child(h_flex().gap(6).items_center()
-          .child(div().text_size(11.5).font_semibold().text_color(this.senderColor(t, from)).child(cap(from) || "Note"))
+          .child(div().text_size(12).font_semibold().text_color(this.senderColor(t, from)).child(cap(from) || "Note"))
           .when(Boolean(kind), (el) => el.child(this.chip(t, kind, t.muted)))
           .when(Boolean(time), (el) => el.child(div().text_size(11).text_color(t.dim).child(time)))
           .when(Boolean(project), (el) => el.child(div().text_size(11).text_color(t.dim).child(project))))
         .when(meta.length > 0, (el) => el.child(div().text_size(11).text_color(t.dim).child(meta.join(" · "))))
-        .child(v_flex().w_full().text_size(12.5).text_color(t.foreground).children(lines(body || "No body.")))
+        .child(v_flex().w_full().text_size(12).text_color(t.foreground).children(lines(body || "No body.")))
         .when(note.cut === true, (el) => el.child(div().text_size(11).text_color(t.muted)
           .child(`cut at 4000 characters; the file is ${file || text(note.path)}`))));
   }

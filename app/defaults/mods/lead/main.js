@@ -366,12 +366,14 @@ export default class Lead extends View {
       .border_color(primary ? t.solid : t.input)
       .bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground)
-      .text_size(12.5)
+      .text_size(12)
       .font_medium()
       .cursor_pointer()
-      .hover((s) => s.opacity(0.88))
+      .relative()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(action)
+      // Hover and press: the theme's state layers over the fill (a style sets only one background).
+      .child(div().absolute().top(-1).left(-1).right(-1).bottom(-1).rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
       .child(text);
   }
 
@@ -391,7 +393,7 @@ export default class Lead extends View {
       .bg(t.chrome)
       .border_t(1)
       .border_color(t.border)
-      .text_size(11.8);
+      .text_size(12);
     const other = joined();
     if (!other) return bar;
     bar = bar.child(
@@ -449,7 +451,7 @@ export default class Lead extends View {
               .rounded(6)
               .text_color(t.dim)
               .cursor_pointer()
-              .hover((s) => s.bg(t.hover))
+              .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
               .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
               .on_click(() => closeOverlay(p.overlay))
               .child(svg("mods/workspace-chrome/x.svg").size(12)),
@@ -465,7 +467,7 @@ export default class Lead extends View {
           .overflow_y_scrollbar()
           .child(
             TextView.markdown("lead-markdown", String(p.markdown ?? ""))
-              .text_size(12.5)
+              .text_size(12)
               .text_color(t.foreground)
               .selectable(true),
           ),

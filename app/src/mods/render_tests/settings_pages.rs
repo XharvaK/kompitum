@@ -277,6 +277,32 @@ fn lead_opened_lists_every_cli(cx: &mut TestAppContext) {
     }
 }
 
+/// A described element's line without its `:hover(…)` and `:active(…)` groups.
+fn without_state_styles(line: &str) -> String {
+    let mut out = line.to_string();
+    for open in [":hover(", ":active("] {
+        while let Some(start) = out.find(open) {
+            let mut depth = 0;
+            let mut end = out.len();
+            for (i, c) in out[start + open.len() - 1..].char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = start + open.len() - 1 + i + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            out.replace_range(start..end, "");
+        }
+    }
+    out
+}
+
 /// An open list draws its highlight on one row, in the theme's hover colour, from the state the caller keeps.
 #[gpui::test]
 fn an_open_dropdown_marks_the_highlighted_row_with_the_hover_colour(cx: &mut TestAppContext) {
@@ -297,7 +323,8 @@ fn an_open_dropdown_marks_the_highlighted_row_with_the_hover_colour(cx: &mut Tes
             .lines()
             .find(|line| line.contains(&format!("st-lead-cli-{key}")))
             .unwrap_or_else(|| panic!("no {key} row: {tree}"));
-        let base = row.replace(&format!(":hover(.bg[Str(\"{hover}\")])"), "");
+        // The row's own style, without its hover and press styles (which use the hover colour on every row).
+        let base = without_state_styles(row);
         assert_eq!(
             base.contains(&format!(".bg[Str(\"{hover}\")]")),
             lit,

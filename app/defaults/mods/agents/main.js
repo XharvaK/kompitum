@@ -159,7 +159,7 @@ export default class Agents extends View {
       .w_full()
       .p(5)
       .bg(t.popover)
-      .text_size(12.8)
+      .text_size(13)
       .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("Sort agents"))
       .children(SORTS.map((s) => h_flex()
         .id(`sort-${s.id}`)
@@ -169,7 +169,7 @@ export default class Agents extends View {
         .rounded(7)
         .items_center()
         .text_color(t.foreground)
-        .hover((el) => el.bg(t.hover))
+        .hover((el) => el.bg(t.hover).text_color(t.foreground)).active((el) => el.bg(t.selected))
         .on_click(() => {
           setShared("agents.sort", s.id);
           closeOverlay(props().overlay);
@@ -209,9 +209,9 @@ export default class Agents extends View {
       .flex_none()
       .gap(0)
       .items_center()
-      .text_size(13.5)
+      .text_size(13)
       .when(on, (el) => el.bg(t.raised))
-      .hover((s) => s.bg(t.hover))
+      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
@@ -225,8 +225,8 @@ export default class Agents extends View {
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
-    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
-    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
+    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(11).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
+    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(11).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
     // Idle: a ring; done: a dot.
     if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
     return div().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
@@ -289,7 +289,7 @@ export default class Agents extends View {
         .text_size(11)
         .text_color(open ? t.dim : (t[top] ?? t.dim))
         .cursor_pointer()
-        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_click((_e, cx) => {
           cx.stop_propagation();
           open ? this.folded.add(a.address) : this.folded.delete(a.address);
@@ -333,7 +333,7 @@ export default class Agents extends View {
           .flex_none()
           .items_center()
           .gap(4)
-          .hover((s) => s.bg(t.hover))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click(() => run("pane.focus", { pane: a.pane }))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
@@ -348,7 +348,7 @@ export default class Agents extends View {
         .rounded(4)
         .text_color(t.dim)
         .cursor_pointer()
-        .hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .tooltip(isPinned ? "Unpin" : "Pin to the top")
         .on_click((_e, cx) => {
           cx.stop_propagation();
@@ -372,7 +372,7 @@ export default class Agents extends View {
         .gap(9)
         .when(a.focused, (el) => el.bg(t.selected))
         .cursor_pointer()
-        .hover((s) => s.bg(t.hover))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_hover((on, cx) => {
           if (on) this.hovered = a.address;
           else if (this.hovered === a.address) this.hovered = null;
@@ -388,7 +388,7 @@ export default class Agents extends View {
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
           .child(div().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
           .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
-        .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
+        .when(Boolean(machine), el => el.child(div().text_size(11).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
         .when(this.hovered === a.address, el => el.child(pin))
         .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(12).text_color(t.dim).child(duration(now - when))))
@@ -451,7 +451,7 @@ export default class Agents extends View {
           .items_center()
           .justify_center()
           .when(on, (el) => el.bg(t.raised))
-          .hover((s) => s.bg(t.hover))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click(() => run("lead.open"))
           .when(Boolean(icon(program, 14, t.foreground)), (el) => el.child(icon(program, 14, t.foreground)));
       }
@@ -465,7 +465,7 @@ export default class Agents extends View {
         .gap(9)
         .when(on, (el) => el.bg(t.selected))
         .cursor_pointer()
-        .hover((s) => s.bg(t.hover))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_click(() => run("lead.open"))
         .when(Boolean(icon(program, 16, t.foreground)), (el) => el.child(icon(program, 16, t.foreground)))
         .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
@@ -497,7 +497,7 @@ export default class Agents extends View {
           .items_center()
           .gap(4)
           .when(tab.active, (el) => el.bg(t.raised))
-          .hover((s) => s.bg(t.hover))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click(() => run("tab.select", { id: tab.id }))
           .when(Boolean(icon(program, 14, t.foreground)), (el) => el.child(icon(program, 14, t.foreground)));
       }
@@ -511,7 +511,7 @@ export default class Agents extends View {
         .gap(9)
         .when(tab.active, (el) => el.bg(t.selected))
         .cursor_pointer()
-        .hover((s) => s.bg(t.hover))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_hover((on, cx) => {
           if (on) this.hovered = key;
           else if (this.hovered === key) this.hovered = null;
@@ -531,7 +531,7 @@ export default class Agents extends View {
           .rounded(6)
           .text_color(t.dim)
           .cursor_pointer()
-          .hover((s) => s.bg(t.hover).text_color(t.foreground))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .tooltip("Close")
           .on_click((_e, cx) => {
             cx.stop_propagation();
@@ -559,7 +559,7 @@ export default class Agents extends View {
     return v_flex()
       .size_full()
       .min_h(0)
-      .text_size(14)
+      .text_size(13)
       .when(!collapsed, (el) =>
         el.child(
           h_flex()

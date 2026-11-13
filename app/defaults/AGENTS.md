@@ -173,11 +173,12 @@ the highlighted line shows where it will land.
 Each file is one whole window. `layout.switch` (`ctrl-shift-l`) cycles
 through them, `layout.switch {name}` picks one; `shared("layout")` is the
 shown one's name. A window starts on `desk` ("Desk": Search and Tasks, then
-the agents list on the left, with Settings, Limits and the bell at its foot
-(Limits shows the context, Claude's limits and what the workers cost; the
-bell lists what needs you and the notes waiting for you); the lead or one
+the agents list on the left, with Settings at its foot; the lead or one
 terminal in the middle; above it a top bar with where you are (folder / tab,
-branch, machine) and the side panel's toggle. The side panel holds Files,
+branch, machine), then Limits and the bell, the side panel's toggle and the
+window's buttons. Limits shows the context, Claude's limits and what the
+workers cost; the bell lists what needs you, the toasts that left (Earlier)
+and the notes waiting for you, in the corner where toasts show. The side panel holds Files,
 Changes and Tasks, picked in its header, which also opens a terminal beside
 the conversation. Notes with the agent that joined through Connect open from
 the bell, and their window links to that system's app); the others are there
@@ -1042,7 +1043,9 @@ All of it is in `kompitum.d.ts`. In short:
   returns an id; the mod gets `props().overlay` and closes itself with
   `closeOverlay(id)`; Esc closes the top dialog or popup. `frame: "none"`
   drops Kompitum's border, corners and shadow so the mod draws its own.
-  `notify({ title, body, level, icon, timeout })` posts a notification, drawn by the `toast` mod.
+  `notify({ title, body, level, icon, timeout })` posts a notification, drawn by the `toast` mod:
+  at the top right, newest first, three at a time; the bell lists it under Earlier once it leaves.
+  `at: "top-right"` opens a popup in that corner.
 - Windows (`kind: "window"`): stay open until closed, over the layout and
   under dialogs; a press the mod doesn't stop drags it (stop it on your
   controls, like a title bar's buttons), it stays where dropped, and the one

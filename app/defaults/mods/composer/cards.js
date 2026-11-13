@@ -198,7 +198,7 @@ export default {
       .items_center()
       .rounded(4)
       .bg(t.muted + "1f")
-      .text_size(10)
+      .text_size(11)
       .font_medium()
       .text_color(t.muted)
       .child(label);
@@ -211,10 +211,10 @@ export default {
       .px(8)
       .items_center()
       .rounded(6)
-      .text_size(12.5)
+      .text_size(12)
       .text_color(t.muted)
       .cursor_pointer()
-      .hover((style) => style.bg(t.hover).text_color(t.foreground))
+      .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
       .on_click(action)
       .child(label);
   },
@@ -230,10 +230,10 @@ export default {
       .border_color(t.input)
       .bg(t.raised)
       .text_color(t.foreground)
-      .text_size(12.5)
+      .text_size(12)
       .font_medium()
       .cursor_pointer()
-      .hover((style) => style.bg(t.hover))
+      .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
       .on_click(action)
       .child(label);
     return tooltip ? button.tooltip(tooltip) : button;
@@ -257,7 +257,7 @@ export default {
           .border_1()
           .border_color(t.input)
           .bg(t.surface)
-          .child(Input.new(this.noteInput).w_full().text_size(12.5).text_color(t.foreground)),
+          .child(Input.new(this.noteInput).w_full().text_size(12).text_color(t.foreground)),
       )
       .child(this.cardButton("composer-note-cancel", "Cancel", (_e, cx) => this.closeNote(cx), t))
       .child(this.cardButton("composer-note-send", "Send", (_e, cx) => this.sendNote(cx), t, { filled: true }));
@@ -290,7 +290,7 @@ export default {
           .child(summary.detail),
       );
     }
-    if (ask.input?.cwd) head.child(div().text_size(11.5).text_color(t.dim).child(`Runs in ${ask.input.cwd}`));
+    if (ask.input?.cwd) head.child(div().text_size(12).text_color(t.dim).child(`Runs in ${ask.input.cwd}`));
     const buttons = h_flex().w_full().gap(8).items_center()
       .child(this.cardButton("composer-allow", "Allow", (_e, cx) => this.answer(ask, { action: "allow" }, cx), t, { filled: true }))
       .when(suggestions.length > 0, (el) => el.child(
@@ -333,7 +333,7 @@ export default {
           .w_full()
           .max_h(240)
           .overflow_y_scrollbar()
-          .child(TextView.markdown("composer-plan-text", plan).text_size(12.5).text_color(t.muted).selectable(true)),
+          .child(TextView.markdown("composer-plan-text", plan).text_size(12).text_color(t.muted).selectable(true)),
       ))
       .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
       .when(!this.noteOpen, (el) => el.child(buttons))
@@ -355,7 +355,7 @@ export default {
         return v_flex()
           .w_full()
           .gap(4)
-          .child(div().text_size(12.5).font_medium().text_color(t.foreground).child(question.header || question.question))
+          .child(div().text_size(12).font_medium().text_color(t.foreground).child(question.header || question.question))
           .when(Boolean(question.header), (el) => el.child(div().text_size(12).text_color(t.muted).child(question.question)))
           .children((question.options ?? []).map((option, optionIndex) => {
             const label = String(option.label ?? "");
@@ -372,12 +372,12 @@ export default {
               .border_color(picked ? t.accent : t.input)
               .bg(picked ? t.selected : t.raised)
               .cursor_pointer()
-              .hover((style) => style.bg(t.hover))
+              .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
               .on_click((_e, cx) => this.toggleOption(question, label, cx))
-              .child(div().text_size(12.5).font_medium().text_color(t.foreground).child(`${optionIndex + 1}. ${label}`))
+              .child(div().text_size(12).font_medium().text_color(t.foreground).child(`${optionIndex + 1}. ${label}`))
               .when(
                 Boolean(option.description) && !repeatsLabel(label, option.description),
-                (el) => el.child(div().text_size(11.5).text_color(t.dim).child(option.description)),
+                (el) => el.child(div().text_size(12).text_color(t.dim).child(option.description)),
               );
           }));
       }))
@@ -397,16 +397,18 @@ export default {
       .px(12)
       .items_center()
       .rounded(7)
-      .text_size(12.5)
-      .font_medium()
-      .child("Send answers");
-    if (!enabled) return button.bg(t.hover).text_color(t.dim);
+      .text_size(12)
+      .font_medium();
+    // Not every question answered: the fill goes and an outline keeps the shape (UD's disabled state).
+    if (!enabled) return button.border_1().border_color(t.input).text_color(t.dim).child("Send answers");
     return button
+      .relative()
       .bg(t.accent_fill)
       .text_color(t.accent_foreground)
       .cursor_pointer()
-      .hover((style) => style.opacity(0.88))
-      .on_click((_e, cx) => this.sendAnswers(ask, cx));
+      .on_click((_e, cx) => this.sendAnswers(ask, cx))
+      .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
+      .child("Send answers");
   },
 
   terminalAnswerLink(ask, t, cx) {
@@ -414,7 +416,7 @@ export default {
       .id("composer-terminal-answer")
       .items_center()
       .cursor_pointer()
-      .text_size(11.5)
+      .text_size(12)
       .text_color(t.dim)
       .hover((style) => style.text_color(t.foreground))
       .on_click((_e, cx) => this.answerInTerminal(ask, cx))
@@ -431,7 +433,7 @@ export default {
     return v_flex()
       .w_full()
       .gap(6)
-      .child(div().id("composer-draft-kept").text_size(11.5).text_color(t.dim).child("Your draft is kept."))
+      .child(div().id("composer-draft-kept").text_size(12).text_color(t.dim).child("Your draft is kept."))
       .child(card);
   },
 };

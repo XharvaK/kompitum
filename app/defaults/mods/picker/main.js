@@ -153,7 +153,7 @@ export default class Picker extends View {
           .text_size(11)
           .font_semibold()
           .text_color(t.dim)
-          .child(h_flex().size(18).rounded(5).bg(spaceColor(t, r.w)).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...r.w.name][0]?.toUpperCase() ?? "?"))
+          .child(h_flex().size(18).rounded(5).bg(spaceColor(t, r.w)).items_center().justify_center().text_size(11).font_bold().text_color("#ffffff").child([...r.w.name][0]?.toUpperCase() ?? "?"))
           .child(r.w.name);
       }
       if (r.kind === "earlier") {
@@ -189,7 +189,7 @@ export default class Picker extends View {
           .text_color(t.muted)
           .cursor_pointer()
           .when(on, (el) => el.bg(t.hover))
-          .hover((s) => s.bg(t.hover))
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click(() => this.go(r))
           .child(div().w(12).child("+"))
           .child(label);
@@ -206,7 +206,7 @@ export default class Picker extends View {
         .items_center()
         .cursor_pointer()
         .when(on, (el) => el.bg(t.hover))
-        .hover((s) => s.bg(t.hover))
+        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_click(() => this.go(r))
         .child(this.glyph(t, r.ctx.status))
         .child(div().flex_1().truncate().text_color(t.foreground).when(here, (d) => d.font_semibold()).child(r.ctx.name))
@@ -242,7 +242,7 @@ export default class Picker extends View {
       .child(
         h_flex().h(36).flex_none().px(10).gap(8).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
           .child(svg("mods/workspace-chrome/search.svg").size(15).text_color(t.dim))
-          .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground)),
+          .child(Input.new(this.input).flex_1().h_full().text_size(13).text_color(t.foreground)),
       )
       .child(
         v_flex()

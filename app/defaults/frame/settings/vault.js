@@ -85,7 +85,7 @@ export function vaultSection(view, t, cx) {
   const pull = pullProblem(problems);
   // Notes that couldn't be filed: not a failed pull, so they wait under Unfiled.
   const filed = problems.filter((problem) => !PULL_FAILED.test(problem));
-  const value = (label) => div().max_w(480).min_w(0).truncate().text_size(12.5).text_color(t.muted).child(label);
+  const value = (label) => div().max_w(480).min_w(0).truncate().text_size(12).text_color(t.muted).child(label);
   const placeholder = () => div().w(110).h(9).rounded(5).bg(t.hover);
   // Windows shows its own backslashes, not the forward slashes git prints.
   const shown = /^[A-Za-z]:\//.test(folder) ? folder.replace(/\//g, "\\") : folder;
@@ -94,7 +94,7 @@ export function vaultSection(view, t, cx) {
   if (!vault && !view.vaultError) {
     state = placeholder();
   } else if (view.vaultLoading) {
-    state = div().text_size(12.5).text_color(t.muted).child("Checking\u2026");
+    state = div().text_size(12).text_color(t.muted).child("Checking\u2026");
   } else if (view.vaultError) {
     state = v_flex()
       .items_end()
@@ -103,10 +103,10 @@ export function vaultSection(view, t, cx) {
         h_flex()
           .gap(4)
           .items_center()
-          .child(div().text_size(12.5).text_color(t.muted).child("Couldn't update"))
+          .child(div().text_size(12).text_color(t.muted).child("Couldn't update"))
           .child(view.textButton(t, "st-vault-retry", "Retry", (_e, cx) => loadVault(view, cx))),
       )
-      .child(div().max_w(360).text_size(11.5).line_height("16px").text_color(t.dim).child(view.vaultError));
+      .child(div().max_w(360).text_size(12).line_height("16px").text_color(t.dim).child(view.vaultError));
   } else if (pull) {
     state = v_flex()
       .items_end()
@@ -117,7 +117,7 @@ export function vaultSection(view, t, cx) {
           .items_center()
           .child(
             div()
-              .text_size(12.5)
+              .text_size(12)
               .text_color(t.blocked)
               .child(`Couldn't pull${view.vaultCheckedAt ? ` \u00b7 ${ago(view.vaultCheckedAt)}` : ""}`),
           )
@@ -126,7 +126,7 @@ export function vaultSection(view, t, cx) {
       .child(
         div()
           .max_w(360)
-          .text_size(11.5)
+          .text_size(12)
           .line_height("16px")
           .text_color(t.blocked)
           .tooltip(pull.detail)
@@ -150,7 +150,7 @@ export function vaultSection(view, t, cx) {
   }
   return v_flex()
     .w_full()
-    .child(div().pb(8).text_size(12.5).line_height("18px").text_color(t.dim)
+    .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim)
       .child("The notes your agents leave each other."))
     .when(unset, (el) => el.child(folderRow))
     .child(view.row(t, "Sync", null, state))
