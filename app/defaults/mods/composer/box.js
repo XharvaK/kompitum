@@ -314,8 +314,9 @@ export default {
       .tooltip("Attach files")
       .on_click((_e, cx) => this.attach(cx))
       .child(svg("mods/composer/paperclip.svg").size(16));
-    // Voice: Windows' own voice typing, opened by Win+H for the focused box. Its words wait in the box like typed ones.
-    const voice = window()?.platform === "windows" && !first && !this.ask
+    // Voice: the system's own dictation for the focused box (Win+H on Windows, Dictation on macOS).
+    // Its words wait in the box like typed ones.
+    const voice = window()?.dictation && !first && !this.ask
       ? h_flex()
         .id("composer-voice")
         .w(28)
@@ -327,7 +328,7 @@ export default {
         .cursor_pointer()
         .text_color(t.muted)
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-        .tooltip("Dictate (Win+H)")
+        .tooltip(window()?.platform === "windows" ? "Dictate (Win+H)" : "Dictate")
         .on_click((_e, cx) => this.dictate(cx))
         .child(svg("mods/composer/mic.svg").size(16))
       : null;

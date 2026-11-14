@@ -85,6 +85,9 @@ impl AppWindow {
             "fullscreen": window.is_fullscreen(),
             "active": self.window_active,
             "summon_taken": crate::tray::summon_taken(),
+            "dictation": crate::dictation::available(platform),
+            // GPUI changes the window's material live, where the Sidebar glass row is shown.
+            "glass_live": cfg!(windows),
         })
     }
 

@@ -287,7 +287,7 @@ pub const COMMANDS: &[Command] = &[
     cmd(
         "dictation.start",
         &[],
-        "Open Windows' voice typing (Win+H) for the focused text box: the words land there like typed ones. Windows only.",
+        "Open the system's dictation for the focused text box: Windows' voice typing (Win+H) or macOS's Dictation. The words land there like typed ones.",
     ),
     cmd(
         "layout.switch",

@@ -1291,6 +1291,113 @@ fn appearance_offers_three_tiles_and_a_sample(cx: &mut TestAppContext) {
     assert!(tree.contains("cargo test login"), "{tree}");
 }
 
+fn glass_values(platform: &str, live: bool) -> BTreeMap<String, Value> {
+    let mut p = props();
+    p["section"] = json!("appearance");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert(
+        "window".into(),
+        json!({"platform": platform, "glass_live": live, "titlebar": "none", "buttons": true}),
+    );
+    values.insert("person".into(), json!({}));
+    values
+}
+
+/// Sidebar glass is a Windows row, between the theme tiles and Reduce motion.
+#[gpui::test]
+fn appearance_offers_sidebar_glass_on_windows_only(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for (platform, shown) in [("windows", true), ("linux", false), ("macos", false)] {
+        let tree = describe_settled(
+            cx,
+            &staged,
+            "frame/settings",
+            glass_values(platform, true),
+            None,
+        )
+        .unwrap();
+        assert_eq!(tree.contains("Sidebar glass"), shown, "{platform}: {tree}");
+        assert_eq!(tree.contains("st-glass"), shown, "{platform}: {tree}");
+        assert_eq!(
+            tree.contains("Lets the desktop show through the sidebar."),
+            shown,
+            "{platform}: {tree}"
+        );
+        if shown {
+            let theme = tree.find("st-ap-System").expect("theme tiles");
+            let glass = tree.find("st-glass").expect("glass row");
+            let motion = tree.find("st-motion").expect("motion row");
+            assert!(theme < glass && glass < motion, "the row's place: {tree}");
+        }
+    }
+}
+
+/// The row's list is Off, Blur, Mica and Mica Alt; picking one writes settings.json.
+#[gpui::test]
+fn sidebar_glass_picks_a_material_and_writes_it(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        glass_values("windows", true),
+        Some("this.glassMenu = { open: true };"),
+    )
+    .unwrap();
+    for (id, label) in [
+        ("st-glass-off", "Off"),
+        ("st-glass-blur", "Blur"),
+        ("st-glass-mica", "Mica"),
+        ("st-glass-mica-alt", "Mica Alt"),
+    ] {
+        assert!(tree.contains(id), "missing {id}: {tree}");
+        assert!(tree.contains(label), "missing {label}: {tree}");
+    }
+    let (writes, _) = settings_after_keys(
+        cx,
+        glass_values("windows", true),
+        "",
+        &["st-glass", "st-glass-blur"],
+        None,
+        "",
+        &[],
+    );
+    assert_eq!(written_settings(&writes)["glass"], json!("blur"));
+}
+
+/// A window that can't switch its material says it applies at the next start.
+#[gpui::test]
+fn sidebar_glass_says_when_it_starts_again(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let live = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        glass_values("windows", true),
+        None,
+    )
+    .unwrap();
+    assert!(
+        !live.contains("Applies when Kompitum starts again."),
+        "{live}"
+    );
+    let next_start = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        glass_values("windows", false),
+        None,
+    )
+    .unwrap();
+    assert!(
+        next_start.contains("Applies when Kompitum starts again."),
+        "{next_start}"
+    );
+}
+
 fn notification_values(platform: &str, taken: bool, person: Value) -> BTreeMap<String, Value> {
     let mut p = props();
     p["section"] = json!("notifications");

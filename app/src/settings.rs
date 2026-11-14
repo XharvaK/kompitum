@@ -501,6 +501,9 @@ pub struct Person {
     /// Light or dark: the system's, or one always.
     #[serde(skip_serializing_if = "Appearance::is_system")]
     pub appearance: Appearance,
+    /// The sidebar's window material: off, blur, mica or mica-alt (Windows).
+    #[serde(skip_serializing_if = "Glass::is_off")]
+    pub glass: Glass,
     /// Spinners, loops and arrivals stand still: `true` always, `false` never,
     /// absent the system's setting.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -570,6 +573,36 @@ impl Appearance {
     }
 }
 
+/// The sidebar's window material (Windows): where the desktop shows through.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Glass {
+    #[default]
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "blur")]
+    Blur,
+    #[serde(rename = "mica")]
+    Mica,
+    #[serde(rename = "mica-alt")]
+    MicaAlt,
+}
+
+impl Glass {
+    fn is_off(&self) -> bool {
+        *self == Glass::Off
+    }
+
+    /// The word `KOMPITUM_GLASS` uses for the same material.
+    pub fn word(self) -> &'static str {
+        match self {
+            Glass::Off => "off",
+            Glass::Blur => "blur",
+            Glass::Mica => "mica",
+            Glass::MicaAlt => "mica-alt",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OptionAsAlt {
@@ -629,6 +662,7 @@ impl Default for Person {
             summon_key: SummonKey::CtrlAltK,
             system_notifications: true,
             appearance: Appearance::System,
+            glass: Glass::Off,
             reduce_motion: None,
             theme: None,
             colors: BTreeMap::new(),
@@ -932,6 +966,54 @@ fn read_system_reduce_motion() -> bool {
             .filter(|o| o.status.success())
             .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == reduced)
     })
+}
+
+/// The system's transparency setting as last read; glass draws solid while it's off.
+static SYSTEM_TRANSPARENCY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+pub fn system_transparency() -> bool {
+    SYSTEM_TRANSPARENCY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Reads the system's transparency setting again; returns whether it changed.
+/// Windows answers at once, so the window asks on every poll; other systems have no such switch here.
+pub fn refresh_system_transparency() -> bool {
+    let now = read_system_transparency();
+    SYSTEM_TRANSPARENCY.swap(now, std::sync::atomic::Ordering::Relaxed) != now
+}
+
+/// Windows: Settings › Personalization › Colors › Transparency effects.
+#[cfg(windows)]
+fn read_system_transparency() -> bool {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW,
+    };
+    let wide = |s: &str| s.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+    let path = wide(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+    let name = wide("EnableTransparency");
+    let mut value: u32 = 1;
+    let mut bytes = std::mem::size_of::<u32>() as u32;
+    // SAFETY: the key and value names are NUL-terminated, and `value` is one DWORD.
+    let result = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            path.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&mut value as *mut u32).cast(),
+            &mut bytes,
+        )
+    };
+    result != ERROR_SUCCESS || value != 0
+}
+
+/// macOS and Linux: no reduced-transparency switch here yet.
+#[cfg(not(windows))]
+fn read_system_transparency() -> bool {
+    true
 }
 
 const ZOOM_MIN: f32 = 0.5;
@@ -1272,6 +1354,32 @@ mod tests {
     }
 
     #[test]
+    fn glass_defaults_off_and_parses_each_value() {
+        let default: Person = serde_json::from_str("{}").unwrap();
+        assert_eq!(default.glass, Glass::Off);
+        assert_eq!(Person::default().glass, Glass::Off);
+        for (value, expected) in [
+            ("off", Glass::Off),
+            ("blur", Glass::Blur),
+            ("mica", Glass::Mica),
+            ("mica-alt", Glass::MicaAlt),
+        ] {
+            let person: Person = serde_json::from_value(serde_json::json!({"glass": value})).unwrap();
+            assert_eq!(person.glass, expected);
+            let saved = serde_json::to_value(&person).unwrap();
+            if value == "off" {
+                assert!(
+                    saved.get("glass").is_none(),
+                    "the default stays absent: {saved}"
+                );
+            } else {
+                assert_eq!(saved["glass"], value);
+            }
+        }
+        assert!(serde_json::from_value::<Person>(serde_json::json!({"glass": "frost"})).is_err());
+    }
+
+    #[test]
     fn option_as_alt_defaults_to_auto_and_round_trips() {
         let default: Person = serde_json::from_str("{}").unwrap();
         assert_eq!(default.option_as_alt, OptionAsAlt::Auto);
@@ -1461,6 +1569,7 @@ mod tests {
             notes_between_agents: false,
             quiet_while_fullscreen: false,
             appearance: Appearance::Light,
+            glass: Glass::Mica,
             reduce_motion: Some(true),
             summon_key: SummonKey::Off,
             system_notifications: false,

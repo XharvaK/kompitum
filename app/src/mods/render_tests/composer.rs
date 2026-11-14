@@ -564,7 +564,7 @@ fn the_mic_opens_windows_voice_typing(cx: &mut TestAppContext) {
     let mut values = conversation_values(json!([]), "hidden", Value::Null, None);
     values.insert(
         "window".into(),
-        json!({"platform":"windows","titlebar":"none","buttons":true,"maximized":false,"fullscreen":false,"active":true}),
+        json!({"platform":"windows","dictation":true,"titlebar":"none","buttons":true,"maximized":false,"fullscreen":false,"active":true}),
     );
     let effects = composer_live_run_after_clicks(cx, values, "", &["composer-voice"]);
     assert!(
@@ -573,7 +573,19 @@ fn the_mic_opens_windows_voice_typing(cx: &mut TestAppContext) {
     );
 }
 
-/// Off Windows (the default fixture is Linux) the composer draws no mic.
+/// macOS opens the system's Dictation from the same mic.
+#[gpui::test]
+fn the_mic_is_there_on_macos(cx: &mut TestAppContext) {
+    let mut values = conversation_values(json!([]), "hidden", Value::Null, None);
+    values.insert(
+        "window".into(),
+        json!({"platform":"macos","dictation":true,"titlebar":"none","buttons":false,"maximized":false,"fullscreen":false,"active":true}),
+    );
+    let tree = composer_draws(cx, values, None);
+    assert!(tree.contains("composer-voice"), "{tree}");
+}
+
+/// Off Windows and macOS (the default fixture is Linux) the composer draws no mic.
 #[gpui::test]
 fn no_mic_off_windows(cx: &mut TestAppContext) {
     let tree = composer_draws(cx, conversation_values(json!([]), "hidden", Value::Null, None), None);

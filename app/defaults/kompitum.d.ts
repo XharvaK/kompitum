@@ -428,6 +428,10 @@ export function window(): {
   maximized: boolean;
   fullscreen: boolean;
   active: boolean;
+  /** The system has dictation for the composer's mic (Windows' voice typing, macOS's Dictation). */
+  dictation: boolean;
+  /** The window's material changes live; otherwise Settings says it applies at the next start. */
+  glass_live: boolean;
 };
 
 /** For a floating mod: where it sits now. `vertical` on the left/right edges, horizontal on

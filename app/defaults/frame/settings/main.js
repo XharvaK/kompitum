@@ -35,6 +35,7 @@ function liveSections() {
 // never reads the drawn tree. `key` matches the row's highlight key.
 const SEARCH = [
   { section: "appearance", key: "theme", title: "Theme", words: "light dark system appearance" },
+  { section: "appearance", key: "glass", title: "Sidebar glass", words: "transparency blur mica desktop sidebar", only: "windows" },
   { section: "appearance", key: "motion", title: "Reduce motion", words: "animation spinners still calm accessibility" },
   { section: "appearance", key: "layout", title: "Window", words: "layout reset desk window shape back" },
   { section: "appearance", key: "zoom", title: "Zoom", words: "size scale bigger smaller interface" },

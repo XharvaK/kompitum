@@ -2,7 +2,7 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, fonts, settings, shared } from "kompitum";
+import { run, fonts, settings, shared, window } from "kompitum";
 import { dropdown } from "./ui.js";
 
 const APPEARANCES = [
@@ -203,6 +203,29 @@ function motionDropdown(view, t) {
   });
 }
 
+// Sidebar glass: the window material behind the sidebar (Windows; settings.json's `glass`).
+function glassDropdown(view, t) {
+  view.glassMenu ??= {};
+  return dropdown(t, "st-glass", {
+    items: [
+      { value: "off", label: "Off" },
+      { value: "blur", label: "Blur" },
+      { value: "mica", label: "Mica" },
+      { value: "mica-alt", label: "Mica Alt" },
+    ],
+    value: view.person.glass ?? "off",
+    onPick: (value, cx) => {
+      view.change((p) => {
+        if (value === "off") delete p.glass;
+        else p.glass = value;
+      }, cx);
+      view.handle.focus();
+    },
+    state: view.glassMenu,
+    width: 160,
+  });
+}
+
 function fontMenu(view, which) {
   view.fontMenus ??= {};
   return (view.fontMenus[which] ??= {});
@@ -265,6 +288,17 @@ export function appearancePage(view, t, cx) {
         .when(view.lit("theme"), (el) => el.bg(t.selected).rounded(7))
         .child(div().text_size(13).text_color(t.foreground).child("Theme"))
         .child(appearanceTiles(view, t)),
+    )
+    .when(window()?.platform === "windows", (el) =>
+      el.child(
+        view.row(
+          t,
+          "Sidebar glass",
+          `Lets the desktop show through the sidebar.${window()?.glass_live ? "" : " Applies when Kompitum starts again."}`,
+          glassDropdown(view, t),
+          "glass",
+        ),
+      ),
     )
     .child(view.row(t, "Reduce motion", "Spinners, loops and arrivals stand still. System follows your computer's setting.", motionDropdown(view, t), "motion"))
     .child(div().h(18))

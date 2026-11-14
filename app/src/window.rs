@@ -90,26 +90,50 @@ fn c(name: &str) -> Hsla {
     settings::color_or_literal(name)
 }
 
-/// The window material the prototype asks for in `KOMPITUM_GLASS`: `blur`, `mica` or `mica-alt`; anything else is opaque.
-pub fn glass_kind(value: Option<&str>) -> gpui::WindowBackgroundAppearance {
+/// The material a word names: `blur`, `mica` or `mica-alt`; anything else is opaque.
+fn glass_material(value: &str) -> gpui::WindowBackgroundAppearance {
     use gpui::WindowBackgroundAppearance as W;
-    match value.map(|v| v.trim().to_lowercase()).as_deref() {
-        Some("blur") => W::Blurred,
-        Some("mica") => W::MicaBackdrop,
-        Some("mica-alt") => W::MicaAltBackdrop,
+    match value.trim().to_lowercase().as_str() {
+        "blur" => W::Blurred,
+        "mica" => W::MicaBackdrop,
+        "mica-alt" => W::MicaAltBackdrop,
         _ => W::Opaque,
     }
 }
 
-static GLASS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+/// The window material the person's `glass` asks for: `KOMPITUM_GLASS`, when set, wins.
+/// Reduced transparency (Windows' Transparency effects off) draws solid, as `off` does.
+pub fn glass_kind(
+    env: Option<&str>,
+    person: settings::Glass,
+    transparency: bool,
+) -> gpui::WindowBackgroundAppearance {
+    if !transparency {
+        return gpui::WindowBackgroundAppearance::Opaque;
+    }
+    glass_material(env.unwrap_or(person.word()))
+}
 
-/// Set once, when the main window opens (`KOMPITUM_GLASS` asks for a material).
-pub fn set_glass(on: bool) {
-    let _ = GLASS.set(on);
+/// What the main window opens with, before the person's file is read again by the window.
+pub fn initial_glass() -> gpui::WindowBackgroundAppearance {
+    settings::refresh_system_transparency();
+    let person = settings::load_person().map(|p| p.glass).unwrap_or_default();
+    glass_kind(
+        std::env::var("KOMPITUM_GLASS").ok().as_deref(),
+        person,
+        settings::system_transparency(),
+    )
+}
+
+static GLASS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sets whether the window is glass now; says whether that changed.
+pub fn set_glass(on: bool) -> bool {
+    GLASS.swap(on, std::sync::atomic::Ordering::Relaxed) != on
 }
 
 pub fn glass_on() -> bool {
-    GLASS.get().copied().unwrap_or(false)
+    GLASS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A colour under a glass window: its alpha times `glass` (clamped to 0..1). Off, or with no `glass`, it is unchanged.
@@ -1538,6 +1562,19 @@ impl AppWindow {
         self.apply_look(window, cx);
     }
 
+    /// Makes the window's material match the person's `glass` now.
+    fn apply_glass(&mut self, window: &mut Window) {
+        let kind = glass_kind(
+            std::env::var("KOMPITUM_GLASS").ok().as_deref(),
+            self.person.glass,
+            settings::system_transparency(),
+        );
+        window.set_background_appearance(kind);
+        if set_glass(kind != WindowBackgroundAppearance::Opaque) {
+            window.refresh();
+        }
+    }
+
     /// Runs with the shown layout's look (its root node) at the person's zoom.
     fn apply_look(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A layout's fonts arrive with its mod: added since the start, they load now.
@@ -1545,6 +1582,7 @@ impl AppWindow {
             mods::note_fonts(cx);
         }
         settings::refresh_system_motion();
+        self.apply_glass(window);
         let s = settings::Settings::compose(&self.person, &self.chrome.look, self.system_dark);
         let problems = s.problems();
         if !problems.is_empty() {
@@ -7785,8 +7823,9 @@ impl AppWindow {
         }
         self.lead_upkeep(window, cx);
         self.watch_workers(window, cx);
+        let transparency_changed = settings::refresh_system_transparency();
         let dark = is_dark(window.appearance());
-        if dark != self.system_dark || settings::refresh_system_motion() {
+        if dark != self.system_dark || settings::refresh_system_motion() || transparency_changed {
             self.system_dark = dark;
             self.apply_look(window, cx);
         }
@@ -12338,14 +12377,46 @@ export default class Probe extends View {
     }
 
     #[test]
-    fn glass_kind_reads_the_three_words() {
+    fn glass_kind_reads_the_person_and_the_environment_wins() {
+        use crate::settings::Glass;
         use gpui::WindowBackgroundAppearance as W;
-        assert_eq!(super::glass_kind(Some("blur")), W::Blurred);
-        assert_eq!(super::glass_kind(Some(" Mica ")), W::MicaBackdrop);
-        assert_eq!(super::glass_kind(Some("mica-alt")), W::MicaAltBackdrop);
-        for other in [Some(""), None, Some("glass")] {
-            assert_eq!(super::glass_kind(other), W::Opaque, "{other:?}");
+        assert_eq!(super::glass_kind(None, Glass::Off, true), W::Opaque);
+        assert_eq!(super::glass_kind(None, Glass::Blur, true), W::Blurred);
+        assert_eq!(super::glass_kind(None, Glass::Mica, true), W::MicaBackdrop);
+        assert_eq!(
+            super::glass_kind(None, Glass::MicaAlt, true),
+            W::MicaAltBackdrop
+        );
+        assert_eq!(super::glass_kind(Some("blur"), Glass::Mica, true), W::Blurred);
+        assert_eq!(super::glass_kind(Some("off"), Glass::Mica, true), W::Opaque);
+        assert_eq!(
+            super::glass_kind(Some(" Mica "), Glass::Off, true),
+            W::MicaBackdrop
+        );
+        for other in [Some(""), Some("glass")] {
+            assert_eq!(
+                super::glass_kind(other, Glass::Mica, true),
+                W::Opaque,
+                "{other:?}"
+            );
         }
+    }
+
+    #[test]
+    fn glass_draws_solid_when_the_system_asks_for_reduced_transparency() {
+        use crate::settings::Glass;
+        use gpui::WindowBackgroundAppearance as W;
+        for glass in [Glass::Off, Glass::Blur, Glass::Mica, Glass::MicaAlt] {
+            assert_eq!(
+                super::glass_kind(None, glass, false),
+                W::Opaque,
+                "{glass:?}"
+            );
+        }
+        assert_eq!(
+            super::glass_kind(Some("mica"), Glass::Off, false),
+            W::Opaque
+        );
     }
 
     #[test]

@@ -255,7 +255,7 @@ pub fn open_main(
     }
     tray::start();
     let (window_bounds, display_id) = place::initial(cx);
-    let glass = window::glass_kind(std::env::var("KOMPITUM_GLASS").ok().as_deref());
+    let glass = window::initial_glass();
     window::set_glass(glass != WindowBackgroundAppearance::Opaque);
     let options = WindowOptions {
         window_bounds: Some(window_bounds),

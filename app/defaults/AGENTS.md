@@ -248,9 +248,9 @@ Properties any node can have:
   the home folder), `border` (`{ "width": 1, "color": "border" }`), `radius`,
   `shadow` (`"sm" | "md" | "lg"`), `focus` (`{ "border": {...} }` when the
   focused pane is inside).
-- `glass` (0..1): under a glass window (`KOMPITUM_GLASS`), this node's
-  background is drawn at this opacity and the window's material shows through
-  the rest. Ignored on an opaque window.
+- `glass` (0..1): under a glass window (`glass` in settings.json, or
+  `KOMPITUM_GLASS`), this node's background is drawn at this opacity and the
+  window's material shows through the rest. Ignored on an opaque window.
 - `padding`: space inside the node's edge, px: `16` or `[vertical, horizontal]`.
 - row/column: `gap` (px between children), `divider` (`{ "width": 1, "color": "border" }`),
   `resizable` (default true: drag the boundary). This applies to that row/column only.
@@ -648,8 +648,8 @@ The main ones:
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
   `lead.steer {terminal, text}` (mark a message the Owner sent while the lead works as steering: it shows
   as on its way until Claude takes it).
-  `dictation.start` (open Windows' voice typing, Win+H, for the focused text box; the composer's mic runs it
-  after focusing its box; Windows only).
+  `dictation.start` (open the system's dictation for the focused text box: Windows' voice typing, Win+H, or
+  macOS's Dictation; the composer's mic runs it after focusing its box; Windows and macOS).
 - Layout: `layout.switch {name?}`, `layout.toggle {id}`, `layout.show {id}`, `layout.hide {id}`,
   `layout.resize {id, px | weight}`, `layout.select {stack, child}`, `layout.set {layout}`
   (personal tree edits; on shipped layouts only click/look fields change),
@@ -722,6 +722,10 @@ What's about the user, never a look:
   precedence as fonts.
 - `appearance`: `"light"` or `"dark"` always; absent, the system's. A layout
   with a light and a dark theme shows the matching one.
+- `glass`: Windows only. `"off"` (default), `"blur"`, `"mica"` or `"mica-alt"`:
+  the sidebar's window material, so the desktop shows through it. Applied live;
+  while Windows' Transparency effects are off, the sidebar draws solid.
+  `KOMPITUM_GLASS` overrides it when set.
 - `reduce_motion`: `true` stills spinners, mod loops and frames, and the
   arrival of notifications and popups; `false` keeps them moving; absent, the
   system's setting (Windows' animation effects, macOS's Reduce motion, GNOME's
