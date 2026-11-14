@@ -19,6 +19,7 @@ mod composer;
 mod limits;
 mod machines;
 mod mailbox;
+mod memory;
 mod palette_keys;
 mod settings_pages;
 mod welcome;
@@ -172,6 +173,9 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let vault_missing = values.remove("vaultMissing");
     let vault_json = values.remove("vaultJson");
     let vault_fail = values.remove("vaultFail");
+    let memory_json = values.remove("memoryJson");
+    let memory_fail = values.remove("memoryFail");
+    let memory_write_fail = values.remove("memoryWriteFail");
     let thread_json = values.remove("threadJson");
     let thread_fail = values.remove("threadFail");
     let send_fail = values.remove("sendFail");
@@ -299,6 +303,9 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let vault_missing = vault_missing.clone();
         let vault_json = vault_json.clone();
         let vault_fail = vault_fail.clone();
+        let memory_json = memory_json.clone();
+        let memory_fail = memory_fail.clone();
+        let memory_write_fail = memory_write_fail.clone();
         let thread_json = thread_json.clone();
         let thread_fail = thread_fail.clone();
         let send_fail = send_fail.clone();
@@ -381,6 +388,41 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     "stdout": vault_report(vec![], 0, vec![]),
                     "stderr": ""
                 })),
+                // Settings › Memory: the agent's notes, and the changes written back through `kom vault`.
+                "kom" if first == json!(["vault", "memory", "--list", "--json"]) && memory_fail.is_some() => {
+                    let text = memory_fail
+                        .as_ref()
+                        .and_then(Value::as_str)
+                        .unwrap_or("memory failed")
+                        .to_string();
+                    Some(json!({"code": 1, "stdout": "", "stderr": text}))
+                }
+                "kom" if first == json!(["vault", "memory", "--list", "--json"]) => Some(json!({
+                    "code": 0,
+                    "stdout": memory_json.clone().map(|v| v.to_string()).unwrap_or_else(|| json!({
+                        "agent": "claude",
+                        "memories": [
+                            {"path": "claude/memory/rule.md", "title": "Always answer in English", "body": "Use English.\n", "project": null, "standing": true, "status": "open", "review_after": "2026-12-01", "updated": "2026-11-03T09:00+00:00"},
+                            {"path": "claude/memory/beta.md", "title": "Beta newest", "body": "Beta fact.\n", "project": "beta", "standing": false, "status": "open", "review_after": null, "updated": "2026-11-05T09:00+00:00"},
+                            {"path": "claude/memory/general.md", "title": "Old general", "body": "Old fact.\n", "project": null, "standing": false, "status": "open", "review_after": null, "updated": "2026-11-01T09:00+00:00"},
+                            {"path": "claude/memory/gone.md", "title": "Gone memory", "body": "No longer true.\n", "project": "alpha", "standing": false, "status": "superseded", "review_after": null, "updated": "2026-11-07T09:00+00:00"}
+                        ],
+                        "problems": []
+                    }).to_string()),
+                    "stderr": ""
+                })),
+                "kom" if first.as_array().is_some_and(|a| {
+                    a.first().and_then(Value::as_str) == Some("vault")
+                        && matches!(a.get(1).and_then(Value::as_str), Some("remember") | Some("forget"))
+                }) => {
+                    calls.borrow_mut().effects.push(("kom".into(), vec![first.clone()]));
+                    if let Some(error) = memory_write_fail.clone() {
+                        let text = error.as_str().unwrap_or("write failed").to_string();
+                        Some(json!({"code": 1, "stdout": "", "stderr": text}))
+                    } else {
+                        Some(json!({"code": 0, "stdout": "", "stderr": ""}))
+                    }
+                }
                 // The mailbox's close: recorded, so a test can see whether Undo wrote it.
                 "kom" if first.as_array().is_some_and(|a| {
                     a.first().and_then(Value::as_str) == Some("vault")

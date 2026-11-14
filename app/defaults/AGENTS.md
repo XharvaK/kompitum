@@ -777,6 +777,11 @@ What's about the user, never a look:
   Option input on every layout. `"left"` / `"right"` makes only that Option
   key act as Alt; the other types characters. Changes apply immediately, including layout
   switches. Linux and Windows are unchanged.
+- `summon_key`: Windows only. `"ctrl+alt+k"` (the default when absent),
+  `"ctrl+alt+space"` or `"off"`: the key that brings Kompitum forward from any app,
+  with the keyboard in the lead's composer. Another app may hold it; Settings says so.
+- `system_notifications`: `false` turns off Windows notifications when something needs
+  you and Kompitum isn't in front; on when absent. Sounds and the taskbar flash stay.
 - `minimum_contrast`: terminal text contrast ratio, `1` (default) leaves
   program colors unchanged. Set it to `1.6` to enable the previous readability
   adjustment, or another number from `1` to `21`. Text below that ratio is

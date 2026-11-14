@@ -492,6 +492,12 @@ pub struct Person {
     /// macOS Option sends Alt shortcuts, or follows the keyboard layout.
     #[serde(skip_serializing_if = "OptionAsAlt::is_auto")]
     pub option_as_alt: OptionAsAlt,
+    /// The key that brings Kompitum forward from any app (Windows).
+    #[serde(skip_serializing_if = "SummonKey::is_default")]
+    pub summon_key: SummonKey,
+    /// Windows notifications when something needs the Owner and Kompitum isn't in front.
+    #[serde(skip_serializing_if = "is_true")]
+    pub system_notifications: bool,
     /// Light or dark: the system's, or one always.
     #[serde(skip_serializing_if = "Appearance::is_system")]
     pub appearance: Appearance,
@@ -581,6 +587,24 @@ impl OptionAsAlt {
     }
 }
 
+/// The key that brings Kompitum forward with the keyboard in the lead's composer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum SummonKey {
+    #[default]
+    #[serde(rename = "ctrl+alt+k")]
+    CtrlAltK,
+    #[serde(rename = "ctrl+alt+space")]
+    CtrlAltSpace,
+    #[serde(rename = "off")]
+    Off,
+}
+
+impl SummonKey {
+    fn is_default(&self) -> bool {
+        *self == Self::CtrlAltK
+    }
+}
+
 fn is_true(b: &bool) -> bool {
     *b
 }
@@ -602,6 +626,8 @@ impl Default for Person {
             pane_scrollbars: true,
             minimum_contrast: 1.0,
             option_as_alt: OptionAsAlt::Auto,
+            summon_key: SummonKey::CtrlAltK,
+            system_notifications: true,
             appearance: Appearance::System,
             reduce_motion: None,
             theme: None,
@@ -649,6 +675,8 @@ pub struct Settings {
     pub quiet_while_fullscreen: bool,
     pub minimum_contrast: f32,
     pub option_as_alt: OptionAsAlt,
+    pub summon_key: SummonKey,
+    pub system_notifications: bool,
     pub sounds: Sounds,
     /// The lead the composer will start: program, model and reasoning level.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -704,6 +732,8 @@ impl Default for Settings {
             quiet_while_fullscreen: true,
             minimum_contrast: 1.0,
             option_as_alt: OptionAsAlt::Auto,
+            summon_key: SummonKey::CtrlAltK,
+            system_notifications: true,
             sounds: Sounds::default(),
             lead: None,
             connect: BTreeMap::new(),
@@ -760,6 +790,8 @@ impl Settings {
             quiet_while_fullscreen: person.quiet_while_fullscreen,
             minimum_contrast: person.minimum_contrast,
             option_as_alt: person.option_as_alt,
+            summon_key: person.summon_key,
+            system_notifications: person.system_notifications,
             lead: person.lead.clone(),
             connect: person.connect.clone(),
         }
@@ -971,6 +1003,7 @@ pub fn write_person(person: &Person) -> std::io::Result<()> {
 
 /// Installs new settings; returns whether anything changed.
 pub fn set(s: Settings) -> bool {
+    crate::tray::set_summon_key(s.summon_key);
     NOTES_BETWEEN_AGENTS.store(s.notes_between_agents, std::sync::atomic::Ordering::Relaxed);
     QUIET_WHILE_FULLSCREEN.store(
         s.quiet_while_fullscreen,
@@ -1265,6 +1298,40 @@ mod tests {
     }
 
     #[test]
+    fn summon_key_defaults_to_ctrl_alt_k_and_parses_each_value() {
+        let default: Person = serde_json::from_str("{}").unwrap();
+        assert_eq!(default.summon_key, SummonKey::CtrlAltK);
+        assert_eq!(Settings::default().summon_key, SummonKey::CtrlAltK);
+        for (value, expected) in [
+            ("ctrl+alt+k", SummonKey::CtrlAltK),
+            ("ctrl+alt+space", SummonKey::CtrlAltSpace),
+            ("off", SummonKey::Off),
+        ] {
+            let person: Person =
+                serde_json::from_value(serde_json::json!({"summon_key": value})).unwrap();
+            let settings = Settings::compose(&person, &crate::layout::Look::default(), true);
+            assert_eq!(settings.summon_key, expected);
+            let saved = serde_json::to_value(&person).unwrap();
+            if value == "ctrl+alt+k" {
+                assert!(saved.get("summon_key").is_none(), "the default stays absent: {saved}");
+            } else {
+                assert_eq!(saved["summon_key"], value);
+            }
+        }
+        assert!(serde_json::from_value::<Person>(serde_json::json!({"summon_key": "ctrl+k"})).is_err());
+    }
+
+    #[test]
+    fn system_notifications_default_on_and_can_be_turned_off() {
+        let default: Person = serde_json::from_str("{}").unwrap();
+        assert!(default.system_notifications);
+        assert!(Settings::default().system_notifications);
+        let off: Person = serde_json::from_str(r#"{"system_notifications":false}"#).unwrap();
+        assert!(!Settings::compose(&off, &crate::layout::Look::default(), true).system_notifications);
+        assert_eq!(serde_json::to_value(off).unwrap()["system_notifications"], false);
+    }
+
+    #[test]
     fn minimum_contrast_defaults_off_and_validates_the_ratio() {
         let default: Person = serde_json::from_str("{}").unwrap();
         assert_eq!(default.minimum_contrast, 1.0);
@@ -1395,6 +1462,8 @@ mod tests {
             quiet_while_fullscreen: false,
             appearance: Appearance::Light,
             reduce_motion: Some(true),
+            summon_key: SummonKey::Off,
+            system_notifications: false,
             theme: Some(crate::layout::ThemeChoice::One(String::new())),
             colors: [("text".into(), String::new())].into(),
             connect: [(

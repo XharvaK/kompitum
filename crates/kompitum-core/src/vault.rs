@@ -15,6 +15,6 @@ mod store;
 
 pub use listing::read_text_of;
 pub use marks::{Done, ReadBy};
-pub use memory::{MemoryDraft, MemoryReport};
+pub use memory::{MemoryDraft, MemoryList, MemoryReport};
 pub use notes::{KINDS, STATUSES};
 pub use store::{Message, Post, Query, Report, Vault, Written, older_than_a_week};

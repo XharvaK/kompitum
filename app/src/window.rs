@@ -5,6 +5,7 @@
 //! anything: keys, mods, menus and agents all run them.
 
 use crate::kom::Core;
+mod alerts;
 mod floats;
 mod movable;
 mod pane_drag;
@@ -881,6 +882,12 @@ pub struct AppWindow {
     lead_restart_quiet: bool,
     /// The height each lead's composer asked for (`lead.fit`), by the lead's terminal.
     composer_px: HashMap<String, f32>,
+    /// Each worker's last state (`kom workers --json`), and when it was last read.
+    worker_states: Option<HashMap<String, String>>,
+    workers_at: Option<Instant>,
+    workers_busy: bool,
+    /// Agents whose "needs you" Windows notification is posted.
+    system_needs: HashSet<String>,
     /// Blocking hooks waiting for the Owner's answer, by ask id.
     lead_asks: HashMap<String, PendingAsk>,
     /// Ask ids whose taskbar flash was already asked for: one flash per ask.
@@ -1023,6 +1030,10 @@ impl AppWindow {
             lead_restart_pending: false,
             lead_restart_quiet: false,
             composer_px: HashMap::new(),
+            worker_states: None,
+            workers_at: None,
+            workers_busy: false,
+            system_needs: HashSet::new(),
             lead_asks: HashMap::new(),
             flashed_asks: HashSet::new(),
             closed_hooks: HashSet::new(),
@@ -3287,6 +3298,92 @@ impl AppWindow {
         }
     }
 
+    /// On a lead start, asks `claude --version` off the window's thread and
+    /// tells the person when it differs from the last one seen.
+    fn check_claude_version(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let job = cx.background_executor().spawn(async move {
+            let mut command = if cfg!(windows) {
+                let mut command = crate::spawn::command("cmd.exe");
+                command.args(["/d", "/c", "claude", "--version"]);
+                command
+            } else {
+                let mut command = crate::spawn::command("claude");
+                command.arg("--version");
+                command
+            };
+            let output = command
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()?;
+            alerts::claude_version(&String::from_utf8_lossy(&output.stdout))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Some(version) = job.await else { return };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let previous =
+                    mods::shared("claude.version").and_then(|value| value.as_str().map(str::to_owned));
+                let change = alerts::claude_version_change(previous.as_deref(), &version);
+                mods::set_shared("claude.version".into(), json!(version));
+                if let Some(body) = change {
+                    let notification = json!({
+                        "title": "Claude Code updated",
+                        "body": body,
+                        "level": "info",
+                    });
+                    this.open_overlay(
+                        mods::new_overlay_id(),
+                        json!({ "kind": "toast", "notification": notification }),
+                        window,
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Every 60 s, reads the core's workers view off the window's thread; a
+    /// worker that went from out to ready gets a toast.
+    fn watch_workers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.workers_busy
+            || self.workers_at.is_some_and(|at| at.elapsed() < Duration::from_secs(60))
+        {
+            return;
+        }
+        self.workers_busy = true;
+        self.workers_at = Some(Instant::now());
+        let core = self.core.clone();
+        let job = cx
+            .background_executor()
+            .spawn(async move { core.call("workers.show", json!({})) });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = job.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.workers_busy = false;
+                let Ok(view) = result else {
+                    return;
+                };
+                let back = this
+                    .worker_states
+                    .as_ref()
+                    .map(|previous| alerts::workers_back(previous, &view))
+                    .unwrap_or_default();
+                this.worker_states = Some(alerts::worker_states(&view));
+                for label in back {
+                    let notification = alerts::worker_back_toast(&label);
+                    this.open_overlay(
+                        mods::new_overlay_id(),
+                        json!({ "kind": "toast", "notification": notification }),
+                        window,
+                        cx,
+                    );
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Tells the person an agent needs them or finished: Kompitum's sounds, and a
     /// toast (drawn by the `toast` mod; click it to go there) unless they're
     /// looking at that agent.
@@ -3324,13 +3421,6 @@ impl AppWindow {
             self.save();
             self.publish(cx);
         }
-        if looking {
-            return;
-        }
-        // The alert toast passes; a fullscreen game keeps the screen.
-        if crate::quiet::quiet() {
-            return;
-        }
         let rec = self.live.get(addr);
         let app = self.model.agents.get(addr).and_then(|a| a.app.clone());
         let name = rec
@@ -3353,12 +3443,45 @@ impl AppWindow {
             ))
         });
         let notification = alert_note(matches!(alert, model::Alert::Blocked), &name, place, addr);
+        if alert == model::Alert::Blocked
+            && alerts::wants_system_notification(
+                settings::get().system_notifications,
+                self.window_active,
+                crate::quiet::quiet(),
+                true,
+            )
+            && let Some(note) = alerts::agent_note(addr, &notification)
+        {
+            self.notify_system(cx, note);
+            self.system_needs.insert(addr.to_owned());
+        }
+        if looking {
+            return;
+        }
+        // The alert toast passes; a fullscreen game keeps the screen.
+        if crate::quiet::quiet() {
+            return;
+        }
         self.open_overlay(
             mods::new_overlay_id(),
             json!({ "kind": "toast", "notification": notification }),
             window,
             cx,
         );
+    }
+
+    /// A Windows notification for something that needs the Owner; nothing on other systems,
+    /// and never a real one from a test.
+    fn notify_system(&self, cx: &mut Context<Self>, note: alerts::SystemNote) {
+        #[cfg(all(target_os = "windows", not(test)))]
+        cx.show_system_notification(gpui::SystemNotification {
+            tag: note.tag.into(),
+            title: note.title.into(),
+            body: note.body.into(),
+            actions: Vec::new(),
+        });
+        #[cfg(any(not(target_os = "windows"), test))]
+        let _ = (cx, note);
     }
 
     /// Keeps the model true to core, on every listing: drops panes whose terminal
@@ -4147,6 +4270,7 @@ impl AppWindow {
         self.apply_lead_terminal_layout(&terminal);
         self.publish_lead(cx);
         if checks_auth {
+            self.check_claude_version(window, cx);
             // The lead is on screen at once; the check runs beside it.
             self.check_lead_auth(terminal.clone(), window, cx);
         }
@@ -4611,6 +4735,16 @@ impl AppWindow {
         {
             crate::attention::request(window);
         }
+        if first_time
+            && alerts::wants_system_notification(
+                settings::get().system_notifications,
+                self.window_active,
+                crate::quiet::quiet(),
+                true,
+            )
+        {
+            self.notify_system(cx, alerts::ask_note(&ask.id, &ask.kind));
+        }
         let older: Vec<String> = self
             .lead_asks
             .iter()
@@ -4667,6 +4801,7 @@ impl AppWindow {
             session.ask = None;
             session.set_state(Some(crate::lead::State::Working), model::now_ms());
         }
+        cx.dismiss_system_notification(&format!("needs-{}", ask.id));
         self.publish_lead(cx);
     }
 
@@ -7285,6 +7420,9 @@ impl AppWindow {
             }
             // A toast that leaves (its clock ran out, it was clicked or closed) stays in the bell's Earlier list.
             if let Some(note) = &o.note {
+                if let Some(needs) = note.get("needs").and_then(Value::as_str) {
+                    cx.dismiss_system_notification(&format!("needs-{needs}"));
+                }
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_millis() as i64);
@@ -7342,6 +7480,8 @@ impl AppWindow {
             Request::CloseOverlay { id } => self.close_overlay(&id, window, cx),
             Request::Refresh => self.refresh_mods(cx),
             Request::Show => self.show_from_tray(window, cx),
+            Request::Summon => self.summon(window, cx),
+            Request::Notification { tag } => self.notification_clicked(&tag, window, cx),
             Request::Quit => self.quit_from_tray(window, cx),
             Request::Control { cmd, reply } => {
                 if cmd.get("do").and_then(Value::as_str) == Some("lead.hook") {
@@ -7369,6 +7509,62 @@ impl AppWindow {
         crate::tray::show(window);
         cx.activate(true);
         window.activate_window();
+    }
+
+    /// The summon key: the window comes back, then the lead's pane and its
+    /// composer take the keyboard. A lead that isn't running is not started.
+    fn summon(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_from_tray(window, cx);
+        let program = settings::load_person()
+            .ok()
+            .and_then(|person| person.lead)
+            .and_then(|lead| lead.program)
+            .filter(|program| !program.is_empty())
+            .unwrap_or_else(|| "claude".into());
+        let Some(terminal) = self.lead_terminal(&program) else {
+            return;
+        };
+        self.focus_lead_terminal(&terminal, window, cx);
+    }
+
+    /// Shows `terminal`'s pane and hands the keyboard to its composer. A lead
+    /// that isn't running is not started.
+    fn focus_lead_terminal(&mut self, terminal: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.live.contains_key(terminal) || self.model.pane_of(terminal).is_none() {
+            return;
+        }
+        self.focused_block = None;
+        self.agent = Some(terminal.to_owned());
+        if let Err(error) = self.ensure_composer(terminal) {
+            tracing::warn!("cannot dock the lead's composer: {error}");
+            return;
+        }
+        if let Some(pane) = self.model.pane_of(terminal) {
+            self.model.focus_pane(&pane);
+            self.focused_pane = None;
+            self.swapped.remove(&pane);
+        }
+        match self.composer_pane(terminal) {
+            Some(composer) => self.focus_block(&composer, window, cx),
+            None => self.sync(window, cx),
+        }
+    }
+
+    /// A Windows notification was clicked: Kompitum comes forward, then to the
+    /// agent it named or the lead's composer.
+    fn notification_clicked(&mut self, tag: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_from_tray(window, cx);
+        let Some(id) = tag.strip_prefix("needs-") else {
+            return;
+        };
+        if let Some(pending) = self.lead_asks.values().find(|pending| pending.ask.id == id) {
+            let terminal = pending.ask.terminal.clone();
+            self.focus_lead_terminal(&terminal, window, cx);
+            return;
+        }
+        if self.live.contains_key(id) {
+            self.run("agent.focus", json!({ "terminal": id }), window, cx);
+        }
     }
 
     /// The tray's Exit: what the close button does, then the app goes.
@@ -7541,6 +7737,16 @@ impl AppWindow {
         for id in expired {
             self.close_overlay(&id, window, cx);
         }
+        let answered: Vec<String> = self
+            .system_needs
+            .iter()
+            .filter(|addr| self.model.status(addr) != Some("blocked"))
+            .cloned()
+            .collect();
+        for addr in answered {
+            cx.dismiss_system_notification(&format!("needs-{addr}"));
+            self.system_needs.remove(&addr);
+        }
         let active = window.is_window_active();
         if active != self.window_active {
             self.window_active = active;
@@ -7557,6 +7763,7 @@ impl AppWindow {
             }
         }
         self.lead_upkeep(window, cx);
+        self.watch_workers(window, cx);
         let dark = is_dark(window.appearance());
         if dark != self.system_dark || settings::refresh_system_motion() {
             self.system_dark = dark;

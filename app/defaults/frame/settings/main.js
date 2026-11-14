@@ -1,12 +1,14 @@
 // App-owned settings mod. Writes changes immediately; no Save step.
 
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, Scrollbar, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, Scrollbar, InputState, Input, TextareaState } from "gpui-base";
 import { kom, run, theme, updates, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared } from "kompitum";
 import { loadVault, vaultSection } from "./vault.js";
+import { loadMemory, memoryPage, saveMemory, forgetMemory } from "./memory.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
 import { agentsPage, loadAgents, ensureAgents } from "./agents.js";
 import { appearancePage } from "./appearance.js";
+import { dropdown } from "./ui.js";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
@@ -14,6 +16,7 @@ const SECTIONS = [
   { id: "appearance", title: "Appearance", icon: "palette" },
   { id: "agents", title: "Agents", icon: "bot" },
   { id: "vault", title: "Vault", icon: "mail" },
+  { id: "memory", title: "Memory", icon: "memory" },
   { id: "connect", title: "Connect", icon: "link" },
   { id: "notifications", title: "Notifications", icon: "bell" },
   { id: "keyboard", title: "Keyboard", icon: "keyboard" },
@@ -45,12 +48,15 @@ const SEARCH = [
   { section: "agents", key: "clis", title: "CLI versions", words: "update version releases" },
   { section: "vault", key: "Folder", title: "Vault folder", words: "notes git mailbox" },
   { section: "vault", key: "Needs you", title: "Notes that need you", words: "mailbox notes requests questions" },
+  { section: "memory", key: "memory", title: "Memory", words: "remember forget notes claude lead" },
   { section: "connect", key: "connect", title: "Connect", words: "agent systems join prompt grok hermes openclaw manager machines" },
   { section: "notifications", key: "sounds", title: "Play sounds", words: "sound audio notification" },
   { section: "notifications", key: "blocked", title: "An agent needs you", words: "sound blocked attention" },
   { section: "notifications", key: "done", title: "An agent finished", words: "sound done finished" },
   { section: "notifications", key: "Notes between agents", title: "Notes between agents", words: "pop-ups toast vault mail" },
   { section: "notifications", key: "Quiet while a game is fullscreen", title: "Quiet while a game is fullscreen", words: "game fullscreen mute do not disturb" },
+  { section: "notifications", key: "Windows notifications", title: "Windows notifications", words: "system toast needs you in front", only: "windows" },
+  { section: "notifications", key: "Summon Kompitum", title: "Summon Kompitum", words: "keyboard shortcut hotkey bring forward composer", only: "windows" },
   { section: "connect", key: "this", title: "This computer", words: "local version kom machines" },
   { section: "connect", key: "add", title: "Add a machine", words: "ssh remote host machines" },
   { section: "keyboard", key: "option", title: "Option key", words: "alt macos accents keyboard" },
@@ -102,12 +108,41 @@ export default class Settings extends View {
     this.vault = null;
     this.vaultError = null;
     this.vaultLoading = false;
+    this.memory = null;
+    this.memoryError = null;
+    this.memoryLoading = false;
+    this.memoryOpenPath = null;
+    this.memoryEdit = null;
+    this.memoryForgetPath = null;
+    this.memoryWhyText = "";
+    this.memoryRowError = null;
+    this.memoryForgottenOpen = false;
+    this.memoryTitle = InputState.new({ placeholder: "Title" });
+    this.memoryTitle.on("change", (_e, cx) => {
+      if (this.memoryEdit) this.memoryEdit.title = this.memoryTitle.value();
+      cx.notify();
+    });
+    this.memoryBody = TextareaState.new({ rows: 6 });
+    this.memoryBody.on("change", (_e, cx) => {
+      if (this.memoryEdit) this.memoryEdit.body = this.memoryBody.value();
+      cx.notify();
+    });
+    this.memoryWhy = InputState.new({ placeholder: "Why it no longer holds" });
+    this.memoryWhy.on("change", (_e, cx) => {
+      this.memoryWhyText = this.memoryWhy.value();
+      cx.notify();
+    });
+    this.memorySave = (cx) => saveMemory(this, cx);
+    this.memoryForget = (cx) => forgetMemory(this, cx);
+    this.summonKeyMenu = {};
+    this.summonKeyPick = (value, cx) => this.change((p) => { p.summon_key = value; }, cx);
     this.handle = cx.focus_handle();
     this.handle.focus();
     cx.spawn(async (cx) => {
       await this.load();
       if (this.section === "connect") await this.loadMachines();
       if (this.section === "vault") loadVault(this, cx);
+      if (this.section === "memory") loadMemory(this, cx);
       if (this.section === "agents") loadAgents(this, cx);
       cx.notify();
     });
@@ -180,6 +215,7 @@ export default class Settings extends View {
     if (!words.length) return [];
     const live = new Set(liveSections().map((s) => s.id));
     return SEARCH.filter((e) => live.has(e.section)).filter((e) => {
+      if (e.only && window()?.platform !== e.only) return false;
       const text = `${e.title} ${e.words}`.toLowerCase();
       return words.every((w) => text.includes(w));
     });
@@ -214,6 +250,7 @@ export default class Settings extends View {
     if (match.section === "connect") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
     if (match.section === "agents") loadAgents(this, cx, true);
     if (match.section === "vault") loadVault(this, cx);
+    if (match.section === "memory") loadMemory(this, cx);
     if (match.section === "connect" && this.connect.vault === null) loadConnect(this, cx);
     cx.timer.after(1500, (cx) => {
       if (this.highlight?.at === at) {
@@ -526,7 +563,24 @@ export default class Settings extends View {
     const on = sounds.enabled !== false;
     const between = this.person.notes_between_agents !== false;
     const quiet = this.person.quiet_while_fullscreen !== false;
+    const notifications = this.person.system_notifications !== false;
+    const summon = this.person.summon_key ?? "ctrl+alt+k";
+    const taken = Boolean(window()?.summon_taken);
     const file = (f) => (f ? f.split(/[\\/]/).pop() : "Kompitum's sound");
+    const summonMenu = dropdown(t, "st-summon-key", {
+      items: [
+        { value: "ctrl+alt+k", label: "Ctrl+Alt+K" },
+        { value: "ctrl+alt+space", label: "Ctrl+Alt+Space" },
+        { value: "off", label: "Off" },
+      ],
+      value: summon,
+      onPick: (value, cx) => this.summonKeyPick(value, cx),
+      state: this.summonKeyMenu,
+      width: 200,
+    });
+    const summonAbout = taken
+      ? div().text_size(12).line_height("18px").text_color(t.blocked).child("Another app is using this key. Pick another.")
+      : "Brings Kompitum forward with the keyboard in the composer, from any app.";
     return v_flex()
       .w_full()
       .child(this.heading(t, "Sounds"))
@@ -545,6 +599,11 @@ export default class Settings extends View {
       .child(this.heading(t, "Pop-ups"))
       .child(this.row(t, "Notes between agents", "Show a note for a few seconds when agents write to each other.", this.toggle(t, "st-notes-between-agents", between, (_e, cx) => this.change((p) => (p.notes_between_agents = !between), cx))))
       .child(this.row(t, "Quiet while a game is fullscreen", "No sounds and no passing notes while another app fills the screen. Notes that need you still wait for you.", this.toggle(t, "st-quiet-fullscreen", quiet, (_e, cx) => this.change((p) => (p.quiet_while_fullscreen = !quiet), cx))))
+      .when(window()?.platform === "windows", (el) =>
+        el
+          .child(this.row(t, "Windows notifications", "When something needs you and Kompitum isn't in front.", this.toggle(t, "st-system-notifications", notifications, (_e, cx) => this.change((p) => (p.system_notifications = !notifications), cx))))
+          .child(this.row(t, "Summon Kompitum", summonAbout, summonMenu)),
+      )
       .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child("Want your own sounds? Ask your lead to change them."));
   }
 
@@ -740,6 +799,7 @@ export default class Settings extends View {
               this.handle.focus();
               if (s.id === "connect") cx.spawn(async (cx) => { await this.loadMachines(); cx.notify(); });
               if (s.id === "vault") loadVault(this, cx);
+              if (s.id === "memory") loadMemory(this, cx);
               if (s.id === "connect" && this.connect.vault === null) loadConnect(this, cx);
               if (s.id === "agents") loadAgents(this, cx);
               cx.notify();
@@ -849,6 +909,8 @@ export default class Settings extends View {
                             ? this.keyboard(t)
                           : section === "vault"
                             ? vaultSection(this, t, cx)
+                          : section === "memory"
+                            ? memoryPage(this, t, cx)
                           : section === "connect"
                             ? connectPage(this, t, cx)
                           : section === "notifications"

@@ -53,6 +53,67 @@ pub struct MemoryReport {
     pub problems: Vec<String>,
 }
 
+/// What `kom vault memory --list` answers: every memory note with the notes
+/// too damaged to read.
+#[derive(Clone, Debug)]
+pub struct MemoryList {
+    pub agent: String,
+    pub memories: Vec<Memory>,
+    pub problems: Vec<String>,
+}
+
+impl MemoryList {
+    pub fn json(&self) -> serde_json::Value {
+        let memories: Vec<serde_json::Value> = self
+            .memories
+            .iter()
+            .map(|memory| {
+                serde_json::json!({
+                    "path": memory.path,
+                    "title": memory.title,
+                    "body": memory.body,
+                    "project": memory.project,
+                    "standing": memory.standing,
+                    "status": memory.status,
+                    "review_after": memory.review_after,
+                    "updated": memory.updated,
+                })
+            })
+            .collect();
+        serde_json::json!({"agent": self.agent, "memories": memories, "problems": self.problems})
+    }
+
+    /// One line per memory: its status mark, title and project.
+    pub fn human(&self) -> String {
+        let mut lines = self.problems.iter().map(|problem| format!("problem: {problem}")).collect::<Vec<_>>();
+        for memory in &self.memories {
+            let mark = if memory.status == "open" { "●" } else { "×" };
+            let project = memory.project.as_deref().map(|project| format!(" · {project}")).unwrap_or_default();
+            lines.push(format!("{mark} {}{project}", memory.title));
+        }
+        lines.join("\n")
+    }
+}
+
+impl Vault {
+    /// Every memory note of this agent: open first, then superseded, each group
+    /// newest `updated` first.
+    pub fn memory_list(&self) -> Result<MemoryList, RpcError> {
+        let (mut memories, problems) = load_memories(&self.root, &self.agent)?;
+        memories.sort_by(|a, b| {
+            rank(&a.status)
+                .cmp(&rank(&b.status))
+                .then_with(|| b.updated.cmp(&a.updated))
+                .then_with(|| a.path.cmp(&b.path))
+        });
+        Ok(MemoryList { agent: self.agent.clone(), memories, problems })
+    }
+}
+
+fn rank(status: &str) -> u8 {
+    if status == "open" { 0 } else { 1 }
+}
+
 impl MemoryReport {
     pub fn json(&self) -> serde_json::Value {
         serde_json::json!({"agent": self.agent, "packet": self.text, "problems": self.problems})
@@ -352,7 +413,7 @@ fn title_words(title: &str) -> Vec<String> {
 }
 
 /// Every memory note in the agent's folder, with the notes too damaged to read.
-fn load_memories(root: &Path, agent: &str) -> Result<(Vec<Memory>, Vec<String>), RpcError> {
+pub(super) fn load_memories(root: &Path, agent: &str) -> Result<(Vec<Memory>, Vec<String>), RpcError> {
     if !valid_name(agent) {
         return Err(RpcError::new(
             "usage",

@@ -205,13 +205,16 @@ kom vault find quota reset              # did we try this before?
 Your memory is your own notes in the vault, `<you>/memory/<slug>.md`.
 `kom vault memory` is the packet you wake with, at every start and after every
 compaction; the session-start hook runs it for you. Details come through
-`kom vault find --kind memory` and `kom vault read <path>`.
+`kom vault find --kind memory` and `kom vault read <path>`. `kom vault memory
+--list --json` is every memory note you have (open first, then superseded), for
+a reader that shows and changes them.
 
 ```sh
 kom vault remember --title "Builds use cargo --locked" --body "..." --project myapp
 kom vault remember --replace opus/memory/builds-use-cargo-locked.md --title "..." --body "..."
 kom vault forget opus/memory/builds-use-cargo-locked.md --why "the check changed"
 kom vault memory --due
+kom vault memory --list
 ```
 
 - Keep: the Owner's working preferences and corrections, with why; each

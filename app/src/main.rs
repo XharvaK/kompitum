@@ -246,6 +246,13 @@ pub fn open_main(
     requests: async_channel::Receiver<mods::Request>,
     cx: &mut App,
 ) {
+    #[cfg(target_os = "windows")]
+    {
+        cx.set_app_identity("Kompitum.App", "Kompitum");
+        cx.on_system_notification_response(|response, _app| {
+            mods::request(mods::Request::Notification { tag: response.tag.to_string() });
+        });
+    }
     tray::start();
     let (window_bounds, display_id) = place::initial(cx);
     let glass = window::glass_kind(std::env::var("KOMPITUM_GLASS").ok().as_deref());
