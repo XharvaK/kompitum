@@ -540,8 +540,15 @@ pub enum Request {
     Refresh,
     /// The tray asked for the main window: show it where it was.
     Show,
+    /// The summon key: show the window and hand the keyboard to the lead's composer.
+    Summon,
     /// The tray's Exit: close the app the way the window's close button does.
     Quit,
+    /// A Windows notification was clicked: the window comes forward and goes
+    /// to the agent or the lead's composer it named.
+    Notification {
+        tag: String,
+    },
     /// From `kompitum-app do` / `kompitum-app status` (control.rs); answer on `reply`.
     Control {
         cmd: Value,

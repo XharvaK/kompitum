@@ -195,6 +195,9 @@ pub(crate) struct MemoryArgs {
     /// The memories due for review instead of the packet, oldest first.
     #[arg(long)]
     pub due: bool,
+    /// Every memory note, open ones first, then superseded.
+    #[arg(long, conflicts_with_all = ["due", "hook"])]
+    pub list: bool,
     /// Print Claude Code's session-start hook JSON and always exit 0.
     #[arg(long)]
     pub hook: bool,
@@ -310,12 +313,17 @@ pub(crate) fn vault_cmd(action: VaultCmd, asked: bool) -> Result<Option<Out>, Rp
             Out { json: written.json(), human: written.said }
         }
         VaultCmd::Memory(a) => {
-            let report = vault(&a.as_agent.name).and_then(|v| v.memory(a.project.as_deref(), a.due));
-            if a.hook {
-                hook_out(report)
+            if a.list {
+                let report = vault(&a.as_agent.name)?.memory_list()?;
+                Out { json: report.json(), human: report.human() }
             } else {
-                let report = report?;
-                Out { json: report.json(), human: report.text }
+                let report = vault(&a.as_agent.name).and_then(|v| v.memory(a.project.as_deref(), a.due));
+                if a.hook {
+                    hook_out(report)
+                } else {
+                    let report = report?;
+                    Out { json: report.json(), human: report.text }
+                }
             }
         }
     }))
@@ -458,7 +466,7 @@ mod tests {
     }
 
     fn memory() -> VaultCmd {
-        VaultCmd::Memory(MemoryArgs { project: None, due: false, hook: false, as_agent: as_args() })
+        VaultCmd::Memory(MemoryArgs { project: None, due: false, list: false, hook: false, as_agent: as_args() })
     }
 
     #[test]

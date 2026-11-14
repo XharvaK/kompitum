@@ -1020,6 +1020,7 @@ Options:
       --json         JSON output even in a terminal
       --project <P>  The standing memories, General, and this project only
       --due          The memories due for review instead of the packet, oldest first
+      --list         Every memory note, open ones first, then superseded
       --hook         Print Claude Code's session-start hook JSON and always exit 0
       --as <AGENT>   Act as this agent, overriding KOMPITUM_AGENT
   -h, --help         Print help

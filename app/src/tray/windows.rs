@@ -2,12 +2,13 @@
 //! icon and its menu. Nothing here draws; the icon is the program file's own.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
 use std::time::Duration;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey};
 use windows_sys::Win32::UI::Shell::{
     ExtractIconExW, NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE,
     NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
@@ -18,16 +19,21 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
     RegisterWindowMessageW, SW_HIDE, SW_RESTORE, SW_SHOW, SendMessageW, SetForegroundWindow,
     ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
-    WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL,
-    WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
+    WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_HOTKEY, WM_LBUTTONDBLCLK, WM_LBUTTONUP,
+    WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_OVERLAPPED,
 };
 
+use crate::settings::SummonKey;
+
 const WM_TRAY_CALLBACK: u32 = WM_APP + 1;
+const WM_SUMMON_CHANGED: u32 = WM_APP + 2;
+const HOTKEY: i32 = 1;
 const NIN_KEYSELECT: u32 = NIN_SELECT + 1;
 const OPEN: usize = 1;
 const EXIT: usize = 2;
 
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+static HOTKEY_WINDOW: AtomicIsize = AtomicIsize::new(0);
 
 struct Tray {
     hwnd: HWND,
@@ -43,12 +49,12 @@ fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
 }
 
-pub(super) fn start(class: &str) -> bool {
+pub(super) fn start(class: &str, key: SummonKey) -> bool {
     let (ready, answer) = std::sync::mpsc::channel();
     let class = class.to_owned();
     match std::thread::Builder::new()
         .name("tray".into())
-        .spawn(move || run(&class, ready))
+        .spawn(move || run(&class, key, ready))
     {
         Ok(_) => answer.recv_timeout(Duration::from_secs(2)).unwrap_or(false),
         Err(error) => {
@@ -58,7 +64,7 @@ pub(super) fn start(class: &str) -> bool {
     }
 }
 
-fn run(class: &str, ready: std::sync::mpsc::Sender<bool>) {
+fn run(class: &str, key: SummonKey, ready: std::sync::mpsc::Sender<bool>) {
     let taskbar = unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) };
     TASKBAR_CREATED.store(taskbar, Ordering::SeqCst);
     let instance: HINSTANCE = unsafe { GetModuleHandleW(std::ptr::null()) };
@@ -122,6 +128,8 @@ fn run(class: &str, ready: std::sync::mpsc::Sender<bool>) {
         });
         let _ = ready.send(add_icon());
     }
+    HOTKEY_WINDOW.store(hwnd as isize, Ordering::SeqCst);
+    register(hwnd, key);
 
     let mut message = MSG::default();
     loop {
@@ -212,6 +220,28 @@ fn remove_icon() {
     });
 }
 
+/// Registers the most recent `summon_key`; unregisters the previous one first.
+fn register(hwnd: HWND, key: SummonKey) {
+    unsafe { UnregisterHotKey(hwnd, HOTKEY) };
+    super::note_summon_taken(false);
+    let Some((modifiers, virtual_key)) = super::summon_hotkey(key) else {
+        return;
+    };
+    if unsafe { RegisterHotKey(hwnd, HOTKEY, modifiers, virtual_key) } == 0 {
+        super::note_summon_taken(true);
+        tracing::warn!("cannot register the summon key: {}", std::io::Error::last_os_error());
+    }
+}
+
+/// Called from the window's thread when settings.json changes the key.
+pub(super) fn summon_key_changed() {
+    let hwnd = HOTKEY_WINDOW.load(Ordering::SeqCst) as HWND;
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe { PostMessageW(hwnd, WM_SUMMON_CHANGED, 0, 0) };
+}
+
 unsafe extern "system" fn wndproc(
     hwnd: HWND,
     message: u32,
@@ -240,8 +270,18 @@ unsafe extern "system" fn wndproc(
             0
         }
         WM_DESTROY => {
+            unsafe { UnregisterHotKey(hwnd, HOTKEY) };
+            HOTKEY_WINDOW.store(0, Ordering::SeqCst);
             remove_icon();
             unsafe { PostQuitMessage(0) };
+            0
+        }
+        WM_HOTKEY if wparam as i32 == HOTKEY => {
+            crate::mods::request(crate::mods::Request::Summon);
+            0
+        }
+        WM_SUMMON_CHANGED => {
+            register(hwnd, super::summon_key());
             0
         }
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },

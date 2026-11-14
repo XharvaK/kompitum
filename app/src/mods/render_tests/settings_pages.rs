@@ -1290,3 +1290,98 @@ fn appearance_offers_three_tiles_and_a_sample(cx: &mut TestAppContext) {
     assert!(tree.contains("Fix the login bug, please"), "{tree}");
     assert!(tree.contains("cargo test login"), "{tree}");
 }
+
+fn notification_values(platform: &str, taken: bool, person: Value) -> BTreeMap<String, Value> {
+    let mut p = props();
+    p["section"] = json!("notifications");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert(
+        "window".into(),
+        json!({"platform": platform, "summon_taken": taken}),
+    );
+    values.insert("person".into(), person);
+    values
+}
+
+/// The summon key and Windows notifications are Windows rows, with their words.
+#[gpui::test]
+fn windows_shows_the_summon_key_and_notification_rows(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for (platform, shown) in [("windows", true), ("linux", false), ("macos", false)] {
+        let tree = describe_settled(
+            cx,
+            &staged,
+            "frame/settings",
+            notification_values(platform, false, json!({})),
+            None,
+        )
+        .unwrap();
+        assert_eq!(tree.contains("Summon Kompitum"), shown, "{platform}: {tree}");
+        assert_eq!(tree.contains("Windows notifications"), shown, "{platform}: {tree}");
+        if shown {
+            for words in [
+                "Brings Kompitum forward with the keyboard in the composer, from any app.",
+                "When something needs you and Kompitum isn't in front.",
+                "Ctrl+Alt+K",
+            ] {
+                assert!(tree.contains(words), "missing {words}: {tree}");
+            }
+        }
+    }
+}
+
+/// The summon dropdown lists all three choices.
+#[gpui::test]
+fn the_summon_key_dropdown_offers_every_choice(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        notification_values("windows", false, json!({})),
+        Some("this.summonKeyMenu.open = true;"),
+    )
+    .unwrap();
+    for choice in ["Ctrl+Alt+K", "Ctrl+Alt+Space", "Off"] {
+        assert!(tree.contains(choice), "missing {choice}: {tree}");
+    }
+}
+
+/// Picking a choice writes settings.json's summon_key.
+#[gpui::test]
+fn picking_a_summon_key_writes_it(cx: &mut TestAppContext) {
+    let (writes, _) = settings_after_keys(
+        cx,
+        notification_values("windows", false, json!({})),
+        "this.summonKeyPick('off', cx);",
+        &[],
+        None,
+        "",
+        &[],
+    );
+    assert_eq!(written_settings(&writes)["summon_key"], json!("off"));
+}
+
+/// A key another app holds says so, in the blocked colour.
+#[gpui::test]
+fn a_taken_summon_key_says_another_app_has_it(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let values = notification_values("windows", true, json!({}));
+    let blocked = values["theme"]["blocked"].as_str().unwrap().to_string();
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    let line = tree
+        .lines()
+        .position(|line| line.contains("Another app is using this key. Pick another."))
+        .unwrap_or_else(|| panic!("the taken-key line is drawn: {tree}"));
+    let lines: Vec<&str> = tree.lines().collect();
+    let near = lines[line.saturating_sub(4)..=line].join("\n");
+    assert!(near.contains(&blocked), "it is written in the blocked colour: {near}");
+    assert!(
+        !tree.contains("Brings Kompitum forward with the keyboard in the composer, from any app."),
+        "the taken line replaces the usual one: {tree}"
+    );
+}
+

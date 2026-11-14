@@ -4,7 +4,9 @@
 //! or a real icon.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
+use crate::settings::SummonKey;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -48,6 +50,60 @@ pub fn close_action(system: System, tray: bool) -> CloseAction {
 }
 
 static PRESENT: AtomicBool = AtomicBool::new(false);
+static SUMMON_TAKEN: AtomicBool = AtomicBool::new(false);
+static SUMMON_KEY: AtomicU8 = AtomicU8::new(0);
+
+fn key_code(key: SummonKey) -> u8 {
+    match key {
+        SummonKey::CtrlAltK => 0,
+        SummonKey::CtrlAltSpace => 1,
+        SummonKey::Off => 2,
+    }
+}
+
+/// The RegisterHotKey modifiers (Control, Alt, no repeat) and virtual key; None for off.
+pub fn summon_hotkey(key: SummonKey) -> Option<(u32, u32)> {
+    const MOD_ALT: u32 = 0x0001;
+    const MOD_CONTROL: u32 = 0x0002;
+    const MOD_NOREPEAT: u32 = 0x4000;
+    const VK_SPACE: u32 = 0x20;
+    const VK_K: u32 = 0x4B;
+    let modifiers = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
+    match key {
+        SummonKey::CtrlAltK => Some((modifiers, VK_K)),
+        SummonKey::CtrlAltSpace => Some((modifiers, VK_SPACE)),
+        SummonKey::Off => None,
+    }
+}
+
+/// The key the tray registered, or should register now.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn summon_key() -> SummonKey {
+    match SUMMON_KEY.load(Ordering::SeqCst) {
+        1 => SummonKey::CtrlAltSpace,
+        2 => SummonKey::Off,
+        _ => SummonKey::CtrlAltK,
+    }
+}
+
+/// A live settings change: the tray re-registers the key.
+pub fn set_summon_key(key: SummonKey) {
+    let code = key_code(key);
+    if SUMMON_KEY.swap(code, Ordering::SeqCst) != code {
+        #[cfg(target_os = "windows")]
+        windows::summon_key_changed();
+    }
+}
+
+/// Whether another app holds the summon key, so Settings can say so.
+pub fn summon_taken() -> bool {
+    SUMMON_TAKEN.load(Ordering::SeqCst)
+}
+
+#[cfg(target_os = "windows")]
+fn note_summon_taken(taken: bool) {
+    SUMMON_TAKEN.store(taken, Ordering::SeqCst);
+}
 
 /// Whether the tray icon is in place.
 pub fn present() -> bool {
@@ -59,7 +115,11 @@ pub fn start() -> bool {
     #[cfg(target_os = "windows")]
     {
         static STARTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *STARTED.get_or_init(|| windows::start(&class_name(&crate::mods::app_dir())))
+        *STARTED.get_or_init(|| {
+            let key = crate::settings::load_person().map(|person| person.summon_key).unwrap_or_default();
+            set_summon_key(key);
+            windows::start(&class_name(&crate::mods::app_dir()), key)
+        })
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -115,6 +175,14 @@ mod tests {
         assert_eq!(close_action(System::Windows, false), CloseAction::Close);
         assert_eq!(close_action(System::Linux, true), CloseAction::Close);
         assert_eq!(close_action(System::Linux, false), CloseAction::Close);
+    }
+
+    #[test]
+    fn the_summon_key_carries_control_alt_and_the_key_for_each_choice() {
+        const ALT_CONTROL_NO_REPEAT: u32 = 0x0001 | 0x0002 | 0x4000;
+        assert_eq!(summon_hotkey(SummonKey::CtrlAltK), Some((ALT_CONTROL_NO_REPEAT, 0x4B)));
+        assert_eq!(summon_hotkey(SummonKey::CtrlAltSpace), Some((ALT_CONTROL_NO_REPEAT, 0x20)));
+        assert_eq!(summon_hotkey(SummonKey::Off), None);
     }
 
     #[test]

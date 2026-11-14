@@ -358,6 +358,63 @@ fn a_damaged_memory_is_named_in_the_problems_line() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn the_list_has_open_first_then_superseded_newest_first_with_every_field() {
+    let root = scratch("list");
+    let v = vault(&root);
+    write(
+        &root,
+        "opus/memory/general-old.md",
+        "---\nfrom: opus\nkind: memory\ntitle: Old general\ndate: 2026-11-01\nupdated: 2026-11-01T09:00+00:00\nstatus: open\n---\n\nOld fact.\n",
+    );
+    write(
+        &root,
+        "opus/memory/beta-new.md",
+        "---\nfrom: opus\nkind: memory\nproject: beta\ntitle: Beta newest\ndate: 2026-11-05\nupdated: 2026-11-05T09:00+00:00\nstatus: open\n---\n\nBeta fact.\n",
+    );
+    write(
+        &root,
+        "opus/memory/rule.md",
+        "---\nfrom: opus\nkind: memory\ntitle: Always answer in English\ndate: 2026-11-03\nupdated: 2026-11-03T09:00+00:00\nstanding: true\nreview_after: 2026-12-01\nstatus: open\n---\n\nUse English.\n",
+    );
+    write(
+        &root,
+        "opus/memory/gone.md",
+        "---\nfrom: opus\nkind: memory\nproject: alpha\ntitle: Gone memory\ndate: 2026-10-01\nupdated: 2026-11-07T09:00+00:00\nstatus: superseded\n---\n\nNo longer true.\n",
+    );
+    write(&root, "opus/memory/bad.md", "---\nkind: request\ntitle: Not a memory\n---\n\nBody.\n");
+
+    let list = v.memory_list().unwrap();
+    assert_eq!(list.agent, "opus");
+    let titles: Vec<&str> = list.memories.iter().map(|memory| memory.title.as_str()).collect();
+    assert_eq!(titles, ["Beta newest", "Always answer in English", "Old general", "Gone memory"]);
+    assert_eq!(list.problems.len(), 1, "{:?}", list.problems);
+
+    let json = list.json();
+    assert_eq!(json["agent"], "opus");
+    assert_eq!(json["memories"][0]["path"], "opus/memory/beta-new.md");
+    assert_eq!(json["memories"][0]["title"], "Beta newest");
+    assert_eq!(json["memories"][0]["body"], "Beta fact.\n");
+    assert_eq!(json["memories"][0]["project"], "beta");
+    assert_eq!(json["memories"][0]["standing"], false);
+    assert_eq!(json["memories"][0]["status"], "open");
+    assert!(json["memories"][0]["review_after"].is_null());
+    assert_eq!(json["memories"][0]["updated"], "2026-11-05T09:00+00:00");
+    assert_eq!(json["memories"][1]["standing"], true);
+    assert_eq!(json["memories"][1]["review_after"], "2026-12-01");
+    assert!(json["memories"][1]["project"].is_null());
+    assert_eq!(json["memories"][3]["project"], "alpha");
+    assert_eq!(json["memories"][3]["status"], "superseded");
+
+    let lines = list.human();
+    assert_eq!(lines.lines().filter(|line| line.contains("Beta newest")).count(), 1, "{lines}");
+    assert!(lines.contains("Beta newest · beta"), "{lines}");
+    assert!(lines.contains("Old general"), "{lines}");
+    assert!(lines.find("Old general").unwrap() < lines.find("Gone memory").unwrap(), "{lines}");
+    assert!(lines.contains("bad.md"), "{lines}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn remember_refuses_a_symlinked_agent_folder_and_writes_nothing_outside() {
