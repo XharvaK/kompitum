@@ -495,6 +495,10 @@ pub struct Person {
     /// Light or dark: the system's, or one always.
     #[serde(skip_serializing_if = "Appearance::is_system")]
     pub appearance: Appearance,
+    /// Spinners, loops and arrivals stand still: `true` always, `false` never,
+    /// absent the system's setting.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reduce_motion: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<crate::layout::ThemeChoice>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -599,6 +603,7 @@ impl Default for Person {
             minimum_contrast: 1.0,
             option_as_alt: OptionAsAlt::Auto,
             appearance: Appearance::System,
+            reduce_motion: None,
             theme: None,
             colors: BTreeMap::new(),
             connect: BTreeMap::new(),
@@ -627,6 +632,8 @@ pub struct Settings {
     pub theme_dark: String,
     /// Whether the window is dark now (the person's `appearance`, else the system's).
     pub dark: bool,
+    /// Whether motion stands still now (the person's `reduce_motion`, else the system's).
+    pub reduce_motion: bool,
     /// Any theme color by name (see `theme()` in kompitum.d.ts), `#rrggbb` or `#rrggbbaa`.
     pub colors: BTreeMap<String, String>,
     /// A draggable scroll position thumb at a terminal pane's right edge.
@@ -687,6 +694,7 @@ impl Default for Settings {
             theme_light: DEFAULT_LIGHT.into(),
             theme_dark: DEFAULT_DARK.into(),
             dark: true,
+            reduce_motion: false,
             colors: BTreeMap::new(),
             pane_scrollbars: true,
             terminal_padding: [10.0, 6.0],
@@ -741,6 +749,7 @@ impl Settings {
             theme_light,
             theme_dark,
             dark,
+            reduce_motion: person.reduce_motion.unwrap_or_else(system_reduce_motion),
             colors,
             pane_scrollbars: person.pane_scrollbars,
             terminal_padding: look.terminal_padding.unwrap_or(d.terminal_padding),
@@ -834,6 +843,63 @@ pub fn notes_between_agents() -> bool {
 /// Whether quiet while another app fills the screen is on.
 pub fn quiet_while_fullscreen() -> bool {
     QUIET_WHILE_FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The system's reduce-motion setting as last read; `compose` uses it when
+/// the person hasn't chosen.
+static SYSTEM_REDUCE_MOTION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn system_reduce_motion() -> bool {
+    SYSTEM_REDUCE_MOTION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Reads the system's reduce-motion setting again; returns whether it changed.
+/// Windows answers at once, so the window asks on every poll; the others are
+/// read once per run.
+pub fn refresh_system_motion() -> bool {
+    let now = read_system_reduce_motion();
+    SYSTEM_REDUCE_MOTION.swap(now, std::sync::atomic::Ordering::Relaxed) != now
+}
+
+/// Windows: Settings › Accessibility › Visual effects › Animation effects off.
+#[cfg(windows)]
+fn read_system_reduce_motion() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SPI_GETCLIENTAREAANIMATION, SystemParametersInfoW,
+    };
+    let mut animate: i32 = 1;
+    // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL through the pointer.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            (&mut animate as *mut i32).cast(),
+            0,
+        )
+    };
+    ok != 0 && animate == 0
+}
+
+/// macOS: Accessibility › Display › Reduce motion. GNOME: animations off.
+#[cfg(not(windows))]
+fn read_system_reduce_motion() -> bool {
+    static ONCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ONCE.get_or_init(|| {
+        let (cmd, args, reduced): (&str, &[&str], &str) = if cfg!(target_os = "macos") {
+            ("defaults", &["read", "com.apple.universalaccess", "reduceMotion"], "1")
+        } else {
+            ("gsettings", &["get", "org.gnome.desktop.interface", "enable-animations"], "false")
+        };
+        crate::spawn::command(cmd)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == reduced)
+    })
 }
 
 const ZOOM_MIN: f32 = 0.5;
@@ -1291,6 +1357,29 @@ mod tests {
         assert_eq!(Settings::compose(&person, &win98.look, true).theme, "ink");
     }
 
+    /// The person's `reduce_motion` wins; absent, the system's counts, and
+    /// settings.json doesn't name it.
+    #[test]
+    fn reduce_motion_follows_the_person_then_the_system() {
+        let look = crate::layout::Look::default();
+        let on = Person {
+            reduce_motion: Some(true),
+            ..Person::default()
+        };
+        let off = Person {
+            reduce_motion: Some(false),
+            ..Person::default()
+        };
+        assert!(Settings::compose(&on, &look, true).reduce_motion);
+        assert!(!Settings::compose(&off, &look, true).reduce_motion);
+        assert_eq!(
+            Settings::compose(&Person::default(), &look, true).reduce_motion,
+            system_reduce_motion()
+        );
+        let text = serde_json::to_string(&Person::default()).unwrap();
+        assert!(!text.contains("reduce_motion"), "{text}");
+    }
+
     /// The guide agents read (written to the home folder) explains every
     /// settings.json key.
     #[test]
@@ -1305,6 +1394,7 @@ mod tests {
             notes_between_agents: false,
             quiet_while_fullscreen: false,
             appearance: Appearance::Light,
+            reduce_motion: Some(true),
             theme: Some(crate::layout::ThemeChoice::One(String::new())),
             colors: [("text".into(), String::new())].into(),
             connect: [(

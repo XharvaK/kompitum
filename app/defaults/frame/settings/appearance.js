@@ -1,4 +1,4 @@
-// Settings › Appearance: light or dark, the window's reset, zoom and fonts.
+// Settings › Appearance: light or dark, motion, the window's reset, zoom and fonts.
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -180,6 +180,29 @@ function layoutReset(view, t) {
   });
 }
 
+// Reduce motion: the system's setting, or on or off always (settings.json's `reduce_motion`).
+function motionDropdown(view, t) {
+  const now = view.person.reduce_motion;
+  view.motionMenu ??= {};
+  return dropdown(t, "st-motion", {
+    items: [
+      { value: "", label: "System" },
+      { value: "on", label: "On" },
+      { value: "off", label: "Off" },
+    ],
+    value: now === true ? "on" : now === false ? "off" : "",
+    onPick: (value, cx) => {
+      view.change((p) => {
+        if (value === "") delete p.reduce_motion;
+        else p.reduce_motion = value === "on";
+      }, cx);
+      view.handle.focus();
+    },
+    state: view.motionMenu,
+    width: 160,
+  });
+}
+
 function fontMenu(view, which) {
   view.fontMenus ??= {};
   return (view.fontMenus[which] ??= {});
@@ -243,6 +266,7 @@ export function appearancePage(view, t, cx) {
         .child(div().text_size(13).text_color(t.foreground).child("Theme"))
         .child(appearanceTiles(view, t)),
     )
+    .child(view.row(t, "Reduce motion", "Spinners, loops and arrivals stand still. System follows your computer's setting.", motionDropdown(view, t), "motion"))
     .child(div().h(18))
     .child(view.heading(t, "Size and fonts"))
     .child(

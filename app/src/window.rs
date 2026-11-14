@@ -1530,12 +1530,16 @@ impl AppWindow {
         if settings::load_home_fonts(cx) {
             mods::note_fonts(cx);
         }
+        settings::refresh_system_motion();
         let s = settings::Settings::compose(&self.person, &self.chrome.look, self.system_dark);
         let problems = s.problems();
         if !problems.is_empty() {
             self.report_layout(&problems.join("; "));
         }
-        if settings::set(s) {
+        let changed = settings::set(s);
+        // Spinners, mod loops and arrivals all ask GPUI (`cx.reduce_motion()`).
+        cx.set_reduce_motion(settings::get().reduce_motion);
+        if changed {
             for term in self.terms.values() {
                 term.view.read(cx).refresh_theme();
             }
@@ -7428,7 +7432,7 @@ impl AppWindow {
         }
         self.lead_upkeep(window, cx);
         let dark = is_dark(window.appearance());
-        if dark != self.system_dark {
+        if dark != self.system_dark || settings::refresh_system_motion() {
             self.system_dark = dark;
             self.apply_look(window, cx);
         }

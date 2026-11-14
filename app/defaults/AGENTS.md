@@ -715,6 +715,10 @@ What's about the user, never a look:
   precedence as fonts.
 - `appearance`: `"light"` or `"dark"` always; absent, the system's. A layout
   with a light and a dark theme shows the matching one.
+- `reduce_motion`: `true` stills spinners, mod loops and frames, and the
+  arrival of notifications and popups; `false` keeps them moving; absent, the
+  system's setting (Windows' animation effects, macOS's Reduce motion, GNOME's
+  animations). Mods read the result as `settings().reduce_motion`.
 - `connect`: agent systems joined to Kompitum, by system id:
   `{ "grokbot": { "since": "<when Connect was pressed>", "agent": "<the name its Joined note gave>", "name": "<the system's name>", "link": "<its app's link, like grokbot://>" } }`.
   Settings › Connect writes it; every field is optional, `since` alone means the

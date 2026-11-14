@@ -1226,6 +1226,36 @@ fn rarely_used_settings_fold_under_advanced(cx: &mut TestAppContext) {
     assert!(tree.contains("st-layout-reset"), "{tree}");
 }
 
+/// Appearance offers Reduce motion: the system's setting until the person
+/// picks On or Off.
+#[gpui::test]
+fn appearance_offers_reduce_motion(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("appearance");
+    let mut picked = |setup: Option<&str>| {
+        let tree = describe(
+            cx,
+            &staged,
+            "frame/settings",
+            true,
+            p.clone(),
+            updates("current", "current"),
+            setup,
+        )
+        .unwrap();
+        assert!(tree.contains("Reduce motion"), "{tree}");
+        let at = tree.find("st-motion").unwrap_or_else(|| panic!("{tree}"));
+        tree[at..].lines().take(8).collect::<Vec<_>>().join("
+")
+    };
+    let system = picked(None);
+    assert!(system.contains("System"), "{system}");
+    let on = picked(Some("this.person = { reduce_motion: true };"));
+    assert!(on.contains("\"On\""), "{on}");
+}
+
 /// Appearance draws the three theme tiles and a sample in the chosen fonts.
 #[gpui::test]
 fn appearance_offers_three_tiles_and_a_sample(cx: &mut TestAppContext) {
