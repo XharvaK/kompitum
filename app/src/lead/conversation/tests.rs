@@ -37,6 +37,98 @@ fn notice(item: &Item) -> &str {
 }
 
 #[test]
+fn the_apps_own_model_command_is_not_drawn_as_the_owners_words() {
+    let mut c = Conversation::default();
+    c.app_sent.push("/model opus".into());
+    c = fold(
+        c,
+        &Event::UserPromptSubmit {
+            prompt: "/model opus".into(),
+        },
+    );
+    assert!(c.items.is_empty(), "{:?}", c.items);
+    assert!(c.app_sent.is_empty(), "the echo consumes the app's command");
+}
+
+#[test]
+fn a_btw_question_is_drawn_and_shows_the_terminal() {
+    let c = fold(
+        Conversation::default(),
+        &Event::UserPromptSubmit {
+            prompt: "/btw what is x".into(),
+        },
+    );
+    assert_eq!(owner_text(&c.items[0]), "/btw what is x");
+    assert_eq!(c.reveal, Some(Reveal::Auto));
+    assert_eq!(
+        c.reveal_why.as_deref(),
+        Some("Claude is answering a side question in its terminal.")
+    );
+}
+
+#[test]
+fn a_word_beginning_with_btw_is_not_the_command() {
+    let c = fold(
+        Conversation::default(),
+        &Event::UserPromptSubmit {
+            prompt: "/btwx".into(),
+        },
+    );
+    assert_eq!(c.reveal, None);
+}
+
+#[test]
+fn an_ordinary_prompt_hides_the_btw_reveal() {
+    let c = fold(
+        Conversation::default(),
+        &Event::UserPromptSubmit {
+            prompt: "/btw what is x".into(),
+        },
+    );
+    let c = fold(
+        c,
+        &Event::UserPromptSubmit {
+            prompt: "and now the real work".into(),
+        },
+    );
+    assert_eq!(c.terminal, TerminalVis::Hidden);
+    assert_eq!(c.reveal, None);
+}
+
+#[test]
+fn the_same_words_typed_by_the_owner_are_drawn() {
+    let c = fold(
+        Conversation::default(),
+        &Event::UserPromptSubmit {
+            prompt: "/model opus".into(),
+        },
+    );
+    assert_eq!(owner_text(&c.items[0]), "/model opus");
+}
+
+#[test]
+fn two_commands_the_app_sent_are_both_dropped() {
+    let mut c = Conversation {
+        app_sent: vec!["/model opus".into(), "/effort high".into()],
+        ..Default::default()
+    };
+    c = fold(
+        c,
+        &Event::UserPromptSubmit {
+            prompt: "/model opus".into(),
+        },
+    );
+    c = fold(
+        c,
+        &Event::UserPromptSubmit {
+            prompt: "/effort high".into(),
+        },
+    );
+    assert!(c.items.is_empty(), "{:?}", c.items);
+    assert!(c.app_sent.is_empty());
+}
+
+#[test]
 fn a_turn_with_three_text_batches_and_two_tools() {
     let mut c = Conversation::default();
     c = fold(

@@ -883,6 +883,8 @@ pub struct AppWindow {
     composer_px: HashMap<String, f32>,
     /// Blocking hooks waiting for the Owner's answer, by ask id.
     lead_asks: HashMap<String, PendingAsk>,
+    /// Ask ids whose taskbar flash was already asked for: one flash per ask.
+    flashed_asks: HashSet<String>,
     /// Hook connections that closed before their request reached the app.
     closed_hooks: HashSet<String>,
     listed_once: bool,
@@ -1022,6 +1024,7 @@ impl AppWindow {
             lead_restart_quiet: false,
             composer_px: HashMap::new(),
             lead_asks: HashMap::new(),
+            flashed_asks: HashSet::new(),
             closed_hooks: HashSet::new(),
             listed_once: false,
             start_lead: !cfg!(test),
@@ -3295,6 +3298,14 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A blocked agent flashes the taskbar button until the window comes back; a finished one never does.
+        if crate::attention::should_flash(
+            alert == model::Alert::Blocked,
+            self.window_active,
+            crate::quiet::quiet(),
+        ) {
+            crate::attention::request(window);
+        }
         if settings::get().sounds.enabled {
             crate::sound::play(if alert == model::Alert::Blocked {
                 "blocked"
@@ -4408,7 +4419,13 @@ impl AppWindow {
     /// `lead.hook`: Claude's hooks. SessionStart records the conversation to
     /// resume; async events set the lead's state; a blocking event becomes an
     /// ask whose reply waits for the Owner.
-    fn lead_hook(&mut self, args: &Value, reply: Option<std::sync::mpsc::Sender<Value>>, cx: &mut Context<Self>) {
+    fn lead_hook(
+        &mut self,
+        args: &Value,
+        reply: Option<std::sync::mpsc::Sender<Value>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let event = args.get("event").and_then(Value::as_str).unwrap_or_default();
         let terminal = args.get("terminal").and_then(Value::as_str).unwrap_or_default().to_owned();
         let input = args.get("input").cloned().unwrap_or(Value::Null);
@@ -4520,7 +4537,7 @@ impl AppWindow {
                 .filter(|id| !id.is_empty())
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("ask-{}", crate::lead::now_nanos()));
-            self.hold_ask(crate::lead::Ask { id, terminal, kind, input }, reply, cx);
+            self.hold_ask(crate::lead::Ask { id, terminal, kind, input }, reply, window, cx);
             return;
         }
         let folded = if from_lead {
@@ -4576,11 +4593,23 @@ impl AppWindow {
 
     /// Holds a blocking hook's reply and shows its ask, replacing an older one
     /// for the same terminal without an answer.
-    fn hold_ask(&mut self, ask: crate::lead::Ask, reply: std::sync::mpsc::Sender<Value>, cx: &mut Context<Self>) {
+    fn hold_ask(
+        &mut self,
+        ask: crate::lead::Ask,
+        reply: std::sync::mpsc::Sender<Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.closed_hooks.remove(&ask.id) {
             // Its socket closed before this request arrived: no one wants the answer.
             let _ = reply.send(json!({ "output": null }));
             return;
+        }
+        let first_time = self.flashed_asks.insert(ask.id.clone());
+        if first_time
+            && crate::attention::should_flash(true, self.window_active, crate::quiet::quiet())
+        {
+            crate::attention::request(window);
         }
         let older: Vec<String> = self
             .lead_asks
@@ -4690,6 +4719,76 @@ impl AppWindow {
             .detach();
     }
 
+    /// The lead's saved model and reasoning, from settings.json.
+    fn saved_lead_change() -> (Option<String>, Option<String>) {
+        settings::load_person()
+            .ok()
+            .and_then(|person| person.lead)
+            .map(|lead| (lead.model, lead.effort))
+            .unwrap_or((None, None))
+    }
+
+    /// Sends Claude's `/model` and `/effort` for the saved values now, when the lead can take them;
+    /// returns the commands sent, or None while the lead can't. Each text waits in the conversation's
+    /// `app_sent`, so its echoed hook doesn't draw it as the Owner's words.
+    fn apply_lead_change(&mut self, terminal: &str, cx: &mut Context<Self>) -> Option<Vec<String>> {
+        if crate::lead::apply_refusal(self.lead_sessions.get(terminal)).is_some() {
+            return None;
+        }
+        let (saved_model, saved_effort) = Self::saved_lead_change();
+        let running = mods::shared("lead.running").unwrap_or(Value::Null);
+        let mine = running.get("terminal").and_then(Value::as_str) == Some(terminal);
+        let running_model = mine
+            .then(|| running.get("model").and_then(Value::as_str).map(str::to_owned))
+            .flatten();
+        let running_effort = mine
+            .then(|| running.get("effort").and_then(Value::as_str).map(str::to_owned))
+            .flatten();
+        let texts = crate::lead::apply_commands(
+            running_model.as_deref(),
+            running_effort.as_deref(),
+            saved_model.as_deref(),
+            saved_effort.as_deref(),
+        );
+        let session = self.lead_sessions.entry(terminal.to_owned()).or_default();
+        session.conversation.app_sent.extend(texts.iter().cloned());
+        session.apply_held = false;
+        if !texts.is_empty() {
+            self.send_lead_apply(terminal.to_owned(), texts.clone(), cx);
+        }
+        // What this lead runs now, which the composer's chip reads.
+        let mut running = match running {
+            Value::Object(map) if mine => map,
+            _ => serde_json::Map::new(),
+        };
+        running.entry("program").or_insert_with(|| json!("claude"));
+        running.insert("terminal".into(), json!(terminal));
+        running.insert("model".into(), json!(saved_model));
+        running.insert("effort".into(), json!(saved_effort));
+        mods::set_shared("lead.running".into(), Value::Object(running));
+        self.publish_lead(cx);
+        Some(texts)
+    }
+
+    /// Sends the app's model and reasoning commands to the lead, in order, off the window's thread.
+    fn send_lead_apply(&mut self, terminal: String, texts: Vec<String>, cx: &mut Context<Self>) {
+        let core = self.core.clone();
+        let guard = crate::inflight::track();
+        cx.background_executor()
+            .spawn(async move {
+                let _guard = guard;
+                for text in texts {
+                    if let Err(error) = core.call(
+                        "terminal.send",
+                        json!({ "terminal": &terminal, "text": &text }),
+                    ) {
+                        tracing::warn!("the lead wasn't sent {text:?}: {error}");
+                    }
+                }
+            })
+            .detach();
+    }
+
     /// The lead's upkeep, run by `poll` and at most once every five seconds: a compaction flag that
     /// has stuck is cleared, a lead whose program the core lost is started again, and a waiting lead
     /// that is due is compacted (`auto_compact_rule`).
@@ -4736,6 +4835,10 @@ impl AppWindow {
         if lost && self.lead_restarts_tried.insert(terminal.clone()) {
             self.restart_lost_lead(terminal, name, false, window, cx);
             return;
+        }
+        // A pick the lead couldn't take when it was made goes as soon as it waits again.
+        if self.lead_sessions.get(&terminal).is_some_and(|session| session.apply_held) {
+            self.apply_lead_change(&terminal, cx);
         }
         if self.lead_check_running || self.lead_compact_after.is_some_and(|after| started < after) {
             return;
@@ -6423,6 +6526,29 @@ impl AppWindow {
                 self.restart_lost_lead(terminal, name, true, window, cx);
                 self.reply = Some(json!({ "restarting": true }));
             }
+            "lead.apply" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let person = settings::load_person().ok();
+                let program = person
+                    .and_then(|person| person.lead)
+                    .and_then(|lead| lead.program)
+                    .filter(|program| !program.is_empty())
+                    .unwrap_or_else(|| "claude".to_owned());
+                if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
+                    return self.fail(format!("{terminal:?} isn't the lead's terminal"));
+                }
+                if program != "claude" {
+                    return self.fail("This lead takes the change when it restarts.");
+                }
+                if crate::lead::apply_refusal(self.lead_sessions.get(&terminal)).is_some() {
+                    self.lead_sessions.entry(terminal).or_default().apply_held = true;
+                    self.publish_lead(cx);
+                    self.reply = Some(json!({ "held": true }));
+                    return;
+                }
+                let sent = self.apply_lead_change(&terminal, cx).unwrap_or_default();
+                self.reply = Some(json!({ "sent": sent }));
+            }
             "lead.mode" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
                 let person = settings::load_person().ok();
@@ -7220,7 +7346,7 @@ impl AppWindow {
             Request::Control { cmd, reply } => {
                 if cmd.get("do").and_then(Value::as_str) == Some("lead.hook") {
                     let args = cmd.get("args").cloned().unwrap_or(Value::Null);
-                    self.lead_hook(&args, Some(reply), cx);
+                    self.lead_hook(&args, Some(reply), window, cx);
                 } else if cmd.get("do").and_then(Value::as_str) == Some("lead.setup") {
                     match lead_setup_check(settings::load_person()) {
                         Ok(()) => start_lead_setup(move |result| {
@@ -11272,19 +11398,19 @@ export default class Probe extends View {
             let hook = |event: &str, id: &str, input: serde_json::Value| {
                 json!({"event": event, "terminal": "t1", "hook_id": id, "input": input})
             };
-            this.lead_hook(&hook("UserPromptSubmit", "", json!({})), None, cx);
+            this.lead_hook(&hook("UserPromptSubmit", "", json!({})), None, window, cx);
             assert_eq!(
                 this.lead_sessions["t1"].state,
                 Some(State::Working),
                 "a prompt sets working"
             );
-            this.lead_hook(&hook("Stop", "", json!({})), None, cx);
+            this.lead_hook(&hook("Stop", "", json!({})), None, window, cx);
             assert_eq!(
                 this.lead_sessions["t1"].state,
                 Some(State::Waiting),
                 "Stop sets waiting"
             );
-            this.lead_hook(&hook("Notification", "", json!({})), None, cx);
+            this.lead_hook(&hook("Notification", "", json!({})), None, window, cx);
             assert_eq!(
                 this.lead_sessions["t1"].state,
                 Some(State::Waiting),
@@ -11299,6 +11425,7 @@ export default class Probe extends View {
                     json!({"tool_name": "Bash", "tool_input": {"command": "ls"}}),
                 ),
                 Some(first),
+                window,
                 cx,
             );
             assert_eq!(
@@ -11323,8 +11450,8 @@ export default class Probe extends View {
                 "a2",
                 json!({"tool_name": "Bash", "tool_input": {"command": "pwd"}}),
             );
-            this.lead_hook(&newer, Some(second), cx);
-            this.lead_hook(&hook("Notification", "", json!({})), None, cx);
+            this.lead_hook(&newer, Some(second), window, cx);
+            this.lead_hook(&hook("Notification", "", json!({})), None, window, cx);
             assert_eq!(
                 this.lead_sessions["t1"].state,
                 Some(State::Asking),
@@ -11367,6 +11494,7 @@ export default class Probe extends View {
                     json!({"tool_name": "Bash", "tool_input": {"command": "whoami"}}),
                 ),
                 Some(third),
+                window,
                 cx,
             );
             this.lead_hook_closed("a3", cx);
@@ -11391,6 +11519,7 @@ export default class Probe extends View {
                     json!({"tool_name": "Bash", "tool_input": {"command": "date"}}),
                 ),
                 Some(fourth),
+                window,
                 cx,
             );
             let early = fourth_reply
@@ -11398,6 +11527,55 @@ export default class Probe extends View {
                 .unwrap();
             assert!(early["output"].is_null());
             assert!(this.lead_sessions["t1"].ask.is_none());
+        });
+    }
+
+    #[test]
+    fn attention_flashes_once_for_a_new_alert_or_ask() {
+        in_own_process("attention_flash");
+    }
+
+    /// A blocked agent flashes the taskbar button when the window isn't in front; a finished one, an
+    /// active window and a quiet full-screen app don't. Each ask flashes once, however often it arrives.
+    #[gpui::test]
+    fn attention_flash(cx: &mut gpui::TestAppContext) {
+        use crate::model::Alert;
+        use serde_json::json;
+        if !running_alone("attention_flash") {
+            return;
+        }
+        let (view, cx) =
+            open_window(cx, "unused", "", json!({ "id": "root", "type": "block", "content": { "tab": "active" } }));
+        view.update_in(cx, |this, window, cx| {
+            // Quiet would ask the system about a full-screen app: off, the test's own answer is all that counts.
+            crate::settings::set(crate::settings::Settings {
+                quiet_while_fullscreen: false,
+                ..Default::default()
+            });
+            this.live.insert("t1".into(), json!({"state": "live"}));
+            crate::attention::reset_flashes();
+            this.window_active = false;
+            this.alert("t1", Alert::Blocked, false, window, cx);
+            assert_eq!(crate::attention::flashes(), 1, "a blocked agent flashes an inactive window");
+            this.window_active = true;
+            this.alert("t1", Alert::Blocked, false, window, cx);
+            assert_eq!(crate::attention::flashes(), 1, "the active window doesn't flash");
+            this.window_active = false;
+            this.alert("t1", Alert::Done, false, window, cx);
+            assert_eq!(crate::attention::flashes(), 1, "a done alert never flashes");
+
+            this.live.insert("t1".into(), json!({"state": "live", "labels": {"lead": "claude"}}));
+            crate::attention::reset_flashes();
+            let ask = json!({
+                "event": "PermissionRequest", "terminal": "t1", "hook_id": "a1",
+                "input": {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+            });
+            let (first, _first_reply) = std::sync::mpsc::channel();
+            this.lead_hook(&ask, Some(first), window, cx);
+            assert_eq!(crate::attention::flashes(), 1, "a new ask flashes");
+            let (again, _again_reply) = std::sync::mpsc::channel();
+            this.lead_hook(&ask, Some(again), window, cx);
+            assert_eq!(crate::attention::flashes(), 1, "the same ask twice flashes once");
         });
     }
 

@@ -631,14 +631,17 @@ The main ones:
   reveal by hand stays until this hides it),
   `lead.fit {terminal, px}` (the composer's height for its text, 44 to 320 px, while the lead isn't asking),
   `lead.compact {terminal}` (have the lead compact its conversation now: the app sends Claude's own `/compact`,
-  the one text it ever sends the lead; refused unless the lead is waiting with no card open; the app also sends
+  one of the texts the app sends the lead; refused unless the lead is waiting with no card open; the app also sends
   it by itself once the lead has waited ten minutes with 333K tokens or more, or with 222K or more in the five
   minutes before Claude's prompt cache expires, and never while the Owner has a draft, a card is open, the
   lead's terminal is shown, or a worker task is running, queued or in review),
+  `lead.apply {terminal}` (send Claude's `/model` and `/effort` for the saved pick now; a pick made while it works
+  waits for it to wait. Another lead program refuses with "This lead takes the change when it restarts."),
   `lead.restart {terminal}` (end the lead and start it again with the saved model and reasoning, in the same
   conversation; refused while it is working, asking or tidying up). The app sets the shared value
-  `lead.running`, `{program, terminal, model, effort}`: what the running lead was started with, which the composer's
-  chip reads (`shared("lead.running")`) to show its reasoning and a dot while a saved change waits for a restart.
+  `lead.running`, `{program, terminal, model, effort}`: what the running lead was started with and last changed
+  to, which the composer's chip reads (`shared("lead.running")`) to show its reasoning and a dot while a saved
+  change waits.
   `lead.mode {terminal}` (press Shift+Tab in the lead's terminal for the Owner's click on the mode word: Claude Code's
   next permission mode; refused while it asks, shows a menu or tidies up). `lead()` carries `permission_mode` (from
   Claude Code's hooks) and `mode_guessed` (true from a click until the next hook says the mode).
@@ -698,7 +701,9 @@ What's about the user, never a look:
 - `sounds`: `{ "enabled": true, "done": "<file>", "blocked": "<file>" }`.
   When an agent needs the person, or finishes while they aren't looking at
   it, Kompitum plays a sound and (unless they're looking) posts a toast that
-  goes there when clicked. `done` / `blocked` replace the bundled MP3s
+  goes there when clicked. The taskbar button flashes when an agent or the
+  lead needs you and Kompitum isn't in front, except while another app fills
+  the screen. `done` / `blocked` replace the bundled MP3s
   (path absolute or relative to `~/.config/kompitum-app`). Changes apply live,
   including the Play buttons in Settings > Notifications.
 - `core`: the kompitum-core binary to use, when it isn't where Kompitum looks
@@ -1074,6 +1079,9 @@ All of it is in `kompitum.d.ts`. In short:
   resolves with the folder or null.
   `leadCommands()`: the lead's `/` commands, `{name, hint, description, source}`
   (`project`, `user`, `plugin` or `built-in`), sorted by name; runs off the UI thread.
+  `listDir(path)`: one folder's entries for the `@` list, `{name, dir}`, folders
+  first, then files, each sorted case-insensitively; `.git` left out, at most 500,
+  and a missing folder is empty. A relative path starts at the lead's folder.
 - Files: `readTextFile(path, { on })` (here, or on that machine),
   `writeTextFile(path, text, expected)` (here only), and
   `watchFolder(dir)` (here only; poll a remote space's folder): resolves with the changed paths the next time anything

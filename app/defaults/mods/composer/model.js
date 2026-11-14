@@ -127,14 +127,43 @@ export default {
     cx.notify();
   },
 
+  // After a pick is saved, tell the running lead: Claude Code applies it with its own /model or /effort.
+  applyLead(cx) {
+    const { started } = this.leadPending();
+    if (started) run("lead.apply", { terminal: this.terminal });
+    cx.notify();
+  },
+
   restartNow(cx) {
     run("lead.restart", { terminal: this.terminal });
     this.modelOpen = false;
     cx.notify();
   },
 
-  // The strip under either view while a saved change waits: Restart now is live only while the lead waits.
+  // Whether the strip under the menu shows: a Claude lead shows it while the pick waits for this turn
+  // to end, and another program while the saved change waits for its restart.
+  showRestartStrip() {
+    if (this.leadProgram().key === "claude") return leadOf()?.apply_held === true;
+    return this.leadPending().pending;
+  },
+
+  // The strip under either view: for Claude the pick goes when this turn ends; another lead needs a
+  // restart, whose Restart now is live only while the lead waits.
   restartStrip(t) {
+    if (this.leadProgram().key === "claude") {
+      return h_flex()
+        .id("composer-restart-strip")
+        .w_full()
+        .mt(6)
+        .pt(8)
+        .px(8)
+        .pb(4)
+        .gap(8)
+        .items_center()
+        .border_t_1()
+        .border_color(t.border)
+        .child(div().flex_1().text_size(12).text_color(t.dim).child("Applies when Claude finishes this turn."));
+    }
     const live = this.state !== "working" && !this.ask && leadOf()?.compacting !== true;
     let button = h_flex()
       .id("composer-restart")
@@ -385,7 +414,7 @@ export default {
             .child(div().id("composer-menu-divider").w(1).self_stretch().mx(4).bg(t.border))
             .child(this.levelsView(t, entry, lead))),
       )
-      .when(this.leadPending().pending, (el) => el.child(this.restartStrip(t)));
+      .when(this.showRestartStrip(), (el) => el.child(this.restartStrip(t)));
     // It sits by Send, so its menu opens upward from its right edge, inside the box.
     return Popover.new("composer-model-menu")
       .anchor("bottom_right")

@@ -109,6 +109,64 @@ fn the_lead_compacts_only_while_it_waits_with_no_card_open() {
 }
 
 #[test]
+fn a_change_goes_when_the_lead_waits_and_a_tidy_up_only_delays_it() {
+    assert!(apply_refusal(None).is_some());
+    let mut session = Session::default();
+    assert_eq!(apply_refusal(Some(&session)), Some("the lead hasn't started yet"));
+    session.state = Some(State::Working);
+    assert_eq!(
+        apply_refusal(Some(&session)),
+        compact_refusal(Some(&session)),
+        "a working lead says the same words as a compaction"
+    );
+    session.state = Some(State::Waiting);
+    assert_eq!(apply_refusal(Some(&session)), None);
+    session.compacting = true;
+    assert_eq!(
+        apply_refusal(Some(&session)),
+        Some("Claude is tidying up: the change goes when it's done")
+    );
+    session.compacting = false;
+    session.ask = Some(Ask {
+        id: "a1".into(),
+        terminal: "t1".into(),
+        kind: AskKind::Permission,
+        input: Value::Null,
+    });
+    assert_eq!(
+        apply_refusal(Some(&session)),
+        Some("Claude is asking something: answer it first")
+    );
+}
+
+#[test]
+fn a_pick_sends_only_the_commands_that_change_what_runs() {
+    assert_eq!(apply_commands(None, None, None, None), Vec::<String>::new());
+    assert_eq!(
+        apply_commands(Some("opus"), Some("high"), Some("opus"), Some("high")),
+        Vec::<String>::new(),
+        "the saved values already run"
+    );
+    assert_eq!(
+        apply_commands(Some("opus"), Some("high"), Some("sonnet"), None),
+        vec!["/model sonnet"]
+    );
+    assert_eq!(
+        apply_commands(Some("opus"), Some("high"), None, Some("low")),
+        vec!["/effort low"]
+    );
+    assert_eq!(
+        apply_commands(Some("opus"), None, Some("sonnet"), Some("low")),
+        vec!["/model sonnet", "/effort low"],
+        "the model comes first"
+    );
+    assert_eq!(
+        apply_commands(None, None, Some("haiku"), Some("max")),
+        vec!["/model haiku", "/effort max"]
+    );
+}
+
+#[test]
 fn a_compact_command_is_not_a_turn_and_an_asked_for_compaction_ends_waiting() {
     let prompt = |text: &str| json!({ "prompt": text });
     assert_eq!(state_after_hook("UserPromptSubmit", &prompt("hello")), Some(State::Working));

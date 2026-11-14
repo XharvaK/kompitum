@@ -39,6 +39,10 @@ pub struct Conversation {
     /// Assistant messages by `message_id`. Not saved: a resumed lead reads its transcript.
     #[serde(skip)]
     messages: BTreeMap<String, Message>,
+    /// The app's own `/model` and `/effort` texts, waiting for Claude's hook to echo them: they are
+    /// not the Owner's words, so they are not drawn. Not saved.
+    #[serde(skip)]
+    pub app_sent: Vec<String>,
 }
 
 /// One assistant message while its batches arrive. Batches can come out of order,
@@ -392,7 +396,13 @@ fn on_submit(conversation: &mut Conversation, prompt: &str) {
     if is_compact_command(prompt) {
         return;
     }
-    if conversation.reveal == Some(Reveal::Auto) && !is_picker_command(prompt) {
+    // The app's own model and reasoning commands: its words, not the Owner's, and gone once echoed.
+    if let Some(at) = conversation.app_sent.iter().position(|sent| sent == prompt) {
+        conversation.app_sent.remove(at);
+        return;
+    }
+    let side_question = prompt == "/btw" || prompt.starts_with("/btw ");
+    if conversation.reveal == Some(Reveal::Auto) && !is_picker_command(prompt) && !side_question {
         conversation.hide();
     }
     if !prompt.is_empty() {
@@ -403,7 +413,12 @@ fn on_submit(conversation: &mut Conversation, prompt: &str) {
         });
         conversation.touched();
     }
-    if is_picker_command(prompt) && conversation.reveal != Some(Reveal::Manual) {
+    if side_question && conversation.reveal != Some(Reveal::Manual) {
+        conversation.show(
+            Reveal::Auto,
+            Some("Claude is answering a side question in its terminal.".into()),
+        );
+    } else if is_picker_command(prompt) && conversation.reveal != Some(Reveal::Manual) {
         let why = format!("Claude is showing its {} menu.", prompt.trim());
         conversation.show(Reveal::Auto, Some(why));
     }

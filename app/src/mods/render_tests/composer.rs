@@ -139,7 +139,16 @@ fn with_shared(mut values: BTreeMap<String, Value>, shared: Value) -> BTreeMap<S
 }
 
 fn running_lead(terminal: &str, model: &str, effort: &str) -> Value {
-    json!({ "lead.running": { "program": "claude", "terminal": terminal, "model": model, "effort": effort } })
+    running_program("claude", terminal, model, effort)
+}
+
+fn running_program(program: &str, terminal: &str, model: &str, effort: &str) -> Value {
+    json!({ "lead.running": { "program": program, "terminal": terminal, "model": model, "effort": effort } })
+}
+
+/// The saved lead for another program, for the restart strip it still shows.
+fn saved_program_with_folder(program: &str, model: &str, effort: &str) -> Value {
+    json!({"lead": {"program": program, "model": model, "effort": effort, "folder": "C:/work"}})
 }
 
 /// The saved lead for the live tests: a folder is set, so the composer doesn't ask for one.
@@ -184,14 +193,18 @@ fn restart_button_line(tree: &str) -> &str {
     tree.lines().find(|line| line.contains("Str(\"composer-restart\")")).unwrap_or_default()
 }
 
-/// Restart now is drawn under the models view while a change waits, live while the lead waits, and runs
-/// lead.restart for this lead. The test window clips the strip's row, so the click is not used: the setup calls
-/// the same method the click calls.
+/// Another program restarts: Restart now is drawn under the models view while a change waits, live
+/// while the lead waits, and runs lead.restart for this lead. A Claude lead applies its pick instead,
+/// so its strip has no button. The test window clips the strip's row, so the click is not used: the
+/// setup calls the same method the click calls.
 #[gpui::test]
 fn restart_now_runs_lead_restart(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
-    let mut values = with_shared(usage_values(Value::Null, json!({})), running_lead("t1", "opus", "low"));
-    values.insert("person".into(), saved_lead_with_folder("opus", "high"));
+    let mut values = with_shared(
+        usage_values(Value::Null, json!({})),
+        running_program("codex", "t1", "gpt", "low"),
+    );
+    values.insert("person".into(), saved_program_with_folder("codex", "gpt", "high"));
     let tree = composer_draws(cx, values.clone(), Some("this.modelOpen = true;"));
     assert!(restart_button_line(&tree).contains("on_click"), "{tree}");
     let effects = composer_live_run_after_clicks(cx, values, "this.modelOpen = true; this.restartNow(cx);", &[]);
@@ -203,15 +216,15 @@ fn restart_now_runs_lead_restart(cx: &mut TestAppContext) {
     );
 }
 
-/// While the lead works the button is drawn dim with its busy tooltip, and has no click.
+/// While another program's lead works the button is drawn dim with its busy tooltip, and has no click.
 #[gpui::test]
 fn restart_now_waits_while_the_lead_works(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let mut values = with_shared(
         usage_values(Value::Null, json!({"state": "working"})),
-        running_lead("t1", "opus", "low"),
+        running_program("codex", "t1", "gpt", "low"),
     );
-    values.insert("person".into(), saved_lead_with_folder("opus", "high"));
+    values.insert("person".into(), saved_program_with_folder("codex", "gpt", "high"));
     let tree = composer_draws(cx, values, Some("this.modelOpen = true;"));
     assert!(!restart_button_line(&tree).contains("on_click"), "{tree}");
     assert!(tree.contains("The lead is busy. Restart when it's done."), "{tree}");
@@ -1803,6 +1816,264 @@ fn each_plan_approval_button_sends_its_mode(cx: &mut TestAppContext) {
             "{id}: {effects:?}"
         );
     }
+}
+
+/// A model pick is saved and then applied to the running lead: one lead.apply, for this terminal.
+#[gpui::test]
+fn a_model_pick_applies_now(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let mut values = with_shared(usage_values(Value::Null, json!({})), running_lead("t1", "opus", "high"));
+    values.insert("person".into(), saved_lead_with_folder("opus", "high"));
+    let effects = composer_live_run_after_clicks(cx, values, "this.modelOpen = true;", &["composer-model-sonnet"]);
+    let applies: Vec<_> = effects
+        .iter()
+        .filter(|args| args.first() == Some(&json!("lead.apply")))
+        .collect();
+    assert_eq!(applies.len(), 1, "one apply per pick: {effects:?}");
+    assert_eq!(applies[0].get(1), Some(&json!({"terminal": "t1"})), "{effects:?}");
+}
+
+/// An effort pick does the same.
+#[gpui::test]
+fn an_effort_pick_applies_now(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let mut values = with_shared(usage_values(Value::Null, json!({})), running_lead("t1", "opus", "high"));
+    values.insert("person".into(), saved_lead_with_folder("opus", "high"));
+    let effects = composer_live_run_after_clicks(cx, values, "this.modelOpen = true;", &["composer-level-low"]);
+    let applies = effects
+        .iter()
+        .filter(|args| args.first() == Some(&json!("lead.apply")))
+        .count();
+    assert_eq!(applies, 1, "{effects:?}");
+}
+
+/// While a Claude pick waits for the turn to end the strip says so, and offers no Restart button.
+#[gpui::test]
+fn a_held_change_says_it_applies_when_claude_finishes(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_draws(
+        cx,
+        usage_values(Value::Null, json!({"apply_held": true})),
+        Some("this.modelOpen = true;"),
+    );
+    assert!(tree.contains("Applies when Claude finishes this turn."), "{tree}");
+    assert!(tree.contains("composer-restart-strip"), "{tree}");
+    assert!(!tree.contains("Restart now"), "{tree}");
+    assert!(!tree.contains("Str(\"composer-restart\")"), "{tree}");
+}
+
+/// Another lead program still waits for a restart, and still offers Restart now.
+#[gpui::test]
+fn another_program_still_restarts(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let mut values = usage_values(Value::Null, json!({}));
+    values.insert(
+        "person".into(),
+        json!({"lead": {"program": "codex", "model": "gpt", "effort": "high", "folder": "C:/work"}}),
+    );
+    let values = with_shared(
+        values,
+        json!({"lead.running": {"program": "codex", "terminal": "t1", "model": "gpt", "effort": "low"}}),
+    );
+    let tree = composer_draws(cx, values, Some("this.modelOpen = true;"));
+    assert!(tree.contains("Restart now"), "{tree}");
+    assert!(!tree.contains("Applies when Claude finishes this turn."), "{tree}");
+}
+
+/// An image chip starts with a 16 px thumbnail; a text file's chip has none.
+#[gpui::test]
+fn an_image_chip_has_a_thumbnail_and_other_files_dont(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_draws(
+        cx,
+        usage_values(Value::Null, json!({})),
+        Some("this.addChip('/fixture/pic.PNG'); this.addChip('/fixture/notes.txt');"),
+    );
+    let image = tree
+        .lines()
+        .find(|line| line.contains("image \"/fixture/pic.PNG\""))
+        .unwrap_or_else(|| panic!("no thumbnail for the image chip: {tree}"));
+    assert!(image.contains(".w[Number(16.0)]"), "{image}");
+    assert!(image.contains(".h[Number(16.0)]"), "{image}");
+    assert!(image.contains(".rounded[Number(3.0)]"), "{image}");
+    assert!(!tree.contains("image \"/fixture/notes.txt\""), "{tree}");
+}
+
+/// The `@` list's values: this folder's entries keyed by the path the list asks for.
+fn file_values(dirs: Value) -> BTreeMap<String, Value> {
+    let mut values = usage_values(Value::Null, json!({}));
+    values.insert("listDirs".into(), dirs);
+    values
+}
+
+fn file_tree(cx: &mut TestAppContext, dirs: Value, text: &str) -> String {
+    let staged = Staged::new();
+    let setup = list_setup(text);
+    describe_settled(cx, &staged, "mods/composer", file_values(dirs), Some(&setup)).unwrap()
+}
+
+fn files_in_root() -> Value {
+    json!({
+        "": [
+            {"name": "src", "dir": true},
+            {"name": "main.rs", "dir": false},
+            {"name": "README.md", "dir": false}
+        ]
+    })
+}
+
+/// The `@` list opens at a start and after a space, never inside a word.
+#[gpui::test]
+fn the_at_list_opens_at_a_start_and_after_a_space(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    for text in ["@", "hello @"] {
+        let tree = file_tree(cx, files_in_root(), text);
+        assert!(list_drawn(&tree), "{text:?}: {tree}");
+        assert!(tree.contains("main.rs"), "{text:?}: {tree}");
+    }
+    let tree = file_tree(cx, files_in_root(), "me@x");
+    assert!(!list_drawn(&tree), "{tree}");
+}
+
+/// Names match their prefix, and a name starting with `.` waits for a `.` prefix.
+#[gpui::test]
+fn the_at_list_filters_by_prefix_and_hides_dot_names(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let dirs = json!({"": [
+        {"name": ".env", "dir": false},
+        {"name": "main.rs", "dir": false},
+        {"name": "README.md", "dir": false}
+    ]});
+    let tree = file_tree(cx, dirs.clone(), "@ma");
+    assert!(tree.contains("main.rs"), "{tree}");
+    assert!(!tree.contains("README.md"), "{tree}");
+    let tree = file_tree(cx, dirs.clone(), "@");
+    assert!(!tree.contains(".env"), "{tree}");
+    let tree = file_tree(cx, dirs, "@.");
+    assert!(tree.contains(".env"), "{tree}");
+    assert!(!tree.contains("main.rs"), "{tree}");
+}
+
+/// A file inserts its path with a space and closes, so the next Enter sends; a folder keeps the
+/// list open on what it holds.
+#[gpui::test]
+fn a_file_inserts_with_a_space_and_a_folder_stays_open(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let setup = format!("{} this.text.set_submit_on_enter(true);", list_setup("@ma"));
+    let sends = composer_sends_after_keys_values(
+        cx,
+        file_values(files_in_root()),
+        &setup,
+        "enter t x enter",
+    );
+    assert_eq!(sent_body(&sends).trim_end(), "@main.rs tx", "{sends:?}");
+
+    let dirs = json!({
+        "": [{"name": "src", "dir": true}],
+        "src/": [{"name": "inner.rs", "dir": false}]
+    });
+    let staged = Staged::new();
+    // Seed the folder the way its answer would, so the folder row is there to insert.
+    let setup = format!(
+        "this.text.focus(); this.text.set_value('@'); this.text.set_selected_range({{start: 1, end: 1}}); \
+         this.listOpen = true; this.listKind = 'files'; this.listDirs = {}; this.listFolder = ''; \
+         this.filterFiles(cx); this.listInsert(cx);",
+        json!({"": [{"name": "src", "dir": true}]})
+    );
+    let tree = describe_settled(cx, &staged, "mods/composer", file_values(dirs), Some(&setup)).unwrap();
+    assert!(list_drawn(&tree), "the list stays open on the folder: {tree}");
+    assert!(tree.contains("inner.rs"), "{tree}");
+}
+
+/// A path with a space is quoted, both for the file it inserts and while a folder stays open.
+#[gpui::test]
+fn a_path_with_a_space_is_quoted(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let dirs = json!({"my dir/": [{"name": "a.txt", "dir": false}]});
+    let setup = format!("{} this.text.set_submit_on_enter(true);", list_setup("@\"my dir/"));
+    let sends = composer_sends_after_keys_values(cx, file_values(dirs), &setup, "enter enter");
+    assert_eq!(sent_body(&sends).trim_end(), "@\"my dir/a.txt\"", "{sends:?}");
+}
+
+/// Esc closes the `@` list, so the next Enter sends the words as typed.
+#[gpui::test]
+fn escape_closes_the_at_list(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let setup = format!("{} this.text.set_submit_on_enter(true);", list_setup("@ma"));
+    let sends = composer_sends_after_keys_values(cx, file_values(files_in_root()), &setup, "escape enter");
+    assert_eq!(sent_body(&sends).trim_end(), "@ma", "{sends:?}");
+}
+
+/// Ctrl+R opens the box's history with every entry, newest first.
+#[gpui::test]
+fn ctrl_r_opens_the_history_with_every_entry(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let setup = "this.text.set_submit_on_enter(true); this.text.focus(); this.history = ['newest', 'older'];";
+    let sends = composer_sends_after_keys_values(
+        cx,
+        usage_values(Value::Null, json!({})),
+        setup,
+        "ctrl-r enter enter",
+    );
+    assert_eq!(sent_body(&sends).trim_end(), "newest", "{sends:?}");
+}
+
+/// Typing after Ctrl+R filters the history by what the entry holds.
+#[gpui::test]
+fn typing_filters_the_history(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let setup = "this.text.set_submit_on_enter(true); this.text.focus(); this.history = ['alpha test', 'beta', 'gamma test'];";
+    let sends = composer_sends_after_keys_values(
+        cx,
+        usage_values(Value::Null, json!({})),
+        setup,
+        "ctrl-r t e s t enter enter",
+    );
+    assert_eq!(sent_body(&sends).trim_end(), "alpha test", "{sends:?}");
+}
+
+/// Ctrl+R again moves down to the next older match, as Down does.
+#[gpui::test]
+fn ctrl_r_again_moves_down_the_history(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let setup = "this.text.set_submit_on_enter(true); this.text.focus(); this.history = ['newest', 'older'];";
+    let sends = composer_sends_after_keys_values(
+        cx,
+        usage_values(Value::Null, json!({})),
+        setup,
+        "ctrl-r ctrl-r enter enter",
+    );
+    assert_eq!(sent_body(&sends).trim_end(), "older", "{sends:?}");
+}
+
+/// Esc closes the search and puts back the text that was in the box before it opened.
+#[gpui::test]
+fn escape_restores_the_text_before_the_history_search(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let setup = "this.text.set_value('kept'); this.text.set_submit_on_enter(true); this.text.focus(); this.history = ['newest', 'older'];";
+    let sends = composer_sends_after_keys_values(
+        cx,
+        usage_values(Value::Null, json!({})),
+        setup,
+        "ctrl-r b e t a escape enter",
+    );
+    assert_eq!(sent_body(&sends).trim_end(), "kept", "{sends:?}");
+}
+
+/// The panel's first row names the search, and it is there even when nothing matches.
+#[gpui::test]
+fn the_history_panel_has_a_header(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let setup = "this.history = ['newest', 'older']; this.openHistory(cx);";
+    let tree = describe_settled(cx, &staged, "mods/composer", usage_values(Value::Null, json!({})), Some(setup)).unwrap();
+    assert!(tree.contains("Search history"), "{tree}");
+    assert!(tree.contains("newest"), "{tree}");
+    let staged = Staged::new();
+    let setup = "this.history = ['newest', 'older']; this.openHistory(cx); this.text.set_value('zzz'); this.filterHistory(cx);";
+    let tree = describe_settled(cx, &staged, "mods/composer", usage_values(Value::Null, json!({})), Some(setup)).unwrap();
+    assert!(tree.contains("Search history"), "{tree}");
+    assert!(!tree.contains("newest"), "{tree}");
 }
 
 /// The first-start button is the same primary look as Send.

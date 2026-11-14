@@ -80,13 +80,17 @@ export default class Composer extends View {
     this.questionInputs = {};
     this.questionAsk = null;
     this.modelOpen = false;
-    // The `/` list: open, the commands its one scan found, the matches and the highlighted row.
+    // The one list: open, its kind (commands, files or history), what it holds, and the highlighted row.
     this.listOpen = false;
+    this.listKind = null;
     this.listCommands = [];
     this.listMatches = [];
     this.listIndex = 0;
     this.listWindowStart = 0;
     this.listScan = 0;
+    this.listDirs = {};
+    this.listFolder = null;
+    this.historyKept = null;
     // Compact first: the pill's state, and the send that waits for the lead's compaction (`at` in ms, `started` once it runs).
     this.compactFirst = false;
     this.compactThenSend = null;
@@ -127,6 +131,9 @@ export default class Composer extends View {
       { keystroke: "tab", action: "composer-list-insert", context: "ComposerList" },
       { keystroke: "enter", action: "composer-list-pick", context: "ComposerList" },
       { keystroke: "escape", action: "composer-list-close", context: "ComposerList" },
+      { keystroke: "ctrl-r", action: "composer-history-search", context: "Composer" },
+      { keystroke: "ctrl-r", action: "composer-history-search", context: "ComposerHistory" },
+      { keystroke: "ctrl-r", action: "composer-history-search", context: "ComposerList" },
       { keystroke: "shift-tab", action: "composer-mode", context: "Composer" },
       { keystroke: "shift-tab", action: "composer-mode", context: "ComposerHistory" },
       { keystroke: "shift-tab", action: "composer-mode", context: "ComposerList" },
@@ -425,8 +432,11 @@ export default class Composer extends View {
         await this.writeLead(patch);
       } catch (error) {
         this.error = `Couldn't save the lead's model: ${String(error?.message ?? error)}`;
+        cx.notify();
+        return;
       }
-      cx.notify();
+      // Saved: a running lead takes it now, and holds it until it waits if it is busy.
+      this.applyLead(cx);
     });
   }
 
@@ -503,6 +513,7 @@ export default class Composer extends View {
       .on_action("composer-list-insert", (_event, cx) => this.listInsert(cx))
       .on_action("composer-list-pick", (_event, cx) => this.listPick(cx))
       .on_action("composer-list-close", (_event, cx) => this.closeList(cx))
+      .on_action("composer-history-search", (_event, cx) => this.historySearchKey(cx))
       .on_action("composer-mode", (_event, cx) => this.pressMode(cx))
       .on_key_down((event, cx) => this.keyDown(event, cx))
       .on_drop((event, cx) => {

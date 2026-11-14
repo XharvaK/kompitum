@@ -255,6 +255,11 @@ pub const COMMANDS: &[Command] = &[
         "End the lead and start it again with the saved model and reasoning, in the same conversation. Refused while the lead is working, asking or tidying up.",
     ),
     cmd(
+        "lead.apply",
+        &[req("terminal")],
+        "Send the saved model and reasoning to the lead now, as Claude Code's own /model and /effort (only what changed). Held until the lead stops working, asking or tidying up; a lead that isn't claude takes them when it restarts.",
+    ),
+    cmd(
         "lead.mode",
         &[req("terminal")],
         "Press Shift+Tab in the lead's terminal: Claude Code's next permission mode. The one key the app presses for the Owner, on their click. Refused while the lead asks, shows a menu or tidies up.",

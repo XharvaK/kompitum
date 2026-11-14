@@ -2089,6 +2089,10 @@ const ELEMENTS: &str = r#"
    * Unlike `svg`, this preserves the source image's colors instead of using it
    * as a theme-tinted icon mask. SVG, PNG, JPEG and other GPUI image formats
    * are supported by the host image loader.
+   *
+   * An absolute path to an existing file is read from the disk as it is, so a
+   * panel can show a picture anywhere; a relative path is an asset in the
+   * application's own directory, as `svg`'s is.
    */
   export function image(path: string): NativeElement;
 

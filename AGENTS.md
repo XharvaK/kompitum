@@ -35,10 +35,13 @@ layout or a workspace to return to, it does not belong in the core.
   only what the Owner typed, when they press Enter. Agents, notes and scripts
   never do, `--force` included. Notes and worker reports reach Opus through
   MCP, never by `kom send`, and a note does not start an Opus session
-  unattended. The Owner made two exceptions: the app itself may send the lead
-  Claude's own `/compact`, that fixed text and nothing else (2026-11-12), and
-  a click on the composer's mode word may press Shift+Tab in the lead's
-  terminal, that one key and nothing else (2026-11-13).
+  unattended. The Owner made three exceptions: the app itself may send the lead
+  Claude's own `/compact`, that fixed text and nothing else (2026-11-12), a
+  click on the composer's mode word may press Shift+Tab in the lead's
+  terminal, that one key and nothing else (2026-11-13), and a model or
+  reasoning pick in the composer may send Claude's `/model` and `/effort`
+  with the saved values, those two commands and nothing else, while the lead
+  waits (2026-11-14).
 - Kompitum runs the real `claude` unmodified. It never reads, stores or routes
   its login, and never calls Anthropic's API on the plan.
 - The vault is a doorbell and a pen, never a judge: it shows what is open and

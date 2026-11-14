@@ -79,6 +79,47 @@ pub fn compact_refusal(session: Option<&Session>) -> Option<&'static str> {
     }
 }
 
+/// Why the lead can't take a model or reasoning change now, or None when it can: the same
+/// conditions as a compaction, but a tidy-up only delays the change.
+pub fn apply_refusal(session: Option<&Session>) -> Option<&'static str> {
+    let Some(session) = session else {
+        return Some("the lead hasn't started yet");
+    };
+    if session.compacting {
+        return Some("Claude is tidying up: the change goes when it's done");
+    }
+    if session.conversation.reveal == Some(Reveal::Auto) {
+        return Some("Claude is showing a menu in its terminal: answer it first");
+    }
+    if session.ask.is_some() {
+        return Some("Claude is asking something: answer it first");
+    }
+    match session.state {
+        Some(State::Waiting) => None,
+        Some(State::Asking) => Some("Claude is asking something: answer it first"),
+        Some(State::Working) => Some("Claude is working: it can tidy up once it has finished"),
+        None => Some("the lead hasn't started yet"),
+    }
+}
+
+/// The commands a picked model and reasoning need: Claude Code's `/model` and `/effort`, each only
+/// when the saved value differs from what the lead runs.
+pub fn apply_commands(
+    running_model: Option<&str>,
+    running_effort: Option<&str>,
+    saved_model: Option<&str>,
+    saved_effort: Option<&str>,
+) -> Vec<String> {
+    let mut commands = Vec::new();
+    if let Some(model) = saved_model.filter(|model| Some(*model) != running_model) {
+        commands.push(format!("/model {model}"));
+    }
+    if let Some(effort) = saved_effort.filter(|effort| Some(*effort) != running_effort) {
+        commands.push(format!("/effort {effort}"));
+    }
+    commands
+}
+
 /// Why the lead can't be restarted by hand right now: a restart ends whatever it is doing.
 pub fn restart_refusal(session: Option<&Session>) -> Option<&'static str> {
     let session = session?;

@@ -1486,11 +1486,19 @@ fn materialize_component(
         Component::AvatarFallback => components::avatar::orphan("AvatarFallback"),
         Component::Image(path) => {
             warn_unhonoured_a11y(&behavior, "image", &[]);
-            // KOMPITUM: animated images need an identity to retain their frame state.
-            let mut source = gpui::ImageSource::from(path);
-            if let gpui::ImageSource::Resource(gpui::Resource::Embedded(path)) = &mut source {
-                *path = crate::AppAssets::cache_key(path);
-            }
+            // KOMPITUM: an absolute path to an existing file is read from the disk as it is, so a
+            // chip can show a picture anywhere; anything else is an asset in the app's directory.
+            let disk = std::path::Path::new(&path);
+            let source = if disk.is_absolute() && disk.is_file() {
+                gpui::ImageSource::from(disk.to_path_buf())
+            } else {
+                // Animated images need an identity to retain their frame state.
+                let mut source = gpui::ImageSource::from(path);
+                if let gpui::ImageSource::Resource(gpui::Resource::Embedded(path)) = &mut source {
+                    *path = crate::AppAssets::cache_key(path);
+                }
+                source
+            };
             let mut image = gpui::img(source).id(element_id(id, behavior.key.clone()));
             image.style().refine(&refinement);
             image.into_any_element()

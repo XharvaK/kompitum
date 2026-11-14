@@ -604,6 +604,9 @@ pub struct Session {
     /// Every permission mode a hook has named in this session: the optional modes count once seen. Not saved.
     #[serde(skip)]
     pub modes_seen: std::collections::BTreeSet<String>,
+    /// A saved model or reasoning pick waits for the lead to wait, then the app sends it. Not saved.
+    #[serde(skip)]
+    pub apply_held: bool,
 }
 
 impl Session {
@@ -657,6 +660,7 @@ pub fn published_session(session: &Session) -> Value {
         "heard_ms": session.heard_ms,
         "permission_mode": session.permission_mode,
         "mode_guessed": session.mode_guessed,
+        "apply_held": session.apply_held,
         "conversation": {
             "version": session.conversation.version,
             "length": session.conversation.items.len(),

@@ -177,6 +177,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let send_fail = values.remove("sendFail");
     let machine_add_fail = values.remove("machineAddFail");
     let lead_commands = values.remove("leadCommands");
+    let list_dirs = values.remove("listDirs");
     let conversation_items = values.remove("conversation").unwrap_or(json!([]));
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
@@ -226,9 +227,9 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         module = module.function(name, move |a| {
             if name == "run" {
                 let command = a.string(0)?;
+                let args = a.get(1).map(from_host).unwrap_or(Value::Null);
                 let command = crate::commands::find(command)
                     .unwrap_or_else(|| panic!("unknown shipped mod command {command}"));
-                let args = a.get(1).map(from_host).unwrap_or(Value::Null);
                 crate::commands::validate_args(command, &args).unwrap();
             }
             calls.borrow_mut().effects.push((
@@ -269,6 +270,19 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     module = module.async_function("leadCommands", move |_| {
         let list = lead_commands.clone().unwrap_or_else(|| Value::Array(Vec::new()));
         Ok(async move { Ok(to_host(&list)) })
+    });
+    // The composer's `@` list asks each folder once; a test hands it these, keyed by path.
+    module = module.async_function("listDir", move |a| {
+        let path = a.string(0).unwrap_or_default().to_owned();
+        let dirs = list_dirs.clone();
+        Ok(async move {
+            let list = dirs
+                .as_ref()
+                .and_then(|dirs| dirs.get(path.as_str()))
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new()));
+            Ok(to_host(&list))
+        })
     });
     for name in ["nextCommand", "watchFolder"] {
         module = module.async_function(name, |_| {
@@ -754,7 +768,28 @@ fn describe_with_values(
     describe_values(cx, staged, entry, values, setup, false)
 }
 
+/// A heavy description can pass the engine's 50 ms render deadline while the suite's other tests keep
+/// the CPUs busy; that is the interpreter's `interrupted`, not a fault in the mod, so it is tried again.
 fn describe_values(
+    cx: &mut TestAppContext,
+    staged: &Staged,
+    entry: &str,
+    values: BTreeMap<String, Value>,
+    setup: Option<&str>,
+    settle: bool,
+) -> anyhow::Result<String> {
+    let mut last = None;
+    for _ in 0..3 {
+        match describe_values_once(cx, staged, entry, values.clone(), setup, settle) {
+            Ok(tree) => return Ok(tree),
+            Err(error) if format!("{error:#}").contains("interrupted") => last = Some(Err(error)),
+            Err(error) => return Err(error),
+        }
+    }
+    last.unwrap_or_else(|| Ok(String::new()))
+}
+
+fn describe_values_once(
     cx: &mut TestAppContext,
     staged: &Staged,
     entry: &str,
@@ -1369,11 +1404,21 @@ fn composer_sends_after_keys_with(
     setup: &str,
     keys: &str,
 ) -> Vec<Vec<Value>> {
-    let staged = Staged::new();
     let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("knownAgents".into(), agent_catalog());
     values.insert("lead".into(), json!({"state": "working", "ask": null, "started": true}));
     values.insert("leadCommands".into(), commands);
+    composer_sends_after_keys_values(cx, values, setup, keys)
+}
+
+/// The same, with everything the composer's host reads set by the caller.
+fn composer_sends_after_keys_values(
+    cx: &mut TestAppContext,
+    values: BTreeMap<String, Value>,
+    setup: &str,
+    keys: &str,
+) -> Vec<Vec<Value>> {
+    let staged = Staged::new();
     let calls = Rc::new(RefCell::new(Calls::default()));
     let policy = Policy::new()
         .with_storage_path(staged.0.join("store-keys.json"))

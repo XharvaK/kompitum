@@ -115,6 +115,12 @@ export function leadSetup(): Promise<{ mcp: "added" | "present"; skill: "install
  *  the user's, the installed plugins', then Claude Code's built-ins. Runs off the UI thread. */
 export function leadCommands(): Promise<{ name: string; hint: string; description: string; source: "project" | "user" | "plugin" | "built-in" }[]>;
 
+/** One folder's entries for the composer's `@` list: `{ name, dir }`, folders first, then files,
+ *  each sorted case-insensitively; `.git` is left out, and at most 500 come back. A relative path
+ *  starts at the lead's folder; an absolute one is used as it is. A missing or unreadable folder
+ *  is empty. Runs off the UI thread. */
+export function listDir(path: string): Promise<{ name: string; dir: boolean }[]>;
+
 /** Plays "done" or "blocked" (the attention sounds, or the files settings.json names), or an MP3
  *  file (absolute, or relative to ~/.config/kompitum-app). */
 export function playSound(sound: string): null;
@@ -153,7 +159,7 @@ export function openLink(url: string): void;
  *   terminal.right_click {to: "program" | "menu", terminal?} (right-clicks to a program that takes the mouse; Shift: the menu).
  *   terminal.scroll {lines | pages | to: "top" | "bottom", terminal?} (Kompitum's view of the history: negative goes up; pages may be fractional).
  * Agents: agent.next, agent.prev (the agents list's order), agent.focus {terminal} (sub-agents too),
- *   lead.open (focus or start the lead, with the composer under it), lead.restart {terminal} (end the lead and start it again with the saved model and reasoning), lead.mode {terminal} (Shift+Tab in the lead's terminal: Claude Code's next permission mode).
+ *   lead.open (focus or start the lead, with the composer under it), lead.restart {terminal} (end the lead and start it again with the saved model and reasoning), lead.apply {terminal} (send Claude's /model and /effort for the saved pick now, or hold it until the lead waits), lead.mode {terminal} (Shift+Tab in the lead's terminal: Claude Code's next permission mode).
  * Layout (the shown layout's nodes by id): layout.toggle|show|hide {id}, layout.resize {id, px | weight},
  *   layout.select {stack, child}, layout.set {layout} (personal trees; shipped layouts: click/look fields only), layout.switch {name?} (no name: the next one).
  *   layout.clone {name, as?} duplicates and switches; mod.clone {name, as?} duplicates a mod.

@@ -1,6 +1,6 @@
 // The one box under the conversation: chips, attach, status, send and the first-start card.
 
-import { div, svg } from "gpui-kit";
+import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
 import { run, pickFiles, pasteImage, lead as leadOf, window, home } from "kompitum";
 import { errorText, COMPACT_FIRST_TOKENS, PULSE_MS } from "./util.js";
@@ -10,6 +10,16 @@ const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim(
 
 function baseName(path) {
   return String(path ?? "").split(/[\\/]/).filter(Boolean).pop() ?? String(path ?? "");
+}
+
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
+
+// Whether a chip's file is one this can show a thumbnail of, judging by its extension alone.
+function isImage(path) {
+  const name = baseName(path);
+  const dot = name.lastIndexOf(".");
+  if (dot < 0) return false;
+  return IMAGE_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
 }
 
 function leadName(entry, key) {
@@ -157,6 +167,7 @@ export default {
       .border_1()
       .border_color(t.border)
       .bg(t.raised)
+      .when(isImage(chip.path), (el) => el.child(image(chip.path).w(16).h(16).rounded(3).flex_none()))
       .child(div().text_size(12).text_color(t.muted).child(baseName(chip.path)))
       .child(
         h_flex()
@@ -333,7 +344,7 @@ export default {
       .when(panel, (el) => el.w_full().max_w(760))
       .when(!panel, (el) => el.size_full())
       .child(box)
-      .when(this.listOpen && this.listMatches.length > 0, (el) => el.child(this.listMenu(t, cx)));
+      .when(this.listShown(), (el) => el.child(this.listMenu(t, cx)));
     return frame.child(panel ? h_flex().w_full().justify_center().child(boxFrame) : boxFrame);
   },
 

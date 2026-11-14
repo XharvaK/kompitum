@@ -1147,6 +1147,48 @@ pub fn run_here(command: &str, args: &[String]) -> Option<String> {
         .map(|(_, out, _)| out)
 }
 
+/// The folder a relative path in `listDir` starts from: the lead's folder, as `leadCommands` uses,
+/// or the person's home when none is saved.
+fn lead_folder(home: PathBuf) -> PathBuf {
+    crate::settings::load_person()
+        .ok()
+        .and_then(|person| person.lead)
+        .and_then(|lead| lead.folder)
+        .filter(|folder| !folder.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(home)
+}
+
+/// One folder's entries for the composer's `@` list: `{ name, dir }`, folders first, then files,
+/// each sorted case-insensitively; `.git` left out; at most 500. A missing or unreadable folder is empty.
+pub(crate) fn list_dir(path: &Path) -> Vec<Value> {
+    const LIMIT: usize = 500;
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(bool, String)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == ".git" {
+                return None;
+            }
+            let dir = entry.file_type().ok()?.is_dir();
+            Some((dir, name))
+        })
+        .collect();
+    found.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.to_lowercase().cmp(&b.1.to_lowercase()))
+            .then_with(|| a.1.cmp(&b.1))
+    });
+    found.truncate(LIMIT);
+    found
+        .into_iter()
+        .map(|(dir, name)| json!({ "name": name, "dir": dir }))
+        .collect()
+}
+
 /// Whether a cached `knownAgents` answer may be used: it is under a minute
 /// old and was asked for the same commands, unless `fresh` asks again.
 fn cache_is_usable(age: Duration, checked: &[String], commands: &[String], fresh: bool) -> bool {
@@ -1401,13 +1443,7 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             let (tx, rx) = async_channel::bounded(1);
             std::thread::spawn(move || {
                 let home = home();
-                let folder = crate::settings::load_person()
-                    .ok()
-                    .and_then(|person| person.lead)
-                    .and_then(|lead| lead.folder)
-                    .filter(|folder| !folder.trim().is_empty())
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| home.clone());
+                let folder = lead_folder(home.clone());
                 let list = crate::lead::commands::lead_commands(
                     &home,
                     &folder,
@@ -1420,6 +1456,31 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 rx.recv()
                     .await
                     .map_err(|_| HostError::new("leadCommands stopped"))
+            })
+        })
+        // One folder's entries for the composer's `@` list, read off the window's thread.
+        .async_function("listDir", |a| {
+            let raw = a.string(0).unwrap_or_default().to_owned();
+            let (tx, rx) = async_channel::bounded(1);
+            let read = move || {
+                let path = Path::new(&raw);
+                let path = if path.is_absolute() {
+                    path.to_path_buf()
+                } else {
+                    lead_folder(home()).join(path)
+                };
+                let value = to_host(&Value::Array(list_dir(&path)));
+                let _ = tx.send_blocking(value);
+            };
+            if cfg!(test) {
+                read();
+            } else {
+                std::thread::spawn(read);
+            }
+            Ok(async move {
+                rx.recv()
+                    .await
+                    .map_err(|_| HostError::new("listDir stopped"))
             })
         })
         .function("themes", |_| {
@@ -1802,6 +1863,54 @@ mod tests {
             assert!(exec_limit(Some(&options(ms))).is_err());
         }
         assert!(exec_limit(Some(&HostObject::new().field("timeout", "30").into())).is_err());
+    }
+
+    fn scratch_folder(name: &str) -> PathBuf {
+        let base = if cfg!(target_os = "linux") {
+            PathBuf::from("/var/tmp")
+        } else {
+            std::env::temp_dir()
+        };
+        let dir = base.join(format!("kompitum-listdir-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn list_dir_puts_folders_before_files_and_leaves_git_out() {
+        let dir = scratch_folder("order");
+        for name in ["alpha", "Zed", ".git"] {
+            std::fs::create_dir_all(dir.join(name)).unwrap();
+        }
+        for name in ["b.txt", "A.txt", ".hidden"] {
+            std::fs::write(dir.join(name), "").unwrap();
+        }
+        let entries = list_dir(&dir);
+        let names: Vec<&str> = entries.iter().filter_map(|entry| entry["name"].as_str()).collect();
+        assert_eq!(names, ["alpha", "Zed", ".hidden", "A.txt", "b.txt"]);
+        for entry in &entries {
+            let dir = matches!(entry["name"].as_str(), Some("alpha" | "Zed"));
+            assert_eq!(entry["dir"], json!(dir), "{entry}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_folder_lists_nothing() {
+        let dir = scratch_folder("gone");
+        assert!(list_dir(&dir.join("not-there")).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_dir_stops_at_500_entries() {
+        let dir = scratch_folder("many");
+        for index in 0..501 {
+            std::fs::write(dir.join(format!("file-{index:03}")), "").unwrap();
+        }
+        assert_eq!(list_dir(&dir).len(), 500);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]
