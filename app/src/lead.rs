@@ -665,6 +665,7 @@ pub fn published_session(session: &Session) -> Value {
             "version": session.conversation.version,
             "length": session.conversation.items.len(),
         },
+        "tasks": session.conversation.tasks,
     })
 }
 
@@ -684,15 +685,18 @@ pub fn apply_transcript_path(session: &mut Session, path: Option<&str>) -> u32 {
     let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
         return 0;
     };
-    let (event, skipped) = match std::fs::read_to_string(path) {
+    let (event, skipped, tasks) = match std::fs::read_to_string(path) {
         Ok(text) => {
             let loaded = items_from_transcript(&text);
-            (Event::History { items: loaded.items }, loaded.skipped)
+            (Event::History { items: loaded.items }, loaded.skipped, Some(loaded.tasks))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return 0,
-        Err(_) => (Event::HistoryUnread, 0),
+        Err(_) => (Event::HistoryUnread, 0, None),
     };
     session.conversation = fold(std::mem::take(&mut session.conversation), &event);
+    if let Some(tasks) = tasks {
+        session.conversation.tasks = tasks;
+    }
     skipped
 }
 

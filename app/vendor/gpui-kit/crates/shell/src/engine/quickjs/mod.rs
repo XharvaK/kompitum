@@ -7248,6 +7248,7 @@ impl ShellRuntime {
             for (index, name) in [
                 "on_click",
                 "on_link_click",
+                "on_selection_change",
                 "on_mouse_move",
                 "on_hover",
                 "on_key_down",
@@ -8240,6 +8241,7 @@ impl ShellRuntime {
             }
             "on_click"
             | "on_link_click"
+            | "on_selection_change"
             | "on_resize"
             | "on_size_change"
             | "on_change"
@@ -10240,6 +10242,7 @@ fn callback_op_name(method: &str) -> Option<&'static str> {
     Some(match method {
         "on_click" => "on_click",
         "on_link_click" => "on_link_click",
+        "on_selection_change" => "on_selection_change",
         "on_mouse_move" => "on_mouse_move",
         "on_hover" => "on_hover",
         "on_key_down" => "on_key_down",

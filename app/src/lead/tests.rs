@@ -702,6 +702,27 @@ fn published_session_carries_when_the_lead_was_last_heard() {
 }
 
 #[test]
+fn published_session_carries_the_task_list() {
+    let mut session = Session::default();
+    session.conversation = fold(
+        session.conversation,
+        &Event::PostToolUse {
+            id: "t1".into(),
+            name: "TodoWrite".into(),
+            input: json!({"todos": [
+                {"content": "Read", "status": "in_progress", "activeForm": "Reading"}
+            ]}),
+            result: String::new(),
+            response: Value::Null,
+        },
+    );
+    let value = published_session(&session);
+    assert_eq!(value["tasks"][0]["subject"], json!("Read"));
+    assert_eq!(value["tasks"][0]["active"], json!("Reading"));
+    assert_eq!(value["tasks"][0]["status"], json!("in_progress"));
+}
+
+#[test]
 fn a_message_display_hook_grows_the_assistant_item() {
     let mut session = Session::default();
     assert!(apply_hook_event(
@@ -793,6 +814,30 @@ fn a_session_start_records_its_transcript_path_beside_the_session() {
         stream_of(&streams, "claude").and_then(|stream| stream.transcript).as_deref(),
         Some("/home/me/.claude/projects/moved.jsonl")
     );
+}
+
+#[test]
+fn a_transcript_file_loads_its_task_list() {
+    let dir = std::env::temp_dir().join(format!(
+        "kompitum-transcript-tasks-{}-{}",
+        std::process::id(),
+        now_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("session.jsonl");
+    std::fs::write(
+        &path,
+        r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"TodoWrite","input":{"todos":[{"content":"Read","status":"in_progress","activeForm":"Reading"}]}}]}}
+"#,
+    )
+    .unwrap();
+    let mut session = Session::default();
+    assert_eq!(apply_transcript_path(&mut session, Some(path.to_str().unwrap())), 0);
+    assert_eq!(session.conversation.tasks.len(), 1);
+    assert_eq!(session.conversation.tasks[0].subject, "Read");
+    assert_eq!(session.conversation.tasks[0].active, "Reading");
+    assert_eq!(session.conversation.tasks[0].status, "in_progress");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

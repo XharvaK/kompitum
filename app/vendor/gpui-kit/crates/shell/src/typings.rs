@@ -2424,6 +2424,9 @@ const BASE: &str = r#"  /** A row. */
   export interface TextViewElement extends NativeElement {
     /** Overrides TextView's default URL opening and reports the resolved URL. */
     on_link_click(handler: (url: string, cx: Context) => void): this;
+    /** Reports the selected plain text when a selection in this view ends (a mouse release or a
+     *  keyboard selection change), and "" when the selection is cleared. */
+    on_selection_change(handler: (text: string, cx: Context) => void): this;
     selectable(value?: boolean): this;
     scrollable(value?: boolean): this;
   }
@@ -4703,9 +4706,11 @@ mod tests {
             .expect("end of Element declaration")
             .0;
         assert!(!element.contains("on_link_click("));
+        assert!(!element.contains("on_selection_change("));
         assert!(!element.contains("selectable("));
         assert!(!element.contains("scrollable("));
         assert!(declarations.contains("export interface TextViewElement extends NativeElement"));
+        assert!(declarations.contains("on_selection_change(handler: (text: string, cx: Context) => void): this;"));
         assert!(declarations.contains("html(id: string, html: string): TextViewElement;"));
     }
 

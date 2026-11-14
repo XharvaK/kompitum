@@ -36,6 +36,20 @@ fn notice(item: &Item) -> &str {
     }
 }
 
+fn steering(item: &Item) -> bool {
+    match item {
+        Item::Owner { steering, .. } => *steering,
+        _ => panic!("expected owner, got {item:?}"),
+    }
+}
+
+fn edit(item: &Item) -> Option<&EditStat> {
+    match item {
+        Item::Tool { edit, .. } => edit.as_ref(),
+        _ => panic!("expected tool, got {item:?}"),
+    }
+}
+
 #[test]
 fn the_apps_own_model_command_is_not_drawn_as_the_owners_words() {
     let mut c = Conversation::default();
@@ -170,6 +184,7 @@ fn a_turn_with_three_text_batches_and_two_tools() {
             name: "Read".into(),
             input: json!({"file_path": "app/src/lead.rs"}),
             result: "pub fn fold".into(),
+            response: Value::Null,
         },
     );
     c = fold(
@@ -187,6 +202,7 @@ fn a_turn_with_three_text_batches_and_two_tools() {
             name: "Bash".into(),
             input: json!({"command": "cargo test"}),
             result: "ok\n".repeat(20),
+            response: Value::Null,
         },
     );
     c = fold(
@@ -273,6 +289,7 @@ fn a_bash_row_says_ran_once_its_command_has_ended() {
             name: "Bash".into(),
             input: json!({"command": "git --version"}),
             result: "git version 2.45.0".into(),
+            response: Value::Null,
         },
     );
     assert_eq!(
@@ -299,6 +316,7 @@ fn a_running_row_that_ends_without_input_turns_its_words_into_the_past() {
             name: "Bash".into(),
             input: json!({}),
             result: String::new(),
+            response: Value::Null,
         },
     );
     assert_eq!(tool(&c.items[0]).1, "Ran `git --version`");
@@ -343,6 +361,7 @@ fn history_replaces_the_items() {
     let items = vec![Item::Owner {
         id: "owner-1".into(),
         text: "Hello".into(),
+        steering: false,
     }];
     let c = fold(
         Conversation::default(),
@@ -661,6 +680,7 @@ fn a_pre_that_arrives_after_its_post_does_not_run_the_tool_again() {
             name: "Read".into(),
             input: json!({"file_path": "a.rs"}),
             result: "one".into(),
+            response: Value::Null,
         },
     );
     c = fold(
@@ -719,6 +739,7 @@ fn a_post_with_no_id_finishes_the_running_tool_of_its_name() {
             name: "Bash".into(),
             input: json!({"command": "ls"}),
             result: "a.rs".into(),
+            response: Value::Null,
         },
     );
     assert_eq!(c.items.len(), 1, "{:?}", c.items);
@@ -764,6 +785,7 @@ fn a_bash_response_shows_its_stdout_and_stderr() {
             name: "Bash".into(),
             input: json!({"command": "x"}),
             result: "ok\nwarn".into(),
+            response: json!({"stdout": "ok\n", "stderr": "warn\n"}),
         })
     );
 }
@@ -842,4 +864,324 @@ fn notification_reads_only_its_notification_type() {
     let event = event_from_hook("Notification", &json!({"matcher": "auth_success"})).unwrap();
     let c = fold(Conversation::default(), &event);
     assert!(c.items.is_empty(), "{:?}", c.items);
+}
+
+fn steer(text: &str) -> Event {
+    Event::Steer { text: text.into() }
+}
+
+#[test]
+fn a_steered_message_is_one_item_after_its_hook_and_no_longer_steering() {
+    let mut c = fold(Conversation::default(), &steer("look at the tests"));
+    assert_eq!(c.items.len(), 1);
+    assert!(steering(&c.items[0]));
+    c = fold(
+        c,
+        &Event::UserPromptSubmit {
+            prompt: "look at the tests".into(),
+        },
+    );
+    assert_eq!(c.items.len(), 1, "{:?}", c.items);
+    assert!(!steering(&c.items[0]));
+    assert!(c.steered.is_empty());
+}
+
+#[test]
+fn a_stop_clears_the_steering_mark() {
+    let c = fold(Conversation::default(), &steer("look at the tests"));
+    let c = fold(c, &Event::Stop);
+    assert!(!steering(&c.items[0]));
+}
+
+#[test]
+fn a_hook_after_a_stop_still_gives_one_item() {
+    let c = fold(Conversation::default(), &steer("look at the tests"));
+    let c = fold(c, &Event::Stop);
+    let c = fold(
+        c,
+        &Event::UserPromptSubmit {
+            prompt: "look at the tests".into(),
+        },
+    );
+    assert_eq!(c.items.len(), 1, "{:?}", c.items);
+}
+
+#[test]
+fn a_different_prompt_adds_its_own_item() {
+    let c = fold(Conversation::default(), &steer("look at the tests"));
+    let c = fold(
+        c,
+        &Event::UserPromptSubmit {
+            prompt: "and then the docs".into(),
+        },
+    );
+    assert_eq!(c.items.len(), 2, "{:?}", c.items);
+    assert!(steering(&c.items[0]));
+}
+
+#[test]
+fn a_steered_entry_is_forgotten_after_two_stops() {
+    let mut c = fold(Conversation::default(), &steer("look at the tests"));
+    c = fold(c, &Event::Stop);
+    c = fold(c, &Event::Stop);
+    assert!(c.steered.is_empty(), "{:?}", c.steered);
+    c = fold(
+        c,
+        &Event::UserPromptSubmit {
+            prompt: "look at the tests".into(),
+        },
+    );
+    assert_eq!(c.items.len(), 2, "{:?}", c.items);
+}
+
+fn hook(name: &str, input: Value, response: Value) -> Event {
+    Event::PostToolUse {
+        id: format!("{name}-1"),
+        name: name.into(),
+        input,
+        result: String::new(),
+        response,
+    }
+}
+
+#[test]
+fn todowrite_replaces_the_task_list() {
+    let c = fold(
+        Conversation::default(),
+        &hook(
+            "TodoWrite",
+            json!({"todos": [
+                {"content": "Read the brief", "status": "completed", "activeForm": "Reading the brief"},
+                {"content": "Write the tests", "status": "in_progress", "activeForm": "Writing the tests"}
+            ]}),
+            Value::Null,
+        ),
+    );
+    assert_eq!(
+        c.tasks,
+        vec![
+            TaskRow {
+                id: "1".into(),
+                subject: "Read the brief".into(),
+                active: "Reading the brief".into(),
+                status: "completed".into()
+            },
+            TaskRow {
+                id: "2".into(),
+                subject: "Write the tests".into(),
+                active: "Writing the tests".into(),
+                status: "in_progress".into()
+            }
+        ]
+    );
+}
+
+#[test]
+fn taskcreate_appends_a_row_with_its_response_id_or_the_next_number() {
+    let c = fold(
+        Conversation::default(),
+        &hook(
+            "TaskCreate",
+            json!({"subject": "Write the code", "description": "The strip", "activeForm": "Writing the code"}),
+            json!({"task": {"id": "7"}}),
+        ),
+    );
+    assert_eq!(
+        c.tasks,
+        vec![TaskRow {
+            id: "7".into(),
+            subject: "Write the code".into(),
+            active: "Writing the code".into(),
+            status: "pending".into()
+        }]
+    );
+    let c = fold(
+        c,
+        &hook(
+            "TaskCreate",
+            json!({"subject": "Check it", "activeForm": "Checking it"}),
+            Value::Null,
+        ),
+    );
+    assert_eq!(c.tasks[1].id, "2");
+}
+
+#[test]
+fn taskupdate_changes_its_row() {
+    let mut c = fold(
+        Conversation::default(),
+        &hook(
+            "TodoWrite",
+            json!({"todos": [{"content": "Write the code", "status": "pending", "activeForm": "Writing the code"}]}),
+            Value::Null,
+        ),
+    );
+    c = fold(
+        c,
+        &hook(
+            "TaskUpdate",
+            json!({"taskId": "1", "status": "in_progress", "subject": "Write the strip", "activeForm": "Writing the strip"}),
+            Value::Null,
+        ),
+    );
+    assert_eq!(c.tasks[0].status, "in_progress");
+    assert_eq!(c.tasks[0].subject, "Write the strip");
+    assert_eq!(c.tasks[0].active, "Writing the strip");
+}
+
+#[test]
+fn taskupdate_ignores_an_unknown_id() {
+    let c = fold(
+        Conversation::default(),
+        &hook("TaskUpdate", json!({"taskId": "9", "status": "completed"}), Value::Null),
+    );
+    assert!(c.tasks.is_empty(), "{:?}", c.tasks);
+}
+
+#[test]
+fn taskupdate_deleted_removes_its_row() {
+    let mut c = fold(
+        Conversation::default(),
+        &hook(
+            "TodoWrite",
+            json!({"todos": [
+                {"content": "One", "status": "pending", "activeForm": ""},
+                {"content": "Two", "status": "pending", "activeForm": ""}
+            ]}),
+            Value::Null,
+        ),
+    );
+    c = fold(
+        c,
+        &hook("TaskUpdate", json!({"taskId": "1", "status": "deleted"}), Value::Null),
+    );
+    assert_eq!(c.tasks.len(), 1, "{:?}", c.tasks);
+    assert_eq!(c.tasks[0].subject, "Two");
+}
+
+#[test]
+fn the_transcript_builds_the_same_task_list() {
+    let text = r#"
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"TodoWrite","input":{"todos":[{"content":"Read","status":"completed","activeForm":"Reading"},{"content":"Write","status":"in_progress","activeForm":"Writing"}]}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t2","name":"TaskCreate","input":{"subject":"Test","description":"The tests","activeForm":"Testing"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t2","content":"Created task"}]},"tool_use_result":{"task":{"id":"3"}}}
+"#;
+    let loaded = items_from_transcript(text);
+    assert_eq!(
+        loaded.tasks,
+        vec![
+            TaskRow {
+                id: "1".into(),
+                subject: "Read".into(),
+                active: "Reading".into(),
+                status: "completed".into()
+            },
+            TaskRow {
+                id: "2".into(),
+                subject: "Write".into(),
+                active: "Writing".into(),
+                status: "in_progress".into()
+            },
+            TaskRow {
+                id: "3".into(),
+                subject: "Test".into(),
+                active: "Testing".into(),
+                status: "pending".into()
+            }
+        ]
+    );
+}
+
+fn edit_of(name: &str, input: Value) -> Option<EditStat> {
+    let c = fold(Conversation::default(), &hook(name, input, Value::Null));
+    edit(&c.items[0]).cloned()
+}
+
+#[test]
+fn an_edit_counts_the_lines_of_its_strings() {
+    assert_eq!(
+        edit_of("Edit", json!({"file_path": "a.rs", "old_string": "one\ntwo", "new_string": "one\nthree\nfour"})),
+        Some(EditStat {
+            path: "a.rs".into(),
+            added: 3,
+            removed: 2
+        })
+    );
+}
+
+#[test]
+fn a_multiedit_sums_its_edits() {
+    assert_eq!(
+        edit_of(
+            "MultiEdit",
+            json!({"file_path": "a.rs", "edits": [
+                {"old_string": "one", "new_string": "two\nthree"},
+                {"old_string": "a\nb", "new_string": "c"}
+            ]})
+        ),
+        Some(EditStat {
+            path: "a.rs".into(),
+            added: 3,
+            removed: 3
+        })
+    );
+}
+
+#[test]
+fn a_write_counts_its_content_and_a_notebook_its_source() {
+    assert_eq!(
+        edit_of("Write", json!({"file_path": "a.rs", "content": "one\ntwo\n"})),
+        Some(EditStat {
+            path: "a.rs".into(),
+            added: 2,
+            removed: 0
+        })
+    );
+    assert_eq!(
+        edit_of("NotebookEdit", json!({"notebook_path": "a.ipynb", "new_source": "one\ntwo"})),
+        Some(EditStat {
+            path: "a.ipynb".into(),
+            added: 2,
+            removed: 0
+        })
+    );
+}
+
+#[test]
+fn a_structured_patch_wins_over_the_edit_strings() {
+    let c = fold(
+        Conversation::default(),
+        &hook(
+            "Edit",
+            json!({"file_path": "a.rs", "old_string": "one\ntwo", "new_string": "one"}),
+            json!({"structuredPatch": [
+                {"lines": [" one", "+two", "+three", "-four"]},
+                {"lines": ["+five", "-six"]}
+            ]}),
+        ),
+    );
+    assert_eq!(
+        edit(&c.items[0]),
+        Some(&EditStat {
+            path: "a.rs".into(),
+            added: 3,
+            removed: 2
+        })
+    );
+}
+
+#[test]
+fn the_transcript_edits_come_from_the_input() {
+    let text = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"e1","name":"Edit","input":{"file_path":"a.rs","old_string":"one","new_string":"two\nthree"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"e1","content":"ok"}]}}
+"#;
+    let loaded = items_from_transcript(text);
+    assert_eq!(
+        edit(&loaded.items[0]),
+        Some(&EditStat {
+            path: "a.rs".into(),
+            added: 2,
+            removed: 1
+        })
+    );
 }

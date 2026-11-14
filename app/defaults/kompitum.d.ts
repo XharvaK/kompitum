@@ -159,7 +159,7 @@ export function openLink(url: string): void;
  *   terminal.right_click {to: "program" | "menu", terminal?} (right-clicks to a program that takes the mouse; Shift: the menu).
  *   terminal.scroll {lines | pages | to: "top" | "bottom", terminal?} (Kompitum's view of the history: negative goes up; pages may be fractional).
  * Agents: agent.next, agent.prev (the agents list's order), agent.focus {terminal} (sub-agents too),
- *   lead.open (focus or start the lead, with the composer under it), lead.restart {terminal} (end the lead and start it again with the saved model and reasoning), lead.apply {terminal} (send Claude's /model and /effort for the saved pick now, or hold it until the lead waits), lead.mode {terminal} (Shift+Tab in the lead's terminal: Claude Code's next permission mode).
+ *   lead.open (focus or start the lead, with the composer under it), lead.restart {terminal} (end the lead and start it again with the saved model and reasoning), lead.apply {terminal} (send Claude's /model and /effort for the saved pick now, or hold it until the lead waits), lead.mode {terminal} (Shift+Tab in the lead's terminal: Claude Code's next permission mode), lead.steer {terminal, text} (mark a message the Owner sent while the lead works as steering).
  * Layout (the shown layout's nodes by id): layout.toggle|show|hide {id}, layout.resize {id, px | weight},
  *   layout.select {stack, child}, layout.set {layout} (personal trees; shipped layouts: click/look fields only), layout.switch {name?} (no name: the next one).
  *   layout.clone {name, as?} duplicates and switches; mod.clone {name, as?} duplicates a mod.
@@ -323,10 +323,27 @@ export interface LeadAsk {
 
 /** One row the chat-view panel draws. */
 export type ConversationItem =
-  | { kind: "owner"; id: string; text: string }
+  | { kind: "owner"; id: string; text: string; steering?: boolean }
   | { kind: "assistant"; id: string; text: string; done: boolean }
-  | { kind: "tool"; id: string; name: string; summary: string; state: "running" | "done" | "failed"; result?: string }
+  | {
+      kind: "tool";
+      id: string;
+      name: string;
+      summary: string;
+      state: "running" | "done" | "failed";
+      result?: string;
+      edit?: { path: string; added: number; removed: number };
+    }
   | { kind: "notice"; id: string; text: string };
+
+/** One row of Claude's task list, from its task tools. */
+export interface TaskRow {
+  id: string;
+  subject: string;
+  /** The present-tense form ("Writing the tests"), or "". */
+  active: string;
+  status: "pending" | "in_progress" | "completed";
+}
 
 /** The lead terminal's state and open ask, from Claude Code's hooks; null when
  *  no hook has reported one (a lead that isn't Claude, or the very first
@@ -345,6 +362,8 @@ export function lead(): {
   reveal_why?: string | null;
   /** Version rises when items change; length is how many items there are. */
   conversation: { version: number; length: number };
+  /** Claude's task list from its task tools (a strip above the composer's box). */
+  tasks: TaskRow[];
   /** When the lead last sent a hook or a status line (Unix ms); null until it has. */
   heard_ms?: number | null;
   /** The model Claude says it is running, from its status line; null until it has said. */

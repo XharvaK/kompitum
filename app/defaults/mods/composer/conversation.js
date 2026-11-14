@@ -2,8 +2,8 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, Scrollbar } from "gpui-base";
-import { lead as leadOf, conversation as conversationFrom, settings } from "kompitum";
-import { codePieces } from "./util.js";
+import { lead as leadOf, conversation as conversationFrom, settings, run } from "kompitum";
+import { codePieces, literalMarkdown } from "./util.js";
 
 export default {
   syncConversation() {
@@ -71,11 +71,13 @@ export default {
     return groups;
   },
 
-  ownerItem(t, item) {
-    return h_flex()
+  ownerItem(t, item, cx) {
+    const quoted = this.quote?.itemId === item.id;
+    return v_flex()
       .id(`composer-item-${item.id}`)
       .w_full()
-      .justify_end()
+      .items_end()
+      .gap(4)
       .child(
         div()
           .px(12)
@@ -85,12 +87,25 @@ export default {
           .bg(t.selected)
           .text_size(13)
           .text_color(t.foreground)
-          .selectable(true)
-          .child(item.text ?? ""),
-      );
+          .child(
+            TextView.markdown(`composer-owner-md-${item.id}`, literalMarkdown(item.text))
+              .text_size(13)
+              .text_color(t.foreground)
+              .on_selection_change((text, cx) => this.selectQuote(item.id, text, cx)),
+          ),
+      )
+      .when(Boolean(item.steering), (el) =>
+        el.child(
+          div()
+            .id(`composer-steering-${item.id}`)
+            .text_size(12)
+            .text_color(t.dim)
+            .child("Steering · Claude sees it after this step"),
+        ))
+      .when(quoted, (el) => el.child(this.replyButton(t, item.id, cx)));
   },
 
-  assistantItem(t, item) {
+  assistantItem(t, item, cx) {
     return v_flex()
       .id(`composer-item-${item.id}`)
       .w_full()
@@ -99,7 +114,8 @@ export default {
         TextView.markdown(`composer-md-${item.id}`, item.text ?? "")
           .text_size(13)
           .text_color(t.foreground)
-          .selectable(true),
+          .selectable(true)
+          .on_selection_change((text, cx) => this.selectQuote(item.id, text, cx)),
       )
       .when(!item.done, (el) =>
         el.child(
@@ -111,7 +127,51 @@ export default {
             // Still: the words arriving show the reply is coming.
             .bg(t.accent),
         ),
-      );
+      )
+      .when(this.quote?.itemId === item.id, (el) =>
+        el.child(h_flex().w_full().justify_end().child(this.replyButton(t, item.id, cx))));
+  },
+
+  replyButton(t, itemId, cx) {
+    return h_flex()
+      .id(`composer-quote-reply-${itemId}`)
+      .h(24)
+      .px(8)
+      .items_center()
+      .rounded(6)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.raised)
+      .text_size(12)
+      .text_color(t.foreground)
+      .cursor_pointer()
+      .hover((s) => s.bg(t.hover))
+      .on_click((_e, cx) => this.replyToQuote(cx))
+      .child("Reply");
+  },
+
+  selectQuote(itemId, text, cx) {
+    // The Owner's leading spaces are drawn as no-break spaces (literalMarkdown); a quote takes them back.
+    if (text) this.quote = { itemId, text: String(text).replace(/ /g, " ") };
+    else if (this.quote?.itemId === itemId) this.quote = null;
+    cx.notify();
+  },
+
+  // The quote goes into the box as a Markdown block, after whatever is already there, and the
+  // keyboard follows it.
+  replyToQuote(cx) {
+    const quote = this.quote;
+    if (!quote) return;
+    const block = `${String(quote.text).replace(/\r?\n+$/, "").split(/\r?\n/).map((line) => `> ${line}`).join("\n")}\n\n`;
+    const existing = this.text.value();
+    const next = existing ? `${existing}\n\n${block}` : block;
+    this.text.set_value(next);
+    this.text.set_selected_range({ start: next.length, end: next.length });
+    this.text.focus();
+    this.quote = null;
+    this.syncDraft();
+    this.setHistory(true, cx);
+    cx.notify();
   },
 
   toolIcon(t, state) {
@@ -205,11 +265,69 @@ export default {
   },
 
   drawItem(t, item, cx) {
-    if (item?.kind === "owner") return this.ownerItem(t, item);
-    if (item?.kind === "assistant") return this.assistantItem(t, item);
+    if (item?.kind === "owner") return this.ownerItem(t, item, cx);
+    if (item?.kind === "assistant") return this.assistantItem(t, item, cx);
     if (item?.kind === "tool") return this.toolItem(t, item, cx);
     if (item?.kind === "notice") return this.noticeItem(t, item);
     return null;
+  },
+
+  // Each finished turn's edits, keyed by the index of the turn's last item.
+  turnSummaries() {
+    const summaries = new Map();
+    const owners = this.items
+      .map((item, index) => (item?.kind === "owner" ? index : -1))
+      .filter((index) => index >= 0);
+    for (let n = 0; n < owners.length; n += 1) {
+      const start = owners[n];
+      const next = owners[n + 1] ?? this.items.length;
+      const end = next - 1;
+      // The newest turn is still running while the lead works; it ends at its Stop.
+      const inProgress = next === this.items.length
+        && (leadOf()?.state === "working"
+          || leadOf()?.state === "asking"
+          || this.items.slice(start + 1).some((item) =>
+            (item?.kind === "assistant" && !item.done) || (item?.kind === "tool" && item.state === "running")));
+      if (inProgress) continue;
+      const paths = new Set();
+      let added = 0;
+      let removed = 0;
+      for (let index = start + 1; index <= end; index += 1) {
+        const item = this.items[index];
+        if (item?.kind !== "tool" || !item.edit) continue;
+        paths.add(item.edit.path);
+        added += Number(item.edit.added) || 0;
+        removed += Number(item.edit.removed) || 0;
+      }
+      if (paths.size > 0) summaries.set(end, { start, files: paths.size, added, removed });
+    }
+    return summaries;
+  },
+
+  turnSummary(t, summary, cx) {
+    return h_flex()
+      .id(`composer-turn-summary-${summary.start}`)
+      .gap(6)
+      .items_center()
+      .child(
+        div()
+          .text_size(12)
+          .text_color(t.muted)
+          .child(`${summary.files} ${summary.files === 1 ? "file changed" : "files changed"}`),
+      )
+      .child(div().text_size(12).text_color(t.muted).child(`+${summary.added} −${summary.removed}`))
+      .child(
+        div()
+          .id(`composer-turn-review-${summary.start}`)
+          .text_size(12)
+          .text_color(t.accent)
+          .cursor_pointer()
+          .on_click((_e, _cx) => {
+            run("layout.select", { stack: "panel-body", child: "changes" });
+            run("layout.show", { id: "panel" });
+          })
+          .child("› Review"),
+      );
   },
 
   conversationPanel(t, cx) {
@@ -220,9 +338,13 @@ export default {
     // The padding sits on an inner column: on the scroll area itself it would count as content to scroll past.
     // The conversation and the box share one column: at most 760 px, centred, with 20 px gutters when narrower.
     const column = v_flex().w_full().max_w(760).px(20).pt(16).pb(16).gap(14);
+    const summaries = this.turnSummaries();
     for (const group of this.conversationGroups()) {
+      const end = group.type === "tools" ? group.start + group.items.length - 1 : group.start;
       if (group.type === "tools") column.child(this.toolsGroup(t, group, cx));
       else column.child(this.drawItem(t, group.item, cx));
+      const summary = summaries.get(end);
+      if (summary) column.child(this.turnSummary(t, summary, cx));
     }
     const list = v_flex()
       .id("composer-conversation")

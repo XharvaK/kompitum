@@ -280,6 +280,11 @@ pub const COMMANDS: &[Command] = &[
         "Answer the lead's open ask: its id and the Owner's answer ({ action: allow, allow_always, deny, approve, keep_planning, answers, or terminal, with note or answers }).",
     ),
     cmd(
+        "lead.steer",
+        &[req("terminal"), req("text")],
+        "Mark a message the Owner sent while the lead works as steering: it shows as on its way until Claude takes it.",
+    ),
+    cmd(
         "dictation.start",
         &[],
         "Open Windows' voice typing (Win+H) for the focused text box: the words land there like typed ones. Windows only.",

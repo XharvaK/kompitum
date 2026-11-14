@@ -99,6 +99,9 @@ pub(crate) type ImageSourceFn = dyn Fn(&gpui::SharedUri) -> gpui::ImageSource + 
 pub(crate) type LinkClickHandlerFn =
     dyn Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync;
 
+/// Reports the selected text when a selection in the view ends, or `""` when it is cleared.
+pub(crate) type SelectionChangeHandlerFn = dyn Fn(&str, &mut Window, &mut App);
+
 /// Kept by the element only, so unlike the handlers the state carries, it
 /// may hold a `ScrollHandle`.
 pub(crate) type RevealHandlerFn = dyn Fn(Bounds<Pixels>, &mut Window, &mut App);
@@ -155,6 +158,7 @@ pub struct TextView {
     code_block_highlighter: Option<Arc<CodeBlockHighlighterFn>>,
     table_actions: Option<Arc<TableActionsFn>>,
     link_click_handler: Option<Arc<LinkClickHandlerFn>>,
+    selection_change_handler: Option<Rc<SelectionChangeHandlerFn>>,
     image_source: Option<Arc<ImageSourceFn>>,
     reveal_handler: Option<Rc<RevealHandlerFn>>,
     markdown_extensions: Arc<MarkdownExtensions>,
@@ -202,6 +206,7 @@ impl TextView {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
+            selection_change_handler: None,
             image_source: None,
             reveal_handler: None,
             markdown_extensions: Arc::default(),
@@ -226,6 +231,7 @@ impl TextView {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
+            selection_change_handler: None,
             image_source: None,
             reveal_handler: None,
             markdown_extensions: Arc::default(),
@@ -250,6 +256,7 @@ impl TextView {
             code_block_highlighter: None,
             table_actions: None,
             link_click_handler: None,
+            selection_change_handler: None,
             image_source: None,
             reveal_handler: None,
             markdown_extensions: Arc::default(),
@@ -399,6 +406,16 @@ impl TextView {
         F: Fn(&SharedString, &ClickEvent, &mut Window, &mut App) + Send + Sync + 'static,
     {
         self.link_click_handler = Some(Arc::new(handler));
+        self
+    }
+
+    /// Report the selected plain text when a selection in this view ends (a release or a
+    /// keyboard selection change), and `""` when it is cleared.
+    pub fn on_selection_change<F>(mut self, handler: F) -> Self
+    where
+        F: Fn(&str, &mut Window, &mut App) + 'static,
+    {
+        self.selection_change_handler = Some(Rc::new(handler));
         self
     }
 
@@ -893,6 +910,31 @@ impl Element for TextView {
             // The handles of a touch selection go over the text, and under
             // whatever is painted over the text after it.
             adapter.paint_touch_handles(&prepaint.touch_handles, handle_color, window, cx);
+        }
+
+        // A selection that has ended is reported, as is a keyboard selection whose text
+        // changed; a drag still in progress is not an end.
+        if let Some(handler) = &self.selection_change_handler {
+            let (text, selecting, was_selecting, report) = {
+                let state = state.read(cx);
+                (
+                    state.selected_text(),
+                    state.is_selecting,
+                    state.was_selecting,
+                    state.selection_report.clone(),
+                )
+            };
+            let reported = report.as_deref() == Some(text.as_str());
+            let ended = was_selecting && !selecting;
+            if !selecting && (ended || !reported) {
+                state.update(cx, |state, _| {
+                    state.selection_report = Some(text.clone());
+                    state.was_selecting = false;
+                });
+                handler(&text, window, cx);
+            } else {
+                state.update(cx, |state, _| state.was_selecting = selecting);
+            }
         }
     }
 }
@@ -3572,5 +3614,56 @@ mod kompitum_html_inline_flows {
         let (_root, cx) = cx.add_window_view(|_, cx| Root(cx.new(|cx| TextViewState::markdown(src, cx))));
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+}
+
+// KOMPITUM: the shell exposes the selected text of a TextView to scripts.
+#[cfg(test)]
+mod kompitum_selection_change {
+    use super::*;
+    use gpui::{
+        Context, Entity, IntoElement, Render, TestAppContext, Window, div, prelude::*, px,
+    };
+    use std::{cell::RefCell, rc::Rc};
+
+    struct Root {
+        view: Entity<TextViewState>,
+        seen: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl Render for Root {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let seen = self.seen.clone();
+            div().w(px(400.)).child(
+                TextView::new(&self.view).on_selection_change(move |text, _, _| {
+                    seen.borrow_mut().push(text.to_owned());
+                }),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_selection_reports_text_when_it_ends_and_empty_when_cleared(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (root, cx) = cx.add_window_view(|_, cx| Root {
+            view: cx.new(|cx| TextViewState::markdown("alpha beta", cx)),
+            seen: seen.clone(),
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(seen.borrow().is_empty(), "no selection yet: {:?}", seen.borrow());
+        root.update(cx, |root, cx| {
+            root.view.update(cx, |view, cx| view.select_all(cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(seen.borrow().as_slice(), ["alpha beta\n".to_string()]);
+        root.update(cx, |root, cx| {
+            root.view.update(cx, |view, cx| view.clear_selection(cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(seen.borrow().as_slice(), ["alpha beta\n", ""].map(str::to_owned));
     }
 }

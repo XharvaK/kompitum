@@ -16,6 +16,28 @@ export function codePieces(text) {
     .filter((piece) => piece.text.length > 0);
 }
 
+// The Owner's words as Markdown that draws exactly as typed. The bubble needs a Markdown view, the only
+// text view that reports a selection, so Markdown's marks are escaped (`$` too: inline math is on), each
+// line break becomes a hard break instead of reflowing, and leading spaces and blank lines are kept as
+// no-break spaces. Marks that only count at a line's start (headings, quotes, lists, rules) are escaped
+// there alone, so ordinary words like `lead.rs` stay as they are.
+export function literalMarkdown(text) {
+  const value = String(text ?? "").replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  if (!value) return "";
+  return value
+    .split("\n")
+    .map((line) => {
+      const indent = line.match(/^[ \t]*/)[0];
+      const rest = line
+        .slice(indent.length)
+        .replace(/[\\`*_[\]<~|$&]/g, "\\$&")
+        .replace(/^([#>+=-])/, "\\$1")
+        .replace(/^(\d+)([.)])/, "$1\\$2");
+      return indent.replace(/\t/g, "    ").replace(/ /g, " ") + rest || " ";
+    })
+    .join("\\\n");
+}
+
 // UTF-16 index (what JavaScript strings count) to UTF-8 bytes, without TextEncoder: QuickJS may lack it.
 export function byteIndex(text, i) {
   const value = String(text ?? "");

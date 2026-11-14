@@ -149,6 +149,12 @@ pub struct TextViewState {
     range_highlights: Option<Arc<RangeHighlightFrame>>,
     pub(super) pending_reveal: Option<PendingReveal>,
     pub(super) selection_revision: usize,
+    /// The last text this view reported through `on_selection_change`; `Some("")` until it has
+    /// a selection to report.
+    pub(super) selection_report: Option<String>,
+    /// Whether the last frame with a selection handler was still selecting, so a new release
+    /// reports even when it selected the same words again.
+    pub(super) was_selecting: bool,
     compatible_layout_update: bool,
     layout_text_style: Option<(gpui::TextStyle, Pixels)>,
     parsed_error: Option<SharedString>,
@@ -242,6 +248,8 @@ impl TextViewState {
             range_highlights: None,
             pending_reveal: None,
             selection_revision: 0,
+            selection_report: Some(String::new()),
+            was_selecting: false,
             compatible_layout_update: false,
             layout_text_style: None,
             tx,

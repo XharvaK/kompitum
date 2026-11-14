@@ -43,6 +43,13 @@ pub struct Conversation {
     /// not the Owner's words, so they are not drawn. Not saved.
     #[serde(skip)]
     pub app_sent: Vec<String>,
+    /// The Owner's texts sent while the lead worked, and how many Stops have passed since each.
+    /// Not saved.
+    #[serde(skip)]
+    pub steered: Vec<(String, u32)>,
+    /// Claude's task list, from its task tools or the transcript.
+    #[serde(default)]
+    pub tasks: Vec<TaskRow>,
 }
 
 /// One assistant message while its batches arrive. Batches can come out of order,
@@ -91,6 +98,8 @@ pub enum Item {
     Owner {
         id: String,
         text: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        steering: bool,
     },
     Assistant {
         id: String,
@@ -104,11 +113,34 @@ pub enum Item {
         state: ToolState,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         result: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        edit: Option<EditStat>,
     },
     Notice {
         id: String,
         text: String,
     },
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+/// What one edit changed in one file.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct EditStat {
+    pub path: String,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// One row of Claude's task list.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TaskRow {
+    pub id: String,
+    pub subject: String,
+    pub active: String,
+    pub status: String,
 }
 
 /// A tool's progress as the panel draws it.
@@ -142,6 +174,7 @@ pub enum Event {
         name: String,
         input: Value,
         result: String,
+        response: Value,
     },
     PostToolUseFailure {
         id: String,
@@ -164,12 +197,16 @@ pub enum Event {
     Toggle {
         show: Option<bool>,
     },
+    Steer {
+        text: String,
+    },
 }
 
 /// What reading a transcript produced.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TranscriptLoad {
     pub items: Vec<Item>,
+    pub tasks: Vec<TaskRow>,
     pub skipped: u32,
 }
 
@@ -233,13 +270,22 @@ pub fn fold(mut conversation: Conversation, event: &Event) -> Conversation {
             name,
             input,
             result,
-        } => on_tool_end(&mut conversation, id, name, input, result, ToolState::Done),
+            response,
+        } => on_tool_end(&mut conversation, id, name, input, result, response, ToolState::Done),
         Event::PostToolUseFailure {
             id,
             name,
             input,
             result,
-        } => on_tool_end(&mut conversation, id, name, input, result, ToolState::Failed),
+        } => on_tool_end(
+            &mut conversation,
+            id,
+            name,
+            input,
+            result,
+            &Value::Null,
+            ToolState::Failed,
+        ),
         Event::Stop => on_stop(&mut conversation),
         Event::StopFailure { error } => on_stop_failure(&mut conversation, error.as_deref()),
         Event::Notification { kind } => on_notification(&mut conversation, kind),
@@ -263,6 +309,7 @@ pub fn fold(mut conversation: Conversation, event: &Event) -> Conversation {
             conversation.touched();
         }
         Event::Toggle { show } => on_toggle(&mut conversation, *show),
+        Event::Steer { text } => on_steer(&mut conversation, text),
     }
     conversation
 }
@@ -301,6 +348,7 @@ pub fn event_from_hook(event: &str, input: &Value) -> Option<Event> {
                 name,
                 input: tool_input(input),
                 result: tool_result(input),
+                response: input.get("tool_response").cloned().unwrap_or(Value::Null),
             })
         }
         "PostToolUseFailure" => {
@@ -361,6 +409,8 @@ pub fn items_from_transcript(text: &str) -> TranscriptLoad {
         next_id += 1;
         format!("{kind}-{next_id}")
     };
+    let mut tasks = Vec::new();
+    let mut pending_creates: BTreeMap<String, usize> = BTreeMap::new();
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() {
@@ -371,8 +421,8 @@ pub fn items_from_transcript(text: &str) -> TranscriptLoad {
             continue;
         };
         match line_type(&value) {
-            Some("user") => apply_user(&mut items, &mut next, &value),
-            Some("assistant") => apply_assistant(&mut items, &mut next, &value),
+            Some("user") => apply_user(&mut items, &mut next, &mut tasks, &mut pending_creates, &value),
+            Some("assistant") => apply_assistant(&mut items, &mut next, &mut tasks, &mut pending_creates, &value),
             Some("system") if value.get("subtype").and_then(Value::as_str) == Some("compact_boundary") => {
                 let id = value.get("uuid").and_then(Value::as_str).map_or_else(|| next("notice"), str::to_owned);
                 items.push(Item::Notice {
@@ -384,7 +434,7 @@ pub fn items_from_transcript(text: &str) -> TranscriptLoad {
             None => skipped += 1,
         }
     }
-    TranscriptLoad { items, skipped }
+    TranscriptLoad { items, tasks, skipped }
 }
 
 /// `/compact` sent on its own, or with a note after it: Claude's own command, not the Owner's words.
@@ -401,6 +451,24 @@ fn on_submit(conversation: &mut Conversation, prompt: &str) {
         conversation.app_sent.remove(at);
         return;
     }
+    // A steering message's hook: the item is already drawn, so it only loses its mark.
+    if let Some(at) = conversation
+        .steered
+        .iter()
+        .position(|(text, _)| text.trim() == prompt.trim())
+    {
+        let (text, _) = conversation.steered.remove(at);
+        if let Some(Item::Owner { steering, .. }) = conversation
+            .items
+            .iter_mut()
+            .rev()
+            .find(|item| matches!(item, Item::Owner { text: have, .. } if have.trim() == text.trim()))
+        {
+            *steering = false;
+        }
+        conversation.touched();
+        return;
+    }
     let side_question = prompt == "/btw" || prompt.starts_with("/btw ");
     if conversation.reveal == Some(Reveal::Auto) && !is_picker_command(prompt) && !side_question {
         conversation.hide();
@@ -410,6 +478,7 @@ fn on_submit(conversation: &mut Conversation, prompt: &str) {
         conversation.items.push(Item::Owner {
             id,
             text: prompt.to_owned(),
+            steering: false,
         });
         conversation.touched();
     }
@@ -422,6 +491,19 @@ fn on_submit(conversation: &mut Conversation, prompt: &str) {
         let why = format!("Claude is showing its {} menu.", prompt.trim());
         conversation.show(Reveal::Auto, Some(why));
     }
+}
+
+/// The Owner's message went at once while the lead worked: draw it now, marked, until Claude's hook
+/// takes it in.
+fn on_steer(conversation: &mut Conversation, text: &str) {
+    let id = conversation.next("owner");
+    conversation.items.push(Item::Owner {
+        id,
+        text: text.to_owned(),
+        steering: true,
+    });
+    conversation.steered.push((text.to_owned(), 0));
+    conversation.touched();
 }
 
 /// One batch of an assistant message. The item's text is the batches joined in index
@@ -503,6 +585,7 @@ fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Va
         summary: tool_summary(name, input, ToolState::Running),
         state: ToolState::Running,
         result: None,
+        edit: None,
     });
     conversation.touched();
 }
@@ -527,21 +610,28 @@ fn on_tool_end(
     name: &str,
     input: &Value,
     result: &str,
+    response: &Value,
     state: ToolState,
 ) {
     let clipped = clip_result(result);
     let result = if clipped.is_empty() { None } else { Some(clipped) };
+    let edit = edit_stat(name, input, response, state);
+    if state == ToolState::Done {
+        apply_task_tool(&mut conversation.tasks, name, input, response);
+    }
     if let Some(Item::Tool {
         name: have_name,
         summary: have_summary,
         state: have,
         result: have_result,
+        edit: have_edit,
         ..
     }) = tool_mut(conversation, id)
     {
         *have_summary = ended_summary(have_summary, have_name, input, state);
         *have = state;
         *have_result = result;
+        *have_edit = edit;
         conversation.touched();
         return;
     }
@@ -551,6 +641,7 @@ fn on_tool_end(
             summary: have_summary,
             state: have,
             result: have_result,
+            edit: have_edit,
             ..
         }) = conversation.items.iter_mut().rev().find(|item| {
             matches!(
@@ -565,6 +656,7 @@ fn on_tool_end(
             *have_summary = ended_summary(have_summary, name, input, state);
             *have = state;
             *have_result = result;
+            *have_edit = edit;
             conversation.touched();
             return;
         }
@@ -580,12 +672,26 @@ fn on_tool_end(
         summary: tool_summary(name, input, state),
         state,
         result,
+        edit,
     });
     conversation.touched();
 }
 
 fn on_stop(conversation: &mut Conversation) {
-    if finish_assistant(conversation) {
+    let mut unsteered = false;
+    for item in &mut conversation.items {
+        if let Item::Owner { steering, .. } = item
+            && *steering
+        {
+            *steering = false;
+            unsteered = true;
+        }
+    }
+    for (_, stops) in &mut conversation.steered {
+        *stops += 1;
+    }
+    conversation.steered.retain(|(_, stops)| *stops < 2);
+    if finish_assistant(conversation) || unsteered {
         conversation.touched();
     }
     if conversation.reveal == Some(Reveal::Auto) {
@@ -762,6 +868,140 @@ pub fn tool_summary(name: &str, input: &Value, state: ToolState) -> String {
     }
 }
 
+/// What a done edit tool changed: the path it wrote, and the lines its response's patch, or its own
+/// input, added and removed.
+fn edit_stat(name: &str, input: &Value, response: &Value, state: ToolState) -> Option<EditStat> {
+    if state != ToolState::Done {
+        return None;
+    }
+    let path = first_string(input, &["file_path", "notebook_path"]);
+    if path.is_empty() {
+        return None;
+    }
+    if let Some(hunks) = response.get("structuredPatch").and_then(Value::as_array) {
+        let mut added = 0;
+        let mut removed = 0;
+        for hunk in hunks {
+            for line in hunk.get("lines").and_then(Value::as_array).into_iter().flatten() {
+                let Some(line) = line.as_str() else { continue };
+                if line.starts_with('+') {
+                    added += 1;
+                } else if line.starts_with('-') {
+                    removed += 1;
+                }
+            }
+        }
+        return Some(EditStat { path, added, removed });
+    }
+    let lines = |value: &Value, key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .map_or(0, |text| text.lines().count() as u32)
+    };
+    let (added, removed) = match name {
+        "Edit" => (lines(input, "new_string"), lines(input, "old_string")),
+        "MultiEdit" => {
+            let mut added = 0;
+            let mut removed = 0;
+            for edit in input.get("edits").and_then(Value::as_array).into_iter().flatten() {
+                added += lines(edit, "new_string");
+                removed += lines(edit, "old_string");
+            }
+            (added, removed)
+        }
+        "Write" => (lines(input, "content"), 0),
+        "NotebookEdit" => (lines(input, "new_source"), 0),
+        _ => return None,
+    };
+    Some(EditStat { path, added, removed })
+}
+
+/// The id a TaskCreate's response gave the new task.
+fn task_response_id(response: &Value) -> Option<String> {
+    let parsed;
+    let response = match response {
+        Value::String(text) => {
+            parsed = serde_json::from_str(text).unwrap_or(Value::Null);
+            &parsed
+        }
+        other => other,
+    };
+    response
+        .pointer("/task/id")
+        .or_else(|| response.get("id"))
+        .or_else(|| response.get("taskId"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+/// The id a TaskUpdate names, with the loose spellings Claude's raw stream can carry.
+fn task_input_id(input: &Value) -> Option<String> {
+    ["taskId", "id", "task_id"]
+        .iter()
+        .find_map(|key| input.get(*key).and_then(Value::as_str))
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
+/// Applies one of Claude Code's task tools to the strip's rows.
+#[allow(clippy::ptr_arg)] // It replaces the whole list for TodoWrite, so the Vec is the point.
+fn apply_task_tool(tasks: &mut Vec<TaskRow>, name: &str, input: &Value, response: &Value) {
+    match name {
+        "TodoWrite" => {
+            let Some(todos) = input.get("todos").and_then(Value::as_array) else {
+                return;
+            };
+            *tasks = todos
+                .iter()
+                .enumerate()
+                .map(|(index, todo)| TaskRow {
+                    id: (index + 1).to_string(),
+                    subject: first_string(todo, &["content"]),
+                    active: first_string(todo, &["activeForm", "active_form"]),
+                    status: first_string(todo, &["status"]),
+                })
+                .collect();
+        }
+        "TaskCreate" => {
+            tasks.push(TaskRow {
+                id: task_response_id(response).unwrap_or_else(|| (tasks.len() + 1).to_string()),
+                subject: first_string(input, &["subject"]),
+                active: first_string(input, &["activeForm", "active_form"]),
+                status: "pending".into(),
+            });
+        }
+        "TaskUpdate" => {
+            let Some(id) = task_input_id(input) else {
+                return;
+            };
+            let status = input.get("status").and_then(Value::as_str).unwrap_or("");
+            if status == "deleted" {
+                tasks.retain(|row| row.id != id);
+                return;
+            }
+            let Some(row) = tasks.iter_mut().find(|row| row.id == id) else {
+                return;
+            };
+            if !status.is_empty() {
+                row.status = status.to_owned();
+            }
+            if let Some(subject) = input.get("subject").and_then(Value::as_str) {
+                row.subject = subject.to_owned();
+            }
+            if let Some(active) = input
+                .get("activeForm")
+                .or_else(|| input.get("active_form"))
+                .and_then(Value::as_str)
+            {
+                row.active = active.to_owned();
+            }
+        }
+        _ => {}
+    }
+}
+
 fn edited_summary(input: &Value) -> String {
     if let Some(files) = input.get("files").and_then(Value::as_array) {
         let paths: Vec<&str> = files.iter().filter_map(Value::as_str).collect();
@@ -858,7 +1098,13 @@ fn message_content(value: &Value) -> &Value {
         .unwrap_or(&Value::Null)
 }
 
-fn apply_user(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String, value: &Value) {
+fn apply_user(
+    items: &mut Vec<Item>,
+    next: &mut impl FnMut(&str) -> String,
+    tasks: &mut [TaskRow],
+    pending_creates: &mut BTreeMap<String, usize>,
+    value: &Value,
+) {
     // A compaction's summary and Claude's meta lines are written by Claude, not the Owner.
     if value["isCompactSummary"] == true || value["isMeta"] == true {
         return;
@@ -868,6 +1114,7 @@ fn apply_user(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String, valu
             items.push(Item::Owner {
                 id: next("owner"),
                 text: text.clone(),
+                steering: false,
             });
         }
         Value::Array(parts) => {
@@ -876,7 +1123,7 @@ fn apply_user(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String, valu
                 let kind = part.get("type").and_then(Value::as_str).unwrap_or("");
                 if kind == "tool_result" {
                     flush_owner(items, next, &mut texts);
-                    apply_tool_result(items, part);
+                    apply_tool_result(items, part, tasks, pending_creates, value);
                 } else if let Some(text) = part_text(part) {
                     texts.push(text);
                 }
@@ -894,31 +1141,56 @@ fn flush_owner(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String, tex
     items.push(Item::Owner {
         id: next("owner"),
         text: texts.join(""),
+        steering: false,
     });
     texts.clear();
 }
 
-fn apply_assistant(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String, value: &Value) {
+#[allow(clippy::ptr_arg)] // A TaskCreate appends to the list.
+fn apply_assistant(
+    items: &mut Vec<Item>,
+    next: &mut impl FnMut(&str) -> String,
+    tasks: &mut Vec<TaskRow>,
+    pending_creates: &mut BTreeMap<String, usize>,
+    value: &Value,
+) {
     match message_content(value) {
         Value::String(text) if !text.is_empty() => append_assistant(items, next, text),
         Value::Array(parts) => {
             for part in parts {
                 let kind = part.get("type").and_then(Value::as_str).unwrap_or("");
                 if kind == "tool_use" {
-                    let id = part
+                    let tool_use_id = part
                         .get("id")
                         .and_then(Value::as_str)
                         .filter(|id| !id.is_empty())
-                        .map(str::to_owned)
+                        .map(str::to_owned);
+                    let id = tool_use_id
+                        .clone()
                         .unwrap_or_else(|| next("tool"));
                     let name = part.get("name").and_then(Value::as_str).unwrap_or("tool");
                     let input = part.get("input").cloned().unwrap_or(Value::Null);
+                    if name == "TaskCreate" {
+                        let index = tasks.len();
+                        tasks.push(TaskRow {
+                            id: (index + 1).to_string(),
+                            subject: first_string(&input, &["subject"]),
+                            active: first_string(&input, &["activeForm", "active_form"]),
+                            status: "pending".into(),
+                        });
+                        if let Some(tool_use_id) = tool_use_id {
+                            pending_creates.insert(tool_use_id, index);
+                        }
+                    } else {
+                        apply_task_tool(tasks, name, &input, &Value::Null);
+                    }
                     items.push(Item::Tool {
                         id,
                         name: name.to_owned(),
                         summary: tool_summary(name, &input, ToolState::Running),
                         state: ToolState::Running,
                         result: None,
+                        edit: edit_stat(name, &input, &Value::Null, ToolState::Done),
                     });
                 } else if kind == "thinking" {
                     continue;
@@ -948,7 +1220,13 @@ fn append_assistant(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String
     });
 }
 
-fn apply_tool_result(items: &mut Vec<Item>, part: &Value) {
+fn apply_tool_result(
+    items: &mut Vec<Item>,
+    part: &Value,
+    tasks: &mut [TaskRow],
+    pending_creates: &mut BTreeMap<String, usize>,
+    value: &Value,
+) {
     let id = part.get("tool_use_id").and_then(Value::as_str).unwrap_or("");
     let result = match part.get("content") {
         Some(content) => content_text(Some(content)),
@@ -957,17 +1235,51 @@ fn apply_tool_result(items: &mut Vec<Item>, part: &Value) {
     let failed = part.get("is_error").and_then(Value::as_bool).unwrap_or(false);
     let state = if failed { ToolState::Failed } else { ToolState::Done };
     let clipped = clip_result(&result);
+    if let Some(index) = pending_creates.remove(id) {
+        let response = tool_response(value, part);
+        if let Some(task_id) = task_response_id(&response)
+            && let Some(row) = tasks.get_mut(index)
+        {
+            row.id = task_id;
+        }
+    }
     if let Some(Item::Tool {
         name: have_name,
         summary: have_summary,
         state: have,
         result: have_result,
+        edit: have_edit,
         ..
     }) = items.iter_mut().find(|item| matches!(item, Item::Tool { id: have, .. } if have == id))
     {
         *have_summary = ended_summary(have_summary, have_name, &Value::Null, state);
         *have = state;
         *have_result = if clipped.is_empty() { None } else { Some(clipped) };
+        if failed {
+            *have_edit = None;
+        }
+    }
+}
+
+/// The structured response a transcript line carries for its tool result: Claude Code writes a
+/// TaskCreate's assigned id in `tool_use_result`, and some lines carry it as the result's JSON.
+fn tool_response(value: &Value, part: &Value) -> Value {
+    if let Some(response) = value
+        .get("tool_use_result")
+        .or_else(|| value.get("toolUseResult"))
+    {
+        return response.clone();
+    }
+    if let Some(response) = part
+        .get("tool_use_result")
+        .or_else(|| part.get("toolUseResult"))
+    {
+        return response.clone();
+    }
+    match part.get("content") {
+        Some(content @ Value::Object(_)) => content.clone(),
+        Some(Value::String(text)) => serde_json::from_str(text).unwrap_or(Value::Null),
+        _ => Value::Null,
     }
 }
 

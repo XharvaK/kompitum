@@ -335,9 +335,20 @@ fn conversation_values_started(
             "terminal": terminal,
             "reveal": reveal,
             "reveal_why": why,
-            "conversation": { "version": 1, "length": length }
+            "conversation": { "version": 1, "length": length },
+            "tasks": []
         }),
     );
+    values
+}
+
+fn with_tasks(mut values: BTreeMap<String, Value>, tasks: Value) -> BTreeMap<String, Value> {
+    values.get_mut("lead").unwrap()["tasks"] = tasks;
+    values
+}
+
+fn with_lead_state(mut values: BTreeMap<String, Value>, state: &str) -> BTreeMap<String, Value> {
+    values.get_mut("lead").unwrap()["state"] = json!(state);
     values
 }
 
@@ -395,6 +406,62 @@ fn composer_live_run_after_clicks(
         })
         .map(|(_, args)| args.clone())
         .collect()
+}
+
+fn composer_laid_out_with_values(
+    cx: &mut TestAppContext,
+    values: BTreeMap<String, Value>,
+    setup: &str,
+    clicks: &[&'static str],
+    keys: &str,
+    want: &[&'static str],
+) -> Vec<(String, bool)> {
+    use gpui::{Modifiers, MouseButton};
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-tasks.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    for id in clicks {
+        let at = visual
+            .debug_bounds(id)
+            .unwrap_or_else(|| panic!("{id} is laid out"))
+            .center();
+        visual.simulate_mouse_move(at, None, Modifiers::default());
+        visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        visual.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    if !keys.is_empty() {
+        visual.simulate_keystrokes(keys);
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    let found = want
+        .iter()
+        .map(|id| ((*id).to_string(), visual.debug_bounds(id).is_some()))
+        .collect();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    found
 }
 
 /// Each conversation kind draws: the owner's words, the assistant's Markdown, a tool summary, a notice.
@@ -527,6 +594,301 @@ fn send_on_a_click_sends_the_typed_words(cx: &mut TestAppContext) {
         effects.iter().any(|args| args.first() == Some(&json!(["send", "t1", "hello"]))),
         "Send should send the typed words: {effects:?}"
     );
+}
+
+/// A message sent while the lead works is marked as steering at once.
+#[gpui::test]
+fn a_send_while_working_marks_it_as_steering(cx: &mut TestAppContext) {
+    let values = with_lead_state(
+        conversation_values(json!([]), "hidden", Value::Null, None),
+        "working",
+    );
+    let effects = composer_live_run_after_clicks(cx, values, "this.text.set_value('hello');", &["composer-send"]);
+    assert!(
+        effects.iter().any(|args| {
+            args.first() == Some(&json!("lead.steer"))
+                && args.get(1) == Some(&json!({"terminal": "t1", "text": "hello"}))
+        }),
+        "a send while working should run lead.steer: {effects:?}"
+    );
+}
+
+/// A message sent while the lead waits is not steering.
+#[gpui::test]
+fn a_send_while_waiting_does_not_steer(cx: &mut TestAppContext) {
+    let effects = composer_live_run_after_clicks(
+        cx,
+        conversation_values(json!([]), "hidden", Value::Null, None),
+        "this.text.set_value('hello');",
+        &["composer-send"],
+    );
+    assert!(
+        !effects.iter().any(|args| args.first() == Some(&json!("lead.steer"))),
+        "a send while waiting is not steering: {effects:?}"
+    );
+}
+
+/// An owner item marked steering says so under its words; an ordinary one does not.
+#[gpui::test]
+fn a_steering_owner_item_says_it_is_on_its_way(cx: &mut TestAppContext) {
+    let items = json!([
+        {"kind": "owner", "id": "o1", "text": "look at the tests", "steering": true},
+        {"kind": "owner", "id": "o2", "text": "and the docs"}
+    ]);
+    let tree = composer_draws(
+        cx,
+        conversation_values(items, "hidden", Value::Null, None),
+        None,
+    );
+    assert!(tree.contains("composer-steering-o1"), "{tree}");
+    assert!(tree.contains("Steering · Claude sees it after this step"), "{tree}");
+    assert!(!tree.contains("composer-steering-o2"), "{tree}");
+}
+
+/// The Owner's words draw exactly as typed through the Markdown view: its marks are escaped, each line
+/// break is a hard break, leading spaces and blank lines stay as no-break spaces, and plain words like
+/// `lead.rs` are left alone.
+#[gpui::test]
+fn the_owners_words_draw_exactly_as_typed(cx: &mut TestAppContext) {
+    let typed = "*word* and $5 at a_b in lead.rs\r\n# not a heading\n\n  - indented\n1. one <b>\n";
+    let items = json!([{"kind": "owner", "id": "o1", "text": typed}]);
+    let tree = composer_draws(
+        cx,
+        conversation_values(items, "hidden", Value::Null, None),
+        None,
+    );
+    let source = "\\*word\\* and \\$5 at a\\_b in lead.rs\\\n\\# not a heading\\\n\u{a0}\\\n\u{a0}\u{a0}\\- indented\\\n1\\. one \\<b>";
+    let expected = format!("markdown \"composer-owner-md-o1\" {source:?}");
+    assert!(tree.contains(&expected), "missing {expected}: {tree}");
+}
+
+/// The task strip is hidden with no tasks and when every one is done.
+#[gpui::test]
+fn the_task_strip_hides_when_nothing_is_open(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let none = composer_draws(
+        cx,
+        with_tasks(conversation_values(json!([]), "hidden", Value::Null, None), json!([])),
+        None,
+    );
+    assert!(!none.contains("composer-tasks-toggle"), "{none}");
+    let done = composer_draws(
+        cx,
+        with_tasks(
+            conversation_values(json!([]), "hidden", Value::Null, None),
+            json!([
+                {"id": "1", "subject": "Read", "active": "Reading", "status": "completed"},
+                {"id": "2", "subject": "Write", "active": "Writing", "status": "completed"}
+            ]),
+        ),
+        None,
+    );
+    assert!(!done.contains("composer-tasks-toggle"), "{done}");
+}
+
+/// Folded, the strip counts the done rows and names the work in progress by its active form.
+#[gpui::test]
+fn the_folded_task_strip_counts_and_names_the_work(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_draws(
+        cx,
+        with_tasks(
+            conversation_values(json!([]), "hidden", Value::Null, None),
+            json!([
+                {"id": "1", "subject": "Read", "active": "Reading", "status": "completed"},
+                {"id": "2", "subject": "Write", "active": "Writing the strip", "status": "in_progress"},
+                {"id": "3", "subject": "Test", "active": "Testing it", "status": "pending"}
+            ]),
+        ),
+        None,
+    );
+    assert!(tree.contains("composer-tasks-toggle"), "{tree}");
+    assert!(tree.contains("1 of 3"), "{tree}");
+    assert!(tree.contains("Writing the strip"), "{tree}");
+    assert!(!tree.contains("composer-task-1"), "folded rows stay hidden: {tree}");
+}
+
+/// A click on the folded line opens the rows, and Ctrl+T does the same.
+#[gpui::test]
+fn the_task_strip_opens_on_a_click_and_ctrl_t(cx: &mut TestAppContext) {
+    let values = with_tasks(
+        conversation_values(json!([]), "hidden", Value::Null, None),
+        json!([
+            {"id": "1", "subject": "Read", "active": "Reading", "status": "completed"},
+            {"id": "2", "subject": "Write", "active": "Writing", "status": "in_progress"}
+        ]),
+    );
+    let clicked = composer_laid_out_with_values(
+        cx,
+        values.clone(),
+        "",
+        &["composer-tasks-toggle"],
+        "",
+        &["composer-task-1", "composer-task-2"],
+    );
+    assert!(clicked.iter().all(|(_, shown)| *shown), "a click opens the rows: {clicked:?}");
+    let keyed = composer_laid_out_with_values(
+        cx,
+        values,
+        "this.text.focus();",
+        &[],
+        "ctrl-t",
+        &["composer-task-1", "composer-task-2"],
+    );
+    assert!(keyed.iter().all(|(_, shown)| *shown), "Ctrl+T opens the rows: {keyed:?}");
+}
+
+/// Open, each row's mark says its status: a ring, a working dot, a check.
+#[gpui::test]
+fn the_open_task_rows_mark_each_status(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = composer_draws(
+        cx,
+        with_tasks(
+            conversation_values(json!([]), "hidden", Value::Null, None),
+            json!([
+                {"id": "1", "subject": "Read", "active": "Reading", "status": "pending"},
+                {"id": "2", "subject": "Write", "active": "Writing", "status": "in_progress"},
+                {"id": "3", "subject": "Test", "active": "Testing", "status": "completed"}
+            ]),
+        ),
+        Some("this.tasksOpen = true;"),
+    );
+    assert!(tree.contains("composer-task-1"), "{tree}");
+    for mark in ["○", "●", "✓"] {
+        assert!(tree.contains(mark), "missing {mark}: {tree}");
+    }
+}
+
+/// A finished turn with one edit says one file and its lines.
+#[gpui::test]
+fn a_finished_turn_says_what_it_changed(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let items = json!([
+        {"kind": "owner", "id": "o1", "text": "Change the code"},
+        {"kind": "tool", "id": "t1", "name": "Edit", "summary": "Edited a.rs", "state": "done",
+         "edit": {"path": "a.rs", "added": 120, "removed": 8}}
+    ]);
+    let tree = composer_draws(cx, conversation_values(items, "hidden", Value::Null, None), None);
+    assert!(tree.contains("composer-turn-summary-0"), "{tree}");
+    assert!(tree.contains("1 file changed"), "{tree}");
+    assert!(tree.contains("+120 −8"), "{tree}");
+    assert!(tree.contains("Review"), "{tree}");
+}
+
+/// Several files count their distinct paths and sum their lines; the same path twice counts once.
+#[gpui::test]
+fn a_turn_counts_each_file_once_and_sums_its_lines(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let items = json!([
+        {"kind": "owner", "id": "o1", "text": "Change the code"},
+        {"kind": "tool", "id": "t1", "name": "Edit", "summary": "Edited a.rs", "state": "done",
+         "edit": {"path": "a.rs", "added": 10, "removed": 2}},
+        {"kind": "tool", "id": "t2", "name": "Write", "summary": "Edited b.rs", "state": "done",
+         "edit": {"path": "b.rs", "added": 20, "removed": 3}},
+        {"kind": "tool", "id": "t3", "name": "Edit", "summary": "Edited a.rs", "state": "done",
+         "edit": {"path": "a.rs", "added": 5, "removed": 1}}
+    ]);
+    let tree = composer_draws(cx, conversation_values(items, "hidden", Value::Null, None), None);
+    assert!(tree.contains("2 files changed"), "{tree}");
+    assert!(tree.contains("+35 −6"), "{tree}");
+}
+
+/// A turn with no edits says nothing, and neither does the turn still in progress.
+#[gpui::test]
+fn a_turn_without_edits_or_still_running_says_nothing(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let quiet = json!([
+        {"kind": "owner", "id": "o1", "text": "Look"},
+        {"kind": "assistant", "id": "a1", "text": "Done.", "done": true}
+    ]);
+    let tree = composer_draws(cx, conversation_values(quiet, "hidden", Value::Null, None), None);
+    assert!(!tree.contains("file changed"), "{tree}");
+    let working = json!([
+        {"kind": "owner", "id": "o1", "text": "Change the code"},
+        {"kind": "tool", "id": "t1", "name": "Edit", "summary": "Edited a.rs", "state": "done",
+         "edit": {"path": "a.rs", "added": 1, "removed": 1}}
+    ]);
+    let tree = composer_draws(
+        cx,
+        with_lead_state(conversation_values(working, "hidden", Value::Null, None), "working"),
+        None,
+    );
+    assert!(!tree.contains("file changed"), "{tree}");
+}
+
+/// Review shows the Changes panel, the way the top bar does.
+#[gpui::test]
+fn review_opens_the_changes_panel(cx: &mut TestAppContext) {
+    let items = json!([
+        {"kind": "owner", "id": "o1", "text": "Change the code"},
+        {"kind": "tool", "id": "t1", "name": "Edit", "summary": "Edited a.rs", "state": "done",
+         "edit": {"path": "a.rs", "added": 4, "removed": 2}}
+    ]);
+    let effects = composer_live_run_after_clicks(
+        cx,
+        conversation_values(items, "hidden", Value::Null, None),
+        "",
+        &["composer-turn-review-0"],
+    );
+    assert!(
+        effects.iter().any(|args| args.first() == Some(&json!("layout.select"))
+            && args.get(1) == Some(&json!({"stack": "panel-body", "child": "changes"}))),
+        "{effects:?}"
+    );
+    assert!(
+        effects.iter().any(|args| args.first() == Some(&json!("layout.show"))
+            && args.get(1) == Some(&json!({"id": "panel"}))),
+        "{effects:?}"
+    );
+}
+
+/// Reply is shown only on the item holding the last selection.
+#[gpui::test]
+fn the_reply_button_follows_the_selection(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let items = json!([
+        {"kind": "owner", "id": "o1", "text": "Look at this"},
+        {"kind": "assistant", "id": "a1", "text": "I'll read the file.", "done": true}
+    ]);
+    let tree = composer_draws(
+        cx,
+        conversation_values(items, "hidden", Value::Null, None),
+        Some("this.quote = { itemId: 'a1', text: 'the file' };"),
+    );
+    assert!(tree.contains("composer-quote-reply-a1"), "{tree}");
+    assert!(!tree.contains("composer-quote-reply-o1"), "{tree}");
+}
+
+/// Reply into an empty box quotes every line and leaves a blank line after it.
+#[gpui::test]
+fn reply_quotes_the_selection_into_an_empty_box(cx: &mut TestAppContext) {
+    let setup = "this.selectQuote('a1', 'line one\\nline two', cx); this.replyToQuote(cx); \
+        if (this.text.value() !== '> line one\\n> line two\\n\\n') \
+        throw new Error('box: ' + JSON.stringify(this.text.value()));";
+    let items = json!([{"kind": "assistant", "id": "a1", "text": "One\nTwo", "done": true}]);
+    let tree = composer_draws(
+        cx,
+        conversation_values(items, "hidden", Value::Null, None),
+        Some(setup),
+    );
+    assert!(!tree.contains("composer-quote-reply-a1"), "the selection is forgotten: {tree}");
+}
+
+/// Reply after existing text keeps it and puts the quote below, separated by an empty line.
+#[gpui::test]
+fn reply_quotes_after_the_text_already_in_the_box(cx: &mut TestAppContext) {
+    let setup = "this.text.set_value('draft'); this.selectQuote('o1', 'line one\\nline two', cx); \
+        this.replyToQuote(cx); \
+        if (this.text.value() !== 'draft\\n\\n> line one\\n> line two\\n\\n') \
+        throw new Error('box: ' + JSON.stringify(this.text.value()));";
+    let items = json!([{"kind": "owner", "id": "o1", "text": "Look at this"}]);
+    let tree = composer_draws(
+        cx,
+        conversation_values(items, "hidden", Value::Null, None),
+        Some(setup),
+    );
+    assert!(!tree.contains("composer-quote-reply-o1"), "the selection is forgotten: {tree}");
 }
 
 /// Sending a bare /model is still kom send; the hook's auto reveal draws the note.

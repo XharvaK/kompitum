@@ -317,6 +317,7 @@ struct Behavior {
     selectable: Option<bool>,
     text_scrollable: Option<bool>,
     on_link_click: Option<CallbackId>,
+    on_selection_change: Option<CallbackId>,
 
     /// Whether a `NumberInput` stacks both step buttons to the right of the
     /// text, rather than putting one on each side of it.
@@ -1133,6 +1134,15 @@ fn materialize_component(
                     if activate && is_openable_url(url) {
                         cx.open_url(url);
                     }
+                });
+            }
+            if let Some(callback) = behavior.on_selection_change {
+                let route = crate::script_callback::ScriptCallbackRoute::new(
+                    Rc::downgrade(runtime),
+                    callback,
+                );
+                view = view.on_selection_change(move |text, window, cx| {
+                    route.emit(crate::HostValue::from(text.to_string()), window, cx);
                 });
             }
             Styled::style(&mut view).refine(&refinement);
@@ -2725,6 +2735,7 @@ pub(in crate::materialize) fn resolve_ops(
             SpecOp::Callback(name, id) => match *name {
                 "on_click" => behavior.on_click = Some(*id),
                 "on_link_click" => behavior.on_link_click = Some(*id),
+                "on_selection_change" => behavior.on_selection_change = Some(*id),
                 "on_mouse_move" => behavior.on_mouse_move = Some(*id),
                 "on_hover" => behavior.on_hover = Some(*id),
                 "on_key_down" => behavior.on_key_down = Some(*id),

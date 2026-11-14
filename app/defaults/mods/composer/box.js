@@ -210,6 +210,64 @@ export default {
     });
   },
 
+  // The lead's task list above the box: folded to a count and the work in progress, or open to up to
+  // eight rows. Shown only while a row still has work in it.
+  taskStrip(t, cx) {
+    const tasks = leadOf()?.tasks;
+    if (!Array.isArray(tasks) || !tasks.some((row) => row?.status !== "completed")) return null;
+    const done = tasks.filter((row) => row?.status === "completed").length;
+    const open = Boolean(this.tasksOpen);
+    const current = tasks.find((row) => row?.status === "in_progress")
+      ?? tasks.find((row) => row?.status !== "completed");
+    const label = current?.active || current?.subject || "";
+    const mark = (row) => {
+      if (row?.status === "completed") return div().text_size(12).text_color(t.dim).child("✓");
+      if (row?.status === "in_progress") return div().text_size(12).text_color(t.working).child("●");
+      return div().text_size(12).text_color(t.dim).child("○");
+    };
+    return v_flex()
+      .id("composer-tasks")
+      .w_full()
+      .flex_none()
+      .rounded(8)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.raised)
+      .when(open, (el) =>
+        el.children(tasks.slice(0, 8).map((row) =>
+          h_flex()
+            .id(`composer-task-${row.id}`)
+            .h(24)
+            .px(10)
+            .gap(8)
+            .items_center()
+            .child(mark(row))
+            .child(
+              div()
+                .min_w(0)
+                .truncate()
+                .text_size(12)
+                .text_color(row?.status === "completed" ? t.dim : t.foreground)
+                .child(row?.subject ?? ""),
+            ))))
+      .child(
+        h_flex()
+          .id("composer-tasks-toggle")
+          .h(28)
+          .px(10)
+          .gap(8)
+          .items_center()
+          .cursor_pointer()
+          .on_click((_e, cx) => {
+            this.tasksOpen = !open;
+            cx.notify();
+          })
+          .child(div().text_size(12).text_color(t.muted).child(`${done} of ${tasks.length}`))
+          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(label))
+          .child(div().text_size(12).text_color(t.dim).child("›")),
+      );
+  },
+
   // One floating box: files, the text (no placeholder), then attach and the mode on the left; the lead's status,
   // its model and Send on the right.
   // While the lead asks, its card takes the text's place in the same box, and the text is not drawn.
@@ -339,13 +397,21 @@ export default {
           );
     // The `/` list is an absolute child of the box's own frame, so it can sit above the box
     // without taking the textarea's keyboard (a Popover would).
+    const strip = this.taskStrip(t, cx);
     const boxFrame = div()
       .relative()
       .when(panel, (el) => el.w_full().max_w(760))
-      .when(!panel, (el) => el.size_full())
+      .when(!panel, (el) => (strip ? el.flex_1().min_h(0) : el.size_full()))
       .child(box)
       .when(this.listShown(), (el) => el.child(this.listMenu(t, cx)));
-    return frame.child(panel ? h_flex().w_full().justify_center().child(boxFrame) : boxFrame);
+    if (!strip) return frame.child(panel ? h_flex().w_full().justify_center().child(boxFrame) : boxFrame);
+    const column = v_flex()
+      .when(panel, (el) => el.w_full().max_w(760))
+      .when(!panel, (el) => el.size_full())
+      .gap(6)
+      .child(strip)
+      .child(boxFrame);
+    return frame.child(panel ? h_flex().w_full().justify_center().child(column) : column);
   },
 
   // A new conversation: the headline in the middle of the space above, and the box at the bottom, where the

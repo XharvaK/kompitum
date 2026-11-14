@@ -6589,6 +6589,27 @@ impl AppWindow {
                 let answer = a.get("answer").cloned().unwrap_or(Value::Null);
                 self.answer_lead(id, &answer, cx);
             }
+            "lead.steer" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let text = Self::arg(a, "text").unwrap_or_default().to_owned();
+                let person = settings::load_person().ok();
+                let program = person
+                    .and_then(|person| person.lead)
+                    .and_then(|lead| lead.program)
+                    .filter(|program| !program.is_empty())
+                    .unwrap_or_else(|| "claude".to_owned());
+                if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
+                    return self.fail(format!("{terminal:?} isn't the lead's terminal"));
+                }
+                {
+                    let session = self.lead_sessions.entry(terminal).or_default();
+                    session.conversation = crate::lead::fold(
+                        std::mem::take(&mut session.conversation),
+                        &crate::lead::Event::Steer { text },
+                    );
+                }
+                self.publish_lead(cx);
+            }
             "agent.focus" => {
                 let t = Self::arg(a, "terminal").unwrap_or_default().to_owned();
                 if !self.live.contains_key(&t) {
@@ -12142,5 +12163,54 @@ export default class Probe extends View {
         ));
         assert!(!super::adoptable(&record("live"), "sp2", Some("tb1"), None));
         assert!(!super::adoptable(&record("live"), "sp1", Some("tb2"), None));
+    }
+
+    /// `TextView.on_selection_change` reports the text when a selection ends and "" when it is
+    /// cleared, the signal the composer's Reply uses.
+    #[gpui::test]
+    fn a_text_view_reports_its_selection_when_it_ends(cx: &mut TestAppContext) {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        struct SelectionRoot {
+            view: gpui::Entity<gpui_base::TextViewState>,
+            seen: Rc<RefCell<Vec<String>>>,
+        }
+
+        impl Render for SelectionRoot {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let seen = self.seen.clone();
+                div().w(px(400.)).child(
+                    gpui_base::TextView::new(&self.view).on_selection_change(move |text, _, _| {
+                        seen.borrow_mut().push(text.to_owned());
+                    }),
+                )
+            }
+        }
+
+        cx.update(gpui_base::init);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (root, cx) = cx.add_window_view(|_, cx| SelectionRoot {
+            view: cx.new(|cx| gpui_base::TextViewState::markdown("alpha beta", cx)),
+            seen: seen.clone(),
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(seen.borrow().is_empty(), "no selection yet: {:?}", seen.borrow());
+        root.update(cx, |root, cx| {
+            root.view.update(cx, |view, cx| view.select_all(cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(seen.borrow().as_slice(), ["alpha beta\n".to_string()]);
+        root.update(cx, |root, cx| {
+            root.view.update(cx, |view, cx| view.clear_selection(cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(
+            seen.borrow().as_slice(),
+            ["alpha beta\n".to_string(), String::new()]
+        );
     }
 }

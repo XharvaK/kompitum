@@ -107,6 +107,8 @@ export default class Composer extends View {
     this.scroll = VirtualListScrollHandle.new();
     this.openTools = {};
     this.openToolGroups = {};
+    this.tasksOpen = false;
+    this.quote = null;
     this.handle = cx.focus_handle();
     this.text = TextareaState.new({});
     this.text.set_auto_grow(1, 6);
@@ -137,6 +139,9 @@ export default class Composer extends View {
       { keystroke: "shift-tab", action: "composer-mode", context: "Composer" },
       { keystroke: "shift-tab", action: "composer-mode", context: "ComposerHistory" },
       { keystroke: "shift-tab", action: "composer-mode", context: "ComposerList" },
+      { keystroke: "ctrl-t", action: "composer-tasks", context: "Composer" },
+      { keystroke: "ctrl-t", action: "composer-tasks", context: "ComposerHistory" },
+      { keystroke: "ctrl-t", action: "composer-tasks", context: "ComposerList" },
     ]);
     this.historyMode = true;
     this.applyKeyContext();
@@ -380,12 +385,14 @@ export default class Composer extends View {
       return;
     }
     const body = [text.trim() ? text : "", ...paths.map(quotePath)].filter(Boolean).join(" ");
+    const steering = this.state === "working";
     this.sending = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         const r = await kom(["send", this.terminal, body]);
         if (!r || r.code !== 0) throw new Error(errorText(r));
+        if (steering) run("lead.steer", { terminal: this.terminal, text: body });
         this.text.set_value("");
         this.chips = [];
         this.syncDraft();
@@ -515,6 +522,10 @@ export default class Composer extends View {
       .on_action("composer-list-close", (_event, cx) => this.closeList(cx))
       .on_action("composer-history-search", (_event, cx) => this.historySearchKey(cx))
       .on_action("composer-mode", (_event, cx) => this.pressMode(cx))
+      .on_action("composer-tasks", (_event, cx) => {
+        this.tasksOpen = !this.tasksOpen;
+        cx.notify();
+      })
       .on_key_down((event, cx) => this.keyDown(event, cx))
       .on_drop((event, cx) => {
         for (const path of event.paths ?? []) this.addChip(path);
