@@ -111,6 +111,10 @@ export function pickFiles(): Promise<string[]>;
  *  Claude's settings or login files. */
 export function leadSetup(): Promise<{ mcp: "added" | "present"; skill: "installed" | "present" }>;
 
+/** The lead's slash commands, sorted by name: the lead folder's skills and commands,
+ *  the user's, the installed plugins', then Claude Code's built-ins. Runs off the UI thread. */
+export function leadCommands(): Promise<{ name: string; hint: string; description: string; source: "project" | "user" | "plugin" | "built-in" }[]>;
+
 /** Plays "done" or "blocked" (the attention sounds, or the files settings.json names), or an MP3
  *  file (absolute, or relative to ~/.config/kompitum-app). */
 export function playSound(sound: string): null;

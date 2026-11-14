@@ -101,6 +101,34 @@ pub fn install(ctx: &Ctx<'_>, module: &Object<'_>, runtime: Weak<ShellRuntime>) 
         )?;
     }
 
+    // KOMPITUM: the active selection as UTF-8 byte offsets, the unit the base
+    // state keeps and returns. Read-only, so a script may ask during a render.
+    let input_range = runtime.clone();
+    globals.set(
+        "__input_selected_range",
+        Func::from(
+            move |ctx: Ctx<'_>, handle: EntityHandle| -> JsResult<Vec<f64>> {
+                let state = live(&ctx, &input_range, handle)?;
+                let range = scope::with_current_app(|cx| state.read(cx).selected_range())
+                    .ok_or_else(|| needs_call(&ctx, "selected_range()"))?;
+                Ok(vec![range.start as f64, range.end as f64])
+            },
+        ),
+    )?;
+
+    let textarea_range = runtime.clone();
+    globals.set(
+        "__textarea_selected_range",
+        Func::from(
+            move |ctx: Ctx<'_>, handle: EntityHandle| -> JsResult<Vec<f64>> {
+                let state = live_textarea(&ctx, &textarea_range, handle)?;
+                let range = scope::with_current_app(|cx| state.read(cx).selected_range())
+                    .ok_or_else(|| needs_call(&ctx, "selected_range()"))?;
+                Ok(vec![range.start as f64, range.end as f64])
+            },
+        ),
+    )?;
+
     // Every entity call reaches its store through the runtime, because the
     // store belongs to the runtime rather than to the thread — see
     // `crate::entities`. Each closure carries its own `Weak`, since a `Func`

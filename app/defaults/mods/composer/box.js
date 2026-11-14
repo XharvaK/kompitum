@@ -326,7 +326,15 @@ export default {
               .when(Boolean(voice), (el) => el.child(voice))
               .when(!first && !this.ask, (el) => el.child(send)),
           );
-    return frame.child(panel ? h_flex().w_full().justify_center().child(box) : box);
+    // The `/` list is an absolute child of the box's own frame, so it can sit above the box
+    // without taking the textarea's keyboard (a Popover would).
+    const boxFrame = div()
+      .relative()
+      .when(panel, (el) => el.w_full().max_w(760))
+      .when(!panel, (el) => el.size_full())
+      .child(box)
+      .when(this.listOpen && this.listMatches.length > 0, (el) => el.child(this.listMenu(t, cx)));
+    return frame.child(panel ? h_flex().w_full().justify_center().child(boxFrame) : boxFrame);
   },
 
   // A new conversation: the headline in the middle of the space above, and the box at the bottom, where the
@@ -370,6 +378,19 @@ export default {
       .child(this.bar(t, cx, true));
   },
 
+  // Whether the mode word (and Shift+Tab) may press the key: the lead waits with no card and no tidy-up.
+  modeLive() {
+    const mode = leadOf()?.permission_mode;
+    return typeof mode === "string" && Boolean(mode) && this.leadReady() && !this.ask && leadOf()?.compacting !== true;
+  },
+
+  // A click on the mode word or Shift+Tab in the box: the one key Claude Code takes for the next mode.
+  pressMode(cx) {
+    if (!this.modeLive()) return;
+    run("lead.mode", { terminal: this.terminal });
+    cx.notify();
+  },
+
   // The mode word after the model: live while the lead waits (a click presses Shift+Tab in its terminal), dim while
   // it works, asks or tidies up, and dim while a guessed mode waits for the next hook.
   modeControl(t) {
@@ -377,7 +398,7 @@ export default {
     if (typeof mode !== "string" || !mode) return null;
     const { word, line = "" } = MODES[mode] ?? { word: mode };
     const guessed = leadOf()?.mode_guessed === true;
-    const live = this.leadReady() && !this.ask && leadOf()?.compacting !== true;
+    const live = this.modeLive();
     const tip = live ? [line, "Click for the next mode (Shift+Tab)."].filter(Boolean).join(" ") : line;
     return h_flex()
       .id("composer-mode")
@@ -390,10 +411,7 @@ export default {
       .when(live, (el) => el
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-        .on_click((_e, cx) => {
-          run("lead.mode", { terminal: this.terminal });
-          cx.notify();
-        }))
+        .on_click((_e, cx) => this.pressMode(cx)))
       .when(Boolean(tip), (el) => el.tooltip(tip))
       .child(word);
   },
@@ -451,7 +469,7 @@ export default {
       .font_medium();
     // No model picked yet: the fill goes and an outline keeps the shape (UD's disabled state).
     const button = picked
-      ? start.bg(t.solid).text_color(t.solid_foreground).cursor_pointer().on_click((_e, cx) => this.startFirstPick(cx))
+      ? start.bg(t.accent_fill).text_color(t.accent_foreground).cursor_pointer().on_click((_e, cx) => this.startFirstPick(cx))
         .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))).child("Start the lead")
       : start.border_1().border_color(t.input).text_color(t.dim).child("Start the lead");
     return v_flex()

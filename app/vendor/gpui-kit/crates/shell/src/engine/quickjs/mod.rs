@@ -6215,6 +6215,10 @@ globalThis.__gpui = (() => {
   const inputState = (handle) => ({
     ...tokenStateMethods(handle, __input_token_call),
     __handle: handle,
+    selected_range: () => {
+      const [start, end] = __input_selected_range(handle);
+      return { start, end };
+    },
     value: () => __input_value(handle),
     set_value: setValue(handle, __input_set_value, __input_token_call),
     on: (event, handler) => __input_on(handle, String(event), handler),
@@ -6235,6 +6239,10 @@ globalThis.__gpui = (() => {
   const textareaState = (handle) => ({
     ...tokenStateMethods(handle, __textarea_token_call),
     __handle: handle,
+    selected_range: () => {
+      const [start, end] = __textarea_selected_range(handle);
+      return { start, end };
+    },
     value: () => __textarea_value(handle),
     set_value: setValue(handle, __textarea_set_value, __textarea_token_call),
     on: (event, handler) => __textarea_on(handle, String(event), handler),

@@ -1072,6 +1072,8 @@ All of it is in `kompitum.d.ts`. In short:
   start one with `argv: agent.run`.
   `pickFolder({ prompt })`: the system's folder picker (here only),
   resolves with the folder or null.
+  `leadCommands()`: the lead's `/` commands, `{name, hint, description, source}`
+  (`project`, `user`, `plugin` or `built-in`), sorted by name; runs off the UI thread.
 - Files: `readTextFile(path, { on })` (here, or on that machine),
   `writeTextFile(path, text, expected)` (here only), and
   `watchFolder(dir)` (here only; poll a remote space's folder): resolves with the changed paths the next time anything

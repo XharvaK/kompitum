@@ -1395,6 +1395,33 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 }
             })
         })
+        // The lead's slash commands, scanned off the window's thread: the
+        // project's and the user's skills and commands, plugins, then built-ins.
+        .async_function("leadCommands", |_| {
+            let (tx, rx) = async_channel::bounded(1);
+            std::thread::spawn(move || {
+                let home = home();
+                let folder = crate::settings::load_person()
+                    .ok()
+                    .and_then(|person| person.lead)
+                    .and_then(|lead| lead.folder)
+                    .filter(|folder| !folder.trim().is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.clone());
+                let list = crate::lead::commands::lead_commands(
+                    &home,
+                    &folder,
+                    crate::lead::commands::BUILTINS,
+                );
+                let value = serde_json::to_value(list).unwrap_or_else(|_| Value::Array(Vec::new()));
+                let _ = tx.send_blocking(to_host(&value));
+            });
+            Ok(async move {
+                rx.recv()
+                    .await
+                    .map_err(|_| HostError::new("leadCommands stopped"))
+            })
+        })
         .function("themes", |_| {
             let list: Vec<Value> = crate::settings::themes().into_iter().map(|(name, colors)| json!({ "light": crate::settings::theme_is_light(&name), "name": name, "colors": colors })).collect();
             Ok(to_host(&Value::Array(list)))

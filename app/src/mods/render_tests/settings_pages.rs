@@ -720,6 +720,17 @@ fn adding_a_worker_shows_cli_model_and_effort_with_the_first_picks(cx: &mut Test
         !tree.contains("st-add-worker-command-code") && !tree.contains("st-add-worker-opencode"),
         "old per-CLI Add worker buttons: {tree}"
     );
+    let button = tree
+        .lines()
+        .find(|line| line.contains("st-add-go"))
+        .unwrap_or_else(|| panic!("no own-worker Add button: {tree}"));
+    let theme = fixture(false, props(), updates("current", "current"))["theme"].clone();
+    assert!(button.contains(theme["accent_fill"].as_str().unwrap()), "{button}");
+    assert!(button.contains(theme["accent_foreground"].as_str().unwrap()), "{button}");
+    assert!(
+        !button.contains(&format!(".bg[Str(\"{}\")]", theme["solid"].as_str().unwrap())),
+        "{button}"
+    );
 }
 
 /// Changing the CLI through its dropdown row resets the model to that CLI's first.

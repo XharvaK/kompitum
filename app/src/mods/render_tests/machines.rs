@@ -26,6 +26,42 @@ fn machine_needing_an_answer_offers_a_terminal(cx: &mut TestAppContext) {
         tree.contains("kom machine add host"),
         "the button says what it runs: {tree}"
     );
+    let theme = fixture(false, props(), updates("current", "current"))["theme"].clone();
+    let finish = tree
+        .lines()
+        .find(|line| line.contains("ma-finish-host"))
+        .unwrap_or_else(|| panic!("no Finish button: {tree}"));
+    assert!(finish.contains(theme["accent_fill"].as_str().unwrap()), "{finish}");
+    assert!(finish.contains(theme["accent_foreground"].as_str().unwrap()), "{finish}");
+    assert!(
+        !finish.contains(&format!(".bg[Str(\"{}\")]", theme["solid"].as_str().unwrap())),
+        "{finish}"
+    );
+}
+
+#[gpui::test]
+fn a_typed_address_uses_the_primary_look(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/machine-add",
+        fixture(false, props(), updates("current", "current")),
+        Some("this.typed = 'host';"),
+    )
+    .unwrap();
+    let theme = fixture(false, props(), updates("current", "current"))["theme"].clone();
+    let button = tree
+        .lines()
+        .find(|line| line.contains("ma-add-typed"))
+        .unwrap_or_else(|| panic!("no Add button: {tree}"));
+    assert!(button.contains(theme["accent_fill"].as_str().unwrap()), "{button}");
+    assert!(button.contains(theme["accent_foreground"].as_str().unwrap()), "{button}");
+    assert!(
+        !button.contains(&format!(".bg[Str(\"{}\")]", theme["solid"].as_str().unwrap())),
+        "{button}"
+    );
 }
 
 #[gpui::test]

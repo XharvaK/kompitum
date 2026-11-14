@@ -8,6 +8,8 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
+#[path = "lead/commands.rs"]
+pub mod commands;
 #[path = "lead/conversation.rs"]
 pub mod conversation;
 mod upkeep;
@@ -750,7 +752,7 @@ pub enum Answer {
     Allow,
     AllowAlways,
     Deny { note: Option<String> },
-    Approve,
+    Approve { mode: Option<String> },
     KeepPlanning { note: Option<String> },
     Answers(Map<String, Value>),
     Terminal,
@@ -767,7 +769,13 @@ impl Answer {
             "allow" => Some(Self::Allow),
             "allow_always" => Some(Self::AllowAlways),
             "deny" => Some(Self::Deny { note: note() }),
-            "approve" => Some(Self::Approve),
+            "approve" => Some(Self::Approve {
+                mode: value
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .filter(|mode| matches!(*mode, "acceptEdits" | "default"))
+                    .map(str::to_owned),
+            }),
             "keep_planning" => Some(Self::KeepPlanning { note: note() }),
             "answers" => Some(Self::Answers(value.get("answers")?.as_object()?.clone())),
             "terminal" => Some(Self::Terminal),
@@ -796,11 +804,13 @@ pub fn hook_output(ask: &Ask, answer: &Answer) -> Option<Value> {
             None,
             None,
         )),
-        (AskKind::Plan, Answer::Approve) => Some(permission_output(
+        (AskKind::Plan, Answer::Approve { mode }) => Some(permission_output(
             "allow",
             None,
             Some(ask.input.get("tool_input").cloned().unwrap_or_else(|| json!({}))),
-            None,
+            mode.clone().map(|mode| {
+                json!([{"type": "setMode", "mode": mode, "destination": "session"}])
+            }),
         )),
         (AskKind::Plan, Answer::KeepPlanning { note }) => Some(permission_output(
             "deny",

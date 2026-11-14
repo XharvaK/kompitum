@@ -919,7 +919,7 @@ fn a_plan_approval_returns_its_tool_input_unchanged() {
     });
     let ask = ask(AskKind::Plan, input.clone());
     assert_eq!(
-        hook_output(&ask, &Answer::Approve),
+        hook_output(&ask, &Answer::Approve { mode: None }),
         Some(json!({
             "hookSpecificOutput": {
                 "hookEventName": "PermissionRequest",
@@ -930,6 +930,47 @@ fn a_plan_approval_returns_its_tool_input_unchanged() {
             },
         }))
     );
+}
+
+#[test]
+fn a_plan_approval_can_set_the_session_edit_mode() {
+    let input = json!({
+        "tool_name": "ExitPlanMode",
+        "tool_input": {"plan": "Do the thing."},
+    });
+    let ask = ask(AskKind::Plan, input);
+    for mode in ["acceptEdits", "default"] {
+        let output = hook_output(&ask, &Answer::Approve { mode: Some(mode.into()) })
+            .expect("a plan approval answers");
+        assert_eq!(
+            output["hookSpecificOutput"]["decision"]["updatedPermissions"],
+            json!([{"type": "setMode", "mode": mode, "destination": "session"}]),
+            "{mode}"
+        );
+        assert_eq!(
+            output["hookSpecificOutput"]["decision"]["updatedInput"],
+            json!({"plan": "Do the thing."}),
+            "{mode}"
+        );
+    }
+}
+
+#[test]
+fn an_unknown_plan_mode_is_dropped_and_approve_alone_keeps_none() {
+    for value in [
+        json!({"action": "approve"}),
+        json!({"action": "approve", "mode": "bypassPermissions"}),
+        json!({"action": "approve", "mode": 3}),
+    ] {
+        assert_eq!(Answer::from_json(&value), Some(Answer::Approve { mode: None }), "{value}");
+    }
+    for mode in ["acceptEdits", "default"] {
+        assert_eq!(
+            Answer::from_json(&json!({"action": "approve", "mode": mode})),
+            Some(Answer::Approve { mode: Some(mode.into()) }),
+            "{mode}"
+        );
+    }
 }
 
 #[test]
@@ -1006,7 +1047,10 @@ fn an_answer_is_read_from_what_the_composer_sends() {
         Answer::from_json(&json!({"action": "deny", "note": "no"})),
         Some(Answer::Deny { note: Some("no".into()) })
     );
-    assert_eq!(Answer::from_json(&json!({"action": "approve"})), Some(Answer::Approve));
+    assert_eq!(
+        Answer::from_json(&json!({"action": "approve"})),
+        Some(Answer::Approve { mode: None })
+    );
     assert_eq!(
         Answer::from_json(&json!({"action": "keep_planning", "note": "wait"})),
         Some(Answer::KeepPlanning { note: Some("wait".into()) })

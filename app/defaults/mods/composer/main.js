@@ -13,6 +13,7 @@ import cards from "./cards.js";
 import model, { leadUsage } from "./model.js";
 import conversation from "./conversation.js";
 import box from "./box.js";
+import list from "./list.js";
 
 const HISTORY_KEY = "composer.history";
 
@@ -74,7 +75,18 @@ export default class Composer extends View {
     this.noteInput = null;
     this.noteAction = null;
     this.answers = {};
+    this.answerTexts = {};
+    // One "Something else…" input per question of the open ask, made when the ask is taken.
+    this.questionInputs = {};
+    this.questionAsk = null;
     this.modelOpen = false;
+    // The `/` list: open, the commands its one scan found, the matches and the highlighted row.
+    this.listOpen = false;
+    this.listCommands = [];
+    this.listMatches = [];
+    this.listIndex = 0;
+    this.listWindowStart = 0;
+    this.listScan = 0;
     // Compact first: the pill's state, and the send that waits for the lead's compaction (`at` in ms, `started` once it runs).
     this.compactFirst = false;
     this.compactThenSend = null;
@@ -98,19 +110,29 @@ export default class Composer extends View {
     this.text.on("change", (_event, cx) => {
       if (this.text.value().length === 0) this.historyAt = -1;
       this.syncDraft();
+      this.refreshList(cx);
       cx.notify();
       this.setHistory(this.text.value().length === 0 || this.historyAt >= 0, cx);
     });
     this.text.on("submit", (event, cx) => this.submit(event, cx));
     this.text.on("paste_other", (_event, cx) => this.pastedImage(cx));
+    this.text.on("blur", (_event, cx) => this.closeList(cx));
     cx.bind_keys([
       { keystroke: "escape", action: "composer-escape", context: "Composer" },
       { keystroke: "escape", action: "composer-escape", context: "ComposerHistory" },
       { keystroke: "up", action: "composer-history-up", context: "ComposerHistory" },
       { keystroke: "down", action: "composer-history-down", context: "ComposerHistory" },
+      { keystroke: "up", action: "composer-list-up", context: "ComposerList" },
+      { keystroke: "down", action: "composer-list-down", context: "ComposerList" },
+      { keystroke: "tab", action: "composer-list-insert", context: "ComposerList" },
+      { keystroke: "enter", action: "composer-list-pick", context: "ComposerList" },
+      { keystroke: "escape", action: "composer-list-close", context: "ComposerList" },
+      { keystroke: "shift-tab", action: "composer-mode", context: "Composer" },
+      { keystroke: "shift-tab", action: "composer-mode", context: "ComposerHistory" },
+      { keystroke: "shift-tab", action: "composer-mode", context: "ComposerList" },
     ]);
     this.historyMode = true;
-    this.text.set_key_context("ComposerHistory");
+    this.applyKeyContext();
     this.takeAsk(cx);
     this.syncDraft();
     cx.spawn(async (cx) => {
@@ -209,8 +231,11 @@ export default class Composer extends View {
   }
 
   takeAsk(cx) {
-    if (!this.leadLive()) return;
     const open = leadOf()?.ask ?? null;
+    // A card takes the box's place; the `/` list goes with the box.
+    if (open?.id && this.listOpen) this.closeList(cx);
+    this.syncQuestionInputs(open, cx);
+    if (!this.leadLive()) return;
     if (open?.id && open.id !== this.focusedAsk) {
       this.focusedAsk = open.id;
       this.handle.focus();
@@ -249,6 +274,10 @@ export default class Composer extends View {
   }
 
   escape(cx) {
+    if (this.listOpen) {
+      this.closeList(cx);
+      return;
+    }
     if (this.state === "asking") {
       if (this.ask) this.cardEscape(this.ask, cx);
       return;
@@ -266,7 +295,7 @@ export default class Composer extends View {
   setHistory(value, cx) {
     if (this.historyMode === value) return;
     this.historyMode = value;
-    if (this.text) this.text.set_key_context(value ? "ComposerHistory" : null);
+    this.applyKeyContext();
     cx.notify();
   }
 
@@ -469,6 +498,12 @@ export default class Composer extends View {
       .on_action("composer-escape", (_event, cx) => this.escape(cx))
       .on_action("composer-history-up", (_event, cx) => this.historyKey(1, cx))
       .on_action("composer-history-down", (_event, cx) => this.historyKey(-1, cx))
+      .on_action("composer-list-up", (_event, cx) => this.listKey(-1, cx))
+      .on_action("composer-list-down", (_event, cx) => this.listKey(1, cx))
+      .on_action("composer-list-insert", (_event, cx) => this.listInsert(cx))
+      .on_action("composer-list-pick", (_event, cx) => this.listPick(cx))
+      .on_action("composer-list-close", (_event, cx) => this.closeList(cx))
+      .on_action("composer-mode", (_event, cx) => this.pressMode(cx))
       .on_key_down((event, cx) => this.keyDown(event, cx))
       .on_drop((event, cx) => {
         for (const path of event.paths ?? []) this.addChip(path);
@@ -518,4 +553,4 @@ export default class Composer extends View {
   }
 }
 
-Object.assign(Composer.prototype, cards, model, conversation, box);
+Object.assign(Composer.prototype, cards, model, conversation, box, list);

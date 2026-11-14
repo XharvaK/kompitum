@@ -69,6 +69,23 @@ function askQuestions(ask) {
   return Array.isArray(questions) ? questions : [];
 }
 
+// A preview is a tool result's kind of text: at most sixteen lines, then an ellipsis row.
+function previewText(text) {
+  const lines = String(text ?? "").split(/\r?\n/);
+  const shown = lines.slice(0, 16);
+  if (lines.length > 16) shown.push("…");
+  return shown.join("\n");
+}
+
+function pickedPreview(question, picked) {
+  if (question?.multiSelect) return null;
+  const label = typeof picked === "string" ? picked : null;
+  if (!label) return null;
+  const option = (question.options ?? []).find((item) => String(item.label ?? "") === label);
+  const preview = option?.preview;
+  return typeof preview === "string" && preview ? preview : null;
+}
+
 export default {
   cardEscape(ask, cx) {
     if (this.noteOpen) {
@@ -139,15 +156,77 @@ export default {
     this.answer(this.ask, { action: this.noteAction, note: this.noteInput.value() }, cx);
   },
 
+  // The text of a question's "Something else…" field, trimmed.
+  questionText(question) {
+    return String(this.answerTexts?.[question.question] ?? "").trim();
+  },
+
+  // The answer a question sends: its pick, or the field's text; in a multi-choice, the text joins the picks.
+  answerFor(question) {
+    const picked = this.answers[question.question];
+    const text = this.questionText(question);
+    if (question.multiSelect) {
+      const labels = Array.isArray(picked) ? picked : [];
+      return text ? [...labels, text] : labels;
+    }
+    if (typeof picked === "string" && picked) return picked;
+    return text;
+  },
+
   questionAnswered(question) {
-    const value = this.answers[question.question];
-    if (Array.isArray(value)) return value.length > 0;
-    return typeof value === "string" && value.length > 0;
+    const answer = this.answerFor(question);
+    if (Array.isArray(answer)) return answer.length > 0;
+    return typeof answer === "string" && answer.length > 0;
   },
 
   allAnswered(ask) {
     const questions = askQuestions(ask);
     return questions.length > 0 && questions.every((question) => this.questionAnswered(question));
+  },
+
+  // One input per question, made when the ask is taken (never while rendering), released when it ends.
+  syncQuestionInputs(ask, cx) {
+    const id = ask?.kind === "question" ? ask.id : null;
+    if (id === this.questionAsk) return;
+    for (const input of Object.values(this.questionInputs ?? {})) {
+      if (input && typeof input.release === "function") input.release();
+    }
+    this.questionInputs = {};
+    this.answerTexts = {};
+    this.questionAsk = id;
+    if (id) {
+      for (const question of askQuestions(ask)) {
+        const input = InputState.new({ placeholder: "Something else…" });
+        input.on("change", (_event, cx) => {
+          this.answerTexts[question.question] = input.value();
+          // One choice: the field and the pick are alternatives.
+          if (!question.multiSelect) delete this.answers[question.question];
+          cx.notify();
+        });
+        this.questionInputs[question.question] = input;
+      }
+    }
+    if (cx) cx.notify();
+  },
+
+  clearQuestionText(question) {
+    this.answerTexts[question.question] = "";
+    const input = this.questionInputs?.[question.question];
+    if (input) input.set_value("");
+  },
+
+  chooseOption(question, label, cx) {
+    if (question.multiSelect) {
+      const chosen = Array.isArray(this.answers[question.question]) ? this.answers[question.question] : [];
+      this.answers[question.question] = chosen.includes(label)
+        ? chosen.filter((item) => item !== label)
+        : [...chosen, label];
+    } else {
+      // Clearing the field fires its change first, then the pick is the answer.
+      this.clearQuestionText(question);
+      this.answers[question.question] = label;
+    }
+    cx.notify();
   },
 
   pickOption(ask, index, cx) {
@@ -157,32 +236,23 @@ export default {
     if (!option) return;
     const label = String(option.label ?? "");
     if (!label) return;
-    if (question.multiSelect) {
-      const chosen = Array.isArray(this.answers[question.question]) ? this.answers[question.question] : [];
-      this.answers[question.question] = chosen.includes(label)
-        ? chosen.filter((item) => item !== label)
-        : [...chosen, label];
-    } else {
-      this.answers[question.question] = label;
-    }
-    cx.notify();
+    this.chooseOption(question, label, cx);
   },
 
   toggleOption(question, label, cx) {
-    if (question.multiSelect) {
-      const chosen = Array.isArray(this.answers[question.question]) ? this.answers[question.question] : [];
-      this.answers[question.question] = chosen.includes(label)
-        ? chosen.filter((item) => item !== label)
-        : [...chosen, label];
-    } else {
-      this.answers[question.question] = label;
-    }
-    cx.notify();
+    this.chooseOption(question, label, cx);
   },
 
   sendAnswers(ask, cx) {
     if (!this.allAnswered(ask)) return;
-    this.answer(ask, { action: "answers", answers: this.answers }, cx);
+    const answers = {};
+    for (const question of askQuestions(ask)) {
+      const answer = this.answerFor(question);
+      if (Array.isArray(answer) ? answer.length > 0 : Boolean(answer)) {
+        answers[question.question] = answer;
+      }
+    }
+    this.answer(ask, { action: "answers", answers }, cx);
   },
 
   answerInTerminal(ask, cx) {
@@ -318,7 +388,19 @@ export default {
   planCard(t, cx, ask) {
     const plan = planText(ask);
     const buttons = h_flex().w_full().gap(6).items_center()
-      .child(this.cardButton("composer-approve", "Approve", (_e, cx) => this.answer(ask, { action: "approve" }, cx), t, { filled: true }))
+      .child(this.cardButton(
+        "composer-approve",
+        "Approve, accept edits",
+        (_e, cx) => this.answer(ask, { action: "approve", mode: "acceptEdits" }, cx),
+        t,
+        { filled: true },
+      ))
+      .child(this.cardButton(
+        "composer-approve-ask",
+        "Approve, ask first",
+        (_e, cx) => this.answer(ask, { action: "approve", mode: "default" }, cx),
+        t,
+      ))
       .child(this.cardButton("composer-keep-planning", "Change the plan…", (_e, cx) => this.openNote("keep_planning", cx), t));
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
       .child(
@@ -352,6 +434,8 @@ export default {
       .children(questions.map((question, questionIndex) => {
         const answer = this.answers[question.question];
         const chosen = Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : [];
+        const input = this.questionInputs?.[question.question] ?? null;
+        const preview = pickedPreview(question, this.answers[question.question]);
         return v_flex()
           .w_full()
           .gap(4)
@@ -379,7 +463,34 @@ export default {
                 Boolean(option.description) && !repeatsLabel(label, option.description),
                 (el) => el.child(div().text_size(12).text_color(t.dim).child(option.description)),
               );
-          }));
+          }))
+          .when(Boolean(input), (el) => el.child(
+            div()
+              .id(`composer-other-${questionIndex}`)
+              .w_full()
+              .h(28)
+              .px(8)
+              .flex()
+              .items_center()
+              .rounded(7)
+              .border_1()
+              .border_color(t.input)
+              .bg(t.surface)
+              .child(Input.new(input).w_full().text_size(12).text_color(t.foreground)),
+          ))
+          .when(Boolean(preview), (el) => el.child(
+            div()
+              .id(`composer-preview-${questionIndex}`)
+              .w_full()
+              .p(8)
+              .rounded(8)
+              .border_1()
+              .border_color(t.border)
+              .text_size(12)
+              .font_family(settings()?.font_family ?? "Google Sans Code")
+              .text_color(t.dim)
+              .child(previewText(preview)),
+          ));
       }))
       .child(
         h_flex().w_full().gap(6).items_center()

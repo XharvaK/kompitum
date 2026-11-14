@@ -176,6 +176,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let thread_fail = values.remove("threadFail");
     let send_fail = values.remove("sendFail");
     let machine_add_fail = values.remove("machineAddFail");
+    let lead_commands = values.remove("leadCommands");
     let conversation_items = values.remove("conversation").unwrap_or(json!([]));
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
@@ -263,6 +264,11 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     });
     module = module.async_function("leadSetup", |_| {
         Ok(async { Ok(to_host(&json!({"mcp": "present", "skill": "present"}))) })
+    });
+    // The composer's `/` list asks once per opening; a test hands it this fixed list.
+    module = module.async_function("leadCommands", move |_| {
+        let list = lead_commands.clone().unwrap_or_else(|| Value::Array(Vec::new()));
+        Ok(async move { Ok(to_host(&list)) })
     });
     for name in ["nextCommand", "watchFolder"] {
         module = module.async_function(name, |_| {
@@ -1353,10 +1359,21 @@ impl Render for Mounted {
 /// `kom send`. The real focus path matters: GPUI's Input context keeps Up and
 /// Down for the caret, so the composer's root must still hear them.
 fn composer_sends_after_keys(cx: &mut TestAppContext, setup: &str, keys: &str) -> Vec<Vec<Value>> {
+    composer_sends_after_keys_with(cx, Value::Array(Vec::new()), setup, keys)
+}
+
+/// The same, with the `/` list's fixed scan.
+fn composer_sends_after_keys_with(
+    cx: &mut TestAppContext,
+    commands: Value,
+    setup: &str,
+    keys: &str,
+) -> Vec<Vec<Value>> {
     let staged = Staged::new();
     let mut values = fixture(true, props(), updates("current", "current"));
     values.insert("knownAgents".into(), agent_catalog());
     values.insert("lead".into(), json!({"state": "working", "ask": null, "started": true}));
+    values.insert("leadCommands".into(), commands);
     let calls = Rc::new(RefCell::new(Calls::default()));
     let policy = Policy::new()
         .with_storage_path(staged.0.join("store-keys.json"))

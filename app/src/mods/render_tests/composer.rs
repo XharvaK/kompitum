@@ -1335,3 +1335,503 @@ fn compact_first_then_send_compacts_and_keeps_the_text(cx: &mut TestAppContext) 
     assert!(waiting.contains("Tidying up, then sending…"), "{waiting}");
     // The box's text is not in the render dump, so "the text stays" is not asserted here (see the report's Gaps).
 }
+fn list_commands() -> Value {
+    json!([
+        {"name": "compact", "hint": "[instructions]", "description": "Summarize the conversation.", "source": "built-in"},
+        {"name": "model", "hint": "[model]", "description": "Switch the model.", "source": "built-in"},
+        {"name": "clear", "hint": "", "description": "Start again.", "source": "built-in"},
+        {"name": "deploy", "hint": "", "description": "Ship it.", "source": "project"},
+        {"name": "git:push", "hint": "", "description": "Push the branch.", "source": "user"},
+        {"name": "git:commit", "hint": "[message]", "description": "Commit the branch.", "source": "user"}
+    ])
+}
+
+fn plain_commands() -> Value {
+    json!([
+        {"name": "alpha", "hint": "", "description": "First.", "source": "built-in"},
+        {"name": "bravo", "hint": "", "description": "Second.", "source": "built-in"},
+        {"name": "charlie", "hint": "", "description": "Third.", "source": "built-in"}
+    ])
+}
+
+fn list_values(commands: Value) -> BTreeMap<String, Value> {
+    let mut values = usage_values(Value::Null, json!({}));
+    values.insert("leadCommands".into(), commands);
+    values
+}
+
+/// Types `text`, leaves the caret after it, and runs the change handler the way typing would.
+fn list_setup(text: &str) -> String {
+    format!(
+        "const typed = {}; this.text.focus(); this.text.set_value(typed); this.text.set_selected_range({{start: typed.length, end: typed.length}}); this.refreshList(cx);",
+        serde_json::to_string(text).unwrap()
+    )
+}
+
+fn slash_tree(cx: &mut TestAppContext, commands: Value, text: &str) -> String {
+    let staged = Staged::new();
+    let setup = list_setup(text);
+    describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        list_values(commands),
+        Some(&setup),
+    )
+    .unwrap()
+}
+
+fn list_drawn(tree: &str) -> bool {
+    tree.contains(":id[Str(\"composer-list\")]")
+}
+
+fn sent_body(sends: &[Vec<Value>]) -> String {
+    sends
+        .iter()
+        .filter(|args| args.first().and_then(Value::as_str) == Some("send"))
+        .filter_map(|args| args.get(2).and_then(Value::as_str))
+        .next_back()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// The `/` list opens on `/` at the start and after a space, never inside a path.
+#[gpui::test]
+fn the_slash_list_opens_at_a_start_and_after_a_space(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    for text in ["/", "hello /"] {
+        let tree = slash_tree(cx, list_commands(), text);
+        assert!(list_drawn(&tree), "{text:?}: {tree}");
+        assert!(tree.contains("/compact"), "{text:?}: {tree}");
+    }
+    let tree = slash_tree(cx, list_commands(), "src/foo");
+    assert!(!list_drawn(&tree), "{tree}");
+}
+
+/// The list filters by the name's start, then by the part after the last colon.
+#[gpui::test]
+fn the_slash_list_filters_by_name_and_after_the_last_colon(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = slash_tree(cx, list_commands(), "/co");
+    assert!(tree.contains("/compact"), "{tree}");
+    assert!(tree.contains("/git:commit"), "after the colon: {tree}");
+    assert!(!tree.contains("/model"), "{tree}");
+    let tree = slash_tree(cx, list_commands(), "/pu");
+    assert!(tree.contains("/git:push"), "{tree}");
+    assert!(!tree.contains("/compact"), "{tree}");
+    let tree = slash_tree(cx, list_commands(), "/git");
+    assert!(
+        tree.contains("/git:push") && tree.contains("/git:commit"),
+        "{tree}"
+    );
+}
+
+/// A space after the name, Esc and no match all close the list; Esc reaches no turn.
+#[gpui::test]
+fn the_slash_list_closes_on_a_space_on_escape_and_when_nothing_matches(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = slash_tree(cx, list_commands(), "/compact ");
+    assert!(!list_drawn(&tree), "{tree}");
+    let tree = slash_tree(cx, list_commands(), "/zzzz");
+    assert!(!list_drawn(&tree), "{tree}");
+
+    let setup = list_setup("/");
+    let sends = composer_sends_after_keys_with(cx, list_commands(), &setup, "escape");
+    assert!(
+        sends
+            .iter()
+            .all(|args| args.first() != Some(&json!("keys"))),
+        "Esc must not stop the turn: {sends:?}"
+    );
+    assert!(sent_body(&sends).is_empty(), "{sends:?}");
+}
+
+/// Down moves the highlight and wraps; Up at the first row wraps to the last.
+#[gpui::test]
+fn up_and_down_move_the_slash_highlight_and_wrap(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let setup = list_setup("/");
+    let sends = composer_sends_after_keys_with(cx, plain_commands(), &setup, "down enter");
+    assert_eq!(sent_body(&sends), "/bravo", "{sends:?}");
+    let sends = composer_sends_after_keys_with(cx, plain_commands(), &setup, "up enter");
+    assert_eq!(sent_body(&sends), "/charlie", "{sends:?}");
+}
+
+/// Tab inserts with the trailing space; Enter on a hint-less row inserts and sends.
+#[gpui::test]
+fn tab_inserts_and_enter_sends_a_hintless_command(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let setup = list_setup("/");
+    let sends = composer_sends_after_keys_with(cx, plain_commands(), &setup, "tab enter");
+    assert_eq!(
+        sent_body(&sends).trim_end_matches('\n'),
+        "/alpha ",
+        "{sends:?}"
+    );
+    let sends = composer_sends_after_keys_with(cx, plain_commands(), &setup, "enter");
+    assert_eq!(sent_body(&sends).trim_end(), "/alpha", "{sends:?}");
+}
+
+/// Enter on a row with a hint inserts the space and leaves the argument to the Owner.
+#[gpui::test]
+fn enter_on_a_command_with_a_hint_keeps_the_text_for_its_argument(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let commands =
+        json!([{"name": "echo", "hint": "[text]", "description": "Say it.", "source": "built-in"}]);
+    let setup = list_setup("/");
+    let first = composer_sends_after_keys_with(cx, commands.clone(), &setup, "enter");
+    assert!(
+        sent_body(&first).is_empty(),
+        "a hint waits for its argument: {first:?}"
+    );
+    let second = composer_sends_after_keys_with(cx, commands, &setup, "enter enter");
+    assert_eq!(
+        sent_body(&second).trim_end_matches('\n'),
+        "/echo ",
+        "{second:?}"
+    );
+}
+
+/// A click on a row inserts exactly as Tab does.
+#[gpui::test]
+fn a_click_inserts_a_slash_command_as_tab_does(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let setup = list_setup("/");
+    let effects = composer_live_run_after_clicks(
+        cx,
+        list_values(plain_commands()),
+        &setup,
+        &["composer-list-0", "composer-send"],
+    );
+    let body = effects
+        .iter()
+        .find(|args| {
+            args.first()
+                .and_then(Value::as_array)
+                .and_then(|words| words.first())
+                == Some(&json!("send"))
+        })
+        .and_then(|args| args.first())
+        .and_then(Value::as_array)
+        .and_then(|words| words.get(2))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert_eq!(body, "/alpha ", "{effects:?}");
+}
+
+/// Eight rows at most, even when more match.
+#[gpui::test]
+fn the_slash_list_shows_eight_rows_at_most(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let commands: Vec<Value> = (0..12)
+        .map(|index| json!({"name": format!("command-{index:02}"), "hint": "", "description": "One.", "source": "built-in"}))
+        .collect();
+    let tree = slash_tree(cx, Value::Array(commands), "/");
+    assert!(tree.contains("composer-list-7"), "{tree}");
+    assert!(!tree.contains("composer-list-8"), "{tree}");
+}
+
+/// The list sits 4 px above the box, on its left edge and at its width.
+#[gpui::test]
+fn the_slash_list_sits_above_the_box_at_its_width(cx: &mut TestAppContext) {
+    let setup = list_setup("/");
+    let (_, _, found) = composer_layout(
+        cx,
+        list_values(list_commands()),
+        &setup,
+        &["composer-box", "composer-list"],
+    );
+    let boxed = found[0].expect("the box is laid out");
+    let list = found[1].expect("the list is laid out");
+    assert!(
+        (f32::from(list.left()) - f32::from(boxed.left())).abs() < 0.5,
+        "{list:?} {boxed:?}"
+    );
+    assert!(
+        (f32::from(list.size.width) - f32::from(boxed.size.width)).abs() < 0.5,
+        "{list:?} {boxed:?}"
+    );
+    let gap = f32::from(boxed.top()) - f32::from(list.bottom());
+    assert!(
+        (gap - 4.0).abs() < 0.5,
+        "the list is 4 px above the box: {gap} {list:?} {boxed:?}"
+    );
+}
+
+/// A fragment after Turkish text and an emoji is found by bytes and JavaScript indexes alike.
+#[gpui::test]
+fn the_slash_list_finds_a_fragment_after_turkish_text(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let tree = slash_tree(cx, list_commands(), "şğ 😀 /mo");
+    assert!(list_drawn(&tree), "{tree}");
+    assert!(tree.contains("/model"), "{tree}");
+    assert!(!tree.contains("/compact"), "{tree}");
+}
+
+/// Shift+Tab does what a click on the mode word does, only while that word is live.
+#[gpui::test]
+fn shift_tab_presses_the_mode_key_only_when_the_word_is_live(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let effects = composer_run_effects_after_keys(
+        cx,
+        with_permission_mode("default", false),
+        "shift-tab",
+        Some("this.text.focus();"),
+    );
+    assert_eq!(
+        effects
+            .iter()
+            .filter(|args| args.first() == Some(&json!("lead.mode")))
+            .count(),
+        1,
+        "{effects:?}"
+    );
+    assert!(
+        effects
+            .iter()
+            .any(|args| args.first() == Some(&json!("lead.mode"))
+                && args.get(1) == Some(&json!({"terminal": "t1"}))),
+        "{effects:?}"
+    );
+
+    let not_ready = usage_values(Value::Null, json!({"permission_mode": "default"}));
+    let effects = composer_run_effects_after_keys(
+        cx,
+        {
+            let mut values = not_ready;
+            values.get_mut("lead").unwrap()["started"] = json!(false);
+            values
+        },
+        "shift-tab",
+        Some("this.text.focus();"),
+    );
+    assert!(
+        !effects
+            .iter()
+            .any(|args| args.first() == Some(&json!("lead.mode"))),
+        "a lead that hasn't started has no mode word: {effects:?}"
+    );
+}
+
+fn question_with_preview() -> Value {
+    json!({
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [{
+            "question": "Which database?",
+            "header": "Database",
+            "multiSelect": false,
+            "options": [
+                {"label": "Postgres", "description": "The server's own", "preview": "CREATE TABLE notes (id int);"},
+                {"label": "SQLite", "description": "A file"}
+            ]
+        }]}
+    })
+}
+
+fn question_multi() -> Value {
+    json!({
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [{
+            "question": "Which checks?",
+            "header": "Checks",
+            "multiSelect": true,
+            "options": [
+                {"label": "Tests", "description": "Run the suite"},
+                {"label": "Lint", "description": "Keep it tidy"}
+            ]
+        }]}
+    })
+}
+
+/// A typed answer is sent as that question's answer.
+#[gpui::test]
+fn a_typed_answer_is_sent_as_that_questions_answer(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let effects = composer_live_run_after_clicks(
+        cx,
+        composer_with_ask("question", question_with_preview()),
+        "this.askId = 'a1'; this.askSince = 0; this.answerTexts = {'Which database?': 'MariaDB'};",
+        &["composer-send-answers"],
+    );
+    assert!(
+        effects.iter().any(|args| {
+            args.first() == Some(&json!("lead.answer"))
+                && args.get(1)
+                    == Some(&json!({"id": "a1", "answer": {
+                        "action": "answers",
+                        "answers": {"Which database?": "MariaDB"}
+                    }}))
+        }),
+        "{effects:?}"
+    );
+}
+
+/// Typing in the field clears the picked option.
+#[gpui::test]
+fn typing_in_the_other_field_clears_a_pick(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let effects = composer_run_effects_after_keys(
+        cx,
+        composer_with_ask("question", question_with_preview()),
+        "M a r i a enter",
+        Some(
+            "this.askId = 'a1'; this.askSince = 0; this.answers = {'Which database?': 'Postgres'}; this.questionInputs['Which database?'].focus();",
+        ),
+    );
+    assert!(
+        effects.iter().any(|args| {
+            args.first() == Some(&json!("lead.answer"))
+                && args.get(1)
+                    == Some(&json!({"id": "a1", "answer": {
+                        "action": "answers",
+                        "answers": {"Which database?": "Maria"}
+                    }}))
+        }),
+        "{effects:?}"
+    );
+}
+
+/// A pick clears the field's text; the answer is the label, not the older text.
+#[gpui::test]
+fn a_pick_clears_the_other_text(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let effects = composer_live_run_after_clicks(
+        cx,
+        composer_with_ask("question", question_with_preview()),
+        "this.askId = 'a1'; this.askSince = 0; this.answers = {'Which database?': 'Postgres'}; this.answerTexts = {'Which database?': 'MariaDB'};",
+        &["composer-option-0-1", "composer-send-answers"],
+    );
+    assert!(
+        effects.iter().any(|args| {
+            args.first() == Some(&json!("lead.answer"))
+                && args.get(1)
+                    == Some(&json!({"id": "a1", "answer": {
+                        "action": "answers",
+                        "answers": {"Which database?": "SQLite"}
+                    }}))
+        }),
+        "{effects:?}"
+    );
+}
+
+/// In a multi-choice question the field's text joins the picked labels.
+#[gpui::test]
+fn a_multi_choice_question_joins_typed_text_after_its_picks(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let effects = composer_live_run_after_clicks(
+        cx,
+        composer_with_ask("question", question_multi()),
+        "this.askId = 'a1'; this.askSince = 0; this.answers = {'Which checks?': ['Tests']}; this.answerTexts = {'Which checks?': 'Also lint'};",
+        &["composer-send-answers"],
+    );
+    assert!(
+        effects.iter().any(|args| {
+            args.first() == Some(&json!("lead.answer"))
+                && args.get(1)
+                    == Some(&json!({"id": "a1", "answer": {
+                        "action": "answers",
+                        "answers": {"Which checks?": ["Tests", "Also lint"]}
+                    }}))
+        }),
+        "{effects:?}"
+    );
+}
+
+/// A question with only typed text counts as answered, and a preview shows only for its picked option.
+#[gpui::test]
+fn typed_text_answers_a_question_and_a_preview_follows_its_pick(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let values = composer_with_ask("question", question_with_preview());
+    let typed = composer_draws(
+        cx,
+        values.clone(),
+        Some("this.askId = 'a1'; this.answerTexts = {'Which database?': 'MariaDB'};"),
+    );
+    assert!(
+        typed.contains("composer-other-0"),
+        "the field is under the options: {typed}"
+    );
+    let button = typed
+        .lines()
+        .find(|line| line.contains("composer-send-answers"))
+        .unwrap_or_else(|| panic!("no send button: {typed}"));
+    let theme = fixture(false, props(), updates("current", "current"))["theme"].clone();
+    assert!(
+        button.contains(theme["accent_fill"].as_str().unwrap()),
+        "{button}"
+    );
+
+    let picked = composer_draws(
+        cx,
+        values.clone(),
+        Some("this.askId = 'a1'; this.answers = {'Which database?': 'Postgres'};"),
+    );
+    assert!(picked.contains("composer-preview-0"), "{picked}");
+    assert!(picked.contains("CREATE TABLE notes"), "{picked}");
+    let other = composer_draws(
+        cx,
+        values,
+        Some("this.askId = 'a1'; this.answers = {'Which database?': 'SQLite'};"),
+    );
+    assert!(!other.contains("composer-preview-0"), "{other}");
+    assert!(!other.contains("CREATE TABLE notes"), "{other}");
+}
+
+/// Each plan approval button sends its own edit mode.
+#[gpui::test]
+fn each_plan_approval_button_sends_its_mode(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    for (id, mode) in [
+        ("composer-approve", "acceptEdits"),
+        ("composer-approve-ask", "default"),
+    ] {
+        let effects = composer_live_run_after_clicks(
+            cx,
+            composer_with_ask(
+                "plan",
+                json!({"tool_name": "ExitPlanMode", "tool_input": {"plan": "Do it."}}),
+            ),
+            "this.askId = 'a1'; this.askSince = 0;",
+            &[id],
+        );
+        assert!(
+            effects.iter().any(|args| {
+                args.first() == Some(&json!("lead.answer"))
+                    && args.get(1)
+                        == Some(&json!({"id": "a1", "answer": {"action": "approve", "mode": mode}}))
+            }),
+            "{id}: {effects:?}"
+        );
+    }
+}
+
+/// The first-start button is the same primary look as Send.
+#[gpui::test]
+fn the_first_start_button_uses_the_primary_look(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = fixture(false, props(), updates("current", "current"));
+    values.insert("knownAgents".into(), agent_catalog());
+    let setup = "this.firstModel = 'sonnet';";
+    let tree = describe_settled(cx, &staged, "mods/composer", values, Some(setup)).unwrap();
+    let theme = fixture(false, props(), updates("current", "current"))["theme"].clone();
+    let button = tree
+        .lines()
+        .find(|line| line.contains("composer-first-start"))
+        .unwrap_or_else(|| panic!("no first-start button: {tree}"));
+    assert!(
+        button.contains(theme["accent_fill"].as_str().unwrap()),
+        "{button}"
+    );
+    assert!(
+        button.contains(theme["accent_foreground"].as_str().unwrap()),
+        "{button}"
+    );
+    assert!(
+        !button.contains(&format!(
+            ".bg[Str(\"{}\")]",
+            theme["solid"].as_str().unwrap()
+        )),
+        "{button}"
+    );
+}
