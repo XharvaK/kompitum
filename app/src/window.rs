@@ -4924,6 +4924,47 @@ impl AppWindow {
         self.publish_lead(cx);
     }
 
+    /// Reads Claude's mode line once the lead has started: its SessionStart hook carries no
+    /// `permission_mode`, so without this the first mode the app knows comes from the first switch
+    /// (whose toast the composer then keeps quiet). A hook that said the mode first wins.
+    fn read_start_mode(&mut self, terminal: String, cx: &mut Context<Self>) {
+        let core = self.core.clone();
+        let address = terminal.clone();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(crate::lead::START_MODE_WAIT_MS))
+                .await;
+            let mode = cx
+                .background_executor()
+                .spawn(async move {
+                    core.call("terminal.read", json!({ "terminal": address, "lines": 50 }))
+                        .ok()
+                        .and_then(|value| {
+                            value["text"]
+                                .as_str()
+                                .and_then(crate::lead::mode_from_screen)
+                                .map(str::to_owned)
+                        })
+                })
+                .await;
+            let Some(mode) = mode else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                let Some(session) = this.lead_sessions.get_mut(&terminal) else {
+                    return;
+                };
+                if session.permission_mode.is_some() {
+                    return;
+                }
+                session.permission_mode = Some(mode);
+                session.mode_guessed = false;
+                this.publish_lead(cx);
+            });
+        })
+        .detach();
+    }
+
     /// Reads the lead terminal's start line with `terminal.read`, the app's way of reading a
     /// terminal: "Code Mode (experimental) is on" is on; "isn't available" keeps the reason
     /// shown; neither is off.
@@ -4991,6 +5032,7 @@ impl AppWindow {
         let transcript = crate::lead::stream_of(&streams, &program).and_then(|stream| stream.transcript);
         self.start_lead_history(&terminal, transcript.as_deref(), cx);
         self.read_code_mode_status(terminal.clone(), cx);
+        self.read_start_mode(terminal.clone(), cx);
         self.apply_lead_terminal_layout(&terminal);
         self.publish_lead(cx);
     }
@@ -5051,6 +5093,7 @@ impl AppWindow {
                 );
                 self.start_lead_history(&terminal, transcript, cx);
                 self.read_code_mode_status(terminal.clone(), cx);
+                self.read_start_mode(terminal.clone(), cx);
                 self.apply_lead_terminal_layout(&terminal);
                 self.publish_lead(cx);
             }

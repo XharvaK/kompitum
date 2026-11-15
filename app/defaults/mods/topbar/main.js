@@ -64,7 +64,8 @@ function ringTone(fraction) {
 function contextRing(t, fraction) {
   const tone = ringTone(fraction);
   let drawing = div().relative().w(16).h(16).flex_none()
-    .child(globalThis.window.paint_path(ringPath(1), Background.solid(t.border)).absolute().top(0).left(0).size_full());
+    // The track is the icons' grey at 35%: the theme's border is too faint to read on the bar.
+    .child(globalThis.window.paint_path(ringPath(1), Background.solid(t.muted + "59")).absolute().top(0).left(0).size_full());
   if (fraction > 0) {
     drawing = drawing.child(globalThis.window.paint_path(ringPath(fraction), Background.solid(t[tone]))
       .id(`topbar-context-${tone}`).absolute().top(0).left(0).size_full());

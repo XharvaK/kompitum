@@ -216,6 +216,8 @@ pub fn mode_not_taken(target: &str, current: Option<&str>) -> Value {
 pub const MODE_PRESSES: usize = 6;
 /// How long Claude Code is given to show its new mode line after Shift+Tab.
 pub const MODE_WAIT_MS: u64 = 300;
+/// How long after its SessionStart the lead's first screen is given to draw its mode line.
+pub const START_MODE_WAIT_MS: u64 = 1500;
 
 /// What a mode switch read and whether it reached its target.
 #[derive(Clone, Debug, Default, PartialEq)]
