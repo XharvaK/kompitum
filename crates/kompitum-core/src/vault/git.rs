@@ -163,6 +163,8 @@ pub struct GitResult {
     pub ok: bool,
     pub output: String,
     pub error: String,
+    /// The write was undone after a failed commit: `error` says nothing was written.
+    pub rolled_back: bool,
 }
 
 pub fn run(dir: &Path, args: &[&str], timeout: Duration) -> GitResult {
@@ -177,7 +179,9 @@ pub fn run(dir: &Path, args: &[&str], timeout: Duration) -> GitResult {
     crate::platform::no_console(&mut cmd);
     let mut child = match cmd.spawn() {
         Ok(child) => child,
-        Err(e) => return GitResult { ok: false, output: String::new(), error: tail(&e.to_string()) },
+        Err(e) => {
+            return GitResult { ok: false, output: String::new(), error: tail(&e.to_string()), rolled_back: false };
+        }
     };
     let mut stdout = child.stdout.take().expect("stdout is piped");
     let mut stderr = child.stderr.take().expect("stderr is piped");
@@ -201,7 +205,7 @@ pub fn run(dir: &Path, args: &[&str], timeout: Duration) -> GitResult {
                 let _ = child.wait();
                 let _ = out_reader.join();
                 let _ = err_reader.join();
-                return GitResult { ok: false, output: String::new(), error: tail(&e.to_string()) };
+                return GitResult { ok: false, output: String::new(), error: tail(&e.to_string()), rolled_back: false };
             }
         }
         if start.elapsed() >= timeout {
@@ -213,6 +217,7 @@ pub fn run(dir: &Path, args: &[&str], timeout: Duration) -> GitResult {
                 ok: false,
                 output: String::new(),
                 error: format!("git {} took longer than {} s", args.join(" "), timeout.as_secs()),
+                rolled_back: false,
             };
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -225,16 +230,16 @@ pub fn run(dir: &Path, args: &[&str], timeout: Duration) -> GitResult {
         } else {
             tail(&stderr)
         };
-        return GitResult { ok: false, output: stdout, error };
+        return GitResult { ok: false, output: stdout, error, rolled_back: false };
     }
-    GitResult { ok: true, output: stdout, error: String::new() }
+    GitResult { ok: true, output: stdout, error: String::new(), rolled_back: false }
 }
 
 /// Bring the vault up to date. A vault with no remote is left as it is.
 pub fn pull(dir: &Path, timeout: Duration) -> GitResult {
     match take(dir) {
         Ok(_lock) => pull_under_lock(dir, timeout),
-        Err(error) => GitResult { ok: false, output: String::new(), error },
+        Err(error) => GitResult { ok: false, output: String::new(), error, rolled_back: false },
     }
 }
 
@@ -253,7 +258,7 @@ fn pull_once(dir: &Path, timeout: Duration) -> GitResult {
         return remotes;
     }
     if remotes.output.trim().is_empty() {
-        return GitResult { ok: true, output: String::new(), error: String::new() };
+        return GitResult { ok: true, output: String::new(), error: String::new(), rolled_back: false };
     }
     let fetched = run_retrying_ref_lock(dir, &["fetch", "--quiet"], timeout);
     if !fetched.ok {
@@ -319,8 +324,47 @@ pub fn pull_for_reading(dir: &Path) -> String {
 pub fn commit_and_push(dir: &Path, paths: &[String], message: &str) -> GitResult {
     match take(dir) {
         Ok(_lock) => commit_and_push_under_lock(dir, paths, message),
-        Err(error) => GitResult { ok: false, output: String::new(), error },
+        Err(error) => GitResult { ok: false, output: String::new(), error, rolled_back: false },
     }
+}
+
+/// Put the tree back after a write that could not commit: unstage what it
+/// staged, delete a file it created, restore one it changed from `HEAD`.
+fn roll_back(dir: &Path, paths: &[String]) -> Option<String> {
+    let mut reset: Vec<&str> = vec!["reset", "--quiet", "--"];
+    reset.extend(paths.iter().map(String::as_str));
+    let reset = run(dir, &reset, TIMEOUT);
+    let mut problems = Vec::new();
+    if !reset.ok {
+        problems.push(format!("cannot unstage: {}", reset.error));
+    }
+    for path in paths {
+        let original = run(dir, &["show", &format!("HEAD:{path}")], TIMEOUT);
+        let full = dir.join(path);
+        let restored = if original.ok {
+            std::fs::write(&full, original.output.as_bytes()).map_err(|e| e.to_string())
+        } else {
+            match std::fs::remove_file(&full) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                _ => Ok(()),
+            }
+        };
+        if let Err(e) = restored {
+            problems.push(format!("cannot put {path} back: {e}"));
+        }
+    }
+    (!problems.is_empty()).then(|| problems.join("; "))
+}
+
+/// A write whose commit failed: undo it and say what happened, in the vault's words.
+fn write_failed(dir: &Path, paths: &[String], error: String) -> GitResult {
+    let cleanup = roll_back(dir, paths);
+    let path = paths.first().map(String::as_str).unwrap_or("the vault");
+    let mut error = format!("The write did not happen, so nothing was written: {path}: {error}");
+    if let Some(cleanup) = cleanup {
+        error.push_str(&format!(" (and the vault could not be put back: {cleanup})"));
+    }
+    GitResult { ok: false, output: String::new(), error, rolled_back: true }
 }
 
 /// The commit and push themselves, with the lock already held.
@@ -329,33 +373,43 @@ pub fn commit_and_push_under_lock(dir: &Path, paths: &[String], message: &str) -
     add.extend(paths.iter().map(String::as_str));
     let added = run(dir, &add, TIMEOUT);
     if !added.ok {
-        return added;
+        return write_failed(dir, paths, added.error);
     }
     let staged = run(dir, &["diff", "--cached", "--name-only"], TIMEOUT);
     if !staged.ok {
-        return staged;
+        return write_failed(dir, paths, staged.error);
     }
     if staged.output.trim().is_empty() {
-        return GitResult { ok: true, output: "Nothing changed.".into(), error: String::new() };
+        return GitResult { ok: true, output: "Nothing changed.".into(), error: String::new(), rolled_back: false };
     }
     let mut commit: Vec<&str> = vec!["commit", "--quiet", "-m", message, "--"];
     commit.extend(paths.iter().map(String::as_str));
     let committed = run(dir, &commit, TIMEOUT);
     if !committed.ok {
-        return committed;
+        return write_failed(dir, paths, committed.error);
     }
     let remotes = run(dir, &["remote"], TIMEOUT);
     if !remotes.ok {
         return remotes;
     }
     if remotes.output.trim().is_empty() {
-        return GitResult { ok: true, output: "Committed (the vault has no remote).".into(), error: String::new() };
+        return GitResult {
+            ok: true,
+            output: "Committed (the vault has no remote).".into(),
+            error: String::new(),
+            rolled_back: false,
+        };
     }
-    let mut last = GitResult { ok: false, output: String::new(), error: "not pushed".into() };
+    let mut last = GitResult { ok: false, output: String::new(), error: "not pushed".into(), rolled_back: false };
     for _ in 0..3 {
         last = run(dir, &["push", "--quiet"], TIMEOUT);
         if last.ok {
-            return GitResult { ok: true, output: "Committed and pushed.".into(), error: String::new() };
+            return GitResult {
+                ok: true,
+                output: "Committed and pushed.".into(),
+                error: String::new(),
+                rolled_back: false,
+            };
         }
         let again = pull_under_lock(dir, TIMEOUT);
         if !again.ok {
@@ -363,6 +417,7 @@ pub fn commit_and_push_under_lock(dir: &Path, paths: &[String], message: &str) -
                 ok: false,
                 output: String::new(),
                 error: format!("Committed, but the push was refused and the pull failed: {}", again.error),
+                rolled_back: false,
             };
         }
     }
@@ -370,6 +425,7 @@ pub fn commit_and_push_under_lock(dir: &Path, paths: &[String], message: &str) -
         ok: false,
         output: String::new(),
         error: format!("Committed, but the push failed three times: {}", last.error),
+        rolled_back: false,
     }
 }
 
@@ -530,6 +586,37 @@ mod tests {
         let again = commit_and_push(&a, &paths, "a: again");
         assert!(again.ok, "{}", again.error);
         assert_eq!(again.output, "Nothing changed.");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_commit_puts_the_tree_back_and_says_nothing_was_written() {
+        let root = scratch("rollback");
+        command(&root, &["init", "-q", "-b", "main"]);
+        configure(&root);
+        std::fs::write(root.join("shared.md"), "# Before\n").unwrap();
+        command(&root, &["add", "."]);
+        command(&root, &["commit", "-q", "-m", "seed"]);
+        // A commit that cannot sign fails after the file is written and staged.
+        command(&root, &["config", "commit.gpgsign", "true"]);
+        let missing = root.join("missing-gpg").display().to_string();
+        command(&root, &["config", "gpg.program", &missing]);
+
+        // A file the write created is deleted.
+        std::fs::write(root.join("new.md"), "# New\n").unwrap();
+        let failed = commit_and_push(&root, &["new.md".to_string()], "new: note");
+        assert!(!failed.ok && failed.rolled_back, "{}", failed.error);
+        assert!(failed.error.contains("nothing was written"), "{}", failed.error);
+        assert!(failed.error.contains("new.md"), "{}", failed.error);
+        assert!(!root.join("new.md").exists(), "a created file is deleted");
+        assert!(status_paths(&root).is_empty(), "{:?}", status_paths(&root));
+
+        // A file the write changed is put back.
+        std::fs::write(root.join("shared.md"), "# After\n").unwrap();
+        let failed = commit_and_push(&root, &["shared.md".to_string()], "shared: edit");
+        assert!(!failed.ok && failed.rolled_back, "{}", failed.error);
+        assert_eq!(std::fs::read_to_string(root.join("shared.md")).unwrap(), "# Before\n");
+        assert!(status_paths(&root).is_empty(), "{:?}", status_paths(&root));
         std::fs::remove_dir_all(root).unwrap();
     }
 

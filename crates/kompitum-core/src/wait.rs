@@ -10,6 +10,29 @@ use std::time::Duration;
 /// Output kept for `output` matching.
 const SEEN_MAX: usize = 64 * 1024;
 
+/// The event subscription and output watch one wait added, removed however it ends.
+struct Subscription<'a> {
+    core: &'a Core,
+    id: u32,
+    events: tokio::sync::mpsc::UnboundedSender<serde_json::Value>,
+    output: Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>,
+}
+
+impl Drop for Subscription<'_> {
+    fn drop(&mut self) {
+        let mut st = self.core.lock();
+        self.core.unsubscribe_waiter(&mut st, &self.events);
+        if let Some(tx) = &self.output
+            && let Some(watchers) = st.output_watch.get_mut(&self.id)
+        {
+            watchers.retain(|watcher| !watcher.same_channel(tx));
+            if watchers.is_empty() {
+                st.output_watch.remove(&self.id);
+            }
+        }
+    }
+}
+
 pub struct WaitSpec {
     /// Ends when output produced after the wait started contains this; then
     /// only blocked, error or exit end it otherwise.
@@ -108,18 +131,20 @@ impl Core {
     pub async fn wait(&self, id: u32, spec: WaitSpec, waiter: Option<u32>) -> WaitResult {
         let (tx, mut events) = tokio::sync::mpsc::unbounded_channel();
         let (out_tx, mut output) = tokio::sync::mpsc::unbounded_channel();
+        let watch_output = spec.output.is_some();
         let start = {
             let mut st = self.lock();
             self.subscribe(
                 &mut st,
                 Filter { terminal: Some(crate::terminals::address(id)), ..Default::default() },
-                Sink::Waiter(tx),
+                Sink::Waiter(tx.clone()),
             );
-            if spec.output.is_some() {
-                st.output_watch.entry(id).or_default().push(out_tx);
+            if watch_output {
+                st.output_watch.entry(id).or_default().push(out_tx.clone());
             }
             st.reg.terminals.get(&id).cloned()
         };
+        let _subscription = Subscription { core: self, id, events: tx, output: watch_output.then_some(out_tx) };
         let result =
             |ended: bool, reason: &str, word: Option<Option<String>>| self.wait_result(id, ended, reason, word);
         let Some(start) = start.filter(|t| t.is_live() && !t.program_lost()) else {
@@ -209,5 +234,51 @@ mod tests {
     #[test]
     fn output_is_matched_without_escape_sequences() {
         assert_eq!(strip(b"\x1b[31mRE\x1b[0mADY\x1b]2;t\x07!\r\n"), "READY!\n");
+    }
+
+    fn test_core() -> (std::sync::Arc<Core>, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("kom-wait-{}", crate::platform::random_hex()));
+        let paths = crate::paths::Paths {
+            state: root.join("state"),
+            config: root.join("config.toml"),
+            socket: root.join("run/core.sock"),
+            holder_socket: root.join("run/core.holder.sock"),
+        };
+        paths.create_dirs().unwrap();
+        let core = Core::start(paths, crate::api::CoreInfo { id: "test".into(), name: "test".into() }).unwrap();
+        (core, root)
+    }
+
+    #[tokio::test]
+    async fn a_wait_removes_its_subscriber_and_output_watch_on_every_exit() {
+        let (core, root) = test_core();
+        let id = {
+            let mut st = core.lock();
+            let id = st
+                .reg
+                .create(crate::terminals::NewTerminal { argv: vec!["sh".into()], ..Default::default() }, 0)
+                .unwrap();
+            st.reg.terminals.get_mut(&id).unwrap().turn = 5;
+            id
+        };
+        // The already-not-working fast path returns before its loop.
+        let fast = WaitSpec { output: None, timeout: Duration::from_secs(1), after_turn: Some(1) };
+        assert_eq!(core.wait(id, fast, None).await.reason, "status");
+        {
+            let st = core.lock();
+            assert_eq!(core.waiter_count(&st), 0, "the fast path's subscriber stayed");
+            assert!(!st.output_watch.contains_key(&id));
+        }
+        // A timeout leaves by its deadline.
+        let timed =
+            WaitSpec { output: Some("never printed".into()), timeout: Duration::from_millis(10), after_turn: None };
+        assert_eq!(core.wait(id, timed, None).await.reason, "timeout");
+        {
+            let st = core.lock();
+            assert_eq!(core.waiter_count(&st), 0, "a timed-out wait's subscriber stayed");
+            assert!(!st.output_watch.contains_key(&id), "a timed-out wait's output watch stayed");
+        }
+        drop(core);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

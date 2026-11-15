@@ -293,3 +293,54 @@ fn remote_misses_and_renames_keep_subscribers_on_the_current_machine() {
     drop(core);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn a_forwarded_wait_says_at_once_when_the_line_is_unreachable() {
+    let root = std::path::PathBuf::from(format!(
+        "/var/tmp/kom-unreachable-{}-{}",
+        std::process::id(),
+        crate::platform::random_hex()
+    ));
+    let paths = Paths {
+        socket: root.join("core.sock"),
+        holder_socket: root.join("holder.sock"),
+        state: root.clone(),
+        config: root.join("config.toml"),
+    };
+    paths.create_dirs().unwrap();
+    let core = Core::start(paths, crate::api::CoreInfo { id: "here".into(), name: "here".into() }).unwrap();
+    let machine = Machine {
+        name: "away".into(),
+        target: "away".into(),
+        via: false,
+        temporary: false,
+        session: None,
+        id: "remote".into(),
+        host: "away".into(),
+        version: "test".into(),
+    };
+    // The line answers the first call, then is lost, and the machine becomes
+    // unreachable before the retry.
+    let (frames, _frames_rx) = mpsc::unbounded_channel();
+    let line = Line::new(frames, &json!({"features": []}));
+    core.lock().lines.insert(machine.id.clone(), LineState::Connected(line.clone()));
+    let background = {
+        let (core, line) = (core.clone(), line.clone());
+        let id = machine.id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            core.lock().lines.insert(id, LineState::Unreachable { since_ms: 0, why: "no route to host".into() });
+            lock(&line.pending).clear();
+        })
+    };
+    let started = tokio::time::Instant::now();
+    let error =
+        forward_waiting(&core, &machine, "terminal.wait", json!({"terminal": "t1", "timeout": 1, "caller": "here/t1"}))
+            .await
+            .unwrap_err();
+    background.await.unwrap();
+    assert!(error.message.contains("no route to host"), "{}", error.message);
+    assert!(started.elapsed() < Duration::from_secs(1), "it waited instead of reporting the line");
+    drop(core);
+    std::fs::remove_dir_all(root).unwrap();
+}
