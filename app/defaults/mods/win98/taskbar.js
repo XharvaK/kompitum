@@ -392,6 +392,7 @@ export default class Taskbar {
         .border_color(none)
         .hover((s) => s.border_color(C.shadow))
         .tooltip(tip)
+        .accessibility_label(tip)
         .on_click(() => perform(act))
         .child(inner),
     );
@@ -408,6 +409,7 @@ export default class Taskbar {
           .relative()
           .flex_none()
           .tooltip(`${a.program?.name ?? a.app ?? "Agent"}: ${a.status} - ${a.space_name} \\ ${a.tab_name}`)
+          .accessibility_label(`${a.program?.name ?? a.app ?? "Agent"}: ${a.status} - ${a.space_name} \\ ${a.tab_name}`)
           .on_click(() => run("agent.focus", { terminal: a.address }))
           .child(programIcon(u, a.program, 16))
           .when(Boolean(badge), (el) =>
@@ -429,7 +431,7 @@ export default class Taskbar {
       .px(u(2))
       .children(icons)
       .child(
-        own(div().id("tray-speaker").flex_none().tooltip(mute ? "Sounds: off" : "Volume").on_click((_e, cx) => {
+        own(div().id("tray-speaker").flex_none().tooltip(mute ? "Sounds: off" : "Volume").accessibility_label(mute ? "Sounds: off" : "Volume").on_click((_e, cx) => {
           setShared("win98.mute", !mute);
           cx.notify();
         })).child(icon(u, mute ? "speaker-mute" : "speaker", 16)),

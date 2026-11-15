@@ -178,6 +178,9 @@ export default {
         .bg(t.accent_fill)
         .text_color(t.accent_foreground)
         .cursor_pointer()
+        .keep_focus(true)
+        .tab_stop(true)
+        .focus_ring(t.focus, 7)
         .on_click((_e, cx) => this.restartNow(cx));
     } else {
       button = button.bg(t.hover).text_color(t.dim).tooltip("The lead is busy. Restart when it's done.");
@@ -287,6 +290,9 @@ export default {
           .cursor_pointer()
           .text_color(level === current ? t.foreground : t.dim)
           .hover((s) => s.text_color(t.foreground))
+          .keep_focus(true)
+          .tab_stop(true)
+          .focus_ring(t.focus, 0)
           .on_click((_e, cx) => this.pickLevel(level, cx))
           .child(EFFORT_WORDS[level] ?? cap(level))));
   },
@@ -319,6 +325,9 @@ export default {
           .items_center()
           .rounded(7)
           .cursor_pointer()
+          .keep_focus(true)
+          .tab_stop(true)
+          .focus_ring(t.focus, 7)
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click((_e, cx) => this.pickModel(model.id, cx))
           .child(div().flex_1().text_size(13).text_color(t.foreground).child(model.label ?? model.id))
@@ -337,8 +346,12 @@ export default {
       .items_center()
       .rounded(7)
       .cursor_pointer()
+      .keep_focus(true)
+      .tab_stop(true)
+      .focus_ring(t.focus, 7)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .when(Boolean(tooltip), (el) => el.tooltip(tooltip))
+      .when(Boolean(tooltip), (el) => el.accessibility_label(tooltip))
       .on_click((_e, cx) => {
         this.saveLead({ effort: level }, cx);
         cx.notify();
@@ -385,8 +398,12 @@ export default {
       .items_center()
       .rounded(7)
       .cursor_pointer()
+      .keep_focus(true)
+      .tab_stop(true)
+      .focus_ring(t.focus, 7)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-      .tooltip(pending ? "Changes wait for the lead's restart" : "The lead's model and reasoning");
+      .tooltip(pending ? "Changes wait for the lead's restart" : "The lead's model and reasoning")
+      .accessibility_label(pending ? "Changes wait for the lead's restart" : "The lead's model and reasoning");
     // The icon sits 6 px left of the name.
     let name = h_flex().gap(6).items_center();
     if (icon) name = name.child(icon);
@@ -426,6 +443,9 @@ export default {
           this.effortTouched = Boolean(lead.effort);
           this.saveEffortOnRelease = true;
           this.ensureEffortSlider(entry);
+        } else if (this.text) {
+          // The menu closes: the box is home again.
+          this.text.focus();
         }
         cx.notify();
       })
@@ -456,8 +476,12 @@ export default {
       .justify_center()
       .rounded(6)
       .cursor_pointer()
+      .keep_focus(true)
+      .tab_stop(true)
+      .focus_ring(t.focus, 6)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .tooltip(`Context ${Math.round(fraction * 100)}% · Limits`)
+      .accessibility_label(`Context ${Math.round(fraction * 100)}% · Limits`)
       .on_click(() => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "pointer", props: { terminal: this.terminal } }))
       .child(drawing);
   },

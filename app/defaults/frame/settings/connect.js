@@ -327,6 +327,8 @@ export function connectPage(view, t, cx) {
         .items_center()
         .py(2)
         .cursor_pointer()
+        .tab_stop(true)
+        .focus_ring(t.focus, 6)
         .on_click((_e, cx) => {
           connect.showHow = !connect.showHow;
           cx.notify();

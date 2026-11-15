@@ -76,6 +76,8 @@ export default class Composer extends View {
     this.noteAction = null;
     this.answers = {};
     this.answerTexts = {};
+    // The option a card's arrow keys are on: one list through every question's choices.
+    this.optionAt = 0;
     // One "Something else…" input per question of the open ask, made when the ask is taken.
     this.questionInputs = {};
     this.questionAsk = null;
@@ -126,6 +128,11 @@ export default class Composer extends View {
     cx.bind_keys([
       { keystroke: "escape", action: "composer-escape", context: "Composer" },
       { keystroke: "escape", action: "composer-escape", context: "ComposerHistory" },
+      // A card has its own context: Shift+Tab is the window's (move focus), not
+      // the mode word's, and the arrows move through its options.
+      { keystroke: "escape", action: "composer-escape", context: "ComposerCard" },
+      { keystroke: "up", action: "composer-history-up", context: "ComposerCard" },
+      { keystroke: "down", action: "composer-history-down", context: "ComposerCard" },
       { keystroke: "up", action: "composer-history-up", context: "ComposerHistory" },
       { keystroke: "down", action: "composer-history-down", context: "ComposerHistory" },
       { keystroke: "up", action: "composer-list-up", context: "ComposerList" },
@@ -312,8 +319,11 @@ export default class Composer extends View {
   }
 
   historyKey(direction, cx) {
-    // A card owns the keys while it shows; the draft under it stays put.
-    if (this.ask) return;
+    // A card's options are the list the arrows move through while it shows.
+    if (this.ask) {
+      this.cardArrow(-direction, cx);
+      return;
+    }
     if (direction > 0) {
       if (this.historyAt < 0 && this.text.value().length > 0) return;
       if (this.historyAt >= this.history.length - 1) return;
@@ -497,6 +507,7 @@ export default class Composer extends View {
       this.noteInput = null;
       this.noteAction = null;
       this.answers = {};
+      this.optionAt = 0;
       if (askId) cx.timer.after(0, () => this.handle.focus());
       // A card takes the box's place, so the box grows and the list above it shrinks: keep the newest item in view.
       if (this.stickToBottom) {
@@ -511,7 +522,7 @@ export default class Composer extends View {
       .min_h(0)
       .bg(t.background)
       .track_focus(this.handle)
-      .key_context(this.historyMode ? "ComposerHistory" : "Composer")
+      .key_context(this.ask ? "ComposerCard" : this.historyMode ? "ComposerHistory" : "Composer")
       .on_action("composer-escape", (_event, cx) => this.escape(cx))
       .on_action("composer-history-up", (_event, cx) => this.historyKey(1, cx))
       .on_action("composer-history-down", (_event, cx) => this.historyKey(-1, cx))

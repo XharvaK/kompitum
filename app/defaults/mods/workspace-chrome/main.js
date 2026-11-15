@@ -85,6 +85,7 @@ export default class WorkspaceChrome extends View {
   button(id, label, action) {
     const t = theme();
     return div().id(id).size(28).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.muted).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .keep_focus(true)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).on_click(action).child(label);
   }
 
@@ -122,6 +123,7 @@ export default class WorkspaceChrome extends View {
       .cursor_pointer()
       .text_size(13)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .keep_focus(true)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(action);
     const content = v_flex()
@@ -163,7 +165,9 @@ export default class WorkspaceChrome extends View {
       );
     const trigger = h_flex().id("space-menu").w(28).h(28).flex_none().items_center().justify_center().rounded(7)
       .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .keep_focus(true)
       .tooltip("Space and new terminals")
+      .accessibility_label("Space and new terminals")
       .child(svg("mods/workspace-chrome/plus.svg").size(16));
     return Popover.new("space-menu-menu")
       .anchor("top_left")
@@ -181,7 +185,9 @@ export default class WorkspaceChrome extends View {
     return h_flex().id(id).h(36).px(8).gap(10).items_center().rounded(8).cursor_pointer().relative()
       .text_size(13).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .when(collapsed, (el) => el.justify_center().px(0))
+      .keep_focus(true)
       .tooltip(tip)
+      .accessibility_label(tip)
       .on_click(action)
       .child(svg(icon).size(16).flex_none())
       .when(!collapsed, (el) => el.child(label));
@@ -225,6 +231,7 @@ export default class WorkspaceChrome extends View {
     const u = updates();
     const settingsButton = h_flex().id("settings").w(32).h(32).flex_none().items_center().justify_center().rounded(8)
       .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tooltip("Settings")
+      .accessibility_label("Settings").keep_focus(true)
       .on_click(() => run("app.settings"))
       .child(svg("mods/workspace-chrome/settings.svg").size(16))
       .when(Boolean(u.app.ready), (el) => el.relative().child(div().size(6).rounded_full().bg(t.accent).absolute().top(4).right(4)));

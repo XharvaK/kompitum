@@ -184,6 +184,11 @@ pub const COMMANDS: &[Command] = &[
         "Focus the pane or focusable mod to the \"left\", \"right\", \"up\" or \"down\".",
     ),
     cmd(
+        "region.go",
+        &[req("direction")],
+        "Move the keyboard to the \"next\" or \"previous\" region: the sidebar, the lead's composer, the focused pane's terminal and the side panel, skipping one that isn't shown.",
+    ),
+    cmd(
         "pane.swap",
         &[opt("direction"), opt("pane"), opt("target")],
         "Swap a pane (default: the focused one) with its neighbor in a direction, or with another pane of its tab (target). Give exactly one of direction or target.",

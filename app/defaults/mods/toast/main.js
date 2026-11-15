@@ -26,6 +26,7 @@ export default class Toast extends View {
       .cursor_pointer()
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .tooltip("Dismiss")
+      .accessibility_label("Dismiss")
       .on_click((_e, cx) => {
         cx.stop_propagation();
         closeOverlay(p.overlay);

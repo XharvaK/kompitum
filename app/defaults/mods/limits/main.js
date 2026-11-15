@@ -227,7 +227,7 @@ export default class Limits extends View {
     const live = current?.state === "waiting" && !current?.ask && current?.compacting !== true;
     return h_flex().id("limits-compact").w_full().h(30).rounded(8).border_1().border_color(t.border)
       .items_center().justify_center()
-      .when(live, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).on_click(() => {
+      .when(live, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tab_stop(true).focus_ring(t.focus, 8).on_click(() => {
         run("lead.compact", { terminal });
         closeOverlay(props().overlay);
       }))

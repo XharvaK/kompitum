@@ -150,6 +150,8 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .bg(t.raised)
     .cursor_pointer()
     .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+    .tab_stop(true)
+    .focus_ring(t.focus, 8)
     .when(Boolean(picked?.icon), (el) => el.child(itemIcon(picked, 15, t)))
     .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(picked ? t.foreground : t.muted)
       .when(Boolean(picked?.font), (el) => el.font_family(picked.font))
@@ -200,7 +202,10 @@ export function iconButton(t, id, icon, tooltip, onClick) {
     .cursor_pointer()
     .text_color(t.muted)
     .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+    .tab_stop(true)
+    .focus_ring(t.focus, 7)
     .tooltip(tooltip)
+    .accessibility_label(tooltip)
     .on_click(onClick)
     .child(svg(icon).size(16));
 }

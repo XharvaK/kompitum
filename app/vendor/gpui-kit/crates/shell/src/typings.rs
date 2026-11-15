@@ -1950,6 +1950,27 @@ const ELEMENT_METHODS: &str = r#"    /**
     /** Styles applied while the element has focus. */
     focus<Self extends Element>(this: Self, declare: (el: NativeElement) => NativeElement | void): Self;
     /**
+     * Styles applied while the element has focus that GPUI considers visible:
+     * the keyboard put it there, not a mouse click.
+     */
+    focus_visible<Self extends Element>(this: Self, declare: (el: NativeElement) => NativeElement | void): Self;
+    /**
+     * A 2 px ring painted 1 px outside this element while it has visible
+     * keyboard focus, with corner radius `radius + 3`. It does not change the
+     * element's layout or its siblings' positions, and nothing is painted
+     * after a mouse click.
+     *
+     * Give it an element with a focus handle, or `tab_stop(true)` (or a tab
+     * index), which gives it one. `radius` is the element's own corner radius
+     * so the ring follows its shape.
+     */
+    focus_ring<Self extends Element>(this: Self, color: string, radius: number): Self;
+    /**
+     * A mouse press on this element does not move the keyboard: its click still
+     * fires, and whatever had focus keeps it. What a chrome button asks for.
+     */
+    keep_focus<Self extends Element>(this: Self, value?: boolean): Self;
+    /**
      * Displays the tab at `index` in `group` when this element is clicked.
      *
      * One of the twelve **dock commands**, which are how an element a dock's
@@ -4096,6 +4117,9 @@ mod tests {
         "hover",
         "active",
         "focus",
+        "focus_visible",
+        "focus_ring",
+        "keep_focus",
     ];
 
     /// Every method name declared in the `Element` interface, in order.

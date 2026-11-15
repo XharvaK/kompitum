@@ -423,7 +423,8 @@ export default {
       .rounded(12)
       .border_1()
       .border_color(t.border)
-      .bg(t.popover);
+      .bg(t.popover)
+      .role("list_box");
     if (this.listKind === "history") panel = panel.child(this.listHeader(t));
     return panel.children(rows.map((entry, offset) => {
       const index = start + offset;
@@ -436,6 +437,9 @@ export default {
           .items_center()
           .rounded(8)
           .when(on, (el) => el.bg(t.selected))
+          .role("list_box_option")
+          .aria_selected(on)
+          .when(on, (el) => el.aria_active_descendant())
           .hover((s) => s.bg(t.hover))
           .on_hover((hovered, cx) => {
             if (hovered && this.listIndex !== index) {
@@ -455,6 +459,9 @@ export default {
           .items_center()
           .rounded(8)
           .when(on, (el) => el.bg(t.selected))
+          .role("list_box_option")
+          .aria_selected(on)
+          .when(on, (el) => el.aria_active_descendant())
           .hover((s) => s.bg(t.hover))
           .on_hover((hovered, cx) => {
             if (hovered && this.listIndex !== index) {
@@ -474,6 +481,9 @@ export default {
         .items_center()
         .rounded(8)
         .when(on, (el) => el.bg(t.selected))
+        .role("list_box_option")
+        .aria_selected(on)
+        .when(on, (el) => el.aria_active_descendant())
         .hover((s) => s.bg(t.hover))
         .on_hover((hovered, cx) => {
           if (hovered && this.listIndex !== index) {

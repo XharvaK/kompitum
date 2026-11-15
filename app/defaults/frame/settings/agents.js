@@ -716,6 +716,8 @@ function addReadyRow(t, s, { key, name, iconEntry, onAdd }) {
         .text_size(12)
         .text_color(t.foreground)
         .hover((el) => el.bg(t.hover).text_color(t.foreground)).active((el) => el.bg(t.selected))
+        .tab_stop(true)
+        .focus_ring(t.focus, 6)
         .on_click((_e, cx) => {
           if (s.addBusy) return;
           onAdd(cx);
@@ -789,7 +791,10 @@ function addPanel(view, t, cx, s) {
     .cursor_pointer()
     .text_color(t.muted)
     .hover((el) => el.bg(t.hover).text_color(t.foreground)).active((el) => el.bg(t.selected))
+    .tab_stop(true)
+    .focus_ring(t.focus, 6)
     .tooltip("Close")
+    .accessibility_label("Close")
     .on_click((_e, cx) => { s.addOpen = false; cx.notify(); })
     .child(svg("frame/settings/close.svg").size(14));
 
@@ -900,6 +905,8 @@ function addPanel(view, t, cx, s) {
           .text_color(t.accent_foreground)
           .cursor_pointer()
           .relative()
+          .tab_stop(true)
+          .focus_ring(t.focus, 8)
           .on_click(addOwn)
           .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
           .child(s.addBusy === "own" ? "Adding…" : "Add"),

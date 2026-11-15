@@ -16,6 +16,7 @@ mod agents_page;
 mod bell;
 mod cli_errors;
 mod composer;
+mod keyboard;
 mod limits;
 mod machines;
 mod mailbox;
@@ -198,9 +199,25 @@ fn module_with_lead(
     let import_file = values.remove("importFile");
     let system_info = values.remove("system");
     let conversation_items = values.remove("conversation").unwrap_or(json!([]));
+    // A test can say what `lead()` answers once `lead.answer` runs, so a card
+    // closes as the real window's hook reply would close it.
+    let lead_after_answer = values.remove("leadAfterAnswer");
+    let answered = Rc::new(Cell::new(false));
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
         if name == "person" || (name == "lead" && lead.is_some()) {
+            continue;
+        }
+        if name == "lead" {
+            let after = lead_after_answer.clone();
+            let answered = answered.clone();
+            module = module.function("lead", move |_| {
+                Ok(to_host(if answered.get() {
+                    after.as_ref().unwrap_or(&value)
+                } else {
+                    &value
+                }))
+            });
             continue;
         }
         module = module.function(name, move |_| Ok(to_host(&value)));
@@ -246,6 +263,7 @@ fn module_with_lead(
         "openLink",
     ] {
         let calls = calls.clone();
+        let answered = answered.clone();
         module = module.function(name, move |a| {
             if name == "run" {
                 let command = a.string(0)?;
@@ -253,6 +271,9 @@ fn module_with_lead(
                 let command = crate::commands::find(command)
                     .unwrap_or_else(|| panic!("unknown shipped mod command {command}"));
                 crate::commands::validate_args(command, &args).unwrap();
+                if command.name == "lead.answer" {
+                    answered.set(true);
+                }
             }
             calls.borrow_mut().effects.push((
                 name.into(),

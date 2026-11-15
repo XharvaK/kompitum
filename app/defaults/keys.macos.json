@@ -32,6 +32,8 @@
     "cmd-alt-shift-down": "pane.swap:down",
     "f2": "tab.rename",
     "shift-f2": "space.rename",
+    "f6": "region.go:next",
+    "shift-f6": "region.go:previous",
     "cmd-/": "app.help",
     "cmd-shift-/": "app.help",
     "cmd-b": "layout.toggle:sidebar",

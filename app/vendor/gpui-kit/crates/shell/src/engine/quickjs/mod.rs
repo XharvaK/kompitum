@@ -5161,6 +5161,7 @@ impl ShellRuntime {
             "hover" => "hover",
             "active" => "active",
             "focus" => "focus",
+            "focus_visible" => "focus_visible",
             // Not a runtime state, but the same mechanism: a detached node
             // collecting ordinary style methods. A `SliderIndicator` draws its
             // filled part from this one.
@@ -5175,7 +5176,7 @@ impl ShellRuntime {
                     ctx,
                     &format!(
                         "unknown state style `{other}`; expected hover, active, focus, \
-                         range_style, cell_style, cell_active_style or caret_style"
+                         focus_visible, range_style, cell_style, cell_active_style or caret_style"
                     ),
                 ));
             }
@@ -5743,6 +5744,25 @@ globalThis.__gpui = (() => {
     __apply(this.__id, "track_focus", [handle.__handle]);
     return this;
   };
+  // A ring drawn just outside the element while its focus is one the keyboard
+  // put there. `radius` is the element's own corner radius, so the ring follows
+  // the shape it surrounds.
+  methods.focus_ring = function (color, radius) {
+    if (typeof color !== "string") {
+      throw new TypeError("focus_ring(color, radius) expects a color such as '#7c86f5'");
+    }
+    if (typeof radius !== "number" || !Number.isFinite(radius) || radius < 0) {
+      throw new TypeError("focus_ring(color, radius) expects a non-negative radius in pixels");
+    }
+    __apply(this.__id, "focus_ring", [color, radius]);
+    return this;
+  };
+  // A press that still clicks but leaves the keyboard where it was: what every
+  // button outside the thing being typed into asks for.
+  methods.keep_focus = function (value) {
+    __apply(this.__id, "keep_focus", [value === undefined ? true : Boolean(value)]);
+    return this;
+  };
   // A virtualized list's scroll position, unwrapped exactly as `track_focus`
   // unwraps a focus handle, and checked here for the same reason: a name or an
   // element would be dropped on the Rust side and the list would simply never
@@ -5781,6 +5801,7 @@ globalThis.__gpui = (() => {
   methods.hover = state("hover");
   methods.active = state("active");
   methods.focus = state("focus");
+  methods.focus_visible = state("focus_visible");
   // Not a state: the filled part of a slider, declared the same way because
   // it is the same thing — a detached element collecting styles. The shell
   // positions the box; this says what it looks like.
@@ -7308,6 +7329,8 @@ impl ShellRuntime {
                 "default_open",
                 "overlay_closable",
                 "with_item_to_measure_index",
+                "focus_ring",
+                "keep_focus",
             ]
             .into_iter()
             .enumerate()
@@ -8318,6 +8341,8 @@ impl ShellRuntime {
             | "track_scroll"
             | "with_item_to_measure_index"
             | "content_focus_handle"
+            | "focus_ring"
+            | "keep_focus"
             | "key_context"
             | "aria_level"
             | "keep_mounted"
@@ -8374,6 +8399,8 @@ impl ShellRuntime {
                     "track_scroll" => "track_scroll",
                     "with_item_to_measure_index" => "with_item_to_measure_index",
                     "content_focus_handle" => "content_focus_handle",
+                    "focus_ring" => "focus_ring",
+                    "keep_focus" => "keep_focus",
                     "key_context" => "key_context",
                     "aria_level" => "aria_level",
                     "keep_mounted" => "keep_mounted",

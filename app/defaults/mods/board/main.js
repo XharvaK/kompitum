@@ -318,6 +318,7 @@ export default class Board extends View {
         .text_color(t.muted)
         .cursor_pointer()
         .tooltip("Close")
+        .accessibility_label("Close")
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => closeOverlay(props().overlay))

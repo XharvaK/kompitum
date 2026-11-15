@@ -61,6 +61,8 @@ function appearanceTiles(view, t) {
           .gap(6)
           .items_center()
           .cursor_pointer()
+          .tab_stop(true)
+          .focus_ring(t.focus, 8)
           .on_click((_e, cx) =>
             view.change((p) => {
               if (value === null) delete p.appearance;
@@ -157,6 +159,8 @@ function stepper(t, id, value, onMinus, onPlus) {
       .text_size(15)
       .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .tab_stop(true)
+      .focus_ring(t.focus, 7)
       .on_click(f)
       .child(label);
   return h_flex()

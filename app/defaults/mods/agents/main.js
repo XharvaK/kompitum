@@ -170,6 +170,7 @@ export default class Agents extends View {
         .items_center()
         .text_color(t.foreground)
         .hover((el) => el.bg(t.hover).text_color(t.foreground)).active((el) => el.bg(t.selected))
+        .keep_focus(true)
         .on_click(() => {
           setShared("agents.sort", s.id);
           closeOverlay(props().overlay);
@@ -212,6 +213,7 @@ export default class Agents extends View {
       .text_size(13)
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .keep_focus(true)
       .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
@@ -290,6 +292,7 @@ export default class Agents extends View {
         .text_color(open ? t.dim : (t[top] ?? t.dim))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+        .keep_focus(true)
         .on_click((_e, cx) => {
           cx.stop_propagation();
           open ? this.folded.add(a.address) : this.folded.delete(a.address);
@@ -334,6 +337,7 @@ export default class Agents extends View {
           .items_center()
           .gap(4)
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+          .keep_focus(true)
           .on_click(() => run("pane.focus", { pane: a.pane }))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
@@ -350,6 +354,8 @@ export default class Agents extends View {
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .tooltip(isPinned ? "Unpin" : "Pin to the top")
+        .accessibility_label(isPinned ? "Unpin" : "Pin to the top")
+        .keep_focus(true)
         .on_click((_e, cx) => {
           cx.stop_propagation();
           run("terminal.pin", { terminal: a.address, pinned: !isPinned });
@@ -380,6 +386,7 @@ export default class Agents extends View {
         })
         .on_click(() => run("pane.focus", { pane: a.pane }))
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
+          .keep_focus(true)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
             cx.stop_propagation();
             this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
@@ -421,6 +428,7 @@ export default class Agents extends View {
         .font_medium()
         .cursor_pointer()
         .hover((s) => s.text_color(t.foreground))
+        .keep_focus(true)
         .on_click((_e, cx) => {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
           cx.notify();
@@ -452,6 +460,7 @@ export default class Agents extends View {
           .justify_center()
           .when(on, (el) => el.bg(t.raised))
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+          .keep_focus(true)
           .on_click(() => run("lead.open"))
           .when(Boolean(icon(program, 14, t.foreground)), (el) => el.child(icon(program, 14, t.foreground)));
       }
@@ -498,6 +507,7 @@ export default class Agents extends View {
           .gap(4)
           .when(tab.active, (el) => el.bg(t.raised))
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+          .keep_focus(true)
           .on_click(() => run("tab.select", { id: tab.id }))
           .when(Boolean(icon(program, 14, t.foreground)), (el) => el.child(icon(program, 14, t.foreground)));
       }
@@ -533,6 +543,8 @@ export default class Agents extends View {
           .cursor_pointer()
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .tooltip("Close")
+          .accessibility_label("Close")
+          .keep_focus(true)
           .on_click((_e, cx) => {
             cx.stop_propagation();
             // A plain shell closes at once; anything else runs something, so ask first.
@@ -577,8 +589,10 @@ export default class Agents extends View {
                 .text_size(11)
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
+                .keep_focus(true)
                 .on_click(() => openOverlay({ mod: "agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
                 .tooltip(`Sort agents: ${sort.label}`)
+                .accessibility_label(`Sort agents: ${sort.label}`)
                 .child(svg(`mods/workspace-chrome/${sort.icon}.svg`).size(14)),
             ),
         ),
@@ -599,6 +613,7 @@ export default class Agents extends View {
                 .text_size(13)
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
+                .keep_focus(true)
                 .on_click(toggleSidebar)
                 .child("»"),
             ),

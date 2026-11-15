@@ -72,6 +72,7 @@ export default class TopBar extends View {
       () => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "top-right" }))
       .text_color(t.muted)
       .tooltip(limitsTip)
+      .accessibility_label(limitsTip)
       .when(top >= 75, (el) => el.relative().child(div().size(6).rounded_full().absolute().top(4).right(4)
         .bg(top >= 100 ? t.blocked : t.working)));
     const u = updates();
@@ -85,6 +86,7 @@ export default class TopBar extends View {
       .relative()
       .text_color(t.muted)
       .tooltip(count === 0 ? "Nothing needs you" : parts.filter(Boolean).join(" · "))
+      .accessibility_label(count === 0 ? "Nothing needs you" : parts.filter(Boolean).join(" · "))
       .when(count > 0, (el) => el.child(div().id("topbar-bell-count").absolute().top(-2).right(-2).h(16).min_w(16).px(4).rounded(8)
         .flex().items_center().justify_center().bg(t.accent_fill).text_color(t.accent_foreground).text_size(11).font_semibold()
         .child(count > 99 ? "99+" : String(count))));
@@ -114,6 +116,7 @@ export default class TopBar extends View {
     const word = (id, label) => {
       const on = body?.active === id;
       return h_flex().id(`panel-pick-${id}`).h(26).px(10).items_center().rounded(7).cursor_pointer().text_size(12)
+        .keep_focus(true)
         .when(on, (el) => el.bg(t.selected).text_color(t.foreground).font_medium())
         .when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
         .on_click(() => run("layout.select", { stack: "panel-body", child: id }))
@@ -121,6 +124,7 @@ export default class TopBar extends View {
     };
     const iconButton = (id, icon, size, tip, action) => div().id(id).size(28).flex_none().flex().items_center().justify_center()
       .rounded(6).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tooltip(tip)
+      .accessibility_label(tip).keep_focus(true)
       .on_click(action).child(svg(icon).size(size));
     const words = [["files", "Files"], ["changes", "Changes"], ["tasks", "Tasks"]]
       .filter(([id]) => enabled.includes(id))
@@ -185,7 +189,7 @@ export default class TopBar extends View {
     this.rememberSurface(space, panel, body);
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action) => div().id(id).size(28).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-      .on_mouse_down("left", stop).on_click(action).child(label);
+      .keep_focus(true).on_mouse_down("left", stop).on_click(action).child(label);
     const open = Boolean(panel && !panel.hidden);
     const togglePanel = () => {
       if (open) {
@@ -198,7 +202,8 @@ export default class TopBar extends View {
     const toggle = button("panel-toggle", svg("mods/topbar/panel-right.svg").size(16), togglePanel)
       .text_color(open ? t.foreground : t.muted)
       .when(open, (el) => el.bg(t.selected))
-      .tooltip(open ? "Hide the side panel" : "Show the side panel");
+      .tooltip(open ? "Hide the side panel" : "Show the side panel")
+      .accessibility_label(open ? "Hide the side panel" : "Show the side panel");
     const machine = space?.machine, branch = space?.branch;
     const crumbs = h_flex().id("topbar-crumbs").min_w(0).gap(6).items_center()
       .when(Boolean(dirText), (el) => el.child(div().id("topbar-folder").min_w(0).truncate().text_size(13).text_color(t.dim).tooltip(dir).child(dirText)))

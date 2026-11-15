@@ -77,6 +77,12 @@ pub(crate) mod entities;
 pub(crate) mod error;
 pub mod host;
 pub mod host_modules;
+pub mod focus_ring_test_support {
+    //! What the focus ring painted in the last frame, for the host's render
+    //! tests. GPUI records laid-out selectors but not painted quads, so a ring
+    //! painted outside the layout has no other observable trace.
+    pub use crate::materialize::focus_ring::test_support::{PaintedRing, painted, reset};
+}
 pub(crate) mod materialize;
 pub mod metrics;
 pub(crate) mod path;

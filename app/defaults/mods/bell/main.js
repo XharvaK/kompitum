@@ -157,7 +157,8 @@ export default class Bell extends View {
         .child(div().text_size(13).text_color(t.foreground).truncate().child(title))
         .when(Boolean(detail), (el) => el.child(div().text_size(12).text_color(t.dim).truncate().child(detail))))
       .when(Boolean(button), (el) => el.child(h_flex().id(`${id}-do`).h(24).px(10).flex_none().items_center().rounded(6).bg(t.raised)
-        .text_size(12).font_medium().text_color(t.foreground).cursor_pointer().relative()
+        .text_size(12).font_medium().text_color(t.foreground).cursor_pointer().relative().keep_focus(true).tab_stop(true).focus_ring(t.focus, 6)
+        .accessibility_label(button.label)
         .on_click(() => {
           button.go();
           closeOverlay(props().overlay);
@@ -169,6 +170,9 @@ export default class Bell extends View {
   // A quiet line that runs a command and closes the popup.
   link(t, id, label, go) {
     return div().id(id).px(8).py(4).text_size(12).text_color(t.muted).cursor_pointer()
+      .keep_focus(true)
+      .tab_stop(true)
+      .focus_ring(t.focus, 0)
       .on_click(() => {
         go();
         closeOverlay(props().overlay);
@@ -260,6 +264,9 @@ export default class Bell extends View {
         .child(div().text_size(12).font_medium().text_color(t.muted).child("Earlier"))
         .child(div().flex_1())
         .child(div().id("bell-recent-clear").text_size(12).text_color(t.muted).cursor_pointer()
+          .keep_focus(true)
+          .tab_stop(true)
+          .focus_ring(t.focus, 0)
           .hover((s) => s.text_color(t.foreground))
           .on_click(() => setShared(RECENT, []))
           .child("Clear")))
@@ -268,6 +275,9 @@ export default class Bell extends View {
         .child(div().text_size(12).font_medium().text_color(t.muted).child("Notes"))
         .child(div().flex_1())
         .when(Boolean(other), (el) => el.child(div().id("bell-thread").text_size(12).text_color(t.muted).cursor_pointer()
+          .keep_focus(true)
+          .tab_stop(true)
+          .focus_ring(t.focus, 0)
           .hover((s) => s.text_color(t.foreground))
           .on_click(() => {
             closeOverlay(props().overlay);

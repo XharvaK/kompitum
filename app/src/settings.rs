@@ -425,6 +425,9 @@ fn resolve(p: &Palette, overrides: &BTreeMap<String, String>) -> Theme {
             hex(if light { 0xffffff } else { mix(bg, 0, 0.28) }),
         ),
         ("ring", hex(mix(bg, fg, 0.7))),
+        // The keyboard focus ring's colour, named as the keyboard plan names it;
+        // it is the ring the rest of the chrome already draws.
+        ("focus", hex(mix(bg, fg, 0.7))),
         ("selection", hex(p.selection)),
         ("cursor", hex(p.cursor.unwrap_or(p.foreground))),
         ("working", hex(working)),

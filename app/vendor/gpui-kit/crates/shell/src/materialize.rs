@@ -121,7 +121,7 @@ fn materialize_factory_subtree(
 use smallvec::SmallVec;
 
 use gpui::{
-    AbsoluteLength, AnyElement, App, Bounds, DefiniteLength, InteractiveElement, IntoElement,
+    AbsoluteLength, AnyElement, App, Bounds, DefiniteLength, Hsla, InteractiveElement, IntoElement,
     Length, MouseButton, ParentElement, Pixels, Refineable as _, SharedString,
     StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
 };
@@ -136,6 +136,7 @@ use gpui_base::{
 };
 
 mod components;
+pub(crate) mod focus_ring;
 mod text_view;
 
 use crate::{
@@ -297,12 +298,16 @@ struct StateStyles {
     hover: Option<StyleRefinement>,
     active: Option<StyleRefinement>,
     focus: Option<StyleRefinement>,
+    /// `focus`, but only while GPUI calls the focus visible: the keyboard put
+    /// it there, not a click.
+    focus_visible: Option<StyleRefinement>,
 }
 
 impl StateStyles {
-    /// `active` and `focus` need a stable element identity; `hover` does not.
+    /// `active`, `focus` and `focus_visible` need a stable element identity;
+    /// `hover` does not.
     fn needs_identity(&self) -> bool {
-        self.active.is_some() || self.focus.is_some()
+        self.active.is_some() || self.focus.is_some() || self.focus_visible.is_some()
     }
 }
 
@@ -548,6 +553,11 @@ struct Behavior {
     /// have — and because a released handle has to be reported once, where it
     /// is used, rather than turned into silence here.
     focus_handle: Option<crate::entities::EntityHandle>,
+    /// The focus ring a script asked for on this element: its colour and the
+    /// radius of the element's own box, so the ring follows it.
+    focus_ring: Option<(Hsla, f32)>,
+    /// Whether a mouse press on the element leaves the keyboard where it was.
+    keep_focus: bool,
     /// The handle the keyboard moves to when a `Select` or `Combobox` opens.
     ///
     /// A second handle rather than a second use of [`Self::focus_handle`],
@@ -589,6 +599,7 @@ impl Behavior {
     /// node only for an element that has an id — so both halves need one.
     fn needs_identity(&self) -> bool {
         self.focus_handle.is_some()
+            || self.focus_ring.is_some()
             || self.tooltip.is_some()
             || self.tab_index.is_some()
             || self.tab_stop.is_some()
@@ -1693,6 +1704,12 @@ fn with_active_and_focus<E: StatefulInteractiveElement>(element: E, states: &Sta
             style
         });
     }
+    if let Some(focus_visible) = states.focus_visible.clone() {
+        element = element.focus_visible(move |mut style| {
+            style.refine(&focus_visible);
+            style
+        });
+    }
     element
 }
 
@@ -1808,6 +1825,15 @@ where
     E: StatefulInteractiveElement + ParentElement,
 {
     let mut element = element;
+    // A chrome button leaves the keyboard where it was: the press still clicks,
+    // but it does not transfer focus. GPUI's own focus-on-press listener runs
+    // after the element's listeners, so `prevent_default` here is what suppresses
+    // it (the same call GPUI documents for a control that keeps its focus).
+    if behavior.keep_focus {
+        element = element.on_mouse_down(MouseButton::Left, |_, window, _| {
+            window.prevent_default();
+        });
+    }
     if let Some(callback) = behavior.on_drop {
         let runtime = Rc::downgrade(runtime);
         element = element.on_drop(move |paths: &gpui::ExternalPaths, window, cx| {
@@ -2187,8 +2213,24 @@ fn flex_element(
     // the whole of what it can carry — and they are exactly what a script
     // needs to build the thing base has no component for: a listbox option, a
     // toolbar, a composite whose keyboard focus stays on its container.
-    let focus = tracked_focus(runtime, &behavior, "div");
     let identity = element_id(id, behavior.key.clone());
+    let mut focus = tracked_focus(runtime, &behavior, "div");
+    // A ring without a handle still has one thing to go on: `tab_stop(true)`
+    // (or a tab index) makes GPUI focus the element, and this gives that focus
+    // a handle the shell can read each frame to know whether to paint.
+    if focus.is_none()
+        && behavior.focus_ring.is_some()
+        && (behavior.tab_stop == Some(true) || behavior.tab_index.is_some())
+    {
+        focus = Some(
+            window
+                .use_keyed_state((identity.clone(), "focus-ring"), cx, |_, cx| {
+                    cx.focus_handle()
+                })
+                .read(cx)
+                .clone(),
+        );
+    }
     let stateful = named_debug_selector(element.id(identity.clone()), &identity);
     let stateful = with_gpui_focus(stateful, &behavior, focus.as_ref());
     let stateful = with_input_handlers(stateful, &behavior, runtime);
@@ -2267,7 +2309,13 @@ fn flex_element(
         }
         (false, false) => stateful,
     };
-    observe_size(finish(stateful, refinement, children), identity, behavior.on_size_change, runtime, window, cx)
+    let element = observe_size(finish(stateful, refinement, children), identity.clone(), behavior.on_size_change, runtime, window, cx);
+    match (behavior.focus_ring, focus) {
+        (Some((color, radius)), Some(handle)) => {
+            focus_ring::with_focus_ring(element, handle, color, gpui::px(radius), identity)
+        }
+        _ => element,
+    }
 }
 
 fn observe_size(
@@ -2718,6 +2766,7 @@ pub(in crate::materialize) fn resolve_ops(
                     "hover" => states.hover = Some(resolved),
                     "active" => states.active = Some(resolved),
                     "focus" => states.focus = Some(resolved),
+                    "focus_visible" => states.focus_visible = Some(resolved),
                     // Not a runtime state at all: the one style from which
                     // a component draws a box of its own. It rides the same op
                     // because what it collects is a refinement built from the
@@ -3585,6 +3634,16 @@ fn apply_behavior(behavior: &mut Behavior, name: &str, args: &[Bridged]) {
                 _ => None,
             };
         }
+        "focus_ring" => {
+            // Both halves or neither: a colour with no radius would ring a
+            // square box, and a radius with no colour would paint nothing.
+            let color = args.first().and_then(|value| value.as_color().ok());
+            let radius = args.get(1).and_then(|value| value.as_f32().ok());
+            if let (Some(color), Some(radius)) = (color, radius) {
+                behavior.focus_ring = Some((color, radius.max(0.0)));
+            }
+        }
+        "keep_focus" => behavior.keep_focus = flag.unwrap_or(true),
         "content_focus_handle" => {
             behavior.content_focus_handle = match args.first() {
                 Some(Bridged::Number(handle)) if *handle >= 0.0 && handle.fract() == 0.0 => {

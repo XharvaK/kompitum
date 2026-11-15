@@ -542,6 +542,25 @@ shortcuts must then be added by hand.
   the bar and its matches stay.
   Each terminal keeps its own query, and reopening selects it so typing replaces it. Search covers the screen and scrollback without replacing text selection.
 
+## Keyboard
+
+- The composer is home: after a card is answered, after a popup or Settings closes, and
+  after a chrome button is clicked, the keyboard stays in or returns to the lead's
+  composer box; a chrome button never takes it from the composer or a terminal.
+- Tab and Shift+Tab move between controls inside Settings, popups and cards; the arrow
+  keys move inside lists; Enter and Space press the focused control.
+- Focus shows only for the keyboard: a 2 px ring in the theme's `focus` color, 1 px
+  outside the control, following its radius; never after a mouse click, and it never
+  moves the layout.
+- F6 and Shift+F6 move the keyboard between regions: the sidebar, the lead's composer,
+  the focused pane's terminal and the side panel when it is open, in that order,
+  skipping a region that isn't shown.
+
+A mod makes a control keyboard-friendly with `tab_stop(true)` and
+`focus_ring(t.focus, radius)` (its own corner radius), `keep_focus(true)` on a chrome
+button that must not take the keyboard, and `accessibility_label` on an icon-only
+control, with the text of its tooltip.
+
 ## Commands
 
 The one way to change anything; keys, mods (`run(name, args)`), menus and
@@ -577,7 +596,10 @@ The main ones:
 - Panes: `pane.split {direction: "right" | "down", pane?, argv? | mod?, props?}` (a new
   terminal, or a mod pane), `pane.close {pane?}`,
   `pane.zoom {pane?}`, `pane.focus {pane | terminal}`, `pane.go {direction}`,
+  `region.go {direction}`,
   `pane.swap {pane?, direction | target}`.
+  `region.go` moves the keyboard between regions: the sidebar, the lead's composer,
+  the focused pane's terminal and the side panel, skipping one that isn't shown.
   `pane.go` prefers the most recently focused pane along the nearest edge in that
   direction; unvisited panes fall back to overlap, then top/left layout order.
   `pane.go` also reaches visible mods whose `mod.json` says `"focusable": true`, and

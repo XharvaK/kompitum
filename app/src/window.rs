@@ -4152,6 +4152,39 @@ impl AppWindow {
         })
     }
 
+    /// The composer is home: after a popup or Settings closes, a shown
+    /// composer takes the keyboard back. `focus_block` hands it to the mod,
+    /// whose own handle then goes to its text box.
+    fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.overlays.iter().any(|o| o.kind.modal_keys()) {
+            return;
+        }
+        let visible = |node: &Node| {
+            matches!(node.content(), Some(Content::Mod { name, .. }) if name == "composer")
+        };
+        let id = self
+            .chrome
+            .visible_blocks()
+            .into_iter()
+            .find(|node| visible(node))
+            .map(|node| node.id.clone())
+            .or_else(|| {
+                self.model
+                    .active_tab()
+                    .and_then(|tab| tab.shown().visible_blocks().into_iter().find(|node| visible(node)))
+                    .map(|node| node.id.clone())
+            });
+        if let Some(id) = id
+            && self.copied(&id)
+        {
+            self.focus_block(&id, window, cx);
+        }
+    }
+
+    fn copied(&self, id: &str) -> bool {
+        self.copies.contains_key(id) && self.mod_block_shown(id)
+    }
+
     /// A composer sits under its lead's terminal, as tall as its text, and grows to hold a card while its lead asks.
     fn fit_composers(&mut self) {
         for tab in self.model.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()) {
@@ -6434,6 +6467,15 @@ impl AppWindow {
                 }
                 return self.go(dir, window, cx);
             }
+            "region.go" => {
+                let dir = Self::arg(a, "direction").unwrap_or_default();
+                if !matches!(dir, "next" | "previous") {
+                    return self.fail(format!(
+                        "{name} direction is next or previous, not {dir:?}"
+                    ));
+                }
+                return self.region_go(dir, window, cx);
+            }
             "pane.swap" => {
                 let by = match swap_by(a) {
                     Ok(by) => by,
@@ -7210,6 +7252,91 @@ impl AppWindow {
         self.sync(window, cx);
     }
 
+    /// The composer block on screen, in the layout or in the shown tab.
+    fn shown_composer(&self) -> Option<String> {
+        let is_composer = |node: &Node| {
+            matches!(node.content(), Some(Content::Mod { name, .. }) if name == "composer")
+        };
+        self.chrome
+            .visible_blocks()
+            .into_iter()
+            .find(|node| is_composer(node))
+            .map(|node| node.id.clone())
+            .or_else(|| {
+                self.model
+                    .active_tab()
+                    .and_then(|tab| tab.shown().visible_blocks().into_iter().find(|node| is_composer(node)))
+                    .map(|node| node.id.clone())
+            })
+            .filter(|id| self.copies.contains_key(id))
+    }
+
+    /// `region.go`: the keyboard moves between the regions that have a focus
+    /// handle — the lead's composer and the focused pane's terminal, wrapping.
+    /// The sidebar and the side panel have no focus handle in this window, so
+    /// they are skipped (the plan's other two regions).
+    fn region_go(&mut self, direction: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.overlays.iter().any(|overlay| overlay.kind.modal_keys()) {
+            return;
+        }
+        let composer = self.shown_composer();
+        let terminal = self
+            .model
+            .focused_pane()
+            .filter(|pane| self.pane_focus(pane, cx).is_some());
+        let at_composer = composer
+            .as_deref()
+            .is_some_and(|id| self.focused_block.as_deref() == Some(id));
+        let at_terminal = self
+            .terms
+            .values()
+            .any(|term| term.view.read(cx).owns_keyboard_focus(window, cx));
+        let mut regions: Vec<&str> = Vec::new();
+        if composer.is_some() {
+            regions.push("composer");
+        }
+        if terminal.is_some() {
+            regions.push("terminal");
+        }
+        if regions.is_empty() {
+            return;
+        }
+        let current = if at_composer {
+            regions.iter().position(|region| *region == "composer")
+        } else if at_terminal || self.focused_block.is_none() {
+            regions.iter().position(|region| *region == "terminal")
+        } else {
+            None
+        };
+        let count = regions.len();
+        let next = match (current, direction) {
+            (Some(index), "previous") => (index + count - 1) % count,
+            (Some(index), _) => (index + 1) % count,
+            (None, "previous") => count - 1,
+            (None, _) => 0,
+        };
+        match regions[next] {
+            "composer" => {
+                if let Some(id) = composer {
+                    self.focus_block(&id, window, cx);
+                }
+            }
+            "terminal" => {
+                if let Some(pane) = terminal {
+                    self.focused_block = None;
+                    self.model.focus_pane(&pane);
+                    self.focused_pane = None;
+                    self.synced_model_pane = self.model.focused_pane();
+                    self.sync(window, cx);
+                    if let Some(focus) = self.pane_focus(&pane, cx) {
+                        focus.focus(window, cx);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Until the mod takes the keyboard, the window holds the keys.
     fn focus_block(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if self.model.tab_of(id).is_some() {
@@ -7547,6 +7674,11 @@ impl AppWindow {
             // `restore_focus` runs on its own when its focus goes).
             if o.kind.modal_keys() {
                 self.restore_focus(window, cx);
+                // The composer is home: a popup or Settings closing hands the
+                // keyboard back to its box.
+                if matches!(o.kind, OverlayKind::Popup) || o.id == "settings" {
+                    self.focus_composer(window, cx);
+                }
             }
             cx.notify();
         }
@@ -10971,10 +11103,101 @@ mod tests {
     }
 
     #[test]
+    fn f6_moves_between_the_composer_and_the_terminal() {
+        in_own_process("f6_regions");
+    }
+
+    /// The regions with a focus handle, in the plan's order with the two that
+    /// have none skipped: the lead's composer and the focused pane's terminal.
+    #[gpui::test]
+    fn f6_regions(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("f6_regions") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "composer",
+            r#"
+import { View, div } from 'gpui-kit';
+import { nextCommand } from 'kompitum';
+export default class Composer extends View {
+  init(_props, cx) {
+    this.h = cx.focus_handle();
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const command = await nextCommand();
+        if (command === 'focus') this.h.focus();
+      }
+    });
+  }
+  render() { return div().size_full().track_focus(this.h).child('composer'); }
+}
+"#,
+            json!({
+                "id": "root", "type": "row", "children": [
+                    { "id": "term", "type": "block", "content": { "terminal": "t1" } },
+                    { "id": "comp", "type": "block", "content": { "mod": "composer" } }
+                ]
+            }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.model.add_space(
+                "sp1",
+                "test",
+                "/tmp",
+                crate::model::Tab::new("tb1", "", "p1", "t1"),
+            );
+            this.model.focus_pane("p1");
+            this.focused_pane = None;
+            this.sync(window, cx);
+            if let Some(focus) = this.pane_focus("p1", cx) {
+                focus.focus(window, cx);
+            }
+        });
+        cx.run_until_parked();
+        let go = |direction: &str, cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                view.update(cx, |this, cx| {
+                    this.run("region.go", json!({ "direction": direction }), window, cx)
+                })
+            });
+            cx.run_until_parked();
+        };
+        go("next", cx);
+        assert_eq!(
+            cx.update(|_, app| view.read(app).focused_block.clone()),
+            Some("comp".into()),
+            "next goes from the terminal to the composer"
+        );
+        go("next", cx);
+        assert!(
+            cx.update(|_, app| {
+                let this = view.read(app);
+                this.focused_block.is_none() && this.model.focused_pane().as_deref() == Some("p1")
+            }),
+            "next goes from the composer back to the terminal"
+        );
+        go("previous", cx);
+        assert_eq!(
+            cx.update(|_, app| view.read(app).focused_block.clone()),
+            Some("comp".into()),
+            "previous goes back to the composer"
+        );
+        go("previous", cx);
+        assert!(
+            cx.update(|_, app| {
+                let this = view.read(app);
+                this.focused_block.is_none() && this.model.focused_pane().as_deref() == Some("p1")
+            }),
+            "previous wraps to the terminal"
+        );
+    }
+
+    #[test]
     fn showing_the_tab_again_gives_its_pane_the_keyboard() {
         in_own_process("tab_shown_again");
     }
-
     /// A home page in a stack beside the tab: a space made while it shows
     /// gets the keyboard once `layout.select` shows the tab again.
     #[gpui::test]

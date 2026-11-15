@@ -331,6 +331,8 @@ export default class Settings extends View {
           .items_center()
           .cursor_pointer()
           .hover((s) => s.text_color(t.foreground))
+          .tab_stop(true)
+          .focus_ring(t.focus, 7)
           .on_click((_e, cx) => {
             this.advancedOpen[key] = !this.advancedOpen[key];
             cx.notify();
@@ -354,6 +356,8 @@ export default class Settings extends View {
       .text_size(13)
       .text_color(t.foreground)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .tab_stop(true)
+      .focus_ring(t.focus, 7)
       .on_click(onClick)
       .child(label);
   }
@@ -369,6 +373,8 @@ export default class Settings extends View {
       .text_size(13)
       .text_color(t.muted)
       .hover((s) => s.text_color(t.foreground))
+      .tab_stop(true)
+      .focus_ring(t.focus, 6)
       .on_click(onClick)
       .child(label);
   }
@@ -386,6 +392,8 @@ export default class Settings extends View {
       .text_size(13)
       .font_semibold()
       .relative()
+      .tab_stop(true)
+      .focus_ring(t.focus, 7)
       .on_click(onClick)
       .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
       .child(label);
@@ -402,6 +410,8 @@ export default class Settings extends View {
       .bg(on ? t.accent_fill : t.hover)
       .flex()
       .when(on, (el) => el.justify_end())
+      .tab_stop(true)
+      .focus_ring(t.focus, 10)
       .on_click(onClick)
       .child(div().w(16).h(16).rounded(8).bg(on ? t.accent_foreground : t.muted));
   }
@@ -438,6 +448,8 @@ export default class Settings extends View {
           .cursor_pointer()
           .when(this.lit("option"), (el) => el.bg(t.selected))
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+          .tab_stop(true)
+          .focus_ring(t.focus, 7)
           .on_click((_e, cx) => this.change((p) => { p.option_as_alt = value; }, cx))
           .child(div().text_color(on ? t.accent : t.muted).child(on ? "◉" : "○"))
           .child(div().text_size(13).text_color(t.foreground).child(label));
@@ -652,7 +664,7 @@ export default class Settings extends View {
                 cx.notify();
               });
     const primary = (id, label, f) =>
-      div().id(id).px(12).py(5).rounded(7).cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).text_size(13).font_semibold().relative().on_click(f).child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))).child(label);
+      div().id(id).px(12).py(5).rounded(7).cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).text_size(13).font_semibold().relative().tab_stop(true).focus_ring(t.focus, 7).on_click(f).child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))).child(label);
     const source = !u.app.updates;
     const app = source
       ? [null, null]
@@ -808,6 +820,8 @@ export default class Settings extends View {
                   .rounded(7)
                   .cursor_pointer()
                   .hover((st) => st.bg(t.hover).text_color(t.foreground)).active((st) => st.bg(t.selected))
+                  .tab_stop(true)
+                  .focus_ring(t.focus, 7)
                   .tooltip(`${where} › ${m.title}`)
                   .on_click((_e, cx) => this.openMatch(m, cx))
                   .child(div().truncate().text_size(13).text_color(t.foreground).child(m.title))
@@ -824,6 +838,8 @@ export default class Settings extends View {
                   .rounded(7)
                   .cursor_pointer()
                   .hover((st) => st.bg(t.hover).text_color(t.foreground)).active((st) => st.bg(t.selected))
+                  .tab_stop(true)
+                  .focus_ring(t.focus, 7)
                   .on_click((_e, cx) => this.askLead(cx))
                   .child(svg(I("bot")).size(14).text_color(t.accent))
                   .child(div().text_size(12).text_color(t.foreground).child("Ask the lead")),
@@ -843,6 +859,8 @@ export default class Settings extends View {
             .cursor_pointer()
             .bg(on ? t.selected : "#00000000")
             .hover((st) => st.bg(t.hover).text_color(t.foreground)).active((st) => st.bg(t.selected))
+            .tab_stop(true)
+            .focus_ring(t.focus, 7)
             .on_click((_e, cx) => {
               this.section = s.id;
               this.picking = null;
@@ -923,6 +941,8 @@ export default class Settings extends View {
               .justify_center()
               .text_color(t.muted)
               .cursor_pointer()
+              .tab_stop(true)
+              .focus_ring(t.focus, 7)
               .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
               .on_click(() => this.close())
               .child(svg("mods/workspace-chrome/x.svg").size(14)),

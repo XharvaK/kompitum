@@ -124,6 +124,9 @@ export default {
       .font_medium()
       .cursor_pointer()
       .relative()
+      .keep_focus(true)
+      .tab_stop(true)
+      .focus_ring(t.focus, 7)
       .on_click(action)
       .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
       .child(label);
@@ -182,6 +185,7 @@ export default {
           .items_center()
           .justify_center()
           .cursor_pointer()
+          .keep_focus(true)
           .on_click((_e, cx) => this.removeChip(index, cx))
           .child(
             h_flex()
@@ -258,6 +262,7 @@ export default {
           .gap(8)
           .items_center()
           .cursor_pointer()
+          .keep_focus(true)
           .on_click((_e, cx) => {
             this.tasksOpen = !open;
             cx.notify();
@@ -291,7 +296,12 @@ export default {
       .items_center()
       .justify_center()
       .rounded_full()
+      .keep_focus(true)
       .tooltip(!this.leadReady()
+        ? "Claude is asking something before it starts."
+        : compacting ? "Claude is tidying up. Your message waits in the box." : this.sending ? "Sending…"
+          : this.compactFirst ? "Compact, then send (Enter)" : "Send (Enter)")
+      .accessibility_label(!this.leadReady()
         ? "Claude is asking something before it starts."
         : compacting ? "Claude is tidying up. Your message waits in the box." : this.sending ? "Sending…"
           : this.compactFirst ? "Compact, then send (Enter)" : "Send (Enter)")
@@ -311,7 +321,9 @@ export default {
       .cursor_pointer()
       .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .keep_focus(true)
       .tooltip("Attach files")
+      .accessibility_label("Attach files")
       .on_click((_e, cx) => this.attach(cx))
       .child(svg("mods/composer/paperclip.svg").size(16));
     // Voice: the system's own dictation for the focused box (Win+H on Windows, Dictation on macOS).
@@ -328,7 +340,9 @@ export default {
         .cursor_pointer()
         .text_color(t.muted)
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+        .keep_focus(true)
         .tooltip(window()?.platform === "windows" ? "Dictate (Win+H)" : "Dictate")
+        .accessibility_label(window()?.platform === "windows" ? "Dictate (Win+H)" : "Dictate")
         .on_click((_e, cx) => this.dictate(cx))
         .child(svg("mods/composer/mic.svg").size(16))
       : null;
@@ -489,6 +503,7 @@ export default {
       .when(live, (el) => el
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+        .keep_focus(true)
         .on_click((_e, cx) => this.pressMode(cx)))
       .when(Boolean(tip), (el) => el.tooltip(tip))
       .child(word);
@@ -514,6 +529,7 @@ export default {
       .text_size(12)
       .text_color(on ? t.accent : t.muted)
       .cursor_pointer()
+      .keep_focus(true)
       .when(!on, (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
       .tooltip(on
         ? `Your next message compacts ${k}K tokens first. Click to keep them.`
@@ -547,7 +563,7 @@ export default {
       .font_medium();
     // No model picked yet: the fill goes and an outline keeps the shape (UD's disabled state).
     const button = picked
-      ? start.bg(t.accent_fill).text_color(t.accent_foreground).cursor_pointer().on_click((_e, cx) => this.startFirstPick(cx))
+      ? start.bg(t.accent_fill).text_color(t.accent_foreground).cursor_pointer().keep_focus(true).on_click((_e, cx) => this.startFirstPick(cx))
         .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))).child("Start the lead")
       : start.border_1().border_color(t.input).text_color(t.dim).child("Start the lead");
     return v_flex()
@@ -569,6 +585,7 @@ export default {
           .border_color(picked === model.id ? t.accent : t.border)
           .when(picked === model.id, (el) => el.bg(t.selected))
           .cursor_pointer()
+          .keep_focus(true)
           .on_click((_e, cx) => {
             this.firstModel = model.id;
             cx.notify();

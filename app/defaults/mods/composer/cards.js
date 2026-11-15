@@ -109,6 +109,10 @@ export default {
       if (/^[1-4]$/.test(event.keystroke)) {
         if (Date.now() - this.askSince >= CARD_WAIT_MS) this.pickOption(ask, Number(event.keystroke) - 1, cx);
         cx.stop_propagation();
+      } else if (event.keystroke === "space") {
+        const chosen = this.cardOptions(ask)[this.optionAt];
+        if (chosen && Date.now() - this.askSince >= CARD_WAIT_MS) this.chooseOption(chosen.question, chosen.label, cx);
+        cx.stop_propagation();
       } else if (event.keystroke === "enter" && this.allAnswered(ask)) {
         if (this.enterArmed()) this.sendAnswers(ask, cx);
         cx.stop_propagation();
@@ -129,6 +133,8 @@ export default {
     this.noteOpen = false;
     this.noteInput = null;
     run("lead.answer", { id: ask.id, answer });
+    // The card is going: the box is home again.
+    if (this.text) this.text.focus();
     cx.notify();
   },
 
@@ -239,6 +245,24 @@ export default {
     this.chooseOption(question, label, cx);
   },
 
+  // Every option of the open card, in the order the card draws them: what the
+  // arrows move through and Space picks.
+  cardOptions(ask) {
+    return askQuestions(ask).flatMap((question) =>
+      (question.options ?? [])
+        .map((option) => ({ question, label: String(option.label ?? "") }))
+        .filter((option) => option.label));
+  },
+
+  cardArrow(direction, cx) {
+    if (this.ask?.kind !== "question" || this.noteOpen) return;
+    const list = this.cardOptions(this.ask);
+    if (list.length === 0) return;
+    const at = Math.max(0, Math.min(list.length - 1, Number.isInteger(this.optionAt) ? this.optionAt : 0));
+    this.optionAt = (at + direction + list.length) % list.length;
+    cx.notify();
+  },
+
   toggleOption(question, label, cx) {
     this.chooseOption(question, label, cx);
   },
@@ -285,6 +309,9 @@ export default {
       .text_color(t.muted)
       .cursor_pointer()
       .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
+      .keep_focus(true)
+      .tab_stop(true)
+      .focus_ring(t.focus, 6)
       .on_click(action)
       .child(label);
   },
@@ -304,6 +331,9 @@ export default {
       .font_medium()
       .cursor_pointer()
       .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
+      .keep_focus(true)
+      .tab_stop(true)
+      .focus_ring(t.focus, 7)
       .on_click(action)
       .child(label);
     return tooltip ? button.tooltip(tooltip) : button;
@@ -429,6 +459,7 @@ export default {
 
   questionCard(t, cx, ask) {
     const questions = askQuestions(ask);
+    let optionAt = 0;
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
       .child(h_flex().child(this.cardTag(t, "Question")))
       .children(questions.map((question, questionIndex) => {
@@ -439,11 +470,13 @@ export default {
         return v_flex()
           .w_full()
           .gap(4)
+          .role(question.multiSelect ? "group" : "radio_group")
           .child(div().text_size(12).font_medium().text_color(t.foreground).child(question.header || question.question))
           .when(Boolean(question.header), (el) => el.child(div().text_size(12).text_color(t.muted).child(question.question)))
           .children((question.options ?? []).map((option, optionIndex) => {
             const label = String(option.label ?? "");
             const picked = chosen.includes(label);
+            const at = optionAt++;
             return h_flex()
               .id(`composer-option-${questionIndex}-${optionIndex}`)
               .w_full()
@@ -453,11 +486,16 @@ export default {
               .py(5)
               .rounded(7)
               .border_1()
-              .border_color(picked ? t.accent : t.input)
+              .border_color(picked || this.optionAt === at ? t.accent : t.input)
               .bg(picked ? t.selected : t.raised)
               .cursor_pointer()
+              .role(question.multiSelect ? "check_box" : "radio_button")
+              .aria_selected(picked)
               .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
-              .on_click((_e, cx) => this.toggleOption(question, label, cx))
+              .on_click((_e, cx) => {
+                this.optionAt = at;
+                this.toggleOption(question, label, cx);
+              })
               .child(div().text_size(12).font_medium().text_color(t.foreground).child(`${optionIndex + 1}. ${label}`))
               .when(
                 Boolean(option.description) && !repeatsLabel(label, option.description),
@@ -517,6 +555,9 @@ export default {
       .bg(t.accent_fill)
       .text_color(t.accent_foreground)
       .cursor_pointer()
+      .keep_focus(true)
+      .tab_stop(true)
+      .focus_ring(t.focus, 7)
       .on_click((_e, cx) => this.sendAnswers(ask, cx))
       .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
       .child("Send answers");
@@ -529,6 +570,9 @@ export default {
       .cursor_pointer()
       .text_size(12)
       .text_color(t.dim)
+      .keep_focus(true)
+      .tab_stop(true)
+      .focus_ring(t.focus, 0)
       .hover((style) => style.text_color(t.foreground))
       .on_click((_e, cx) => this.answerInTerminal(ask, cx))
       .child("or answer in the terminal");

@@ -167,6 +167,8 @@ export function memoryPage(view, t, cx) {
       .py(9)
       .gap(3)
       .cursor_pointer()
+      .tab_stop(true)
+      .focus_ring(t.focus, 0)
       .on_click((_e, cx) => {
         if (open) {
           view.memoryOpenPath = null;
@@ -293,6 +295,8 @@ export function memoryPage(view, t, cx) {
         .gap(6)
         .items_center()
         .cursor_pointer()
+        .tab_stop(true)
+        .focus_ring(t.focus, 0)
         .on_click((_e, cx) => {
           view.memoryForgottenOpen = !open;
           cx.notify();
