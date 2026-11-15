@@ -2,6 +2,7 @@
 //! the deciding code behind the window's upkeep of the lead.
 
 use super::{AUTO_COMPACT_WINDOW, Reveal, Session, State, TerminalVis, is_compact_command, is_lead_record};
+use crate::strings;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -56,26 +57,40 @@ fn whole(value: &Value) -> Option<u64> {
 /// (the Owner's one exception to "only the Owner's input reaches the lead", 2026-11-12).
 pub const COMPACT_COMMAND: &str = "/compact";
 
+/// A refusal's words, kept for the `&'static str` its callers and tests use.
+fn word(text: String) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static WORDS: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let mut words = WORDS.get_or_init(|| Mutex::new(HashSet::new())).lock().unwrap();
+    if let Some(word) = words.get(text.as_str()) {
+        return word;
+    }
+    let word: &'static str = Box::leak(text.into_boxed_str());
+    words.insert(word);
+    word
+}
+
 /// Why the lead can't be told to compact now, or None when it can: it has to be waiting for the
 /// Owner, with no card open and no compaction running.
 pub fn compact_refusal(session: Option<&Session>) -> Option<&'static str> {
     let Some(session) = session else {
-        return Some("the lead hasn't started yet");
+        return Some(word(strings::text("lead.not-started")));
     };
     if session.compacting {
-        return Some("Claude is already tidying up");
+        return Some(word(strings::text("lead.compacting")));
     }
     if session.conversation.reveal == Some(Reveal::Auto) {
-        return Some("Claude is showing a menu in its terminal: answer it first");
+        return Some(word(strings::text("lead.menu-shown")));
     }
     if session.ask.is_some() {
-        return Some("Claude is asking something: answer it first");
+        return Some(word(strings::text("lead.asking")));
     }
     match session.state {
         Some(State::Waiting) => None,
-        Some(State::Asking) => Some("Claude is asking something: answer it first"),
-        Some(State::Working) => Some("Claude is working: it can tidy up once it has finished"),
-        None => Some("the lead hasn't started yet"),
+        Some(State::Asking) => Some(word(strings::text("lead.asking"))),
+        Some(State::Working) => Some(word(strings::text("lead.working-compact"))),
+        None => Some(word(strings::text("lead.not-started"))),
     }
 }
 
@@ -83,22 +98,22 @@ pub fn compact_refusal(session: Option<&Session>) -> Option<&'static str> {
 /// conditions as a compaction, but a tidy-up only delays the change.
 pub fn apply_refusal(session: Option<&Session>) -> Option<&'static str> {
     let Some(session) = session else {
-        return Some("the lead hasn't started yet");
+        return Some(word(strings::text("lead.not-started")));
     };
     if session.compacting {
-        return Some("Claude is tidying up: the change goes when it's done");
+        return Some(word(strings::text("lead.tidying-change")));
     }
     if session.conversation.reveal == Some(Reveal::Auto) {
-        return Some("Claude is showing a menu in its terminal: answer it first");
+        return Some(word(strings::text("lead.menu-shown")));
     }
     if session.ask.is_some() {
-        return Some("Claude is asking something: answer it first");
+        return Some(word(strings::text("lead.asking")));
     }
     match session.state {
         Some(State::Waiting) => None,
-        Some(State::Asking) => Some("Claude is asking something: answer it first"),
-        Some(State::Working) => Some("Claude is working: it can tidy up once it has finished"),
-        None => Some("the lead hasn't started yet"),
+        Some(State::Asking) => Some(word(strings::text("lead.asking"))),
+        Some(State::Working) => Some(word(strings::text("lead.working-compact"))),
+        None => Some(word(strings::text("lead.not-started"))),
     }
 }
 
@@ -124,12 +139,12 @@ pub fn apply_commands(
 pub fn restart_refusal(session: Option<&Session>) -> Option<&'static str> {
     let session = session?;
     if session.ask.is_some() {
-        return Some("The lead is asking something: answer it first");
+        return Some(word(strings::text("lead.restart-asking")));
     }
     if session.compacting {
-        return Some("The lead is tidying up: restart it when it's done");
+        return Some(word(strings::text("lead.restart-tidying")));
     }
-    (session.state == Some(State::Working)).then_some("The lead is working: restart it when it's done")
+    (session.state == Some(State::Working)).then(|| word(strings::text("lead.restart-working")))
 }
 
 /// Folds a hook's `permission_mode` into the session. Returns whether what mods see changed.
@@ -159,19 +174,19 @@ pub fn next_mode(current: Option<&str>, seen: &BTreeSet<String>) -> &'static str
 /// Why the mode can't be switched now; None when it can (working is fine).
 pub fn mode_refusal(session: Option<&Session>) -> Option<&'static str> {
     let Some(session) = session else {
-        return Some("the lead hasn't started yet");
+        return Some(word(strings::text("lead.not-started")));
     };
     if !session.started {
-        return Some("the lead hasn't started yet");
+        return Some(word(strings::text("lead.not-started")));
     }
     if session.ask.is_some() {
-        return Some("Claude is asking something: answer it first");
+        return Some(word(strings::text("lead.asking")));
     }
     if session.conversation.reveal == Some(Reveal::Auto) {
-        return Some("Claude is showing a menu in its terminal: answer it first");
+        return Some(word(strings::text("lead.menu-shown")));
     }
     if session.compacting {
-        return Some("Claude is tidying up: switch when it's done");
+        return Some(word(strings::text("lead.mode-tidying")));
     }
     None
 }

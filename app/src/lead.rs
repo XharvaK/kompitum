@@ -3,6 +3,7 @@
 //! argv it starts with. Decisions live here, away from the window and the
 //! process, so they test on their own.
 
+use crate::strings;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -377,7 +378,12 @@ pub const COMPACT_INSTRUCTIONS: &str = "Keep every decision the Owner made and t
 /// Writes the lead's Claude settings file, made fresh every start.
 pub fn write_claude_settings(app_dir: &Path, app: &Path, core: &Path) -> Result<PathBuf, String> {
     let path = app_dir.join("lead").join("claude-settings.json");
-    let fail = |error: std::io::Error| format!("Couldn't write the lead's settings file {}: {error}", path.display());
+    let fail = |error: std::io::Error| {
+        strings::text_with(
+            "lead.settings-failed",
+            &[("path", &path.display().to_string()), ("error", &error.to_string())],
+        )
+    };
     let text = serde_json::to_string_pretty(&claude_settings(app, core, app_dir)).unwrap_or_default() + "\n";
     std::fs::create_dir_all(path.parent().unwrap_or(app_dir))
         .and_then(|()| crate::persist::write_atomic(&path, text))
@@ -440,16 +446,16 @@ fn install_skill(home: &Path, skill: &str) -> Result<&'static str, String> {
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "Couldn't install Kompitum's skill at {}: {error}",
-                path.display()
+            strings::text_with(
+                "lead.install-skill-failed",
+                &[("path", &path.display().to_string()), ("error", &error.to_string())],
             )
         })?;
     }
     crate::persist::write_atomic(&path, skill).map_err(|error| {
-        format!(
-            "Couldn't install Kompitum's skill at {}: {error}",
-            path.display()
+        strings::text_with(
+            "lead.install-skill-failed",
+            &[("path", &path.display().to_string()), ("error", &error.to_string())],
         )
     })?;
     Ok("installed")
@@ -464,14 +470,15 @@ pub fn setup(kom: &Path, home: &Path) -> Result<Value, String> {
         _ => match claude_exec(kom, &add) {
             Ok((0, _, _)) => "added",
             Ok((code, out, err)) => {
-                return Err(format!(
-                    "Couldn't add Kompitum's tools to Claude Code: {}",
-                    first_line(&err, &out, code)
+                return Err(strings::text_with(
+                    "lead.add-tools-failed",
+                    &[("error", &first_line(&err, &out, code))],
                 ));
             }
             Err(error) => {
-                return Err(format!(
-                    "Couldn't add Kompitum's tools to Claude Code: {error}"
+                return Err(strings::text_with(
+                    "lead.add-tools-failed",
+                    &[("error", &error)],
                 ));
             }
         },
@@ -490,8 +497,12 @@ pub fn app_claude_settings_path(app_dir: &Path) -> PathBuf {
 /// `modelSettings`, the 444K compaction window.
 pub fn write_app_claude_settings(app_dir: &Path) -> Result<PathBuf, String> {
     let path = app_claude_settings_path(app_dir);
-    let fail =
-        |error: std::io::Error| format!("Couldn't write Claude Code's settings file {}: {error}", path.display());
+    let fail = |error: std::io::Error| {
+        strings::text_with(
+            "lead.claude-settings-failed",
+            &[("path", &path.display().to_string()), ("error", &error.to_string())],
+        )
+    };
     let text = serde_json::to_string_pretty(&json!({ "modelSettings": model_settings() })).unwrap_or_default() + "\n";
     std::fs::create_dir_all(app_dir).and_then(|()| crate::persist::write_atomic(&path, text)).map_err(fail)?;
     Ok(path)
@@ -727,7 +738,7 @@ pub fn apply_auth_status(conversation: &mut Conversation, code: i32) {
     conversation.terminal = terminal;
     conversation.reveal = reveal;
     conversation.reveal_why = match reveal {
-        Some(Reveal::Login) => Some("Claude needs you to sign in.".into()),
+        Some(Reveal::Login) => Some(strings::text("lead.sign-in-needed")),
         _ => None,
     };
 }
@@ -736,7 +747,7 @@ pub fn apply_auth_status(conversation: &mut Conversation, code: i32) {
 pub fn apply_startup_reveal(conversation: &mut Conversation) {
     conversation.show(
         Reveal::Startup,
-        Some("Claude is asking something before it starts.".into()),
+        Some(strings::text("lead.startup-question")),
     );
 }
 
@@ -808,7 +819,7 @@ pub fn hook_output(ask: &Ask, answer: &Answer) -> Option<Value> {
         )),
         (AskKind::Permission, Answer::Deny { note }) => Some(permission_output(
             "deny",
-            Some(note.clone().filter(|note| !note.trim().is_empty()).unwrap_or_else(|| "The Owner declined.".into())),
+            Some(note.clone().filter(|note| !note.trim().is_empty()).unwrap_or_else(|| strings::text("lead.owner-declined"))),
             None,
             None,
         )),

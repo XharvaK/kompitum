@@ -1,5 +1,6 @@
 //! The conversation the panel draws. `fold` applies one hook event; it does no IO.
 
+use crate::strings;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -291,7 +292,7 @@ pub fn fold(mut conversation: Conversation, event: &Event) -> Conversation {
         Event::Notification { kind } => on_notification(&mut conversation, kind),
         Event::Elicitation => {
             if conversation.reveal != Some(Reveal::Manual) {
-                conversation.show(Reveal::Auto, Some("Claude needs your input.".into()));
+                conversation.show(Reveal::Auto, Some(strings::text("lead.needs-input")));
             }
         }
         Event::History { items } => {
@@ -304,7 +305,7 @@ pub fn fold(mut conversation: Conversation, event: &Event) -> Conversation {
             let id = conversation.next("notice");
             conversation.items.push(Item::Notice {
                 id,
-                text: "Couldn't read the conversation history.".into(),
+                text: strings::text("lead.history-unread"),
             });
             conversation.touched();
         }
@@ -358,7 +359,7 @@ pub fn event_from_hook(event: &str, input: &Value) -> Option<Event> {
             }
             // An interrupt has no error worth showing; the first line of an error is the same text as its result.
             let result = if input.get("is_interrupt").and_then(Value::as_bool).unwrap_or(false) {
-                "Stopped.".to_owned()
+                strings::text("lead.tool-stopped")
             } else {
                 string_field(input, "error")
             };
@@ -427,7 +428,7 @@ pub fn items_from_transcript(text: &str) -> TranscriptLoad {
                 let id = value.get("uuid").and_then(Value::as_str).map_or_else(|| next("notice"), str::to_owned);
                 items.push(Item::Notice {
                     id,
-                    text: "Tidied up the conversation".into(),
+                    text: strings::text("lead.tidied-up"),
                 });
             }
             Some(_) => skipped += 1,
@@ -485,10 +486,10 @@ fn on_submit(conversation: &mut Conversation, prompt: &str) {
     if side_question && conversation.reveal != Some(Reveal::Manual) {
         conversation.show(
             Reveal::Auto,
-            Some("Claude is answering a side question in its terminal.".into()),
+            Some(strings::text("lead.side-question")),
         );
     } else if is_picker_command(prompt) && conversation.reveal != Some(Reveal::Manual) {
-        let why = format!("Claude is showing its {} menu.", prompt.trim());
+        let why = strings::text_with("lead.showing-menu", &[("menu", prompt.trim())]);
         conversation.show(Reveal::Auto, Some(why));
     }
 }
@@ -597,7 +598,7 @@ fn ended_summary(current: &str, name: &str, input: &Value, state: ToolState) -> 
         return tool_summary(name, input, state);
     }
     match current.strip_prefix("Running ") {
-        Some(rest) => format!("Ran {rest}"),
+        Some(rest) => strings::text_with("lead.tool-ran", &[("rest", rest)]),
         None => current.to_owned(),
     }
 }
@@ -708,22 +709,23 @@ fn on_stop_failure(conversation: &mut Conversation, error: Option<&str>) {
     });
     conversation.touched();
     if error == Some("authentication_failed") {
-        conversation.show(Reveal::Login, Some("Claude needs you to sign in.".into()));
+        conversation.show(Reveal::Login, Some(strings::text("lead.sign-in-needed")));
     }
 }
 
 /// The notice for a turn that stopped on an error, in the app's own words.
 fn stop_failure_text(error: Option<&str>) -> String {
-    let words = match error {
-        Some("rate_limit") => "rate limit".into(),
-        Some("overloaded") => "Claude is overloaded".into(),
-        Some("authentication_failed") => "sign-in failed".into(),
-        Some("billing_error") => "a billing problem".into(),
-        Some("max_output_tokens") => "the reply hit its length limit".into(),
-        Some(other) if !other.is_empty() => other.replace('_', " "),
-        _ => return "The turn stopped.".into(),
-    };
-    format!("The turn stopped: {words}.")
+    match error {
+        Some("rate_limit") => strings::text("lead.turn-stopped-rate-limit"),
+        Some("overloaded") => strings::text("lead.turn-stopped-overloaded"),
+        Some("authentication_failed") => strings::text("lead.turn-stopped-sign-in-failed"),
+        Some("billing_error") => strings::text("lead.turn-stopped-billing"),
+        Some("max_output_tokens") => strings::text("lead.turn-stopped-length"),
+        Some(other) if !other.is_empty() => {
+            strings::text_with("lead.turn-stopped-other", &[("words", &other.replace('_', " "))])
+        }
+        _ => strings::text("lead.turn-stopped"),
+    }
 }
 
 fn on_notification(conversation: &mut Conversation, kind: &str) {
@@ -732,7 +734,7 @@ fn on_notification(conversation: &mut Conversation, kind: &str) {
             let id = conversation.next("notice");
             conversation.items.push(Item::Notice {
                 id,
-                text: "Signed in.".into(),
+                text: strings::text("lead.signed-in"),
             });
             conversation.touched();
             if conversation.reveal == Some(Reveal::Login) {
@@ -744,25 +746,25 @@ fn on_notification(conversation: &mut Conversation, kind: &str) {
             let id = conversation.next("notice");
             conversation.items.push(Item::Notice {
                 id,
-                text: "Signed in, but the sign-in couldn't be saved.".into(),
+                text: strings::text("lead.sign-in-unsaved"),
             });
             conversation.touched();
         }
         "elicitation_dialog" | "elicitation_url_dialog" => {
             if conversation.reveal != Some(Reveal::Manual) {
-                conversation.show(Reveal::Auto, Some("Claude needs your input.".into()));
+                conversation.show(Reveal::Auto, Some(strings::text("lead.needs-input")));
             }
         }
         "agent_needs_input" => {
             if conversation.reveal != Some(Reveal::Manual) {
-                conversation.show(Reveal::Auto, Some("Claude needs your input.".into()));
+                conversation.show(Reveal::Auto, Some(strings::text("lead.needs-input")));
             }
         }
         "quota_auto_resume_stale" => {
             if conversation.reveal != Some(Reveal::Manual) {
                 conversation.show(
                     Reveal::Auto,
-                    Some("Claude is waiting for you to continue.".into()),
+                    Some(strings::text("lead.waiting-continue")),
                 );
             }
         }
@@ -816,9 +818,9 @@ pub fn tool_summary(name: &str, input: &Value, state: ToolState) -> String {
         "Read" => {
             let file = path(&["file_path", "path"]);
             if file.is_empty() {
-                "Read a file".into()
+                strings::text("lead.read-file")
             } else {
-                format!("Read {file}")
+                strings::text_with("lead.read", &[("file", file)])
             }
         }
         "Write" | "Edit" | "NotebookEdit" | "MultiEdit" => edited_summary(input),
@@ -826,10 +828,10 @@ pub fn tool_summary(name: &str, input: &Value, state: ToolState) -> String {
             let command = path(&["command"]);
             let running = state == ToolState::Running;
             match (command.is_empty(), running) {
-                (true, true) => "Running a command".into(),
-                (true, false) => "Ran a command".into(),
-                (false, true) => format!("Running `{command}`"),
-                (false, false) => format!("Ran `{command}`"),
+                (true, true) => strings::text("lead.bash-running"),
+                (true, false) => strings::text("lead.bash-ran"),
+                (false, true) => strings::text_with("lead.bash-running-command", &[("command", command)]),
+                (false, false) => strings::text_with("lead.bash-ran-command", &[("command", command)]),
             }
         }
         "Grep" => {
@@ -851,17 +853,17 @@ pub fn tool_summary(name: &str, input: &Value, state: ToolState) -> String {
         "WebFetch" => {
             let url = path(&["url"]);
             if url.is_empty() {
-                "Fetch a url".into()
+                strings::text("lead.fetch-url")
             } else {
-                format!("Fetch {url}")
+                strings::text_with("lead.fetch", &[("url", url)])
             }
         }
         "WebSearch" => {
             let query = path(&["query"]);
             if query.is_empty() {
-                "Search the web".into()
+                strings::text("lead.search-web")
             } else {
-                format!("Search the web for {query}")
+                strings::text_with("lead.search-web-for", &[("query", query)])
             }
         }
         other => other.to_owned(),
@@ -1006,9 +1008,9 @@ fn edited_summary(input: &Value) -> String {
     if let Some(files) = input.get("files").and_then(Value::as_array) {
         let paths: Vec<&str> = files.iter().filter_map(Value::as_str).collect();
         return match paths.as_slice() {
-            [] => "Edited files".into(),
-            [one] => format!("Edited {one}"),
-            many => format!("Edited {} files", many.len()),
+            [] => strings::text("lead.edited-files"),
+            [one] => strings::text_with("lead.edited-one", &[("path", one)]),
+            many => strings::text_with("lead.edited-count", &[("count", &many.len().to_string())]),
         };
     }
     match input
@@ -1016,8 +1018,8 @@ fn edited_summary(input: &Value) -> String {
         .or_else(|| input.get("path"))
         .and_then(Value::as_str)
     {
-        Some(path) if !path.is_empty() => format!("Edited {path}"),
-        _ => "Edited a file".into(),
+        Some(path) if !path.is_empty() => strings::text_with("lead.edited-one", &[("path", path)]),
+        _ => strings::text("lead.edited-a-file"),
     }
 }
 

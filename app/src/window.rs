@@ -20,6 +20,7 @@ use crate::layout_sync;
 use crate::model::{self, Model, Tab};
 use crate::mods::{self, Found, Instance, Request};
 use crate::settings;
+use crate::strings;
 use crate::terminal::{TerminalEvent, TerminalView, scroll_target};
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
@@ -267,9 +268,12 @@ fn launch_failure(record: &Value, output: &str) -> Option<String> {
         .collect::<Vec<_>>();
     let tail = lines[lines.len().saturating_sub(5)..].join("\n");
     Some(if tail.is_empty() {
-        format!("Exit code {code}")
+        strings::text_with("app.launch-exit-code", &[("code", &code.to_string())])
     } else {
-        format!("Exit code {code}\n{tail}")
+        strings::text_with(
+            "app.launch-exit-code-tail",
+            &[("code", &code.to_string()), ("tail", &tail)],
+        )
     })
 }
 
@@ -501,7 +505,7 @@ fn begin_pane_change(
     change: PaneChange,
 ) -> Result<(), String> {
     if changes.get(address).is_some_and(|c| c.refusing()) {
-        return Err("This terminal is being killed.".into());
+        return Err(strings::text("app.terminal-killed"));
     }
     changes.insert(address.to_owned(), change);
     Ok(())
@@ -577,10 +581,8 @@ impl CoreLink {
             CoreLink::Lost { since } if now.saturating_duration_since(*since) < Duration::from_secs(2) => {
                 None
             }
-            CoreLink::Lost { .. } => Some("Reconnecting to Kompitum's core…".into()),
-            CoreLink::Refused { why } => Some(format!(
-                "Kompitum's core changed to a version this app can't use: {why}. Restart Kompitum."
-            )),
+            CoreLink::Lost { .. } => Some(strings::text("app.core-reconnecting")),
+            CoreLink::Refused { why } => Some(strings::text_with("app.core-changed", &[("why", why)])),
         }
     }
 
@@ -600,13 +602,17 @@ impl CoreLink {
 fn mismatch_words(mismatch: crate::kom::Mismatch) -> String {
     use crate::kom::Mismatch;
     match mismatch {
-        Mismatch::TooOld { have, need } => {
-            format!("it is {have}, and this app needs {need} or newer")
-        }
-        Mismatch::Newer { generation } => format!(
-            "it speaks a newer protocol (generation {generation}) than this app understands"
+        Mismatch::TooOld { have, need } => strings::text_with(
+            "app.core-needs-newer",
+            &[("have", &have), ("need", &need)],
         ),
-        Mismatch::Missing(methods) => format!("it is missing {}", methods.join(", ")),
+        Mismatch::Newer { generation } => strings::text_with(
+            "app.core-newer-protocol",
+            &[("generation", &generation.to_string())],
+        ),
+        Mismatch::Missing(methods) => {
+            strings::text_with("app.core-missing-methods", &[("methods", &methods.join(", "))])
+        }
     }
 }
 
@@ -726,12 +732,12 @@ pub(crate) fn kept_edits_note(clones: &[String]) -> Option<Value> {
     let (title, body) = match clones {
         [] => return None,
         [one] => (
-            format!("Your edits are in {one}"),
-            "Kompitum's own layouts and mods can't be changed: clone one to make it yours.".to_owned(),
+            strings::text_with("app.kept-edits-title-one", &[("clone", one)]),
+            strings::text("app.kept-edits-body"),
         ),
         many => (
-            format!("Your edits are in {} copies", many.len()),
-            format!("{}. Kompitum's own layouts and mods can't be changed.", and_list(many)),
+            strings::text_with("app.kept-edits-title", &[("count", &many.len().to_string())]),
+            strings::text_with("app.kept-edits-body-many", &[("names", &and_list(many))]),
         ),
     };
     Some(json!({ "title": title, "body": body, "level": "info", "timeout": 12000 }))
@@ -768,9 +774,9 @@ pub(crate) fn answered(needs: Option<&str>, status: Option<&str>) -> bool {
 pub(crate) fn alert_note(blocked: bool, name: &str, place: Option<String>, addr: &str) -> Value {
     let action = json!({ "name": "agent.focus", "args": { "terminal": addr } });
     if blocked {
-        json!({ "title": format!("{name} needs you"), "body": place, "level": "error", "timeout": 0, "needs": addr, "action": action })
+        json!({ "title": strings::text_with("app.agent-needs-you", &[("name", name)]), "body": place, "level": "error", "timeout": 0, "needs": addr, "action": action })
     } else {
-        json!({ "title": format!("{name} finished"), "body": place, "level": "info", "action": action })
+        json!({ "title": strings::text_with("app.agent-finished", &[("name", name)]), "body": place, "level": "info", "action": action })
     }
 }
 
@@ -1164,7 +1170,15 @@ impl AppWindow {
         w.apply_look(window, cx);
         w.show_layout_notes(window, cx);
         if let (Some(n), false) = (&name, gone.is_empty()) {
-            let note = json!({ "title": format!("{n} needs mods that aren't here"), "body": format!("Showing Kompitum instead. Missing: {}. Your {n} layout file is still there.", gone.join(", ")), "level": "info", "timeout": 12000 });
+            let note = json!({
+                "title": strings::text_with("app.layout-needs-mods", &[("layout", n)]),
+                "body": strings::text_with(
+                    "app.layout-needs-mods-body",
+                    &[("mods", &gone.join(", ")), ("layout", n)],
+                ),
+                "level": "info",
+                "timeout": 12000,
+            });
             w.open_overlay(
                 mods::new_overlay_id(),
                 json!({ "kind": "toast", "notification": note }),
@@ -1503,10 +1517,10 @@ impl AppWindow {
         let core = core.clone();
         std::thread::spawn(move || {
             if let Ok(s) = core.call("server.status", json!({})) {
-                let text = |k: &str| s.get(k).and_then(Value::as_str).map(str::to_owned);
+                let field = |k: &str| s.get(k).and_then(Value::as_str).map(str::to_owned);
                 crate::update::set_core(
-                    text("version").map(|v| v.trim_start_matches("kom ").to_owned()),
-                    text("installed_by"),
+                    field("version").map(|v| v.trim_start_matches("kom ").to_owned()),
+                    field("installed_by"),
                 );
             }
         });
@@ -3105,15 +3119,16 @@ impl AppWindow {
                     if notify {
                         tracing::warn!("layout on {machine:?} unavailable: {error}");
                         slot.notified_error = Some(error.clone());
+                        let machine = if machine.is_empty() {
+                            strings::text("app.this-machine")
+                        } else {
+                            machine.clone()
+                        };
                         self.layout_notice(
-                            "Layout unavailable",
-                            &format!(
-                                "{}: {error}",
-                                if machine.is_empty() {
-                                    "This machine"
-                                } else {
-                                    &machine
-                                }
+                            &strings::text("app.layout-unavailable"),
+                            &strings::text_with(
+                                "app.layout-unavailable-body",
+                                &[("machine", &machine), ("error", &error)],
                             ),
                             window,
                             cx,
@@ -3142,7 +3157,7 @@ impl AppWindow {
                 let since = self.core_back_at.map(|at| at.elapsed());
                 let lead_running = self.lead_is_running();
                 let (title, body, action) = layout_conflict_notice(since, lead_running);
-                self.layout_notice_action(title, &body, action, window, cx);
+                self.layout_notice_action(&title, &body, action, window, cx);
             }
         }
         if let Some(machines) = machines {
@@ -3167,13 +3182,12 @@ impl AppWindow {
                         .as_str()
                         .map(str::to_owned)
                         .unwrap_or_else(|| match state {
-                            "needs_update" => {
-                                format!("{name} needs a core update; run kom machine update {name}")
-                            }
-                            "needs_login" => {
-                                format!("{name} needs login; run kom machine login {name}")
-                            }
-                            _ => format!("{name} is {state}"),
+                            "needs_update" => strings::text_with("app.machine-needs-core", &[("name", name)]),
+                            "needs_login" => strings::text_with("app.machine-needs-login", &[("name", name)]),
+                            _ => strings::text_with(
+                                "app.machine-state",
+                                &[("name", name), ("state", state)],
+                            ),
                         })
                 });
                 self.documents
@@ -3384,7 +3398,7 @@ impl AppWindow {
                 mods::set_shared("claude.version".into(), json!(version));
                 if let Some(body) = change {
                     let notification = json!({
-                        "title": "Claude Code updated",
+                        "title": strings::text("app.claude-code-updated"),
                         "body": body,
                         "level": "info",
                     });
@@ -3488,15 +3502,17 @@ impl AppWindow {
                     .map(str::to_owned)
             })
             .or_else(|| app.as_deref().map(crate::programs::name))
-            .unwrap_or_else(|| "An agent".into());
+            .unwrap_or_else(|| strings::text("app.any-agent"));
         // A sub-agent lives where its top agent does.
         let home = self.root_agent(addr);
         let place = self.model.pane_of(&home).and_then(|pane| {
             let (p, c) = (self.model.space_of(&pane)?, self.model.tab_of(&pane)?);
-            Some(format!(
-                "{} / {}",
-                self.model.space_name(p, &self::home()),
-                self.model.tab_name(p, c)
+            Some(strings::text_with(
+                "app.place",
+                &[
+                    ("space", &self.model.space_name(p, &self::home())),
+                    ("tab", &self.model.tab_name(p, c)),
+                ],
             ))
         });
         let notification = alert_note(matches!(alert, model::Alert::Blocked), &name, place, addr);
@@ -3858,7 +3874,7 @@ impl AppWindow {
                     if generation != this.core_generation {
                         return;
                     }
-                    this.open_overlay(mods::new_overlay_id(), json!({"kind":"toast", "notification":{"title":"Terminal failed to start", "body":body, "level":"error"}}), window, cx);
+                    this.open_overlay(mods::new_overlay_id(), json!({"kind":"toast", "notification":{"title":strings::text("app.terminal-failed"), "body":body, "level":"error"}}), window, cx);
                 });
             }
         }).detach();
@@ -3883,16 +3899,13 @@ impl AppWindow {
     fn require_document(&self, machine: Option<&str>) -> Result<(), String> {
         match self.documents.get(machine.unwrap_or("")) {
             Some(slot) if slot.available => Ok(()),
-            Some(slot) => Err(slot.error.clone().unwrap_or_else(|| {
-                "This machine's layout is unavailable. Try again when it reconnects.".into()
-            })),
+            Some(slot) => Err(slot
+                .error
+                .clone()
+                .unwrap_or_else(|| strings::text("app.layout-unavailable-command"))),
             None => Err(match machine {
-                Some(m) => format!(
-                    "Kompitum has no machine called {m}. See kom machine ls; machines added with --temp stay out of Kompitum."
-                ),
-                None => {
-                    "This machine's layout is unavailable. Try again when it reconnects.".into()
-                }
+                Some(m) => strings::text_with("app.no-machine", &[("machine", m)]),
+                None => strings::text("app.layout-unavailable-command"),
             }),
         }
     }
@@ -4115,7 +4128,7 @@ impl AppWindow {
                     .find(|space| space.machine.is_none())
                     .map(|space| space.id.clone())
             });
-        self.new_mod_tab(space, "Lead", "composer".into(), json!({}))?;
+        self.new_mod_tab(space, &strings::text("app.lead-tab"), "composer".into(), json!({}))?;
         Ok(())
     }
 
@@ -4246,10 +4259,11 @@ impl AppWindow {
             })
             .map(|tab| tab.id.clone())
             .collect();
+        let lead_tab = strings::text("app.lead-tab");
         let made = match local {
             Some(space) => self.new_tab(
                 Some(space),
-                "Lead",
+                &lead_tab,
                 Some(folder.to_owned()),
                 argv,
                 None,
@@ -4260,7 +4274,7 @@ impl AppWindow {
             None => self.new_space(
                 "",
                 Some(folder.to_owned()),
-                Some("Lead"),
+                Some(&lead_tab),
                 argv,
                 None,
                 None,
@@ -4349,8 +4363,9 @@ impl AppWindow {
         );
         let checks_auth = program == "claude";
         if checks_auth {
-            let app = std::env::current_exe()
-                .map_err(|error| format!("Couldn't find this kompitum-app's path: {error}"))?;
+            let app = std::env::current_exe().map_err(|error| {
+                strings::text_with("lead.path-failed", &[("error", &error.to_string())])
+            })?;
             let settings_file = crate::lead::write_claude_settings(
                 &mods::app_dir(),
                 &app,
@@ -4431,7 +4446,10 @@ impl AppWindow {
                     crate::lead::note_lead_check_failed(
                         &mut session.conversation,
                         started,
-                        format!("Couldn't check whether Claude is signed in: {error}"),
+                        strings::text_with(
+                            "lead.check-sign-in-failed",
+                            &[("error", &error.to_string())],
+                        ),
                     );
                     this.apply_lead_terminal_layout(&terminal);
                     this.publish_lead(cx);
@@ -4484,7 +4502,10 @@ impl AppWindow {
                         crate::lead::note_lead_check_failed(
                             &mut session.conversation,
                             started,
-                            format!("Couldn't check whether the resumed conversation started: {error}"),
+                            strings::text_with(
+                                "lead.check-resume-failed",
+                                &[("error", &error.to_string())],
+                            ),
                         );
                         this.apply_lead_terminal_layout(&terminal);
                         this.publish_lead(cx);
@@ -4538,7 +4559,10 @@ impl AppWindow {
                         Ok(app) => app,
                         Err(error) => {
                             return this.lead_failed(
-                                format!("Couldn't find this kompitum-app's path: {error}"),
+                                strings::text_with(
+                                    "lead.path-failed",
+                                    &[("error", &error.to_string())],
+                                ),
                                 window,
                                 cx,
                             );
@@ -4573,8 +4597,8 @@ impl AppWindow {
                             json!({
                                 "kind": "toast",
                                 "notification": {
-                                    "title": "The lead started a new conversation",
-                                    "body": "Couldn't go on with the last conversation, so the lead started a new one.",
+                                    "title": strings::text("app.lead-new-conversation"),
+                                    "body": strings::text("app.lead-new-conversation-body"),
                                     "level": "warning",
                                 },
                             }),
@@ -4595,7 +4619,7 @@ impl AppWindow {
             json!({
                 "kind": "toast",
                 "notification": {
-                    "title": "The lead didn't start",
+                    "title": strings::text("app.lead-didnt-start"),
                     "body": error,
                     "level": "error",
                 },
@@ -5181,13 +5205,19 @@ impl AppWindow {
                 }
                 Err(error) if by_hand => this.lead_restart_toast(
                     &name,
-                    Err(format!("Couldn't end the lead: {error}")),
+                    Err(strings::text_with(
+                        "app.lead-end-failed",
+                        &[("error", &error.to_string())],
+                    )),
                     window,
                     cx,
                 ),
                 Err(error) => this.lead_restart_toast(
                     &name,
-                    Err(format!("Couldn't end the shell the core started in its place: {error}")),
+                    Err(strings::text_with(
+                        "app.lead-end-shell-failed",
+                        &[("error", &error.to_string())],
+                    )),
                     window,
                     cx,
                 ),
@@ -5220,8 +5250,8 @@ impl AppWindow {
                 }
                 this.publish_lead(cx);
                 let notification = json!({
-                    "title": format!("Couldn't switch Claude's mode: {error}"),
-                    "body": "The mode stays as it was.",
+                    "title": strings::text_with("app.lead-mode-failed", &[("error", &error.to_string())]),
+                    "body": strings::text("app.lead-mode-stays"),
                     "level": "error",
                 });
                 this.open_overlay(
@@ -5239,12 +5269,12 @@ impl AppWindow {
     fn lead_restart_toast(&mut self, name: &str, outcome: Result<(), String>, window: &mut Window, cx: &mut Context<Self>) {
         let notification = match outcome {
             Ok(()) => json!({
-                "title": format!("{name} was started again"),
-                "body": "Kompitum's core restarted. The lead continues the same conversation.",
+                "title": strings::text_with("app.lead-restarted", &[("name", name)]),
+                "body": strings::text("app.lead-restart-body"),
                 "level": "info",
             }),
             Err(error) => json!({
-                "title": format!("{name} wasn't started again"),
+                "title": strings::text_with("app.lead-not-restarted", &[("name", name)]),
                 "body": error,
                 "level": "error",
             }),
@@ -5593,9 +5623,9 @@ impl AppWindow {
     ) -> Result<Value, String> {
         if let Some(change) = self.pane_changes.get(addr) {
             return Err(if change.refusing() {
-                "This terminal is being killed.".into()
+                strings::text("app.terminal-killed")
             } else {
-                "This terminal already has a pane change in progress.".into()
+                strings::text("app.terminal-pane-change")
             });
         }
         if let Some(p) = self.model.pane_of(addr) {
@@ -5612,7 +5642,7 @@ impl AppWindow {
             .ok_or("no space to keep it in")?;
         let machine = self.machine_of(&space);
         if addr.split_once('/').map(|(m, _)| m) != machine.as_deref() {
-            return Err("A terminal's pane must stay on its own machine.".into());
+            return Err(strings::text("app.terminal-pane-own-machine"));
         }
         self.require_document(machine.as_deref())?;
         let target = matches!(place, "right" | "down")
@@ -5669,9 +5699,9 @@ impl AppWindow {
     ) -> Result<Value, String> {
         if let Some(change) = self.pane_changes.get(addr) {
             return Err(if change.refusing() {
-                "This terminal is being killed.".into()
+                strings::text("app.terminal-killed")
             } else {
-                "This terminal already has a pane change in progress.".into()
+                strings::text("app.terminal-pane-change")
             });
         }
         self.require_document(addr.split_once('/').map(|(m, _)| m))?;
@@ -5782,7 +5812,7 @@ impl AppWindow {
         if let Err(error) = result {
             tracing::error!("terminal change for {address} failed: {error}");
             if !self.draining {
-                self.layout_notice("Could not change terminal pane", &error, window, cx);
+                self.layout_notice(&strings::text("app.terminal-pane-failed"), &error, window, cx);
             }
             return;
         }
@@ -5967,7 +5997,8 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let spec = json!({"kind":"toast", "notification":{"title":format!("{name} failed"),"body":error,"level":"error"}});
+        let title = strings::text_with("app.command-failed", &[("name", name)]);
+        let spec = json!({"kind":"toast", "notification":{"title":title,"body":error,"level":"error"}});
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 
@@ -6103,7 +6134,11 @@ impl AppWindow {
                     .and_then(|i| self.model.space(i))
                     .map(|p| p.name.clone());
                 args["id"] = json!(id);
-                ("rename space", "empty: named after its folder", current)
+                (
+                    strings::text("app.rename-space"),
+                    strings::text("app.rename-space-hint"),
+                    current,
+                )
             }
             _ => {
                 let id = Self::owned(&args, "id")
@@ -6113,7 +6148,11 @@ impl AppWindow {
                     .and_then(|i| self.model.tab(i))
                     .map(|c| c.name.clone());
                 args["id"] = json!(id);
-                ("rename tab", "empty: its number", current)
+                (
+                    strings::text("app.rename-tab"),
+                    strings::text("app.rename-tab-hint"),
+                    current,
+                )
             }
         };
         // Once: a second rename press closes the open prompt instead of stacking another.
@@ -6164,14 +6203,16 @@ impl AppWindow {
                         return self.fail("space.close ends its terminals: pass confirmed: true");
                     }
                     let panes: usize = p.tabs.iter().map(|c| c.root.panes().len()).sum();
-                    let detail = format!(
-                        "{} \u{2014} {} tabs, {} terminals",
-                        self.model.space_name(p, &home()),
-                        p.tabs.len(),
-                        panes
+                    let detail = strings::text_with(
+                        "app.close-space-detail",
+                        &[
+                            ("space", &self.model.space_name(p, &home())),
+                            ("tabs", &p.tabs.len().to_string()),
+                            ("terminals", &panes.to_string()),
+                        ],
                     );
                     self.confirm(
-                        "Close space?",
+                        &strings::text("app.close-space"),
                         &detail,
                         "space.close",
                         json!({ "id": id, "confirmed": true }),
@@ -6379,7 +6420,7 @@ impl AppWindow {
                     }
                 };
                 if Self::owned(a, "pane").or_else(|| self.model.focused_pane()).is_some_and(|p| self.pane_pinned(&p)) {
-                    return self.fail(PINNED);
+                    return self.fail(lead_pinned());
                 }
                 let r = match Self::owned(a, "mod") {
                     Some(name) => self.split_mod(
@@ -6485,7 +6526,7 @@ impl AppWindow {
                 let pane = Self::owned(a, "pane").or_else(|| self.model.focused_pane());
                 let pinned = |p: &str| self.pane_pinned(p);
                 if pane.as_deref().is_some_and(pinned) || matches!(by, SwapBy::Target(target) if pinned(target)) {
-                    return self.fail(PINNED);
+                    return self.fail(lead_pinned());
                 }
                 let r = match (by, pane) {
                     (SwapBy::Direction(dir), Some(pane)) => self.swap_pane(&pane, explicit, dir),
@@ -6710,7 +6751,7 @@ impl AppWindow {
                     let result = rx
                         .recv()
                         .await
-                        .unwrap_or_else(|_| json!({ "error": "lead.setup stopped" }));
+                        .unwrap_or_else(|_| json!({ "error": strings::text("app.lead-setup-stopped") }));
                     let _ = this.update_in(cx, |this, window, cx| {
                         let spec = json!({
                             "kind": "toast",
@@ -6798,7 +6839,7 @@ impl AppWindow {
                     return self.fail(format!("{terminal:?} isn't the lead's terminal"));
                 }
                 if program != "claude" {
-                    return self.fail("This lead takes the change when it restarts.");
+                    return self.fail(strings::text("app.lead-change-on-restart"));
                 }
                 if crate::lead::apply_refusal(self.lead_sessions.get(&terminal)).is_some() {
                     self.lead_sessions.entry(terminal).or_default().apply_held = true;
@@ -6824,7 +6865,7 @@ impl AppWindow {
                     return self.fail(why);
                 }
                 let Some(session) = self.lead_sessions.get_mut(&terminal) else {
-                    return self.fail("the lead hasn't started yet");
+                    return self.fail(strings::text("lead.not-started"));
                 };
                 let old = session.permission_mode.clone();
                 let next = crate::lead::next_mode(old.as_deref(), &session.modes_seen).to_owned();
@@ -6927,7 +6968,7 @@ impl AppWindow {
                     Err(e) => return self.fail(format!("layout: {e}")),
                 };
                 if layout_sync::without_clicks(&self.chrome, &n) != self.chrome {
-                    return self.fail("Only supported click/look fields can change on Kompitum's own layouts: clone one for other changes");
+                    return self.fail(strings::text("app.only-click-fields"));
                 }
                 let mut state = layout_sync::State::between(&self.file_chrome, &n);
                 if n.look.theme == self.chrome.look.theme {
@@ -7116,7 +7157,7 @@ impl AppWindow {
             "app.check_updates" => crate::update::check_now(),
             "app.update_core" => {
                 if crate::update::core().ready.is_none() && crate::update::core().error.is_none() {
-                    return self.fail("kompitum-core is up to date");
+                    return self.fail(strings::text("app.core-up-to-date"));
                 }
                 crate::update::update_core();
             }
@@ -7158,7 +7199,7 @@ impl AppWindow {
             "app.quit" => cx.quit(),
             "app.update" => {
                 if !crate::update::apply() {
-                    return self.fail("no update is ready yet");
+                    return self.fail(strings::text("app.no-update-ready"));
                 }
                 self.drain_documents(window, cx);
                 crate::update::relaunch();
@@ -7383,7 +7424,7 @@ impl AppWindow {
     fn swap_pane(&mut self, from: &str, explicit: bool, dir: &str) -> Result<(), String> {
         let neighbor = self.neighbor(from, dir, false);
         if neighbor.as_deref().is_some_and(|n| self.pane_pinned(n)) {
-            return Err(PINNED.into());
+            return Err(lead_pinned());
         }
         swap_with_neighbor(&mut self.model, from, explicit, neighbor)
     }
@@ -8395,7 +8436,7 @@ impl AppWindow {
             .on_click(cx.listener(|this, _, window, cx| {
                 this.run("lead.open", json!({}), window, cx);
             }))
-            .child("Start the lead");
+            .child(strings::text("app.empty-start-lead"));
         let secondary = div()
             .id("start-terminal")
             .debug_selector(|| "start-terminal".into())
@@ -8412,7 +8453,7 @@ impl AppWindow {
             .on_click(cx.listener(|this, _, window, cx| {
                 this.run("tab.new", json!({}), window, cx);
             }))
-            .child("Open a terminal");
+            .child(strings::text("app.empty-open-terminal"));
         div()
             .id("empty-main")
             .debug_selector(|| "empty-main".into())
@@ -8438,13 +8479,13 @@ impl AppWindow {
                             .text_size(z(15.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(c("foreground"))
-                            .child("Start with the lead"),
+                            .child(strings::text("app.empty-start-with-lead")),
                     )
                     .child(
                         div()
                             .text_size(z(12.5))
                             .text_color(c("muted"))
-                            .child(format!("{lead} · {model}")),
+                            .child(strings::text_with("app.lead-model", &[("lead", &lead), ("model", &model)])),
                     )
                     .child(
                         div()
@@ -8461,7 +8502,7 @@ impl AppWindow {
                                 .pt(z(2.0))
                                 .text_size(z(11.0))
                                 .text_color(c("dim"))
-                                .child(format!("{keys} for every command")),
+                                .child(strings::text_with("app.empty-keys-hint", &[("keys", &keys)])),
                         )
                     }),
             )
@@ -8515,7 +8556,7 @@ impl AppWindow {
                     .items_center()
                     .justify_center()
                     .text_color(c("dim"))
-                    .child("no agents yet. start claude, codex or pi in a terminal")
+                    .child(strings::text("app.empty-agents"))
                     .into_any_element(),
             },
             Content::Context { .. } => match self.model.active_tab() {
@@ -8566,7 +8607,10 @@ impl AppWindow {
                             .bg(c("blocked"))
                             .text_color(c("background"))
                             .text_xs()
-                            .child(format!("{} didn't reload: {first}", copy.inst.name)),
+                            .child(strings::text_with(
+                                "app.didnt-reload",
+                                &[("mod", copy.inst.name.as_str()), ("error", first)],
+                            )),
                     )
                     .child(
                         div()
@@ -8590,9 +8634,9 @@ impl AppWindow {
                 .text_xs()
                 .text_color(c("blocked"))
                 .overflow_y_scroll()
-                .child(format!(
-                    "{} did not load:\n\n{}\n\nFix the files; Kompitum retries on save.",
-                    copy.inst.name, error
+                .child(strings::text_with(
+                    "app.fix-mods",
+                    &[("mod", &copy.inst.name), ("error", error)],
                 ))
                 .into_any_element(),
         }
@@ -9029,7 +9073,7 @@ impl AppWindow {
                     .cursor_pointer()
                     .hover(|s| s.text_color(c("foreground")))
                     .on_click(cx.listener(|this, _, w, cx| this.open_bell(w, cx)))
-                    .child(format!("{more} more in the bell"))
+                    .child(strings::text_with("app.bell-more", &[("more", &more.to_string())]))
                     .into_any_element(),
             );
             below += 28.0 + TOAST_GAP;
@@ -9053,7 +9097,7 @@ impl AppWindow {
                     .on_click(cx.listener(|this, _, w, cx| {
                         this.run("app.settings", json!({ "section": "about" }), w, cx)
                     }))
-                    .child(format!("kompitum-core update failed: {error} · Open About"))
+                    .child(strings::text_with("app.core-update-error", &[("error", &error)]))
                     .into_any_element(),
             );
         }
@@ -9100,7 +9144,7 @@ impl AppWindow {
                         .text_color(c("accent_foreground"))
                         .font_weight(FontWeight::SEMIBOLD)
                         .hover(|s| s.opacity(0.9))
-                        .child("Restart")
+                        .child(strings::text("app.restart"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.drain_documents(window, cx);
                             crate::update::relaunch();
@@ -9121,9 +9165,12 @@ impl AppWindow {
         let core = crate::update::core();
         let core = core.ready.filter(|_| !core.updating);
         match (crate::update::ready(), core) {
-            (Some(a), Some(c)) => Some(format!("Kompitum {a} and kompitum-core {c} are ready")),
-            (Some(a), None) => Some(format!("Kompitum {a} is ready")),
-            (None, Some(c)) => Some(format!("kompitum-core {c} is ready")),
+            (Some(a), Some(c)) => Some(strings::text_with(
+                "app.update-ready-both",
+                &[("app", &a), ("core", &c)],
+            )),
+            (Some(a), None) => Some(strings::text_with("app.update-ready-app", &[("app", &a)])),
+            (None, Some(c)) => Some(strings::text_with("app.update-ready-core", &[("core", &c)])),
             (None, None) => None,
         }
     }
@@ -9132,10 +9179,14 @@ impl AppWindow {
         let app_version = crate::update::ready();
         let app_ready = app_version.is_some();
         let success = self.update_ready.is_none() && self.update_success;
-        let label = self
-            .update_ready
-            .clone()
-            .or_else(|| success.then(|| format!("Updated to {}", env!("CARGO_PKG_VERSION"))))?;
+        let label = self.update_ready.clone().or_else(|| {
+            success.then(|| {
+                strings::text_with(
+                    "app.updated-to",
+                    &[("version", env!("CARGO_PKG_VERSION"))],
+                )
+            })
+        })?;
         let dismissal = app_version
             .map(|v| format!("app:{v}"))
             .unwrap_or_else(|| label.clone());
@@ -9174,7 +9225,7 @@ impl AppWindow {
                         .text_color(c("accent_foreground"))
                         .font_weight(FontWeight::SEMIBOLD)
                         .hover(|s| s.opacity(0.9))
-                        .child("Restart")
+                        .child(strings::text("app.restart"))
                         .on_click(
                             cx.listener(|this, _, w, cx| this.run("app.update", json!({}), w, cx)),
                         ),
@@ -9187,9 +9238,9 @@ impl AppWindow {
                     .cursor_pointer()
                     .text_color(c("accent"))
                     .child(if app_ready || success {
-                        "What changed"
+                        strings::text("app.what-changed")
                     } else {
-                        "Open About"
+                        strings::text("app.open-about")
                     })
                     .on_click(cx.listener(move |this, _, w, cx| {
                         if success {
@@ -9555,8 +9606,9 @@ fn lead_setup_check(person: Result<settings::Person, String>) -> Result<(), Stri
         Err(error) => return Err(format!("settings.json: {error}")),
     };
     if program != "claude" {
-        return Err(format!(
-            "lead.setup is for Claude Code; the lead is {program:?}"
+        return Err(strings::text_with(
+            "app.lead-setup-wrong-program",
+            &[("program", &format!("{program:?}"))],
         ));
     }
     Ok(())
@@ -9579,13 +9631,13 @@ fn start_lead_setup(done: impl FnOnce(Value) + Send + 'static) {
 fn lead_setup_toast(reply: &Value) -> Value {
     match reply.get("error").and_then(Value::as_str) {
         Some(error) => json!({
-            "title": "Kompitum's tools are not ready",
+            "title": strings::text("app.lead-setup-failed"),
             "body": error,
             "level": "error"
         }),
         None => json!({
-            "title": "Kompitum's tools are ready",
-            "body": "Kompitum's tools are ready in Claude Code.",
+            "title": strings::text("app.lead-setup-ready"),
+            "body": strings::text("app.lead-setup-ready-body"),
             "level": "info"
         }),
     }
@@ -9891,25 +9943,29 @@ const CORE_RESTART_GRACE: Duration = Duration::from_secs(30);
 fn layout_conflict_notice(
     since_core_back: Option<Duration>,
     lead_running: bool,
-) -> (&'static str, String, Option<Value>) {
+) -> (String, String, Option<Value>) {
     if since_core_back.is_some_and(|elapsed| elapsed < CORE_RESTART_GRACE) {
         if lead_running {
             (
-                "Kompitum's core restarted",
-                "Your terminals were restarted as plain shells.".into(),
+                strings::text("app.core-restart-title"),
+                strings::text("app.core-restart-body"),
                 None,
             )
         } else {
             (
-                "Kompitum's core restarted",
-                "Your terminals were restarted as plain shells. The lead needs starting again.".into(),
-                Some(json!({ "name": "lead.open", "label": "Start the lead", "args": {} })),
+                strings::text("app.core-restart-title"),
+                strings::text("app.core-restart-body-lead"),
+                Some(json!({
+                    "name": "lead.open",
+                    "label": strings::text("app.start-lead"),
+                    "args": {},
+                })),
             )
         }
     } else {
         (
-            "Layout changed elsewhere",
-            "The other screen's layout is shown.".into(),
+            strings::text("app.layout-changed"),
+            strings::text("app.layout-changed-body"),
             None,
         )
     }
@@ -9936,7 +9992,9 @@ fn local_core(argv: Option<Vec<String>>, machine: Option<&str>, core: &std::path
 }
 
 /// Why a split or swap that would move the lead's terminal or its composer is refused.
-const PINNED: &str = "The lead's terminal and its composer stay in place.";
+fn lead_pinned() -> String {
+    strings::text("app.lead-pinned")
+}
 
 /// The composer's box with one line of text: its margin, padding, the line and the row of buttons under it.
 const COMPOSER_LINE: f32 = 96.0;
@@ -10136,7 +10194,7 @@ impl Render for AppWindow {
                         }
                         this.run_key(&name, args, w, cx);
                     }
-                    Err(error) => this.command_error("Key binding", &error, w, cx),
+                    Err(error) => this.command_error(&strings::text("app.key-binding"), &error, w, cx),
                 },
             ))
             // Ctrl (Cmd) alone shows links in the pane under the pointer, focused or not.

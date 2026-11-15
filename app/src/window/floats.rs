@@ -184,7 +184,10 @@ impl AppWindow {
                             .bg(c("blocked"))
                             .text_color(c("background"))
                             .text_xs()
-                            .child(format!("{} didn't reload: {first}", inst.name)),
+                            .child(crate::strings::text_with(
+                                "app.didnt-reload",
+                                &[("mod", inst.name.as_str()), ("error", first)],
+                            )),
                     )
                     .child(root.clone())
                     .into_any_element()
@@ -204,7 +207,10 @@ impl AppWindow {
                 .bg(c("popover"))
                 .text_xs()
                 .text_color(c("blocked"))
-                .child(format!("{} did not load: {e}", inst.name))
+                .child(crate::strings::text_with(
+                    "app.did-not-load",
+                    &[("mod", inst.name.as_str()), ("error", e.as_str())],
+                ))
                 .into_any_element(),
             _ => div().into_any_element(),
         };

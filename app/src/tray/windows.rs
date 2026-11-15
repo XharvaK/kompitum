@@ -294,8 +294,8 @@ fn menu(hwnd: HWND) {
         if items.is_null() {
             return;
         }
-        let open = wide("Open Kompitum");
-        let exit = wide("Exit");
+        let open = wide(&crate::strings::text("tray.open"));
+        let exit = wide(&crate::strings::text("tray.exit"));
         AppendMenuW(items, MF_STRING, OPEN, open.as_ptr());
         AppendMenuW(items, MF_SEPARATOR, 0, std::ptr::null());
         AppendMenuW(items, MF_STRING, EXIT, exit.as_ptr());
