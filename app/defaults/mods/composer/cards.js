@@ -4,6 +4,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
 import { run, settings, text } from "kompitum";
 import { CARD_WAIT_MS } from "./util.js";
+import { shortPath } from "./paths.js";
 
 function planText(ask) {
   const plan = ask?.input?.tool_input?.plan;
@@ -28,14 +29,23 @@ function cut(text, limit = 300) {
   return value.length > limit ? `${value.slice(0, limit)}…` : value;
 }
 
+// The folder a card's paths read from: the ask's own cwd, else the lead's folder.
+function askFolder(ask) {
+  const cwd = ask?.input?.cwd;
+  if (typeof cwd === "string" && cwd) return cwd;
+  const folder = settings()?.lead?.folder;
+  return typeof folder === "string" && folder ? folder : null;
+}
+
 // What Claude wants, from the tool and its input. `mono` marks the detail that
 // reads best as the command itself.
-function permissionSummary(toolName, toolInput) {
-  const name = String(toolName ?? "");
-  const input = toolInput && typeof toolInput === "object" ? toolInput : {};
+function permissionSummary(ask) {
+  const name = String(ask?.input?.tool_name ?? "");
+  const input = ask?.input?.tool_input && typeof ask.input.tool_input === "object" ? ask.input.tool_input : {};
+  const folder = askFolder(ask);
   if (name === "Bash") return { title: text("composer.run-command"), detail: String(input.command ?? ""), mono: true };
-  if (name === "Edit" || name === "Write") return { title: text("composer.edit-path", { path: String(input.file_path ?? "") }) };
-  if (name === "Read") return { title: text("composer.read-path", { path: String(input.file_path ?? "") }) };
+  if (name === "Edit" || name === "Write") return { title: text("composer.edit-path", { path: shortPath(String(input.file_path ?? ""), folder) }) };
+  if (name === "Read") return { title: text("composer.read-path", { path: shortPath(String(input.file_path ?? ""), folder) }) };
   if (name === "WebFetch") return { title: text("composer.fetch-url", { url: String(input.url ?? "") }) };
   if (name === "WebSearch") return { title: text("composer.search-web", { query: String(input.query ?? "") }) };
   if (name.startsWith("mcp__")) {
@@ -365,7 +375,7 @@ export default {
   },
 
   permissionCard(t, cx, ask) {
-    const summary = permissionSummary(ask.input?.tool_name, ask.input?.tool_input);
+    const summary = permissionSummary(ask);
     const suggestions = Array.isArray(ask.input?.permission_suggestions) ? ask.input.permission_suggestions : [];
     const head = v_flex()
       .w_full()

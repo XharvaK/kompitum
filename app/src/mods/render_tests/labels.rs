@@ -53,6 +53,16 @@ fn a_pane_headers_four_buttons_carry_their_labels(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_tab_bars_close_and_new_buttons_carry_their_labels(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let values = fixture(true, props(), updates("current", "current"));
+    let tree = describe_settled(cx, &staged, "mods/tabs", values, None).unwrap();
+    assert_label(&tree, "close-tab1", "Close tab");
+    assert_label(&tree, "tab-new", "New");
+}
+
+#[gpui::test]
 fn the_spaces_list_new_button_carries_its_label(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();

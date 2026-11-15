@@ -140,7 +140,7 @@ export default class MachineAdd extends View {
       try {
         why = r.code === 0 ? null : (JSON.parse(r.stdout || r.stderr).error ?? { message: (r.stderr || r.stdout).trim() });
       } catch {
-        why = { message: (r.stderr || r.stdout || "it didn't answer").trim() };
+        why = { message: (r.stderr || r.stdout || text("machine-add.no-answer")).trim() };
       }
       if (!why) {
         delete this.state[target];

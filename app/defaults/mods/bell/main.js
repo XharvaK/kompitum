@@ -79,7 +79,7 @@ function leadName(catalog, key) {
 }
 
 // A blocked agent's name: its own title, else its tab's, else its program's.
-const agentName = (a) => a.title || a.tab_name || a.program?.name || "An agent";
+const agentName = (a) => a.title || a.tab_name || a.program?.name || text("bell.any-agent");
 
 // The first system that joined through Connect, or null: who the notes are with, and its app's link.
 function joined() {

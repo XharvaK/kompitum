@@ -85,6 +85,8 @@ struct Calls {
     unexpected: Vec<String>,
     effects: Vec<(String, Vec<Value>)>,
     shared: BTreeMap<String, Value>,
+    /// When set, `kom workers --json` waits for a message: a page drawn before it answers.
+    workers_gate: Option<async_channel::Receiver<()>>,
 }
 
 fn updates(app: &str, core: &str) -> Value {
@@ -410,6 +412,14 @@ fn module_with_lead(
         let import_file = import_file.clone();
         module = module.async_function(name, move |a| {
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
+            let workers_gate = if first.as_array().is_some_and(|a| {
+                a.first().and_then(Value::as_str) == Some("workers")
+                    && a.get(1).and_then(Value::as_str) == Some("--json")
+            }) {
+                calls.borrow_mut().workers_gate.take()
+            } else {
+                None
+            };
             let reply = match name {
                 "readTextFile" if first == "/fixture/app/settings.json" => {
                     calls
@@ -675,7 +685,12 @@ fn module_with_lead(
                 calls.borrow_mut().unexpected.push(message.clone());
                 Err(HostError::new(message))
             };
-            Ok(std::future::ready(result))
+            Ok(async move {
+                if let Some(gate) = workers_gate {
+                    let _ = gate.recv().await;
+                }
+                result
+            })
         });
     }
     module.declarations(DECLARATIONS)
@@ -1229,6 +1244,50 @@ fn the_permission_card_says_what_claude_wants(cx: &mut TestAppContext) {
         assert!(tree.contains("composer-terminal-answer"), "{tool}: {tree}");
         assert!(!tree.contains("composer-allow-always"), "{tool}: allow always without suggestions: {tree}");
     }
+}
+
+/// A permission card names a path inside the ask's folder relative to it, so the card
+/// says what changed rather than repeating where the lead works.
+#[gpui::test]
+fn a_permission_card_shows_a_path_inside_the_folder_relative_to_it(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        composer_with_ask(
+            "permission",
+            json!({
+                "tool_name": "Write",
+                "tool_input": {"file_path": "/fixture/project/src/app.js"},
+                "cwd": "/fixture/project"
+            }),
+        ),
+        None,
+    )
+    .unwrap();
+    assert!(tree.contains("Edit src/app.js"), "{tree}");
+    assert!(!tree.contains("/fixture/project/src/app.js"), "{tree}");
+}
+
+/// With no cwd on the ask, the lead's own folder is the one paths read from.
+#[gpui::test]
+fn a_permission_card_uses_the_leads_folder_when_the_ask_has_no_cwd(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = composer_with_ask(
+        "permission",
+        json!({"tool_name": "Read", "tool_input": {"file_path": "C:\\work\\proj\\notes.txt"}}),
+    );
+    values.get_mut("lead").unwrap()["folder"] = json!("c:\\work\\proj");
+    values.insert(
+        "window".into(),
+        json!({"platform":"windows","dictation":true,"titlebar":"none","buttons":true,"maximized":false,"fullscreen":false,"active":true}),
+    );
+    let tree = describe_settled(cx, &staged, "mods/composer", values, None).unwrap();
+    assert!(tree.contains("Read notes.txt"), "{tree}");
+    assert!(!tree.contains("C:\\work\\proj\\notes.txt"), "{tree}");
 }
 
 /// Allow always appears only with a suggestion, and says where the rule lives.

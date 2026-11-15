@@ -3,6 +3,27 @@
 
 use super::*;
 
+/// The turn summary and the mods' fallbacks are words from the table, not English in code.
+#[test]
+fn the_new_words_are_in_the_shipped_table() {
+    let table: BTreeMap<String, String> =
+        serde_json::from_str(include_str!("../../../defaults/strings/en.json")).unwrap();
+    for (key, value) in [
+        ("composer.files-changed-one", "{count} file changed"),
+        ("composer.files-changed", "{count} files changed"),
+        ("bell.any-agent", "An agent"),
+        ("board.kom-exited", "kom exited {code}"),
+        ("limits.kom-exited", "kom exited {code}"),
+        ("line.kom-exited", "kom exited {code}"),
+        ("machine-add.no-answer", "it didn't answer"),
+        ("workspace-chrome.exit-code", "exit {code}"),
+        ("tabs.close-tab", "Close tab"),
+        ("tabs.new", "New"),
+    ] {
+        assert_eq!(table.get(key).map(String::as_str), Some(value), "{key}");
+    }
+}
+
 /// The shipped table is empty, so a key it doesn't have comes back as written:
 /// the same value the real function returns, through the module a mod imports.
 #[gpui::test]

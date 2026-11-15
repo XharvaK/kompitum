@@ -6,6 +6,7 @@ import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { kom, exec, knownAgents, pickFolder, window, text, lead as leadOf } from "kompitum";
 import { dropdown } from "./ui.js";
+import { shortPath } from "./paths.js";
 
 // The core's built-in workers (`builtin()` in crates/kompitum-core/src/task/worker.rs): none of them can be removed.
 export const BUILTIN = new Set(["cc", "go", "free", "codex", "haiku"]);
@@ -69,10 +70,9 @@ export function loadAgents(view, cx, forceUsage = false) {
       s.known = null;
       s.errors.push(errorText(error));
     }
-    for (const [name, args, label] of [
-      ["workers", ["workers", "--json"], "kom workers"],
-      ["status", ["status", "--json"], "kom status"],
-    ]) {
+    cx.notify();
+    // The core's two answers don't wait for each other, and the page never waits for both to draw the lead.
+    const read = async (name, args, label) => {
       try {
         const r = await kom(args);
         if (r.code !== 0) throw new Error(firstLine(r.stderr || r.stdout) || text("settings.command-failed", { command: label }));
@@ -81,7 +81,12 @@ export function loadAgents(view, cx, forceUsage = false) {
         s[name] = null;
         s.errors.push(text("settings.command-error", { command: label, error: errorText(error) }));
       }
-    }
+    };
+    await Promise.all([
+      read("workers", ["workers", "--json"], "kom workers"),
+      read("status", ["status", "--json"], "kom status"),
+    ]);
+    cx.notify();
     await loadUsage(view, cx, s, forceUsage);
     s.busy = false;
     cx.notify();
@@ -109,6 +114,7 @@ async function loadUsage(view, cx, s, force) {
       // Only that it failed is kept: a CLI's raw report never reaches the screen.
       s.usageError[entry.key] = true;
     }
+    cx.notify();
   }
 }
 
@@ -448,7 +454,7 @@ function leadSection(view, t, cx, s) {
         .flex_none()
         .gap(8)
         .items_center()
-        .child(div().max_w(340).truncate().text_size(13).text_color(t.muted).child(lead.folder || text("settings.not-set")))
+        .child(div().min_w(0).truncate().text_size(13).text_color(t.muted).child(lead.folder ? shortPath(lead.folder) : text("settings.not-set")))
         .child(view.button(t, "st-lead-folder", text("settings.choose"), (_e, cx) => chooseFolder(view, cx))),
       "folder",
     ))

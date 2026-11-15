@@ -42,7 +42,7 @@ function errorText(result) {
       if (message) return String(message);
     } catch {}
   }
-  return String(result?.stderr || result?.stdout || "").trim() || `kom exited ${result?.code ?? "?"}`;
+  return String(result?.stderr || result?.stdout || "").trim() || text("line.kom-exited", { code: result?.code ?? "?" });
 }
 
 function problemText(problem) {

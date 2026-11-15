@@ -63,7 +63,7 @@ function errorText(result) {
       if (message) return firstLine(message);
     } catch {}
   }
-  return firstLine(result?.stderr) || firstLine(result?.stdout) || `kom exited ${result?.code ?? "?"}`;
+  return firstLine(result?.stderr) || firstLine(result?.stdout) || text("board.kom-exited", { code: result?.code ?? "?" });
 }
 
 function tasksOf(tasks, key) {
