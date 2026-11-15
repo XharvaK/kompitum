@@ -211,8 +211,21 @@ fn draw(visual: &mut VisualTestContext) {
 /// with a down arrow before its words.
 #[gpui::test]
 fn the_jump_latest_pill_is_centred_above_the_composer(cx: &mut TestAppContext) {
-    let values = composer_values(composer_conversation(3));
-    let (mut visual, window, calls) = mount_composer(cx, values, "this.stickToBottom = false;", None);
+    use gpui::{point, px, Modifiers, ScrollDelta, ScrollWheelEvent, TouchPhase};
+    // A conversation that fits is at its end, so the pill needs a long one scrolled up.
+    let values = composer_values(composer_conversation(80));
+    let (mut visual, window, calls) = mount_composer(cx, values, "", None);
+    let at = visual
+        .debug_bounds("composer-conversation")
+        .expect("the conversation is laid out")
+        .center();
+    visual.simulate_event(ScrollWheelEvent {
+        position: at,
+        delta: ScrollDelta::Pixels(point(px(0.0), px(400.0))),
+        modifiers: Modifiers::default(),
+        touch_phase: TouchPhase::Moved,
+    });
+    draw(&mut visual);
     let pill = visual
         .debug_bounds("composer-jump-latest")
         .expect("the pill is laid out");
