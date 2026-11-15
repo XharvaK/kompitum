@@ -128,9 +128,9 @@ export function memoryPage(view, t, cx) {
   const groups = memoryGroups(memories);
   const forgotten = memories.filter((memory) => memory.status !== "open");
 
-  const heading = (text) => div().pt(10).pb(6).text_size(12).font_semibold().text_color(t.dim).child(text);
+  const heading = (text) => div().pt(10).pb(6).text_size(13).font_semibold().text_color(t.dim).child(text);
   const disabled = (id, label) =>
-    div().id(id).px(12).py(5).rounded(7).text_size(13).text_color(t.dim).child(label);
+    div().id(id).px(12).py(5).rounded(7).text_size(14).text_color(t.dim).child(label);
 
   const openEdit = (memory, cx) => {
     view.memoryOpenPath = memory.path;
@@ -182,8 +182,8 @@ export function memoryPage(view, t, cx) {
         }
         cx.notify();
       })
-      .child(div().text_size(13).text_color(t.foreground).child(memory.title))
-      .when(Boolean(meta), (el) => el.child(div().text_size(12).text_color(t.muted).child(meta)));
+      .child(div().text_size(14).text_color(t.foreground).child(memory.title))
+      .when(Boolean(meta), (el) => el.child(div().text_size(13).text_color(t.muted).child(meta)));
     if (!open) return v_flex().w_full().border_b(1).border_color(t.border).child(line);
 
     const edit = view.memoryEdit?.path === memory.path ? view.memoryEdit : null;
@@ -193,7 +193,7 @@ export function memoryPage(view, t, cx) {
       .w_full()
       .pb(10)
       .gap(9)
-      .child(TextView.markdown(`memory-body-${index}`, String(memory.body ?? "")).text_size(13).text_color(t.foreground).selectable(true));
+      .child(TextView.markdown(`memory-body-${index}`, String(memory.body ?? "")).text_size(14).text_color(t.foreground).selectable(true));
     if (!edit && !forgetHere) {
       body.child(
         h_flex()
@@ -216,7 +216,7 @@ export function memoryPage(view, t, cx) {
             .border_1()
             .border_color(t.input)
             .bg(t.background)
-            .text_size(13)
+            .text_size(14)
             .text_color(t.foreground),
         )
         .child(
@@ -228,7 +228,7 @@ export function memoryPage(view, t, cx) {
             .border_1()
             .border_color(t.input)
             .bg(t.background)
-            .text_size(13)
+            .text_size(14)
             .text_color(t.foreground),
         )
         .child(
@@ -256,7 +256,7 @@ export function memoryPage(view, t, cx) {
             .border_1()
             .border_color(t.input)
             .bg(t.background)
-            .text_size(13)
+            .text_size(14)
             .text_color(t.foreground),
         )
         .child(
@@ -275,7 +275,7 @@ export function memoryPage(view, t, cx) {
             })),
         );
     }
-    if (error) body.child(div().text_size(12).text_color(t.blocked).child(error));
+    if (error) body.child(div().text_size(13).text_color(t.blocked).child(error));
     return v_flex().w_full().border_b(1).border_color(t.border).child(line).child(body);
   };
 
@@ -301,17 +301,17 @@ export function memoryPage(view, t, cx) {
           view.memoryForgottenOpen = !open;
           cx.notify();
         })
-        .child(div().text_size(12).font_semibold().text_color(t.dim).child(text("settings.forgotten", { count: forgotten.length })))
-        .child(div().text_size(12).text_color(t.dim).child(open ? "\u2304" : "\u203a")),
+        .child(div().text_size(13).font_semibold().text_color(t.dim).child(text("settings.forgotten", { count: forgotten.length })))
+        .child(div().text_size(13).text_color(t.dim).child(open ? "\u2304" : "\u203a")),
     );
     if (open) forgotten.forEach((memory) => shown.push(row(memory, memories.indexOf(memory))));
   }
 
   let state = null;
   if (!data && !view.memoryError) {
-    state = div().py(12).text_size(12).text_color(t.muted).child(text("settings.loading"));
+    state = div().py(12).text_size(13).text_color(t.muted).child(text("settings.loading"));
   } else if (view.memoryLoading) {
-    state = div().py(12).text_size(12).text_color(t.muted).child(text("settings.checking"));
+    state = div().py(12).text_size(13).text_color(t.muted).child(text("settings.checking"));
   } else if (view.memoryError) {
     state = v_flex()
       .py(12)
@@ -320,31 +320,31 @@ export function memoryPage(view, t, cx) {
         h_flex()
           .gap(4)
           .items_center()
-          .child(div().text_size(12).text_color(t.muted).child(text("settings.couldnt-read-memory")))
+          .child(div().text_size(13).text_color(t.muted).child(text("settings.couldnt-read-memory")))
           .child(view.textButton(t, "st-memory-retry", text("settings.retry"), (_e, cx) => loadMemory(view, cx))),
       )
-      .child(div().max_w(420).text_size(12).line_height("16px").text_color(t.blocked).child(view.memoryError));
+      .child(div().max_w(420).text_size(13).line_height("16px").text_color(t.blocked).child(view.memoryError));
   }
 
   return v_flex()
     .w_full()
-    .child(div().text_size(15).font_semibold().text_color(t.foreground).child(text("settings.memory")))
+    .child(div().text_size(16).font_semibold().text_color(t.foreground).child(text("settings.memory")))
     .child(
       div()
         .pt(4)
         .pb(8)
-        .text_size(12)
+        .text_size(13)
         .line_height("18px")
         .text_color(t.muted)
         .child(text("settings.memory-about")),
     )
     .when(Boolean(state), (el) => el.child(state))
-    .when(!state && memories.length === 0, (el) => el.child(div().py(12).text_size(12).text_color(t.muted).child(text("settings.memory-empty"))))
+    .when(!state && memories.length === 0, (el) => el.child(div().py(12).text_size(13).text_color(t.muted).child(text("settings.memory-empty"))))
     .when(Boolean(problems.length), (el) =>
       el.child(
         div()
           .py(8)
-          .text_size(12)
+          .text_size(13)
           .text_color(t.blocked)
           .tooltip(problems.join("\n"))
           .child(problems.length === 1 ? problems[0] : text("settings.memory-notes-failed", { count: problems.length })),

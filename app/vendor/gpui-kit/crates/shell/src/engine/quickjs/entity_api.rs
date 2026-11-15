@@ -1277,6 +1277,20 @@ pub fn install(ctx: &Ctx<'_>, module: &Object<'_>, runtime: Weak<ShellRuntime>) 
         }),
     )?;
 
+    // Where that plain area is: px scrolled from the top, and the most it can scroll. Both
+    // are 0 before its first layout.
+    let scroll_position = runtime.clone();
+    globals.set(
+        "__virtual_scroll_position",
+        Func::from(move |ctx: Ctx<'_>, handle: EntityHandle| -> JsResult<Vec<f64>> {
+            let scroll = live_virtual_scroll(&ctx, &scroll_position, handle)?;
+            let base = scroll.base_handle();
+            let y = (-f64::from(base.offset().y)).max(0.0);
+            let max = f64::from(base.max_offset().y).max(0.0);
+            Ok(vec![y, max])
+        }),
+    )?;
+
     let discard_virtual_scroll = runtime.clone();
     globals.set(
         "__virtual_scroll_release",

@@ -359,7 +359,7 @@ fn button(id: &'static str, label: String, primary: bool) -> Stateful<Div> {
         .items_center()
         .rounded(px(9.0))
         .cursor_pointer()
-        .text_size(px(14.0))
+        .text_size(px(15.0))
         .font_weight(FontWeight::SEMIBOLD)
         .when(primary, |d| {
             d.bg(c("accent_fill"))
@@ -492,7 +492,7 @@ impl Render for Setup {
                     )
                     .child(
                         div()
-                            .text_size(px(14.0))
+                            .text_size(px(15.0))
                             .line_height(px(21.0))
                             .text_color(c("muted"))
                             .child(body),
@@ -500,7 +500,7 @@ impl Render for Setup {
                     .child(actions)
                     .child(
                         div()
-                            .text_size(px(12.5))
+                            .text_size(px(13.5))
                             .line_height(px(19.0))
                             .text_color(c("dim"))
                             .child(foot),
@@ -508,11 +508,11 @@ impl Render for Setup {
                     .child(match &self.state {
                         State::Ready => div(),
                         State::Busy(what) => div()
-                            .text_size(px(13.0))
+                            .text_size(px(14.0))
                             .text_color(c("accent"))
                             .child(what.clone()),
                         State::Failed(e) => div()
-                            .text_size(px(13.0))
+                            .text_size(px(14.0))
                             .text_color(c("blocked"))
                             .child(e.clone()),
                     }),

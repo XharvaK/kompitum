@@ -100,8 +100,8 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
         v_flex()
           .flex_1()
           .min_w(0)
-          .child(div().truncate().text_size(13).text_color(t.foreground).when(Boolean(item.font), (el) => el.font_family(item.font)).child(item.label))
-          .when(Boolean(item.detail), (el) => el.child(div().truncate().text_size(12).text_color(t.dim).child(item.detail))),
+          .child(div().truncate().text_size(14).text_color(t.foreground).when(Boolean(item.font), (el) => el.font_family(item.font)).child(item.label))
+          .when(Boolean(item.detail), (el) => el.child(div().truncate().text_size(13).text_color(t.dim).child(item.detail))),
       )
       .child(div().w(14).flex_none().when(on, (el) => el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent))));
   };
@@ -113,9 +113,9 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .gap(1)
     .overflow_y_scrollbar()
     .children(shown.map(row))
-    .when(matching.length === 0, (el) => el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child(text("settings.nothing-matches"))))
+    .when(matching.length === 0, (el) => el.child(div().px(8).py(6).text_size(13).text_color(t.dim).child(text("settings.nothing-matches"))))
     .when(limit > 0 && matching.length > limit, (el) =>
-      el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child(text("settings.type-to-narrow"))));
+      el.child(div().px(8).py(6).text_size(13).text_color(t.dim).child(text("settings.type-to-narrow"))));
   // The list sits 4 px under the trigger: the Popover binding has no offset, so the gap is the list's own top margin.
   // Its right edge is the trigger's (`anchor`, top_right), and the trigger is never wider than `width`, so the list is at least as wide.
   const content = v_flex()
@@ -135,7 +135,7 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .on_action("settings-dropdown-enter", (_e, cx) => key("enter", cx))
     .on_action("settings-dropdown-escape", (_e, cx) => key("escape", cx))
     .when(search && Boolean(state.input), (el) =>
-      el.child(div().px(10).py(6).border_b(1).border_color(t.border).child(Input.new(state.input).h(26).text_size(13).text_color(t.foreground))))
+      el.child(div().px(10).py(6).border_b(1).border_color(t.border).child(Input.new(state.input).h(26).text_size(14).text_color(t.foreground))))
     .child(list);
   const trigger = h_flex()
     .id(id)
@@ -154,7 +154,7 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .tab_stop(true)
     .focus_ring(t.focus, 8)
     .when(Boolean(picked?.icon), (el) => el.child(itemIcon(picked, 15, t)))
-    .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(picked ? t.foreground : t.muted)
+    .child(div().flex_1().min_w(0).truncate().text_size(14).text_color(picked ? t.foreground : t.muted)
       .when(Boolean(picked?.font), (el) => el.font_family(picked.font))
       .child(picked?.label ?? empty))
     .child(svg(CHEVRON).size(12).flex_none().text_color(t.dim));

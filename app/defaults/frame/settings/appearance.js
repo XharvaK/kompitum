@@ -86,7 +86,7 @@ function appearanceTiles(view, t) {
               .when(!chosen, (el) => el.hover((s) => s.border_color(t.input)))
               .child(tileArt(which)),
           )
-          .child(div().text_size(12).text_color(chosen ? t.foreground : t.muted).child(appearanceWord(which)));
+          .child(div().text_size(13).text_color(chosen ? t.foreground : t.muted).child(appearanceWord(which)));
       }),
     );
 }
@@ -123,13 +123,13 @@ function sample(t, s) {
             .py(7)
             .rounded(12)
             .bg(t.raised)
-            .text_size(13)
+            .text_size(14)
             .text_color(t.foreground)
             .font_family(ui)
             .child("Fix the login bug, please"),
         ),
     )
-    .child(div().text_size(13).text_color(t.foreground).font_family(ui).child("Found it: the token check ran before the session loaded."))
+    .child(div().text_size(14).text_color(t.foreground).font_family(ui).child("Found it: the token check ran before the session loaded."))
     .child(
       v_flex()
         .rounded(6)
@@ -162,7 +162,7 @@ function stepper(t, id, value, onMinus, onPlus) {
       .items_center()
       .justify_center()
       .cursor_pointer()
-      .text_size(15)
+      .text_size(16)
       .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .tab_stop(true)
@@ -177,7 +177,7 @@ function stepper(t, id, value, onMinus, onPlus) {
     .bg(t.raised)
     .overflow_hidden()
     .child(b("minus", "\u2212", onMinus))
-    .child(div().w(54).text_size(13).text_color(t.foreground).flex().justify_center().child(value))
+    .child(div().w(54).text_size(14).text_color(t.foreground).flex().justify_center().child(value))
     .child(b("plus", "+", onPlus));
 }
 
@@ -325,7 +325,7 @@ export function appearancePage(view, t, cx) {
         .border_b(1)
         .border_color(t.border)
         .when(view.lit("light-dark"), (el) => el.bg(t.selected).rounded(7))
-        .child(div().text_size(13).text_color(t.foreground).child(text("settings.light-dark")))
+        .child(div().text_size(14).text_color(t.foreground).child(text("settings.light-dark")))
         .child(appearanceTiles(view, t)),
     )
     .child(view.row(t, text("settings.theme"), null, themeDropdown(view, t), "theme"))

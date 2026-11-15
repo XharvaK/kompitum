@@ -314,7 +314,7 @@ export default class Settings extends View {
   // Pieces ---------------------------------------------------------------
 
   heading(t, text) {
-    return div().pt(6).pb(8).text_size(12).font_semibold().text_color(t.dim).child(text);
+    return div().pt(6).pb(8).text_size(13).font_semibold().text_color(t.dim).child(text);
   }
 
   // One setting: what it is on the left, the control on the right. `key` names
@@ -334,8 +334,8 @@ export default class Settings extends View {
           .flex_1()
           .min_w(0)
           .gap(3)
-          .when(Boolean(title), (el) => el.child(div().text_size(13).text_color(t.foreground).child(title)))
-          .when(Boolean(about), (el) => el.child(div().text_size(12).line_height("18px").text_color(t.dim).child(about))),
+          .when(Boolean(title), (el) => el.child(div().text_size(14).text_color(t.foreground).child(title)))
+          .when(Boolean(about), (el) => el.child(div().text_size(13).line_height("18px").text_color(t.dim).child(about))),
       )
       .child(div().flex_none().child(control));
   }
@@ -362,8 +362,8 @@ export default class Settings extends View {
             this.advancedOpen[key] = !this.advancedOpen[key];
             cx.notify();
           })
-          .child(div().text_size(13).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child(text("settings.advanced")))
-          .child(div().text_size(13).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child(open ? "⌄" : "›")),
+          .child(div().text_size(14).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child(text("settings.advanced")))
+          .child(div().text_size(14).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child(open ? "⌄" : "›")),
       )
       .when(open, (el) => el.child(v_flex().w_full().children(rows)));
   }
@@ -378,7 +378,7 @@ export default class Settings extends View {
       .border_color(t.border)
       .bg(t.raised)
       .cursor_pointer()
-      .text_size(13)
+      .text_size(14)
       .text_color(t.foreground)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .tab_stop(true)
@@ -395,7 +395,7 @@ export default class Settings extends View {
       .py(4)
       .rounded(6)
       .cursor_pointer()
-      .text_size(13)
+      .text_size(14)
       .text_color(t.muted)
       .hover((s) => s.text_color(t.foreground))
       .tab_stop(true)
@@ -414,7 +414,7 @@ export default class Settings extends View {
       .cursor_pointer()
       .bg(t.accent_fill)
       .text_color(t.accent_foreground)
-      .text_size(13)
+      .text_size(14)
       .font_semibold()
       .relative()
       .tab_stop(true)
@@ -455,10 +455,10 @@ export default class Settings extends View {
       .w_full()
       .child(this.heading(t, text("settings.option-key")))
       .when(window()?.platform === "macos", (el) =>
-        el.child(div().pb(12).text_size(13).text_color(t.dim).child(text("settings.option-about"))),
+        el.child(div().pb(12).text_size(14).text_color(t.dim).child(text("settings.option-about"))),
       )
       .when(window()?.platform !== "macos", (el) =>
-        el.child(div().pb(12).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.option-mac-only"))),
+        el.child(div().pb(12).text_size(13).line_height("18px").text_color(t.dim).child(text("settings.option-mac-only"))),
       )
       .when(window()?.platform === "macos", (el) =>
         el.children(choices.map(([value, label]) => {
@@ -477,7 +477,7 @@ export default class Settings extends View {
           .focus_ring(t.focus, 7)
           .on_click((_e, cx) => this.change((p) => { p.option_as_alt = value; }, cx))
           .child(div().text_color(on ? t.accent : t.muted).child(on ? "◉" : "○"))
-          .child(div().text_size(13).text_color(t.foreground).child(label));
+          .child(div().text_size(14).text_color(t.foreground).child(label));
         })));
   }
 
@@ -560,7 +560,7 @@ export default class Settings extends View {
     const color = ["connected", "online"].includes(m.state) ? t.ansi2 : ["connecting", "reconnecting"].includes(m.state) ? t.working : t.blocked;
     const result = this.machineResults[m.name];
     const controls = h_flex().gap(6).items_center();
-    if (busy) controls.child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12).text_color(t.muted).child(busy === "update" ? text("settings.updating") : busy === "rename" ? text("settings.renaming") : text("settings.removing")));
+    if (busy) controls.child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(13).text_color(t.muted).child(busy === "update" ? text("settings.updating") : busy === "rename" ? text("settings.renaming") : text("settings.removing")));
     else {
       if (this.olderCore(m.version, localVersion)) controls.child(this.button(t, `st-m-update-${m.name}`, text("settings.update"), (_e, cx) => this.machineAction(m.name, "update", cx)));
       for (const [action, label] of [["rename", text("settings.rename")], ["rm", text("settings.remove")]]) {
@@ -580,24 +580,24 @@ export default class Settings extends View {
       .child(h_flex().gap(10).items_center()
         .child(div().w(7).h(7).flex_none().rounded(4).bg(color))
         .child(v_flex().flex_1().min_w(0).gap(3)
-          .child(div().text_size(13).text_color(t.foreground).child(m.name))
-          .child(div().text_size(12).text_color(t.dim).child(m.version
+          .child(div().text_size(14).text_color(t.foreground).child(m.name))
+          .child(div().text_size(13).text_color(t.dim).child(m.version
             ? text("settings.machine-line", { target: m.target ?? "", state, version: m.version })
             : text("settings.machine-line-no-version", { target: m.target ?? "", state }))))
         .child(controls.flex_none()));
-    if (busy === "update") row.child(div().text_size(12).text_color(t.dim).child(text("settings.copying-core")));
+    if (busy === "update") row.child(div().text_size(13).text_color(t.dim).child(text("settings.copying-core")));
     if (edit && !busy) {
       const cancel = this.button(t, `st-m-cancel-${m.name}`, text("settings.cancel"), (_e, cx) => { this.machineEdit = null; this.handle.focus(); cx.notify(); });
       if (edit.action === "rm") row.child(v_flex().gap(8)
-        .child(div().text_size(12).text_color(t.muted).child(text("settings.remove-machine-confirm", { machine: m.name })))
+        .child(div().text_size(13).text_color(t.muted).child(text("settings.remove-machine-confirm", { machine: m.name })))
         .child(h_flex().gap(6).child(cancel).child(this.button(t, `st-m-confirm-${m.name}`, text("settings.remove-machine"), (_e, cx) => this.machineAction(m.name, "rm", cx)))));
       else row.child(v_flex().gap(6)
-        .child(div().text_size(12).text_color(t.dim).child(text("settings.new-name-hint")))
+        .child(div().text_size(13).text_color(t.dim).child(text("settings.new-name-hint")))
         .child(h_flex().gap(6).items_center()
-          .child(Input.new(this.renameInput).flex_1().min_w(0).h(32).px(10).rounded(7).border_1().border_color(this.renameFocused ? t.accent : t.input).bg(t.background).text_size(13).text_color(t.foreground))
+          .child(Input.new(this.renameInput).flex_1().min_w(0).h(32).px(10).rounded(7).border_1().border_color(this.renameFocused ? t.accent : t.input).bg(t.background).text_size(14).text_color(t.foreground))
           .child(cancel).child(this.button(t, `st-m-save-${m.name}`, text("settings.save"), (_e, cx) => this.machineAction(m.name, "rename", cx, edit.name)))));
     }
-    if (result) row.child(div().text_size(12).text_color(result.ok ? t.ansi2 : t.blocked).tooltip(result.ok ? null : result.message).child(result.ok ? result.message : firstLine(result.message) || result.message));
+    if (result) row.child(div().text_size(13).text_color(result.ok ? t.ansi2 : t.blocked).tooltip(result.ok ? null : result.message).child(result.ok ? result.message : firstLine(result.message) || result.message));
     return row;
   }
 
@@ -605,13 +605,13 @@ export default class Settings extends View {
     const version = updates().core.version;
     return v_flex().w_full()
       .child(this.heading(t, text("settings.heading-machines")))
-      .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.machines-about")))
+      .child(div().pb(8).text_size(13).line_height("18px").text_color(t.dim).child(text("settings.machines-about")))
       .child(this.row(t, text("settings.this-computer"), text("settings.connected"), div().w(7).h(7).rounded(4).bg(t.ansi2), "this"))
       .children((this.machineList ?? []).map((m) => this.machineRow(t, m, version)))
-      .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12).text_color(t.dim).child(text("settings.reading-machines")))))
-      .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(12).text_color(t.dim).child(text("settings.no-machines"))))
-      .when(Boolean(this.machineError), (el) => el.child(div().py(10).text_size(12).text_color(t.blocked).tooltip(this.machineError).child(firstLine(this.machineError) || this.machineError)))
-      .when(Boolean(this.machineNotice), (el) => el.child(div().py(10).text_size(12).text_color(t.ansi2).child(this.machineNotice)))
+      .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(13).text_color(t.dim).child(text("settings.reading-machines")))))
+      .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(13).text_color(t.dim).child(text("settings.no-machines"))))
+      .when(Boolean(this.machineError), (el) => el.child(div().py(10).text_size(13).text_color(t.blocked).tooltip(this.machineError).child(firstLine(this.machineError) || this.machineError)))
+      .when(Boolean(this.machineNotice), (el) => el.child(div().py(10).text_size(13).text_color(t.ansi2).child(this.machineNotice)))
       .child(this.row(t, text("settings.add-machine"), text("settings.add-machine-about"), this.button(t, "st-m-add", text("settings.add"), () => run("mod.open", { name: "machine-add" })), "add"));
   }
 
@@ -638,7 +638,7 @@ export default class Settings extends View {
       width: 200,
     });
     const summonAbout = taken
-      ? div().text_size(12).line_height("18px").text_color(t.blocked).child(text("settings.summon-taken"))
+      ? div().text_size(13).line_height("18px").text_color(t.blocked).child(text("settings.summon-taken"))
       : text("settings.summon-about");
     return v_flex()
       .w_full()
@@ -663,7 +663,7 @@ export default class Settings extends View {
           .child(this.row(t, text("settings.windows-notifications"), text("settings.windows-notifications-about"), this.toggle(t, "st-system-notifications", notifications, (_e, cx) => this.change((p) => (p.system_notifications = !notifications), cx))))
           .child(this.row(t, text("settings.summon-kompitum"), summonAbout, summonMenu)),
       )
-      .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.sounds-own")));
+      .child(div().pt(12).text_size(13).line_height("18px").text_color(t.dim).child(text("settings.sounds-own")));
   }
 
   // About ----------------------------------------------------------------
@@ -688,16 +688,16 @@ export default class Settings extends View {
       !u.checks
         ? null
         : u.checking && this.asked
-          ? div().px(12).py(5).text_size(13).text_color(t.dim).child(text("settings.checking"))
+          ? div().px(12).py(5).text_size(14).text_color(t.dim).child(text("settings.checking"))
           : asked && u.checked && !u.checking
-            ? div().px(12).py(5).text_size(13).text_color(t.ansi2).child(text("settings.up-to-date-check"))
+            ? div().px(12).py(5).text_size(14).text_color(t.ansi2).child(text("settings.up-to-date-check"))
             : this.button(t, id, text("settings.check-now"), (_e, cx) => {
                 this.asked = Date.now();
                 run("app.check_updates");
                 cx.notify();
               });
     const primary = (id, label, f) =>
-      div().id(id).px(12).py(5).rounded(7).cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).text_size(13).font_semibold().relative().tab_stop(true).focus_ring(t.focus, 7).on_click(f).child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))).child(label);
+      div().id(id).px(12).py(5).rounded(7).cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).text_size(14).font_semibold().relative().tab_stop(true).focus_ring(t.focus, 7).on_click(f).child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))).child(label);
     const source = !u.app.updates;
     const app = source
       ? [null, null]
@@ -725,8 +725,8 @@ export default class Settings extends View {
           .gap(9)
           .border_b(1)
           .border_color(t.border)
-          .child(div().text_size(13).text_color(t.foreground).child(text("settings.version-line", { app: u.app.version, core: c.version ?? "" })))
-          .child(div().text_size(12).line_height("18px").text_color(t.dim)
+          .child(div().text_size(14).text_color(t.foreground).child(text("settings.version-line", { app: u.app.version, core: c.version ?? "" })))
+          .child(div().text_size(13).line_height("18px").text_color(t.dim)
             .child(source ? text("settings.built-from-checkout") : text("settings.update-check")))
           .child(
             h_flex()
@@ -735,10 +735,10 @@ export default class Settings extends View {
               .items_center()
               .flex_wrap()
               .when(this.lit("app"), (el) => el.bg(t.selected).rounded(7))
-              .child(div().text_size(12).text_color(t.dim).child(text("settings.app-word")))
-              .when(Boolean(app[0]), (el) => el.child(div().flex_1().min_w(0).text_size(12).line_height("18px").text_color(t.muted).child(app[0])))
+              .child(div().text_size(13).text_color(t.dim).child(text("settings.app-word")))
+              .when(Boolean(app[0]), (el) => el.child(div().flex_1().min_w(0).text_size(13).line_height("18px").text_color(t.muted).child(app[0])))
               .child(div().flex_1())
-              .when(Boolean(u.app.version), (el) => el.child(div().text_size(12).text_color(t.muted).child(u.app.version)))
+              .when(Boolean(u.app.version), (el) => el.child(div().text_size(13).text_color(t.muted).child(u.app.version)))
               .child(this.button(t, "st-whats-new", text("settings.whats-new"), () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
               .when(Boolean(app[1]), (el) => el.child(app[1])),
           )
@@ -749,8 +749,8 @@ export default class Settings extends View {
               .items_center()
               .flex_wrap()
               .when(this.lit("core"), (el) => el.bg(t.selected).rounded(7))
-              .child(div().text_size(12).text_color(t.dim).child(text("settings.core-word")))
-              .child(div().flex_1().min_w(0).text_size(12).line_height("18px").text_color(t.muted).tooltip(core[0]).child(firstLine(core[0]) || core[0]))
+              .child(div().text_size(13).text_color(t.dim).child(text("settings.core-word")))
+              .child(div().flex_1().min_w(0).text_size(13).line_height("18px").text_color(t.muted).tooltip(core[0]).child(firstLine(core[0]) || core[0]))
               .when(Boolean(core[1]), (el) => el.child(core[1])),
           ),
       )
@@ -783,11 +783,11 @@ export default class Settings extends View {
         ),
       )
       .when(Boolean(this.exportNote), (el) =>
-        el.child(div().id("st-export-note").py(6).text_size(12).text_color(t.dim).child(this.exportNote)))
+        el.child(div().id("st-export-note").py(6).text_size(13).text_color(t.dim).child(this.exportNote)))
       .when(Boolean(this.importError), (el) =>
-        el.child(div().id("st-import-error").py(6).text_size(12).text_color(t.blocked).child(this.importError)))
+        el.child(div().id("st-import-error").py(6).text_size(13).text_color(t.blocked).child(this.importError)))
       .when(Boolean(this.importNote), (el) =>
-        el.child(div().id("st-import-note").py(6).text_size(12).text_color(t.dim).child(this.importNote)))
+        el.child(div().id("st-import-note").py(6).text_size(13).text_color(t.dim).child(this.importNote)))
       .child(
         this.row(
           t,
@@ -797,13 +797,13 @@ export default class Settings extends View {
             .gap(8)
             .items_center()
             .child(this.button(t, "st-copy-diagnostics", text("settings.copy-diagnostics"), (_e, cx) => copyDiagnostics(this, cx)))
-            .when(Boolean(this.copiedAt), (el) => el.child(div().id("st-copied").text_size(12).text_color(t.ansi2).child(text("settings.copied")))),
+            .when(Boolean(this.copiedAt), (el) => el.child(div().id("st-copied").text_size(13).text_color(t.ansi2).child(text("settings.copied")))),
         ),
       )
       .when(Boolean(this.diagnosticError), (el) =>
-        el.child(div().id("st-diagnostic-error").py(6).text_size(12).text_color(t.blocked).child(this.diagnosticError)))
-      .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.privacy-note")))
-      .child(div().text_size(12).line_height("18px").text_color(t.dim).child(text("settings.built-on-herdr")));
+        el.child(div().id("st-diagnostic-error").py(6).text_size(13).text_color(t.blocked).child(this.diagnosticError)))
+      .child(div().pt(12).text_size(13).line_height("18px").text_color(t.dim).child(text("settings.privacy-note")))
+      .child(div().text_size(13).line_height("18px").text_color(t.dim).child(text("settings.built-on-herdr")));
   }
 
 
@@ -833,7 +833,7 @@ export default class Settings extends View {
             .border_1()
             .border_color(t.input)
             .bg(t.background)
-            .text_size(13)
+            .text_size(14)
             .text_color(t.foreground),
         ),
       )
@@ -857,11 +857,11 @@ export default class Settings extends View {
                   .focus_ring(t.focus, 7)
                   .tooltip(`${where} › ${m.title()}`)
                   .on_click((_e, cx) => this.openMatch(m, cx))
-                  .child(div().truncate().text_size(13).text_color(t.foreground).child(m.title()))
-                  .child(div().truncate().text_size(11).text_color(t.dim).child(where));
+                  .child(div().truncate().text_size(14).text_color(t.foreground).child(m.title()))
+                  .child(div().truncate().text_size(12).text_color(t.dim).child(where));
               })
             : [
-                div().px(10).py(6).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.no-match", { query })),
+                div().px(10).py(6).text_size(13).line_height("18px").text_color(t.dim).child(text("settings.no-match", { query })),
                 h_flex()
                   .id("st-ask-lead")
                   .px(10)
@@ -875,7 +875,7 @@ export default class Settings extends View {
                   .focus_ring(t.focus, 7)
                   .on_click((_e, cx) => this.askLead(cx))
                   .child(svg(I("bot")).size(14).text_color(t.accent))
-                  .child(div().text_size(12).text_color(t.foreground).child(text("settings.ask-lead"))),
+                  .child(div().text_size(13).text_color(t.foreground).child(text("settings.ask-lead"))),
               ],
         ),
       )
@@ -908,7 +908,7 @@ export default class Settings extends View {
               cx.notify();
             })
             .child(svg(I(s.icon)).size(15).text_color(on ? t.accent : t.dim))
-            .child(div().flex_1().text_size(13).text_color(on ? t.foreground : t.muted).child(sectionTitle(s.id)))
+            .child(div().flex_1().text_size(14).text_color(on ? t.foreground : t.muted).child(sectionTitle(s.id)))
             .when(s.id === "about" && waiting, (el) => el.child(div().w(7).h(7).rounded(4).bg(t.accent)));
         }),
       ));
@@ -966,7 +966,7 @@ export default class Settings extends View {
                           div()
                             .id("st-save-error")
                             .pb(10)
-                            .text_size(12)
+                            .text_size(13)
                             .line_height("18px")
                             .text_color(t.blocked)
                             .child(text("settings.save-failed", { reason: this.saveError })),

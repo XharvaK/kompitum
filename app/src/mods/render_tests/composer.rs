@@ -1460,45 +1460,6 @@ fn composer_draws(cx: &mut TestAppContext, values: BTreeMap<String, Value>, setu
     describe_settled(cx, &staged, "mods/composer", values, setup).unwrap()
 }
 
-/// The ring is drawn when the context is counted, with its share as the tooltip; not when usage is null.
-#[gpui::test]
-fn the_context_ring_draws_when_the_context_is_counted(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let tree = composer_draws(cx, usage_values(usage_with(300000, Value::Null), json!({})), None);
-    assert!(tree.contains("composer-usage"), "{tree}");
-    assert!(tree.contains("Context 68% · Limits"), "{tree}");
-
-    let none = composer_draws(cx, usage_values(Value::Null, json!({})), None);
-    assert!(!none.contains("composer-usage"), "{none}");
-}
-
-/// A present window at 75% or more says itself in the row; under 75 it says nothing.
-#[gpui::test]
-fn a_limit_says_itself_only_when_it_matters(cx: &mut TestAppContext) {
-    cx.update(gpui_shell::init);
-    let soon = unix_now() + 3600;
-    let high = composer_draws(
-        cx,
-        usage_values(
-            usage_with(300000, json!({"used_percentage": 82, "resets_at": soon})),
-            json!({}),
-        ),
-        None,
-    );
-    assert!(high.contains("composer-limit"), "{high}");
-    assert!(high.contains("5h 82%"), "{high}");
-
-    let low = composer_draws(
-        cx,
-        usage_values(
-            usage_with(300000, json!({"used_percentage": 40, "resets_at": soon})),
-            json!({}),
-        ),
-        None,
-    );
-    assert!(!low.contains("composer-limit"), "{low}");
-}
-
 /// The chip names the model the lead says it runs; the saved label stands until it has said.
 #[gpui::test]
 fn the_chip_names_the_running_model(cx: &mut TestAppContext) {
@@ -1530,23 +1491,6 @@ fn while_compacting_the_composer_holds_the_message(cx: &mut TestAppContext) {
             .iter()
             .any(|args| args.first().is_some_and(|first| first.to_string().contains("send"))),
         "Send must not reach kom send while compacting: {effects:?}"
-    );
-}
-
-/// The ring opens the Limits sheet for this lead's terminal, so the sheet can offer Compact now.
-#[gpui::test]
-fn the_ring_opens_the_limits_sheet(cx: &mut TestAppContext) {
-    let effects = composer_live_run_after_clicks(
-        cx,
-        usage_values(usage_with(300000, Value::Null), json!({})),
-        "",
-        &["composer-usage"],
-    );
-    assert!(
-        effects.iter().any(|args| args.first().is_some_and(|spec| {
-            spec.get("mod") == Some(&json!("limits")) && spec.pointer("/props/terminal") == Some(&json!("t1"))
-        })),
-        "the ring opens the limits sheet with the terminal: {effects:?}"
     );
 }
 
@@ -1830,8 +1774,8 @@ fn the_draft_uses_the_conversations_text_size_and_line_height(cx: &mut TestAppCo
         .unwrap_or_else(|| panic!("no message: {tree}"));
     for (what, line) in [("draft", draft), ("message", message)] {
         assert!(
-            line.contains(".text_size[Number(13.0)]"),
-            "the {what} is 13 px: {line}"
+            line.contains(".text_size[Number(14.0)]"),
+            "the {what} is 14 px: {line}"
         );
         assert!(
             !line.contains(".line_height"),
@@ -1932,85 +1876,21 @@ fn the_model_menu_opens_inside_the_window(cx: &mut TestAppContext) {
     assert!(f32::from(menu.right()) <= width, "the menu's right edge is inside the {width}-wide window: {menu:?}");
 }
 
-/// The dump line of the mode word: it names its id, and says `on_click` only while the word is live.
-fn mode_line(tree: &str) -> &str {
-    tree.lines().find(|line| line.contains("Str(\"composer-mode\")")).unwrap_or_default()
-}
-
-/// The text colour the dump gives a line (its first `text_color`).
-fn text_color_of(line: &str) -> &str {
-    line.split("text_color[").nth(1).and_then(|rest| rest.split(']').next()).unwrap_or_default()
-}
-
 /// A lead whose hooks named `mode`, with the mode's guess flag; `extra` adds to the lead.
 fn with_permission_mode(mode: &str, guessed: bool) -> BTreeMap<String, Value> {
     usage_values(Value::Null, json!({"permission_mode": mode, "mode_guessed": guessed}))
 }
 
-/// A lead with a permission card open: the box can't take a click on the mode word.
-fn with_open_card(mode: &str) -> BTreeMap<String, Value> {
-    usage_values(
-        Value::Null,
-        json!({
-            "permission_mode": mode,
-            "ask": {"id": "a1", "terminal": "t1", "kind": "permission", "input": {"tool_name": "Bash", "tool_input": {"command": "ls"}}}
-        }),
-    )
-}
-
-/// The box's bottom row: attach and the mode word on the left; the model, then Send at the far right.
+/// The box's bottom row: attach on the left; the model, then Send at the far right. No mode word.
 #[gpui::test]
-fn the_row_reads_mode_then_model_and_send(cx: &mut TestAppContext) {
+fn the_row_reads_attach_then_model_and_send(cx: &mut TestAppContext) {
     let tree = composer_draws(cx, with_permission_mode("default", false), None);
-    assert!(tree.contains("Ask first"), "{tree}");
-    assert!(!mode_line(&tree).is_empty(), "{tree}");
-    let ids = ["composer-attach", "composer-model", "composer-mode", "composer-send"];
+    assert!(!tree.contains(":id[Str(\"composer-mode\")]"), "the mode word is gone: {tree}");
+    let ids = ["composer-attach", "composer-model", "composer-send"];
     let (_, _, found) = composer_layout(cx, with_permission_mode("default", false), "", &ids);
-    let [attach, model, mode, send] = [0, 1, 2, 3].map(|i| found[i].unwrap_or_else(|| panic!("{} is laid out", ids[i])));
-    assert!(f32::from(attach.left()) < f32::from(mode.left()), "attach, then mode: {attach:?} {mode:?}");
-    assert!(f32::from(mode.left()) < f32::from(model.left()), "mode, then model: {mode:?} {model:?}");
+    let [attach, model, send] = [0, 1, 2].map(|i| found[i].unwrap_or_else(|| panic!("{} is laid out", ids[i])));
+    assert!(f32::from(attach.left()) < f32::from(model.left()), "attach, then model: {attach:?} {model:?}");
     assert!(f32::from(model.left()) < f32::from(send.left()), "send is the rightmost: {model:?} {send:?}");
-}
-
-/// Before Claude has reported a mode there is no mode word: no hook has named one.
-#[gpui::test]
-fn no_mode_word_before_claude_reports_one(cx: &mut TestAppContext) {
-    let tree = composer_draws(cx, usage_values(Value::Null, json!({})), None);
-    assert!(mode_line(&tree).is_empty(), "{tree}");
-}
-
-/// A click on the mode word runs lead.mode for this terminal.
-#[gpui::test]
-fn clicking_the_mode_runs_lead_mode(cx: &mut TestAppContext) {
-    let effects = composer_live_run_after_clicks(cx, with_permission_mode("default", false), "", &["composer-mode"]);
-    assert!(
-        effects
-            .iter()
-            .any(|args| args.first() == Some(&json!("lead.mode")) && args.get(1) == Some(&json!({"terminal": "t1"}))),
-        "{effects:?}"
-    );
-}
-
-/// While a card is open the mode word is drawn but has no click: Claude is asking, so the mode can't switch.
-#[gpui::test]
-fn the_mode_word_waits_while_a_card_is_open(cx: &mut TestAppContext) {
-    let tree = composer_draws(cx, with_open_card("default"), None);
-    assert!(tree.contains("Ask first"), "{tree}");
-    let line = mode_line(&tree);
-    assert!(!line.is_empty(), "{tree}");
-    assert!(!line.contains("on_click"), "{tree}");
-}
-
-/// A guessed mode is drawn dim, the colour a not-live mode word has; a confirmed live one is drawn muted.
-#[gpui::test]
-fn a_guessed_mode_is_drawn_dim(cx: &mut TestAppContext) {
-    let guessed = composer_draws(cx, with_permission_mode("plan", true), None);
-    let confirmed = composer_draws(cx, with_permission_mode("plan", false), None);
-    let asking = composer_draws(cx, with_open_card("plan"), None);
-    let dim = text_color_of(mode_line(&asking));
-    assert!(!dim.is_empty(), "{asking}");
-    assert_eq!(text_color_of(mode_line(&guessed)), dim, "a guessed mode is dim: {guessed}");
-    assert_ne!(text_color_of(mode_line(&confirmed)), dim, "a confirmed live mode is not dim: {confirmed}");
 }
 
 /// "Compact first" shows only from 222K tokens, with a draft waiting: not below 222K, and not without a draft.

@@ -405,7 +405,7 @@ export default {
       .h(24)
       .px(8)
       .items_center()
-      .child(div().text_size(12).text_color(t.dim).child(text("composer.search-history")));
+      .child(div().text_size(13).text_color(t.dim).child(text("composer.search-history")));
   },
 
   listMenu(t, cx) {
@@ -449,7 +449,7 @@ export default {
             }
           })
           .on_click((_e, cx) => this.listClick(index, cx))
-          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(firstLine(entry)));
+          .child(div().flex_1().min_w(0).truncate().text_size(14).text_color(t.foreground).child(firstLine(entry)));
       }
       if (this.listKind === "files") {
         return h_flex()
@@ -471,7 +471,7 @@ export default {
             }
           })
           .on_click((_e, cx) => this.listClick(index, cx))
-          .child(div().text_size(13).text_color(t.foreground).child(`${entry.name}${entry.dir ? "/" : ""}`));
+          .child(div().text_size(14).text_color(t.foreground).child(`${entry.name}${entry.dir ? "/" : ""}`));
       }
       return h_flex()
         .id(`composer-list-${index}`)
@@ -493,15 +493,15 @@ export default {
           }
         })
         .on_click((_e, cx) => this.listClick(index, cx))
-        .child(div().flex_none().text_size(13).text_color(t.foreground).child(`/${entry.name}`))
+        .child(div().flex_none().text_size(14).text_color(t.foreground).child(`/${entry.name}`))
         .when(Boolean(entry.hint), (el) =>
-          el.child(div().flex_none().text_size(13).text_color(t.dim).child(entry.hint)))
+          el.child(div().flex_none().text_size(14).text_color(t.dim).child(entry.hint)))
         .child(
           div()
             .flex_1()
             .min_w(0)
             .truncate()
-            .text_size(12)
+            .text_size(13)
             .text_color(t.muted)
             .child(String(entry.description ?? "")),
         );

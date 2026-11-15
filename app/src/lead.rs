@@ -190,6 +190,23 @@ pub fn argv(
     out
 }
 
+/// The permission-mode id Claude Code takes: the setting's hook id, except that `default` is
+/// Claude Code 2.1.321's `manual`. Absent or empty means `auto`.
+pub fn permission_mode_word(setting: Option<&str>) -> &str {
+    match setting.filter(|mode| !mode.is_empty()) {
+        None => "auto",
+        Some("default") => "manual",
+        Some(mode) => mode,
+    }
+}
+
+/// Appends Claude Code's `--permission-mode <id>` to a lead's argv.
+pub fn with_permission_mode(mut argv: Vec<String>, setting: Option<&str>) -> Vec<String> {
+    argv.push("--permission-mode".into());
+    argv.push(permission_mode_word(setting).into());
+    argv
+}
+
 /// A terminal is the lead when it is live and carries the lead label with the
 /// lead's program key: a terminal that ended is not the lead, so `lead.open`
 /// starts a new one. Its program isn't checked: on Windows the core sees the
@@ -727,6 +744,9 @@ pub struct Session {
     /// A saved model or reasoning pick waits for the lead to wait, then the app sends it. Not saved.
     #[serde(skip)]
     pub apply_held: bool,
+    /// A `lead.set_mode` target waits for the lead to wait, then the app presses for it. Not saved.
+    #[serde(skip)]
+    pub set_mode_held: Option<String>,
 }
 
 impl Session {

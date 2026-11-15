@@ -165,6 +165,99 @@ pub fn next_mode(current: Option<&str>, seen: &BTreeSet<String>) -> &'static str
     }
 }
 
+/// The mode a lead's screen shows, from the last 8 non-empty lines: Claude Code prints its current
+/// permission mode there, and a newer line wins over an older one above it.
+pub fn mode_from_screen(text: &str) -> Option<&'static str> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .rev()
+        .take(8)
+        .find_map(|line| {
+            if line.contains("manual mode on") {
+                Some("default")
+            } else if line.contains("accept edits on") {
+                Some("acceptEdits")
+            } else if line.contains("plan mode on") {
+                Some("plan")
+            } else if line.contains("auto mode on") {
+                Some("auto")
+            } else if line.contains("bypass permissions on") {
+                Some("bypassPermissions")
+            } else {
+                None
+            }
+        })
+}
+
+/// The word the interface gives a permission mode.
+pub fn mode_word(mode: &str) -> String {
+    match mode {
+        "default" => strings::text("composer.mode-ask-first"),
+        "acceptEdits" => strings::text("composer.mode-accept-edits"),
+        "plan" => strings::text("composer.mode-plan-first"),
+        "auto" => strings::text("composer.mode-auto"),
+        "bypassPermissions" => strings::text("composer.mode-full-access"),
+        "dontAsk" => strings::text("composer.mode-dont-ask"),
+        _ => mode.to_owned(),
+    }
+}
+
+/// The error toast a mode switch that ran out of presses shows.
+pub fn mode_not_taken(target: &str, current: Option<&str>) -> Value {
+    let current = current.filter(|mode| !mode.is_empty()).unwrap_or(target);
+    json!({
+        "title": strings::text_with("lead.mode-not-taken", &[("mode", &mode_word(target))]),
+        "body": strings::text_with("lead.mode-stays", &[("current", &mode_word(current))]),
+        "level": "error",
+    })
+}
+
+/// The most presses `lead.set_mode` spends getting to its target.
+pub const MODE_PRESSES: usize = 6;
+/// How long Claude Code is given to show its new mode line after Shift+Tab.
+pub const MODE_WAIT_MS: u64 = 300;
+
+/// What a mode switch read and whether it reached its target.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ModeSwitch {
+    /// The mode read last, or the mode it started from when no read answered.
+    pub mode: Option<String>,
+    /// Whether the last read (or the start) was the target.
+    pub reached: bool,
+    /// Whether any read answered at all.
+    pub read_any: bool,
+}
+
+/// Presses Shift+Tab and reads the mode after each press until `target` is read, at most
+/// `MODE_PRESSES` times. An already-current target presses nothing. A read with no answer keeps
+/// the mode it had.
+pub fn switch_mode(
+    target: &str,
+    current: Option<String>,
+    mut press_and_read: impl FnMut() -> Option<String>,
+) -> ModeSwitch {
+    let mut switch = ModeSwitch {
+        mode: current,
+        reached: false,
+        read_any: false,
+    };
+    if switch.mode.as_deref() == Some(target) {
+        switch.reached = true;
+        return switch;
+    }
+    for _ in 0..MODE_PRESSES {
+        if let Some(mode) = press_and_read() {
+            switch.mode = Some(mode);
+            switch.read_any = true;
+        }
+        if switch.mode.as_deref() == Some(target) {
+            switch.reached = true;
+            return switch;
+        }
+    }
+    switch
+}
+
 /// Why the mode can't be switched now; None when it can (working is fine).
 pub fn mode_refusal(session: Option<&Session>) -> Option<&'static str> {
     let Some(session) = session else {

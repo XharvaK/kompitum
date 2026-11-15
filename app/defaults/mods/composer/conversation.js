@@ -36,6 +36,23 @@ export default {
     if (this.stickToBottom) this.scroll.scroll_to_end();
   },
 
+  // Sticks the conversation to its end and hides the pill.
+  stickToEnd(cx) {
+    this.stickToBottom = true;
+    this.scroll.scroll_to_end();
+    cx.notify();
+  },
+
+  // Back within 24 px of the end, however it got there (wheel, scrollbar or keys), the conversation sticks
+  // again. Returns whether it just stuck.
+  restickAtEnd() {
+    if (this.stickToBottom) return false;
+    const { y, max } = this.scroll.position();
+    if (y < max - 24) return false;
+    this.stickToBottom = true;
+    return true;
+  },
+
   terminalShown() {
     return leadOf()?.terminal === "shown";
   },
@@ -50,7 +67,7 @@ export default {
       .id("composer-reveal-note")
       .px(20)
       .pb(8)
-      .text_size(12)
+      .text_size(13)
       .text_color(t.dim)
       .child(why);
   },
@@ -90,11 +107,11 @@ export default {
           .rounded(14)
           .max_w("80%")
           .bg(t.selected)
-          .text_size(13)
+          .text_size(14)
           .text_color(t.foreground)
           .child(
             TextView.markdown(`composer-owner-md-${item.id}`, literalMarkdown(item.text))
-              .text_size(13)
+              .text_size(14)
               .text_color(t.foreground)
               .on_selection_change((text, cx) => this.selectQuote(item.id, text, cx)),
           ),
@@ -103,7 +120,7 @@ export default {
         el.child(
           div()
             .id(`composer-steering-${item.id}`)
-            .text_size(12)
+            .text_size(13)
             .text_color(t.dim)
             .child(text("composer.steering")),
         ))
@@ -117,7 +134,7 @@ export default {
       .gap(6)
       .child(
         TextView.markdown(`composer-md-${item.id}`, item.text ?? "")
-          .text_size(13)
+          .text_size(14)
           .text_color(t.foreground)
           .selectable(true)
           .on_selection_change((text, cx) => this.selectQuote(item.id, text, cx)),
@@ -147,7 +164,7 @@ export default {
       .border_1()
       .border_color(t.border)
       .bg(t.raised)
-      .text_size(12)
+      .text_size(13)
       .text_color(t.foreground)
       .cursor_pointer()
       .hover((s) => s.bg(t.hover))
@@ -194,11 +211,11 @@ export default {
         ? div()
           .min_w(0)
           .truncate()
-          .text_size(12)
+          .text_size(13)
           .font_family(settings()?.font_family ?? "Google Sans Code")
           .text_color(t.muted)
           .child(piece.text)
-        : div().min_w(0).text_size(12).text_color(t.muted).child(piece.text)));
+        : div().min_w(0).text_size(13).text_color(t.muted).child(piece.text)));
   },
 
   toolItem(t, item, cx) {
@@ -231,7 +248,7 @@ export default {
             .py(8)
             .rounded(8)
             .bg(t.surface)
-            .text_size(12)
+            .text_size(13)
             .font_family(mono)
             .text_color(t.dim)
             .child(code),
@@ -245,7 +262,7 @@ export default {
             .py(8)
             .rounded(8)
             .bg(t.surface)
-            .text_size(12)
+            .text_size(13)
             .font_family(mono)
             .text_color(t.dim)
             .child(result.split(/\r?\n/).slice(0, 12).join("\n")),
@@ -258,7 +275,7 @@ export default {
       .id(`composer-item-${item.id}`)
       .w_full()
       .text_center()
-      .text_size(12)
+      .text_size(13)
       .text_color(t.dim)
       .child(item.text ?? "");
   },
@@ -276,7 +293,7 @@ export default {
           cx.notify();
         })
         .child(svg("mods/workspace-chrome/check.svg").size(14).text_color(t.muted))
-        .child(div().text_size(12).text_color(t.muted).child(text("composer.tools-used", { count: group.items.length })));
+        .child(div().text_size(13).text_color(t.muted).child(text("composer.tools-used", { count: group.items.length })));
     }
     return v_flex()
       .id("composer-tools-used")
@@ -332,17 +349,17 @@ export default {
       .items_center()
       .child(
         div()
-          .text_size(12)
+          .text_size(13)
           .text_color(t.muted)
           .child(summary.files === 1
             ? text("composer.files-changed-one", { count: summary.files })
             : text("composer.files-changed", { count: summary.files })),
       )
-      .child(div().text_size(12).text_color(t.muted).child(text("composer.diff-count", { added: summary.added, removed: summary.removed })))
+      .child(div().text_size(13).text_color(t.muted).child(text("composer.diff-count", { added: summary.added, removed: summary.removed })))
       .child(
         div()
           .id(`composer-turn-review-${summary.start}`)
-          .text_size(12)
+          .text_size(13)
           .text_color(t.accent)
           .cursor_pointer()
           .on_click((_e, _cx) => {
@@ -383,12 +400,13 @@ export default {
         this.scroll.scroll_to_end();
         cx.notify();
       })
+      // A wheel toward older text (a positive delta) lets the conversation go and shows the pill; any wheel
+      // while it's loose redraws, and the redraw sticks it again near the end.
       .on_scroll_wheel((event, cx) => {
-        if (event.delta.y < 0 && this.stickToBottom) {
-          this.stickToBottom = false;
-          cx.notify();
-        }
+        if (event.delta.y > 0 && this.stickToBottom) this.stickToBottom = false;
+        if (!this.stickToBottom) cx.notify();
       });
+    this.restickAtEnd();
     return v_flex()
       .id("composer-panel")
       .flex_1()
@@ -399,25 +417,29 @@ export default {
       .when(!this.stickToBottom, (el) =>
         el.child(
           h_flex()
-            .id("composer-jump-latest")
             .absolute()
-            .bottom(8)
-            .h(26)
-            .px(12)
-            .items_center()
-            .rounded(13)
-            .border_1()
-            .border_color(t.border)
-            .bg(t.raised)
-            .text_size(12)
-            .text_color(t.foreground)
-            .cursor_pointer()
-            .on_click((_e, cx) => {
-              this.stickToBottom = true;
-              this.scroll.scroll_to_end();
-              cx.notify();
-            })
-            .child(text("composer.jump-latest")),
+            .bottom(12)
+            .left(0)
+            .right(0)
+            .justify_center()
+            .child(
+              h_flex()
+                .id("composer-jump-latest")
+                .h(26)
+                .px(12)
+                .gap(6)
+                .items_center()
+                .rounded(13)
+                .border_1()
+                .border_color(t.border)
+                .bg(t.raised)
+                .text_size(13)
+                .text_color(t.foreground)
+                .cursor_pointer()
+                .on_click((_e, cx) => this.stickToEnd(cx))
+                .child(svg("mods/composer/arrow-down.svg").size(14))
+                .child(text("composer.jump-latest")),
+            ),
         ),
       );
   },

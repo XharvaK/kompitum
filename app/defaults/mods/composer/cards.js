@@ -298,7 +298,7 @@ export default {
       .items_center()
       .rounded(4)
       .bg(t.muted + "1f")
-      .text_size(11)
+      .text_size(12)
       .font_medium()
       .text_color(t.muted)
       .child(label);
@@ -311,7 +311,7 @@ export default {
       .px(8)
       .items_center()
       .rounded(6)
-      .text_size(12)
+      .text_size(13)
       .text_color(t.muted)
       .cursor_pointer()
       .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
@@ -333,7 +333,7 @@ export default {
       .border_color(t.input)
       .bg(t.raised)
       .text_color(t.foreground)
-      .text_size(12)
+      .text_size(13)
       .font_medium()
       .cursor_pointer()
       .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
@@ -363,7 +363,7 @@ export default {
           .border_1()
           .border_color(t.input)
           .bg(t.surface)
-          .child(Input.new(this.noteInput).w_full().text_size(12).text_color(t.foreground)),
+          .child(Input.new(this.noteInput).w_full().text_size(13).text_color(t.foreground)),
       )
       .child(this.cardButton("composer-note-cancel", text("composer.cancel"), (_e, cx) => this.closeNote(cx), t))
       .child(this.cardButton("composer-note-send", text("composer.send-label"), (_e, cx) => this.sendNote(cx), t, { filled: true }));
@@ -371,7 +371,7 @@ export default {
 
   // The line under a card's buttons: what Enter and Esc do, or a note that the box holds a draft.
   cardHint(t, idle, typing) {
-    return div().text_size(11).text_color(t.dim).child(this.hasDraft() ? typing : idle);
+    return div().text_size(12).text_color(t.dim).child(this.hasDraft() ? typing : idle);
   },
 
   permissionCard(t, cx, ask) {
@@ -385,18 +385,18 @@ export default {
           .gap(6)
           .items_center()
           .child(this.cardTag(t, text("composer.tag-permission")))
-          .child(div().text_size(13).font_medium().text_color(t.foreground).child(summary.title)),
+          .child(div().text_size(14).font_medium().text_color(t.foreground).child(summary.title)),
       );
     if (summary.detail) {
       head.child(
         div()
-          .text_size(12)
+          .text_size(13)
           .text_color(t.muted)
           .when(Boolean(summary.mono), (el) => el.font_family(settings()?.font_family ?? "Google Sans Code"))
           .child(summary.detail),
       );
     }
-    if (ask.input?.cwd) head.child(div().text_size(12).text_color(t.dim).child(text("composer.runs-in", { folder: ask.input.cwd })));
+    if (ask.input?.cwd) head.child(div().text_size(13).text_color(t.dim).child(text("composer.runs-in", { folder: ask.input.cwd })));
     const buttons = h_flex().w_full().gap(8).items_center()
       .child(this.cardButton("composer-allow", text("composer.allow"), (_e, cx) => this.answer(ask, { action: "allow" }, cx), t, { filled: true }))
       .when(suggestions.length > 0, (el) => el.child(
@@ -444,14 +444,14 @@ export default {
           .gap(6)
           .items_center()
           .child(this.cardTag(t, text("composer.tag-plan")))
-          .child(div().text_size(13).font_medium().text_color(t.foreground).child(text("composer.plan-ready"))),
+          .child(div().text_size(14).font_medium().text_color(t.foreground).child(text("composer.plan-ready"))),
       )
       .when(Boolean(plan), (el) => el.child(
         div()
           .w_full()
           .max_h(240)
           .overflow_y_scrollbar()
-          .child(TextView.markdown("composer-plan-text", plan).text_size(12).text_color(t.muted).selectable(true)),
+          .child(TextView.markdown("composer-plan-text", plan).text_size(13).text_color(t.muted).selectable(true)),
       ))
       .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
       .when(!this.noteOpen, (el) => el.child(buttons))
@@ -477,8 +477,8 @@ export default {
           .w_full()
           .gap(4)
           .role(question.multiSelect ? "group" : "radio_group")
-          .child(div().text_size(12).font_medium().text_color(t.foreground).child(question.header || question.question))
-          .when(Boolean(question.header), (el) => el.child(div().text_size(12).text_color(t.muted).child(question.question)))
+          .child(div().text_size(13).font_medium().text_color(t.foreground).child(question.header || question.question))
+          .when(Boolean(question.header), (el) => el.child(div().text_size(13).text_color(t.muted).child(question.question)))
           .children((question.options ?? []).map((option, optionIndex) => {
             const label = String(option.label ?? "");
             const picked = chosen.includes(label);
@@ -502,11 +502,11 @@ export default {
                 this.optionAt = at;
                 this.toggleOption(question, label, cx);
               })
-              .child(div().text_size(12).font_medium().text_color(t.foreground)
+              .child(div().text_size(13).font_medium().text_color(t.foreground)
                 .child(optionIndex < 9 ? text("composer.option-numbered", { number: optionIndex + 1, label }) : label))
               .when(
                 Boolean(option.description) && !repeatsLabel(label, option.description),
-                (el) => el.child(div().text_size(12).text_color(t.dim).child(option.description)),
+                (el) => el.child(div().text_size(13).text_color(t.dim).child(option.description)),
               );
           }))
           .when(Boolean(input), (el) => el.child(
@@ -521,7 +521,7 @@ export default {
               .border_1()
               .border_color(t.input)
               .bg(t.surface)
-              .child(Input.new(input).w_full().text_size(12).text_color(t.foreground)),
+              .child(Input.new(input).w_full().text_size(13).text_color(t.foreground)),
           ))
           .when(Boolean(preview), (el) => el.child(
             div()
@@ -531,7 +531,7 @@ export default {
               .rounded(8)
               .border_1()
               .border_color(t.border)
-              .text_size(12)
+              .text_size(13)
               .font_family(settings()?.font_family ?? "Google Sans Code")
               .text_color(t.dim)
               .child(previewText(preview)),
@@ -553,7 +553,7 @@ export default {
       .px(12)
       .items_center()
       .rounded(7)
-      .text_size(12)
+      .text_size(13)
       .font_medium();
     // Not every question answered: the fill goes and an outline keeps the shape (UD's disabled state).
     if (!enabled) return button.border_1().border_color(t.input).text_color(t.dim).child(text("composer.send-answers"));
@@ -575,7 +575,7 @@ export default {
       .id("composer-terminal-answer")
       .items_center()
       .cursor_pointer()
-      .text_size(12)
+      .text_size(13)
       .text_color(t.dim)
       .keep_focus(true)
       .tab_stop(true)
@@ -595,7 +595,7 @@ export default {
     return v_flex()
       .w_full()
       .gap(6)
-      .child(div().id("composer-draft-kept").text_size(12).text_color(t.dim).child(text("composer.draft-kept")))
+      .child(div().id("composer-draft-kept").text_size(13).text_color(t.dim).child(text("composer.draft-kept")))
       .child(card);
   },
 };

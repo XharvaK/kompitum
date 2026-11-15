@@ -7,7 +7,7 @@
 
 import { View } from "gpui-kit";
 import { v_flex, TextareaState, VirtualListScrollHandle } from "gpui-base";
-import { kom, run, theme, settings, props, shared, setShared, terminals, knownAgents, appHome, readTextFile, writeTextFile, pickFolder, lead as leadOf, nextCommand, text } from "kompitum";
+import { kom, run, theme, settings, props, shared, setShared, terminals, knownAgents, appHome, readTextFile, writeTextFile, pickFolder, lead as leadOf, nextCommand, notify, text } from "kompitum";
 import { errorText, CARD_WAIT_MS, COMPACT_FIRST_TOKENS, PULSE_MS } from "./util.js";
 import cards from "./cards.js";
 import model, { leadUsage } from "./model.js";
@@ -32,6 +32,17 @@ const STARTING_PX = 44;
 function quotePath(path) {
   const text = String(path ?? "");
   return /[ \t]/.test(text) ? `"${text}"` : text;
+}
+
+// Claude Code's permission modes, as its hooks' ids: the word a toast shows.
+function modeWord(mode) {
+  if (mode === "default") return text("composer.mode-ask-first");
+  if (mode === "acceptEdits") return text("composer.mode-accept-edits");
+  if (mode === "plan") return text("composer.mode-plan-first");
+  if (mode === "auto") return text("composer.mode-auto");
+  if (mode === "bypassPermissions") return text("composer.mode-full-access");
+  if (mode === "dontAsk") return text("composer.mode-dont-ask");
+  return mode;
 }
 
 function loadHistory() {
@@ -69,6 +80,8 @@ export default class Composer extends View {
     this.state = null;
     this.ask = null;
     this.askId = null;
+    // The last permission mode a hook confirmed: a later one posts a toast; the first after a start is quiet.
+    this.lastConfirmedMode = null;
     // When the open card appeared (0 with none): its Enter and digit keys wait for it.
     this.askSince = 0;
     this.noteOpen = false;
@@ -166,6 +179,8 @@ export default class Composer extends View {
     });
     cx.timer.every(500, (cx) => {
       this.takeAsk(cx);
+      // A scrollbar drag or a key that brought the conversation back to its end sticks it again.
+      if (this.restickAtEnd()) cx.notify();
       // A send waiting for the lead's compaction is noticed here.
       if (this.compactThenSend) cx.notify();
       // The working pulse ends PULSE_MS into the work: redraw once then, so the word stays still.
@@ -507,8 +522,33 @@ export default class Composer extends View {
     }
   }
 
+  // A confirmed permission mode: the first one after the lead starts (or the app opens) says nothing;
+  // every later change posts one info toast, whenever it came from.
+  trackMode(mode, cx) {
+    if (typeof mode !== "string" || !mode) return;
+    if (this.lastConfirmedMode === null) {
+      this.lastConfirmedMode = mode;
+      return;
+    }
+    if (mode === this.lastConfirmedMode) return;
+    this.lastConfirmedMode = mode;
+    notify({ title: text("composer.mode-switched", { mode: modeWord(mode) }), level: "info" });
+  }
+
+  // Reads the lead's confirmed mode (a guess is not one) and tracks it; no lead resets the first-report rule.
+  noteConfirmedMode(cx) {
+    const lead = leadOf();
+    if (!lead) {
+      this.lastConfirmedMode = null;
+      return;
+    }
+    if (lead.mode_guessed === true) return;
+    this.trackMode(lead.permission_mode, cx);
+  }
+
   compose(t, cx) {
     const lead = leadOf();
+    this.noteConfirmedMode(cx);
     this.state = lead?.state ?? null;
     // When work started, for the pulse that says so (it stops after PULSE_MS).
     if (this.state !== "working") this.workingSince = 0;
