@@ -256,6 +256,65 @@ impl Conversation {
         self.reveal_why = why;
         self.touched();
     }
+
+    /// Ends one running tool's row as failed, with `result`; false when no row with that id is running.
+    pub fn fail_running_tool(&mut self, id: &str, result: String) -> bool {
+        let Some(Item::Tool {
+            name,
+            summary,
+            state,
+            result: have_result,
+            edit,
+            ..
+        }) = self.items.iter_mut().find(|item| matches!(item, Item::Tool { id: have, .. } if have == id))
+        else {
+            return false;
+        };
+        if *state != ToolState::Running {
+            return false;
+        }
+        let ended = ended_summary(summary, name, &Value::Null, ToolState::Failed);
+        *summary = ended;
+        *state = ToolState::Failed;
+        *have_result = Some(result);
+        *edit = None;
+        self.touched();
+        true
+    }
+}
+
+/// A turn ended: every row still running ends the way an interrupted tool does.
+fn end_running_tools(conversation: &mut Conversation) -> bool {
+    end_running_items(&mut conversation.items)
+}
+
+/// A prompt after a tool call with no result means that call stopped.
+fn stop_tools_before_prompt(items: &mut [Item]) {
+    end_running_items(items);
+}
+
+fn end_running_items(items: &mut [Item]) -> bool {
+    let mut changed = false;
+    for item in items {
+        if let Item::Tool {
+            name,
+            summary,
+            state,
+            result,
+            edit,
+            ..
+        } = item
+            && *state == ToolState::Running
+        {
+            let ended = ended_summary(summary, name, &Value::Null, ToolState::Failed);
+            *summary = ended;
+            *state = ToolState::Failed;
+            *result = Some(strings::text("lead.tool-stopped"));
+            *edit = None;
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Applies one event. No IO.
@@ -605,8 +664,24 @@ fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Va
 /// The summary of a tool that has ended: built again from the end's own input when it has one, otherwise the
 /// running words turned into the past ("Running `ls`" becomes "Ran `ls`").
 fn ended_summary(current: &str, name: &str, input: &Value, state: ToolState) -> String {
-    if input.as_object().is_some_and(|fields| !fields.is_empty()) {
+    if input
+        .as_object()
+        .is_some_and(|fields| fields.keys().any(|key| key != "cwd"))
+    {
         return tool_summary(name, input, state);
+    }
+    if let Some(rest) = current.strip_prefix("Editing ") {
+        return match rest {
+            "files" => strings::text("lead.edited-files"),
+            "a file" => strings::text("lead.edited-a-file"),
+            _ => match rest
+                .strip_suffix(" files")
+                .filter(|count| !count.is_empty() && count.chars().all(|ch| ch.is_ascii_digit()))
+            {
+                Some(count) => strings::text_with("lead.edited-count", &[("count", count)]),
+                None => strings::text_with("lead.edited-one", &[("path", rest)]),
+            },
+        };
     }
     match current.strip_prefix("Running ") {
         Some(rest) => strings::text_with("lead.tool-ran", &[("rest", rest)]),
@@ -712,7 +787,8 @@ fn on_stop(conversation: &mut Conversation) {
         *stops += 1;
     }
     conversation.steered.retain(|(_, stops)| *stops < 2);
-    if finish_assistant(conversation) || unsteered {
+    let tools = end_running_tools(conversation);
+    if finish_assistant(conversation) || unsteered || tools {
         conversation.touched();
     }
     if conversation.reveal == Some(Reveal::Auto) {
@@ -722,6 +798,7 @@ fn on_stop(conversation: &mut Conversation) {
 
 fn on_stop_failure(conversation: &mut Conversation, error: Option<&str>) {
     let _ = finish_assistant(conversation);
+    end_running_tools(conversation);
     let id = conversation.next("notice");
     conversation.items.push(Item::Notice {
         id,
@@ -837,16 +914,18 @@ pub fn tool_summary(name: &str, input: &Value, state: ToolState) -> String {
             .find_map(|key| input.get(*key).and_then(Value::as_str))
             .unwrap_or("")
     };
+    let cwd = input.get("cwd").and_then(Value::as_str);
     match name {
         "Read" => {
             let file = path(&["file_path", "path"]);
             if file.is_empty() {
                 strings::text("lead.read-file")
             } else {
-                strings::text_with("lead.read", &[("file", file)])
+                let file = short_path(file, cwd);
+                strings::text_with("lead.read", &[("file", &file)])
             }
         }
-        "Write" | "Edit" | "NotebookEdit" | "MultiEdit" => edited_summary(input),
+        "Write" | "Edit" | "NotebookEdit" | "MultiEdit" => edited_summary(input, cwd, state),
         "Bash" | "PowerShell" => {
             let command = path(&["command"]);
             let running = state == ToolState::Running;
@@ -915,7 +994,11 @@ fn edit_stat(name: &str, input: &Value, response: &Value, state: ToolState) -> O
     if path.is_empty() {
         return None;
     }
-    if let Some(hunks) = response.get("structuredPatch").and_then(Value::as_array) {
+    if let Some(hunks) = response
+        .get("structuredPatch")
+        .and_then(Value::as_array)
+        .filter(|hunks| !hunks.is_empty())
+    {
         let mut added = 0;
         let mut removed = 0;
         for hunk in hunks {
@@ -1039,12 +1122,24 @@ fn apply_task_tool(tasks: &mut Vec<TaskRow>, name: &str, input: &Value, response
     }
 }
 
-fn edited_summary(input: &Value) -> String {
+fn edited_summary(input: &Value, cwd: Option<&str>, state: ToolState) -> String {
+    let running = state == ToolState::Running;
     if let Some(files) = input.get("files").and_then(Value::as_array) {
         let paths: Vec<&str> = files.iter().filter_map(Value::as_str).collect();
         return match paths.as_slice() {
+            [] if running => strings::text("lead.editing-files"),
             [] => strings::text("lead.edited-files"),
-            [one] => strings::text_with("lead.edited-one", &[("path", one)]),
+            [one] if running => {
+                let path = short_path(one, cwd);
+                strings::text_with("lead.editing-one", &[("path", &path)])
+            }
+            [one] => {
+                let path = short_path(one, cwd);
+                strings::text_with("lead.edited-one", &[("path", &path)])
+            }
+            many if running => {
+                strings::text_with("lead.editing-count", &[("count", &many.len().to_string())])
+            }
             many => strings::text_with("lead.edited-count", &[("count", &many.len().to_string())]),
         };
     }
@@ -1053,8 +1148,105 @@ fn edited_summary(input: &Value) -> String {
         .or_else(|| input.get("path"))
         .and_then(Value::as_str)
     {
-        Some(path) if !path.is_empty() => strings::text_with("lead.edited-one", &[("path", path)]),
+        Some(path) if !path.is_empty() => {
+            let path = short_path(path, cwd);
+            if running {
+                strings::text_with("lead.editing-one", &[("path", &path)])
+            } else {
+                strings::text_with("lead.edited-one", &[("path", &path)])
+            }
+        }
+        _ if running => strings::text("lead.editing-a-file"),
         _ => strings::text("lead.edited-a-file"),
+    }
+}
+
+/// A path as a row reads it: under the lead's folder when it is, and clipped in the middle when
+/// it is still longer than 60 characters.
+const PATH_LIMIT: usize = 60;
+
+fn short_path(path: &str, cwd: Option<&str>) -> String {
+    let path = relative_path(path, cwd);
+    if path.chars().count() <= PATH_LIMIT {
+        path
+    } else {
+        clip_path(&path)
+    }
+}
+
+/// `path` under `cwd` reads without the folder (case-insensitively on Windows, `/` and `\` alike);
+/// anything else stays whole.
+fn relative_path(path: &str, cwd: Option<&str>) -> String {
+    let Some(folder) = cwd.filter(|folder| !folder.is_empty()) else {
+        return path.to_owned();
+    };
+    let folder = folder.trim_end_matches(['/', '\\']);
+    let Some(prefix) = path.get(..folder.len()) else {
+        return path.to_owned();
+    };
+    let Some(separator) = path.as_bytes().get(folder.len()) else {
+        return path.to_owned();
+    };
+    if !matches!(separator, b'/' | b'\\') {
+        return path.to_owned();
+    }
+    let folder_key = folder.replace('\\', "/");
+    let prefix_key = prefix.replace('\\', "/");
+    let inside = if cfg!(windows) {
+        prefix_key.eq_ignore_ascii_case(&folder_key)
+    } else {
+        prefix_key == folder_key
+    };
+    if inside {
+        path[folder.len() + 1..].to_owned()
+    } else {
+        path.to_owned()
+    }
+}
+
+/// A long path as its root, `…`, and its last two parts whole.
+fn clip_path(path: &str) -> String {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for (index, ch) in path.char_indices() {
+        if matches!(ch, '/' | '\\') {
+            if index > start {
+                parts.push((start, index));
+            }
+            start = index + 1;
+        }
+    }
+    if start < path.len() {
+        parts.push((start, path.len()));
+    }
+    if parts.len() <= 2 {
+        return path.to_owned();
+    }
+    let mut root_end = parts[0].1;
+    let mut prefix_end = 0;
+    if path.as_bytes().get(1) == Some(&b':') {
+        prefix_end = if matches!(path.as_bytes().get(2), Some(b'/' | b'\\')) { 3 } else { 2 };
+        root_end = parts.get(1).map_or(prefix_end, |part| part.1);
+    } else if path.starts_with("\\\\") {
+        root_end = parts.get(1).map_or(parts[0].1, |part| part.1);
+        prefix_end = parts[0].1;
+    } else if path.starts_with('/') {
+        prefix_end = 1;
+        root_end = parts[0].1;
+    }
+    let tail_start = parts[parts.len() - 2].0;
+    if root_end > tail_start {
+        root_end = prefix_end;
+    }
+    let separator = if path.contains('\\') { '\\' } else { '/' };
+    let root = &path[..root_end];
+    let tail = &path[tail_start..];
+    if root.is_empty() {
+        format!("…{separator}{tail}")
+    } else if root.ends_with(['/', '\\']) {
+        format!("{root}…{separator}{tail}")
+    } else {
+        format!("{root}{separator}…{separator}{tail}")
     }
 }
 
@@ -1086,7 +1278,16 @@ fn tool_id(input: &Value) -> String {
 }
 
 fn tool_input(input: &Value) -> Value {
-    input.get("tool_input").cloned().unwrap_or(Value::Null)
+    let tool = input.get("tool_input").cloned().unwrap_or(Value::Null);
+    with_cwd(tool, input.get("cwd").and_then(Value::as_str))
+}
+
+/// Carries the hook's `cwd` with a tool's own input, for its row's paths.
+fn with_cwd(mut input: Value, cwd: Option<&str>) -> Value {
+    if let (Some(cwd), Some(fields)) = (cwd.filter(|cwd| !cwd.is_empty()), input.as_object_mut()) {
+        fields.insert("cwd".into(), Value::String(cwd.to_owned()));
+    }
+    input
 }
 
 /// A tool's result text from its `tool_response`, which each tool shapes itself. A
@@ -1148,6 +1349,7 @@ fn apply_user(
     }
     match message_content(value) {
         Value::String(text) if !text.is_empty() => {
+            stop_tools_before_prompt(items);
             items.push(Item::Owner {
                 id: next("owner"),
                 text: text.clone(),
@@ -1175,6 +1377,7 @@ fn flush_owner(items: &mut Vec<Item>, next: &mut impl FnMut(&str) -> String, tex
     if texts.is_empty() {
         return;
     }
+    stop_tools_before_prompt(items);
     items.push(Item::Owner {
         id: next("owner"),
         text: texts.join(""),
@@ -1197,6 +1400,11 @@ fn apply_assistant(
             for part in parts {
                 let kind = part.get("type").and_then(Value::as_str).unwrap_or("");
                 if kind == "tool_use" {
+                    let name = part.get("name").and_then(Value::as_str).unwrap_or("tool");
+                    // A question is the card's to answer, never a tool row; the live hook path skips it too.
+                    if name == "AskUserQuestion" {
+                        continue;
+                    }
                     let tool_use_id = part
                         .get("id")
                         .and_then(Value::as_str)
@@ -1205,8 +1413,10 @@ fn apply_assistant(
                     let id = tool_use_id
                         .clone()
                         .unwrap_or_else(|| next("tool"));
-                    let name = part.get("name").and_then(Value::as_str).unwrap_or("tool");
-                    let input = part.get("input").cloned().unwrap_or(Value::Null);
+                    let input = with_cwd(
+                        part.get("input").cloned().unwrap_or(Value::Null),
+                        value.get("cwd").and_then(Value::as_str),
+                    );
                     if name == "TaskCreate" {
                         let index = tasks.len();
                         tasks.push(TaskRow {

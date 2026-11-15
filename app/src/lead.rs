@@ -685,6 +685,15 @@ pub struct Session {
     /// Whether this window has seen the lead's SessionStart. Not saved.
     #[serde(skip)]
     pub started: bool,
+    /// Whether this window started the lead, and when: a lead already running when the window
+    /// opened never gets the "hasn't started" reveal. Not saved.
+    #[serde(skip)]
+    pub started_this_run: bool,
+    #[serde(skip)]
+    pub started_ms: Option<u64>,
+    /// When this terminal's core status first read `blocked`, for the asking-in-terminal reveal. Not saved.
+    #[serde(skip)]
+    pub blocked_since_ms: Option<u64>,
     /// The model Claude says it runs (`{ id, name }`), from its status line. Not saved.
     #[serde(skip)]
     pub model: Option<Value>,
@@ -884,6 +893,30 @@ pub fn hide_startup(conversation: &mut Conversation) {
     if conversation.reveal == Some(Reveal::Startup) {
         conversation.hide();
     }
+}
+
+/// Hides one automatic reveal by its words; a reveal by hand, or another automatic one, stays.
+pub fn hide_auto(conversation: &mut Conversation, why: &str) {
+    if conversation.reveal == Some(Reveal::Auto) && conversation.reveal_why.as_deref() == Some(why) {
+        conversation.hide();
+    }
+}
+
+/// A lead this run started that its SessionStart hasn't reached after ten seconds: Claude may be
+/// asking something in its terminal before any hook can carry a card.
+pub fn reveal_not_started(started_this_run: bool, started: bool, started_ms: Option<u64>, now_ms: u64) -> bool {
+    started_this_run && !started && started_ms.is_some_and(|started| now_ms.saturating_sub(started) >= 10_000)
+}
+
+/// A core status that says `blocked` while the app holds no ask for that terminal, for three seconds
+/// in a row: Claude is asking something in its terminal without a card.
+pub fn reveal_asking_in_terminal(
+    blocked: bool,
+    ask_held: bool,
+    blocked_since_ms: Option<u64>,
+    now_ms: u64,
+) -> bool {
+    blocked && !ask_held && blocked_since_ms.is_some_and(|since| now_ms.saturating_sub(since) >= 3_000)
 }
 
 /// Runs `claude auth status` through the core. Only the exit code is kept.

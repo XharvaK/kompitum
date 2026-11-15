@@ -1393,3 +1393,43 @@ fn an_ended_time_is_rfc_3339_in_utc() {
     assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
     assert_eq!(rfc3339(1_700_000_000_000), "2023-11-14T22:13:20Z");
 }
+
+/// A lead this run started gets ten seconds to reach SessionStart; one already running when the
+/// window opened never gets this reveal.
+#[test]
+fn a_lead_that_has_not_started_reveals_after_ten_seconds() {
+    assert!(!reveal_not_started(true, false, Some(1_000), 10_999));
+    assert!(reveal_not_started(true, false, Some(1_000), 11_000));
+    assert!(
+        !reveal_not_started(false, false, Some(1_000), 20_000),
+        "a lead already running when the app opened keeps this rule to itself"
+    );
+    assert!(
+        !reveal_not_started(true, true, Some(1_000), 20_000),
+        "SessionStart ends it"
+    );
+    assert!(
+        !reveal_not_started(true, false, None, 20_000),
+        "a lead with no start time has no clock"
+    );
+}
+
+/// A blocked core status reveals after three seconds in a row, unless the app already holds an ask
+/// for that terminal.
+#[test]
+fn a_blocked_lead_with_no_ask_reveals_after_three_seconds() {
+    assert!(!reveal_asking_in_terminal(true, false, Some(1_000), 3_999));
+    assert!(reveal_asking_in_terminal(true, false, Some(1_000), 4_000));
+    assert!(
+        !reveal_asking_in_terminal(true, true, Some(1_000), 9_000),
+        "an ask is its own card"
+    );
+    assert!(
+        !reveal_asking_in_terminal(false, false, Some(1_000), 9_000),
+        "the status left blocked"
+    );
+    assert!(
+        !reveal_asking_in_terminal(true, false, None, 9_000),
+        "the clock starts when blocked is first seen"
+    );
+}

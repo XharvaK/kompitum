@@ -1031,6 +1031,8 @@ pub struct AppWindow {
     /// Agents the person is looking at, and the turn they were shared as seen at.
     looked: HashMap<String, u64>,
     watched: Watched,
+    /// The last mistake said for each config file, so an unchanged broken file says nothing new.
+    config_errors: HashMap<String, String>,
     /// Core's terminal records by address.
     live: HashMap<String, Value>,
     /// The lead's state per terminal: working, asking or waiting, and its ask.
@@ -1204,6 +1206,7 @@ impl AppWindow {
             written_seen: HashMap::new(),
             looked: HashMap::new(),
             watched: Watched::default(),
+            config_errors: HashMap::new(),
             live: HashMap::new(),
             lead_sessions: HashMap::new(),
             published_lead_items: HashMap::new(),
@@ -1710,12 +1713,27 @@ impl AppWindow {
         cx.notify();
     }
 
-    fn report(&self, what: &str, message: &str) {
+    fn report(&mut self, what: &str, message: &str, window: &mut Window, cx: &mut Context<Self>) {
         tracing::warn!("{what}.json not applied: {message}");
         let _ = std::fs::write(
             file(&format!("{what}.error")),
             format!("{what}.json was not applied: {message}\n"),
         );
+        let file = format!("{what}.json");
+        if let Some(text) = config_notice(self.config_errors.get(what).map(String::as_str), &file, message) {
+            self.config_errors
+                .insert(what.to_owned(), config_reason(message).to_owned());
+            self.open_overlay(
+                mods::new_overlay_id(),
+                json!({ "kind": "toast", "notification": { "title": text, "level": "error" } }),
+                window,
+                cx,
+            );
+        }
+    }
+
+    fn config_fixed(&mut self, what: &str) {
+        self.config_errors.remove(what);
     }
 
     // ---- config files ------------------------------------------------------
@@ -1787,9 +1805,10 @@ impl AppWindow {
             match loaded {
                 Ok(p) => {
                     self.person = p;
+                    self.config_fixed("settings");
                     let _ = std::fs::remove_file(file("settings.error"));
                 }
-                Err(e) => self.report("settings", &e),
+                Err(e) => self.report("settings", &e, window, cx),
             }
             self.watched.settings = mtime(&settings::path());
             self.apply_look(window, cx);
@@ -1799,10 +1818,11 @@ impl AppWindow {
             match crate::keys::load() {
                 Ok(bindings) => {
                     crate::keys::install(bindings, cx);
+                    self.config_fixed("keys");
                     let _ = std::fs::remove_file(file("keys.error"));
                 }
                 Err(e) => {
-                    self.report("keys", &e);
+                    self.report("keys", &e, window, cx);
                     if self.watched.keys.is_none() {
                         crate::keys::install(vec![], cx);
                     }
@@ -1814,9 +1834,10 @@ impl AppWindow {
         if p_time != self.watched.programs {
             match crate::programs::load() {
                 Ok(()) => {
+                    self.config_fixed("programs");
                     let _ = std::fs::remove_file(file("programs.error"));
                 }
-                Err(e) => self.report("programs", &e),
+                Err(e) => self.report("programs", &e, window, cx),
             }
             self.watched.programs = p_time;
             self.publish(cx);
@@ -3918,7 +3939,7 @@ impl AppWindow {
     /// Reads each terminal's live folder, and its repo and branch for mods.
     fn track_folders(&mut self, cx: &mut Context<Self>) {
         let home = mods::home().to_string_lossy().into_owned();
-        let mut todo: HashMap<(Option<String>, String), Vec<String>> = HashMap::new();
+        let mut todo: FolderTodo = HashMap::new();
         let mut moved = false;
         for (addr, rec) in &self.live {
             // Core's live folder of what runs there (any machine), else the shell's (local).
@@ -3939,6 +3960,7 @@ impl AppWindow {
             let Some(cwd) = cwd else { continue };
             let busy = busy(rec);
             let last = self.folders_checked.get_mut(addr);
+            let same_folder = last.as_ref().is_none_or(|check| check.cwd == cwd);
             if recheck(last.as_deref(), &cwd, busy, self.window_active) {
                 moved |= self.cwds.get(addr) != Some(&cwd);
                 self.cwds.insert(addr.clone(), cwd.clone());
@@ -3955,7 +3977,7 @@ impl AppWindow {
                 // Another machine's terminal (`vps/t7`): git runs there.
                 todo.entry((addr.split_once('/').map(|(m, _)| m.to_owned()), cwd))
                     .or_default()
-                    .push(addr.clone());
+                    .push((addr.clone(), same_folder));
             } else if let Some(last) = last {
                 last.busy = busy;
             }
@@ -3978,7 +4000,7 @@ impl AppWindow {
             let home = home.clone();
             cx.spawn(async move |this, cx| {
                 let asked = cwd.clone();
-                let (info, repo) = cx
+                let (read, repo) = cx
                     .background_executor()
                     .spawn(async move { folder_info(&asked, &home, on.as_deref()) })
                     .await;
@@ -3988,12 +4010,14 @@ impl AppWindow {
                     }
                     let mut changed = false;
                     // Not one that moved on meanwhile: its own answer is coming.
-                    for addr in addrs.into_iter().filter(|a| this.cwds.get(a) == Some(&cwd)) {
+                    for (addr, same_folder) in addrs.into_iter().filter(|(a, _)| this.cwds.get(a) == Some(&cwd)) {
                         if let Some(check) = this.folders_checked.get_mut(&addr) {
                             check.repo = repo;
                         }
+                        let previous = same_folder.then(|| this.model.folder_info.get(&addr)).flatten();
+                        let info = merge_folder_info(previous, &cwd, &read);
                         if this.model.folder_info.get(&addr) != Some(&info) {
-                            this.model.folder_info.insert(addr, info.clone());
+                            this.model.folder_info.insert(addr, info);
                             changed = true;
                         }
                     }
@@ -4606,6 +4630,8 @@ impl AppWindow {
         session.code_mode = code_mode;
         // Only Claude asks its trust question before SessionStart; other lead programs have no hook to wait for.
         session.started = !checks_auth;
+        session.started_this_run = true;
+        session.started_ms = Some(model::now_ms());
         if checks_auth {
             mods::set_shared("lead.started".into(), json!(""));
             crate::lead::apply_startup_reveal(&mut session.conversation);
@@ -4800,7 +4826,10 @@ impl AppWindow {
                 match this.start_lead_tab(&folder, &program, &argv, code_mode, window) {
                     Ok(started) => {
                         if let Some(terminal) = started["terminal"].as_str() {
-                            this.lead_sessions.entry(terminal.to_owned()).or_default().code_mode = code_mode;
+                            let session = this.lead_sessions.entry(terminal.to_owned()).or_default();
+                            session.code_mode = code_mode;
+                            session.started_this_run = true;
+                            session.started_ms = Some(model::now_ms());
                             if let Err(error) = this.ensure_composer(terminal) {
                                 tracing::warn!("cannot dock the composer after a retry: {error}");
                             }
@@ -5009,6 +5038,10 @@ impl AppWindow {
                 session.set_compacting(false, model::now_ms());
                 mods::set_shared("lead.started".into(), json!(terminal));
                 crate::lead::hide_startup(&mut session.conversation);
+                crate::lead::hide_auto(
+                    &mut session.conversation,
+                    &strings::text("lead.not-started-yet"),
+                );
                 self.start_lead_history(&terminal, transcript, cx);
                 self.read_code_mode_status(terminal.clone(), cx);
                 self.apply_lead_terminal_layout(&terminal);
@@ -5276,6 +5309,10 @@ impl AppWindow {
         let session = self.lead_sessions.entry(terminal).or_default();
         session.set_state(Some(crate::lead::State::Asking), model::now_ms());
         session.ask = Some(ask.clone());
+        crate::lead::hide_auto(
+            &mut session.conversation,
+            &strings::text("lead.asking-in-terminal"),
+        );
         self.lead_asks.insert(ask.id.clone(), PendingAsk { ask, reply });
         self.publish_lead(cx);
     }
@@ -5316,8 +5353,17 @@ impl AppWindow {
         let Some(pending) = self.lead_asks.remove(id) else {
             return false;
         };
-        let output =
-            crate::lead::Answer::from_json(answer).and_then(|answer| crate::lead::hook_output(&pending.ask, &answer));
+        let parsed = crate::lead::Answer::from_json(answer);
+        if matches!(parsed, Some(crate::lead::Answer::Deny { .. }))
+            && pending.ask.kind == crate::lead::AskKind::Permission
+            && let Some(tool) = pending.ask.input.get("tool_use_id").and_then(Value::as_str)
+            && let Some(session) = self.lead_sessions.get_mut(&pending.ask.terminal)
+        {
+            session
+                .conversation
+                .fail_running_tool(tool, strings::text("lead.tool-denied"));
+        }
+        let output = parsed.and_then(|answer| crate::lead::hook_output(&pending.ask, &answer));
         let _ = pending.reply.send(json!({ "output": output }));
         self.remember_closed_hook(id);
         self.finish_ask(&pending.ask, cx);
@@ -5477,6 +5523,57 @@ impl AppWindow {
                 }
             })
             .detach();
+    }
+
+    /// The two automatic reveals a lead's terminal asks for: a start that never reached SessionStart,
+    /// and a core status of `blocked` with no ask held. A reveal by hand is never touched.
+    fn lead_reveals(&mut self, cx: &mut Context<Self>) {
+        let now = model::now_ms();
+        let not_started = strings::text("lead.not-started-yet");
+        let asking = strings::text("lead.asking-in-terminal");
+        let terminals: Vec<String> = self.lead_sessions.keys().cloned().collect();
+        let mut changed = Vec::new();
+        for terminal in terminals {
+            let blocked = self.model.status(&terminal) == Some("blocked");
+            let Some(session) = self.lead_sessions.get_mut(&terminal) else {
+                continue;
+            };
+            let before = session.conversation.version;
+            if blocked {
+                session.blocked_since_ms.get_or_insert(now);
+            } else {
+                session.blocked_since_ms = None;
+            }
+            if crate::lead::reveal_not_started(session.started_this_run, session.started, session.started_ms, now) {
+                if session.conversation.reveal != Some(crate::lead::Reveal::Manual) {
+                    session
+                        .conversation
+                        .show(crate::lead::Reveal::Auto, Some(not_started.clone()));
+                }
+            } else if session.started {
+                crate::lead::hide_auto(&mut session.conversation, &not_started);
+            }
+            let ask_held = session.ask.is_some();
+            if crate::lead::reveal_asking_in_terminal(blocked, ask_held, session.blocked_since_ms, now) {
+                if session.conversation.reveal != Some(crate::lead::Reveal::Manual) {
+                    session
+                        .conversation
+                        .show(crate::lead::Reveal::Auto, Some(asking.clone()));
+                }
+            } else if !blocked || ask_held {
+                crate::lead::hide_auto(&mut session.conversation, &asking);
+            }
+            if session.conversation.version != before {
+                changed.push(terminal);
+            }
+        }
+        if changed.is_empty() {
+            return;
+        }
+        for terminal in changed {
+            self.apply_lead_terminal_layout(&terminal);
+        }
+        self.publish_lead(cx);
     }
 
     /// The lead's upkeep, run by `poll` and at most once every five seconds: a compaction flag that
@@ -8540,6 +8637,7 @@ impl AppWindow {
                 self.refresh_snapshot_mods(cx);
             }
         }
+        self.lead_reveals(cx);
         self.lead_upkeep(window, cx);
         self.watch_workers(window, cx);
         let transparency_changed = settings::refresh_system_transparency();
@@ -9995,6 +10093,9 @@ struct FolderCheck {
     repo: bool,
 }
 
+/// Per machine and folder, the terminals to ask about and whether each stayed in that folder.
+type FolderTodo = HashMap<(Option<String>, String), Vec<(String, bool)>>;
+
 /// Changes made outside Kompitum (a commit in another app): looked for this often,
 /// in repos, while the window is in front.
 const FOLDER_FALLBACK: Duration = Duration::from_secs(60);
@@ -10020,15 +10121,21 @@ fn recheck(last: Option<&FolderCheck>, cwd: &str, busy: bool, active: bool) -> b
 /// saved layout stays as it was.
 pub static QUITTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// What asking a folder about its repo found.
+#[derive(Clone, Debug, PartialEq)]
+enum FolderRead {
+    Found(model::FolderInfo),
+    /// Git's own "not a git repository".
+    NotRepo,
+    /// Git ran and failed, or said something that isn't the two lines asked for.
+    Unknown,
+}
+
 /// The repo a folder is in (a worktree counts as its main checkout's), else the
 /// folder itself, and the branch; and whether it is a repo (or git couldn't say).
-fn folder_info(cwd: &str, home: &str, on: Option<&str>) -> (model::FolderInfo, bool) {
-    let none = model::FolderInfo {
-        top: cwd.into(),
-        branch: None,
-    };
+fn folder_info(cwd: &str, home: &str, on: Option<&str>) -> (FolderRead, bool) {
     if on.is_none() && cwd == home {
-        return (none, false);
+        return (FolderRead::NotRepo, false);
     }
     let args = [
         "-C",
@@ -10057,23 +10164,59 @@ fn folder_info(cwd: &str, home: &str, on: Option<&str>) -> (model::FolderInfo, b
                 .to_lowercase()
                 .contains("not a git repository")
         });
-        return (none, !no);
+        return (if no { FolderRead::NotRepo } else { FolderRead::Unknown }, !no);
     };
     let out: Vec<String> = String::from_utf8_lossy(&out)
         .lines()
         .map(str::to_owned)
         .collect();
     let [top, head] = out.as_slice() else {
-        return (none, true);
+        return (FolderRead::Unknown, true);
     };
     let branch = (head != "HEAD").then(|| head.clone());
     (
-        model::FolderInfo {
+        FolderRead::Found(model::FolderInfo {
             top: top.clone(),
             branch,
-        },
+        }),
         true,
     )
+}
+
+/// The first line of a config parse error: the rest is usually the file's own text.
+fn config_reason(error: &str) -> &str {
+    error.lines().next().unwrap_or(error).trim()
+}
+
+/// The toast for a broken config file, once per distinct first line; `last` is the mistake
+/// already said, and None forgets it after the file is fixed.
+fn config_notice(last: Option<&str>, file: &str, error: &str) -> Option<String> {
+    let reason = config_reason(error);
+    (last != Some(reason)).then(|| {
+        strings::text_with(
+            "app.config-not-applied",
+            &[("file", file), ("reason", reason)],
+        )
+    })
+}
+
+/// A failed read keeps the branch the address already knew; only git's own "not a repository" clears it.
+fn merge_folder_info(
+    previous: Option<&model::FolderInfo>,
+    cwd: &str,
+    read: &FolderRead,
+) -> model::FolderInfo {
+    match read {
+        FolderRead::Found(info) => info.clone(),
+        FolderRead::NotRepo => model::FolderInfo {
+            top: cwd.into(),
+            branch: None,
+        },
+        FolderRead::Unknown => previous.cloned().unwrap_or_else(|| model::FolderInfo {
+            top: cwd.into(),
+            branch: None,
+        }),
+    }
 }
 
 /// The node `id` while it is shown: a hidden node, or a stack child that isn't
@@ -14593,6 +14736,251 @@ export default class Probe extends View {
         assert_eq!(
             seen.borrow().as_slice(),
             ["alpha beta\n".to_string(), String::new()]
+        );
+    }
+
+    /// A start that never reached SessionStart, or a blocked status with no ask, reveals the
+    /// terminal automatically; SessionStart, the status leaving blocked and an ask hide it, and a
+    /// reveal by hand is never touched.
+    #[test]
+    fn a_lead_reveals_its_terminal_automatically() {
+        in_own_process("lead_reveals");
+    }
+
+    #[gpui::test]
+    fn lead_reveals(cx: &mut gpui::TestAppContext) {
+        use crate::lead::{Reveal, TerminalVis};
+        use serde_json::json;
+        if !running_alone("lead_reveals") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.live.insert(
+                "t1".into(),
+                json!({"state": "live", "labels": {"lead": "claude"}}),
+            );
+            let session = this.lead_sessions.entry("t1".into()).or_default();
+            session.started_this_run = true;
+            session.started_ms = Some(0);
+            this.lead_reveals(cx);
+            assert_eq!(this.lead_sessions["t1"].conversation.reveal, Some(Reveal::Auto));
+            assert_eq!(
+                this.lead_sessions["t1"].conversation.reveal_why.as_deref(),
+                Some("Claude hasn't started. It may be asking something in its terminal.")
+            );
+            this.lead_hook(
+                &json!({"event": "SessionStart", "terminal": "t1", "input": {}}),
+                None,
+                window,
+                cx,
+            );
+            assert_eq!(
+                this.lead_sessions["t1"].conversation.terminal,
+                TerminalVis::Hidden,
+                "SessionStart hides the automatic reveal"
+            );
+
+            this.model.agents.insert(
+                "t1".into(),
+                crate::model::Agent {
+                    word: Some("blocked".into()),
+                    ..Default::default()
+                },
+            );
+            let session = this.lead_sessions.get_mut("t1").unwrap();
+            session.blocked_since_ms = Some(crate::model::now_ms().saturating_sub(4_000));
+            this.lead_reveals(cx);
+            assert_eq!(
+                this.lead_sessions["t1"].conversation.reveal_why.as_deref(),
+                Some("Claude is asking something in its terminal.")
+            );
+            let session = this.lead_sessions.get_mut("t1").unwrap();
+            session.ask = Some(crate::lead::Ask {
+                id: "a1".into(),
+                terminal: "t1".into(),
+                kind: crate::lead::AskKind::Permission,
+                input: serde_json::Value::Null,
+            });
+            this.lead_reveals(cx);
+            assert_eq!(
+                this.lead_sessions["t1"].conversation.terminal,
+                TerminalVis::Hidden,
+                "an ask arriving hides it"
+            );
+
+            let session = this.lead_sessions.get_mut("t1").unwrap();
+            session.ask = None;
+            session.conversation.show(Reveal::Manual, None);
+            session.blocked_since_ms = Some(crate::model::now_ms().saturating_sub(4_000));
+            this.lead_reveals(cx);
+            assert_eq!(
+                this.lead_sessions["t1"].conversation.reveal,
+                Some(Reveal::Manual),
+                "a reveal by hand stays"
+            );
+        });
+    }
+
+    /// The Owner's denial ends the ask's running tool row with "Denied".
+    #[test]
+    fn a_denied_permission_ends_its_tool_row() {
+        in_own_process("lead_denied_tool");
+    }
+
+    #[gpui::test]
+    fn lead_denied_tool(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_denied_tool") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.live.insert(
+                "t1".into(),
+                json!({"state": "live", "labels": {"lead": "claude"}}),
+            );
+            this.lead_hook(
+                &json!({
+                    "event": "PreToolUse", "terminal": "t1",
+                    "input": {"tool_name": "Bash", "tool_use_id": "u1", "tool_input": {"command": "ls"}},
+                }),
+                None,
+                window,
+                cx,
+            );
+            let (reply, _reply_rx) = std::sync::mpsc::channel();
+            this.lead_hook(
+                &json!({
+                    "event": "PermissionRequest", "terminal": "t1", "hook_id": "a1",
+                    "input": {"tool_name": "Bash", "tool_use_id": "u1", "tool_input": {"command": "ls"}},
+                }),
+                Some(reply),
+                window,
+                cx,
+            );
+            assert!(this.answer_lead("a1", &json!({"action": "deny"}), cx));
+            let row = this.lead_sessions["t1"]
+                .conversation
+                .items
+                .iter()
+                .find(|item| matches!(item, crate::lead::Item::Tool { id, .. } if id == "u1"))
+                .expect("the tool row");
+            let crate::lead::Item::Tool { state, result, .. } = row else {
+                unreachable!()
+            };
+            assert_eq!(*state, crate::lead::conversation::ToolState::Failed);
+            assert_eq!(result.as_deref(), Some("Denied"));
+        });
+    }
+
+    /// A broken config file's toast is posted once; the same mistake again posts nothing, and a
+    /// fixed file's next mistake is news again.
+    #[test]
+    fn a_broken_config_file_shows_one_toast() {
+        in_own_process("config_toast");
+    }
+
+    #[gpui::test]
+    fn config_toast(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("config_toast") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            let before = this.overlays.len();
+            this.report("settings", "expected value at line 3\nmore", window, cx);
+            assert_eq!(this.overlays.len(), before + 1);
+            this.report("settings", "expected value at line 3\nmore", window, cx);
+            assert_eq!(this.overlays.len(), before + 1, "the same mistake is not news");
+            this.config_fixed("settings");
+            // The old toast's clock ran out before the file was fixed and broken again.
+            this.overlays.clear();
+            this.report("settings", "expected value at line 3\nmore", window, cx);
+            assert_eq!(this.overlays.len(), before + 1, "a fixed file forgets the message");
+            let note = this.overlays.last().and_then(|overlay| overlay.note.as_ref()).unwrap();
+            assert_eq!(note["level"], json!("error"));
+            assert_eq!(
+                note["title"],
+                json!("settings.json has a mistake and wasn't applied: expected value at line 3")
+            );
+        });
+    }
+
+    /// Git failing to answer, or answering with something that isn't the two lines, keeps the
+    /// branch the address already had; only git's own "not a git repository" clears it.
+    #[test]
+    fn a_failed_git_read_keeps_the_branch_it_knew() {
+        let known = crate::model::FolderInfo {
+            top: r"C:\proj".into(),
+            branch: Some("main".into()),
+        };
+        assert_eq!(
+            super::merge_folder_info(Some(&known), r"C:\proj", &super::FolderRead::Unknown),
+            known
+        );
+        assert_eq!(
+            super::merge_folder_info(None, r"C:\proj", &super::FolderRead::Unknown),
+            crate::model::FolderInfo {
+                top: r"C:\proj".into(),
+                branch: None
+            },
+            "with nothing known, a failed read says no branch"
+        );
+        assert_eq!(
+            super::merge_folder_info(Some(&known), r"C:\proj", &super::FolderRead::NotRepo),
+            crate::model::FolderInfo {
+                top: r"C:\proj".into(),
+                branch: None
+            }
+        );
+        let found = crate::model::FolderInfo {
+            top: r"C:\proj".into(),
+            branch: Some("other".into()),
+        };
+        assert_eq!(
+            super::merge_folder_info(Some(&known), r"C:\proj", &super::FolderRead::Found(found.clone())),
+            found
+        );
+    }
+
+    /// A broken config file says so once; the same mistake on the next reload says nothing, and
+    /// once the file is fixed its next mistake is news again.
+    #[test]
+    fn a_broken_config_file_is_said_once_until_it_is_fixed() {
+        let error = "expected value at line 3\n  while parsing object";
+        assert_eq!(
+            super::config_notice(None, "settings.json", error).as_deref(),
+            Some("settings.json has a mistake and wasn't applied: expected value at line 3")
+        );
+        assert_eq!(
+            super::config_notice(Some("expected value at line 3"), "settings.json", error),
+            None,
+            "the same mistake on the next reload is not news"
+        );
+        assert!(
+            super::config_notice(Some("expected value at line 3"), "settings.json", "a different line\nmore")
+                .is_some()
+        );
+        assert!(
+            super::config_notice(None, "settings.json", error).is_some(),
+            "a fixed file forgets the message"
         );
     }
 }

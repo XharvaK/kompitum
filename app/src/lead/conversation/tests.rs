@@ -1289,3 +1289,220 @@ fn powershell_rows_name_their_command() {
     assert_eq!(tool_summary("PowerShell", &input, ToolState::Running), "Running `py -c \"print(1)\"`");
     assert_eq!(tool_summary("PowerShell", &input, ToolState::Done), "Ran `py -c \"print(1)\"`");
 }
+
+fn running_read(id: &str) -> Event {
+    Event::PreToolUse {
+        id: id.into(),
+        name: "Read".into(),
+        input: json!({"file_path": "a.rs"}),
+    }
+}
+
+fn stopped<'a>(
+    name: &'a str,
+    summary: &'a str,
+    state: ToolState,
+    result: Option<&'a str>,
+) -> (&'a str, &'a str, ToolState, Option<&'a str>) {
+    (name, summary, state, result)
+}
+
+#[test]
+fn a_stop_ends_every_running_row_as_stopped() {
+    let mut c = Conversation::default();
+    c = fold(c, &running_read("u1"));
+    c = fold(
+        c,
+        &Event::PreToolUse {
+            id: "u2".into(),
+            name: "Bash".into(),
+            input: json!({"command": "ls"}),
+        },
+    );
+    c = fold(
+        c,
+        &Event::PostToolUse {
+            id: "u2".into(),
+            name: "Bash".into(),
+            input: json!({"command": "ls"}),
+            result: "a.rs".into(),
+            response: Value::Null,
+        },
+    );
+    c = fold(c, &Event::Stop);
+    assert_eq!(
+        tool(&c.items[0]),
+        stopped("Read", "Read a.rs", ToolState::Failed, Some("Stopped."))
+    );
+    assert_eq!(
+        tool(&c.items[1]),
+        stopped("Bash", "Ran `ls`", ToolState::Done, Some("a.rs")),
+        "a row that ended keeps its end"
+    );
+}
+
+#[test]
+fn a_stop_failure_ends_every_running_row_as_stopped() {
+    let c = fold(
+        Conversation::default(),
+        &Event::StopFailure {
+            error: Some("overloaded".into()),
+        },
+    );
+    assert!(c.items.iter().all(|item| !matches!(item, Item::Tool { .. })));
+    let c = fold(
+        fold(Conversation::default(), &running_read("u1")),
+        &Event::StopFailure { error: None },
+    );
+    assert_eq!(
+        tool(&c.items[0]),
+        stopped("Read", "Read a.rs", ToolState::Failed, Some("Stopped."))
+    );
+}
+
+#[test]
+fn a_denied_tool_row_ends_failed() {
+    let mut c = fold(Conversation::default(), &running_read("u1"));
+    assert!(c.fail_running_tool("u1", crate::strings::text("lead.tool-denied")));
+    assert_eq!(
+        tool(&c.items[0]),
+        stopped("Read", "Read a.rs", ToolState::Failed, Some("Denied"))
+    );
+    assert!(!c.fail_running_tool("u1", "Denied".into()), "it only ends a row still running");
+}
+
+#[test]
+fn a_transcript_hides_questions_and_stops_unanswered_tools_at_the_next_prompt() {
+    let text = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[]}}]}}
+{"type":"user","message":{"role":"user","content":"next"}}
+"#;
+    let loaded = items_from_transcript(text);
+    assert!(
+        loaded.items.iter().all(|item| !matches!(item, Item::Tool { .. })),
+        "the question is never a row and no tool is left running: {:?}",
+        loaded.items
+    );
+}
+
+#[test]
+fn a_transcript_keeps_a_long_unanswered_tool_before_the_next_prompt_as_stopped() {
+    let text = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"a.rs"}}]}}
+{"type":"user","message":{"role":"user","content":"next"}}
+"#;
+    let loaded = items_from_transcript(text);
+    assert_eq!(loaded.items.len(), 2, "{:?}", loaded.items);
+    assert_eq!(
+        tool(&loaded.items[0]),
+        stopped("Read", "Read a.rs", ToolState::Failed, Some("Stopped."))
+    );
+}
+
+#[test]
+fn paths_inside_the_leads_folder_read_relative_to_it() {
+    let input = json!({
+        "file_path": "C:/Users/me/proj/src/main.rs",
+        "cwd": "C:\\Users\\me\\proj",
+    });
+    assert_eq!(tool_summary("Read", &input, ToolState::Running), "Read src/main.rs");
+    let outside = json!({
+        "file_path": "C:\\Users\\me\\elsewhere\\main.rs",
+        "cwd": "C:\\Users\\me\\proj",
+    });
+    assert_eq!(
+        tool_summary("Read", &outside, ToolState::Running),
+        "Read C:\\Users\\me\\elsewhere\\main.rs"
+    );
+    let edit = json!({
+        "file_path": "C:/Users/me/proj/src/main.rs",
+        "cwd": "C:\\Users\\me\\proj",
+    });
+    assert_eq!(tool_summary("Edit", &edit, ToolState::Done), "Edited src/main.rs");
+    if cfg!(windows) {
+        let mixed_case = json!({
+            "file_path": "C:\\Users\\ME\\PROJ\\src\\main.rs",
+            "cwd": "c:/users/me/proj",
+        });
+        assert_eq!(
+            tool_summary("Read", &mixed_case, ToolState::Running),
+            "Read src\\main.rs"
+        );
+    }
+}
+
+#[test]
+fn a_long_path_is_clipped_in_the_middle() {
+    let path = r"C:\Users\Somebody\Documents\Projects\kompitum\code\proj\hello.txt";
+    assert_eq!(short_path(path, None), r"C:\Users\…\proj\hello.txt");
+}
+
+#[test]
+fn a_running_edit_says_editing_and_a_done_edit_says_edited() {
+    let input = json!({"file_path": "a.rs"});
+    assert_eq!(tool_summary("Edit", &input, ToolState::Running), "Editing a.rs");
+    assert_eq!(tool_summary("Edit", &input, ToolState::Done), "Edited a.rs");
+    let many = json!({"files": ["a.rs", "b.rs"]});
+    assert_eq!(tool_summary("MultiEdit", &many, ToolState::Running), "Editing 2 files");
+    assert_eq!(tool_summary("MultiEdit", &many, ToolState::Done), "Edited 2 files");
+    assert_eq!(
+        tool_summary("Edit", &json!({}), ToolState::Running),
+        "Editing a file"
+    );
+    assert_eq!(
+        tool_summary("MultiEdit", &json!({"files": []}), ToolState::Running),
+        "Editing files"
+    );
+}
+
+#[test]
+fn a_running_edit_that_ends_without_input_still_says_edited() {
+    let mut c = fold(
+        Conversation::default(),
+        &Event::PreToolUse {
+            id: "e1".into(),
+            name: "Edit".into(),
+            input: json!({"file_path": "a.rs"}),
+        },
+    );
+    c = fold(
+        c,
+        &Event::PostToolUse {
+            id: "e1".into(),
+            name: "Edit".into(),
+            input: json!({}),
+            result: String::new(),
+            response: Value::Null,
+        },
+    );
+    assert_eq!(tool(&c.items[0]).1, "Edited a.rs");
+}
+
+#[test]
+fn a_created_files_empty_patch_counts_its_input_lines() {
+    let mut c = Conversation::default();
+    c = fold(
+        c,
+        &Event::PreToolUse {
+            id: "w1".into(),
+            name: "Write".into(),
+            input: json!({"file_path": "new.txt", "content": "one line"}),
+        },
+    );
+    c = fold(
+        c,
+        &Event::PostToolUse {
+            id: "w1".into(),
+            name: "Write".into(),
+            input: json!({"file_path": "new.txt", "content": "one line"}),
+            result: "created".into(),
+            response: json!({"type": "create", "structuredPatch": []}),
+        },
+    );
+    assert_eq!(
+        edit(&c.items[0]),
+        Some(&EditStat {
+            path: "new.txt".into(),
+            added: 1,
+            removed: 0
+        })
+    );
+}
