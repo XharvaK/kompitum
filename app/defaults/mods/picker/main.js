@@ -6,7 +6,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { agents, spaces, terminals, run, kom, theme, settings, props, closeOverlay, openOverlay, shared, setShared, text } from "kompitum";
+import { agents, spaces, panes, terminals, run, kom, theme, settings, props, closeOverlay, openOverlay, shared, setShared, text } from "kompitum";
 
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
 
@@ -232,7 +232,10 @@ export default class Picker extends View {
         else if (k === "d" && e.modifiers.control) {
           if (sel?.kind === "ctx") {
             this.close();
-            run("tab.close", { id: sel.ctx.id });
+            const terms = panes().filter((p) => p.tab === sel.ctx.id && p.terminal);
+            // A plain shell closes at once; anything else runs something, so ask first.
+            if (terms.every((p) => p.program?.shell === true)) run("tab.close", { id: sel.ctx.id });
+            else openOverlay({ mod: "confirm", kind: "dialog", width: 380, props: { title: text("picker.close-terminal"), detail: text("picker.close-terminal-detail", { name: sel.ctx.name }), command: { name: "tab.close", args: { id: sel.ctx.id } } } });
           }
         } else return;
         cx.stop_propagation();

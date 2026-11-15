@@ -127,6 +127,7 @@ export default class Board extends View {
     this.hovered = null;
     this.confirm = null;
     this.accepting = null;
+    this.actionFocus = new Map();
     this.handle = cx.focus_handle();
     this.catalog = [];
     if (this.mode !== "panel") return;
@@ -179,6 +180,7 @@ export default class Board extends View {
           }
           if (!data || typeof data !== "object") throw new Error(text("board.status-object"));
           this.data = data;
+          this.prepareActions(data, cx);
           this.error = null;
           this.noteReviews(data);
         }
@@ -359,8 +361,30 @@ export default class Board extends View {
     return t.muted;
   }
 
-  action(t, id, label, primary, onClick) {
-    return div()
+  actionHandle(id, cx) {
+    let handle = this.actionFocus.get(id);
+    if (!handle) {
+      handle = cx.focus_handle();
+      this.actionFocus.set(id, handle);
+    }
+    return handle;
+  }
+
+  // Focus handles are made in a task, never in render: each row's actions keep
+  // the one they started with, so Tab's focus survives the next frame.
+  prepareActions(data, cx) {
+    const tasks = data?.tasks && typeof data.tasks === "object" ? data.tasks : {};
+    for (const kind of ["review", "running", "queued"]) {
+      for (const task of tasksOf(tasks, kind)) {
+        const key = `${kind}:${task.name}`;
+        for (const id of [`review-${key}`, `accept-${key}`, `discard-${key}`, `cancel-${key}`, `watch-${key}`]) this.actionHandle(id, cx);
+      }
+    }
+  }
+
+  action(t, id, label, primary, onClick, cx) {
+    const handle = this.actionFocus.get(id) ?? null;
+    const el = div()
       .id(id)
       .h(20)
       .px(6)
@@ -369,23 +393,25 @@ export default class Board extends View {
       .items_center()
       .rounded(5)
       .bg(primary ? t.solid : t.raised)
-      .text_color(primary ? t.solid_foreground : t.foreground)
+      .text_color(primary ? t.solid_foreground : t.dim)
       .text_size(11)
       .font_medium()
       .cursor_pointer()
-      .relative()
-      .tab_stop(true)
+      .relative();
+    if (handle) el.track_focus(handle);
+    el.tab_stop(true)
       .focus_ring(t.focus, 5)
       .on_click(onClick)
       .child(div().absolute().inset_0().rounded(5).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
       .child(label);
+    if (!primary) el.focus_visible((s) => s.text_color(t.foreground));
+    return { el, handle, primary };
   }
 
   row(t, task, kind, cx) {
     const key = `${kind}:${task.name}`;
     const hovered = this.hovered === key;
     const accepting = this.accepting?.name === task.name;
-    const show = kind === "review" || hovered || accepting;
     const asked = this.confirm?.key === key ? this.confirm.action : null;
     const repo = base(task.repo);
     const worker = str(task.worker);
@@ -395,20 +421,24 @@ export default class Board extends View {
     const by = this.byLabel(task.by);
 
     const buttons = [];
-    buttons.push(this.action(t, `review-${key}`, text("board.review"), false, () => this.review(task.name, cx)));
+    buttons.push(this.action(t, `review-${key}`, text("board.review"), false, () => this.review(task.name, cx), cx));
     if (kind === "review") {
       buttons.push(this.action(t, `accept-${key}`, text("board.accept"), true,
-        () => accepting ? this.accept(task.name, cx) : this.openAccept(task.name, cx)));
+        () => accepting ? this.accept(task.name, cx) : this.openAccept(task.name, cx), cx));
       buttons.push(this.action(t, `discard-${key}`, asked === "discard" ? text("board.discard-ask") : text("board.discard"), false,
-        () => asked === "discard" ? this.runTask("discard", task.name, cx) : this.ask(key, "discard", cx)));
+        () => asked === "discard" ? this.runTask("discard", task.name, cx) : this.ask(key, "discard", cx), cx));
     }
     if (kind === "running" || kind === "queued") {
       buttons.push(this.action(t, `cancel-${key}`, asked === "cancel" ? text("board.cancel-ask") : text("board.cancel"), false,
-        () => asked === "cancel" ? this.runTask("cancel", task.name, cx) : this.ask(key, "cancel", cx)));
+        () => asked === "cancel" ? this.runTask("cancel", task.name, cx) : this.ask(key, "cancel", cx), cx));
     }
     if (kind === "running") {
-      buttons.push(this.action(t, `watch-${key}`, text("board.watch"), false, () => this.watch(task.name)));
+      buttons.push(this.action(t, `watch-${key}`, text("board.watch"), false, () => this.watch(task.name), cx));
     }
+    // The keyboard reaches every action; at rest they wait dimmed, and a hovered
+    // row or a focused action brings them forward.
+    const color = hovered || buttons.some((button) => button.handle?.is_focused()) ? t.foreground : t.dim;
+    for (const button of buttons) button.el.text_color(button.primary ? t.solid_foreground : color);
 
     const meta = [];
     if (repo) meta.push(div().child(repo));
@@ -432,7 +462,7 @@ export default class Board extends View {
       .child(h_flex().gap(6).items_center()
         .child(div().flex_1().min_w(0).truncate().font_medium().text_color(t.foreground).child(task.name))
         .when(Boolean(by), (el) => el.child(this.chip(t, by, this.byColor(t, task.by))))
-        .when(show, (el) => el.child(h_flex().gap(4).children(buttons))))
+        .child(h_flex().gap(4).children(buttons.map((button) => button.el))))
       .when(meta.length > 0, (el) => el.child(h_flex().flex_wrap().gap(8).text_size(11).text_color(t.dim).children(meta)))
       .when(accepting, (el) => el.child(h_flex().pt(2).gap(6).items_center()
         .child(div().flex_1().min_w(0).h(24).px(6).rounded(5).border_1().border_color(t.accent).bg(t.background)

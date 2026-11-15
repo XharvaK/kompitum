@@ -37,9 +37,17 @@ function claudeWindows(usage) {
 
 export default class TopBar extends View {
   init(_props, cx) {
-    this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
+    this.panels = {};
+    this.last = {};
+    try {
+      const panels = JSON.parse(localStorage.getItem("panels") ?? "null");
+      if (panels && typeof panels === "object" && !Array.isArray(panels)) this.panels = panels;
+    } catch {}
     // The last surface shown per space, kept after the panel closes, so the toggle reopens it.
-    this.last = JSON.parse(localStorage.getItem("panel-last") ?? "{}");
+    try {
+      const last = JSON.parse(localStorage.getItem("panel-last") ?? "null");
+      if (last && typeof last === "object" && !Array.isArray(last)) this.last = last;
+    } catch {}
     // Only the bar reads the notes, for the bell; the panel's header copy has no bell.
     this.notes = 0;
     if (props()?.panel) return;

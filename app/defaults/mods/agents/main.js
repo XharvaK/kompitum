@@ -57,6 +57,17 @@ const SORTS = [
   { id: "grouped", label: text("agents.grouped-by-space"), icon: "layers" },
 ];
 const sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[0];
+
+// A saved value that doesn't parse, or has the wrong shape, is the default.
+function readStored(key, fallback, ok) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? "null");
+    return ok(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const SECTION = { 4: text("agents.needs-you"), 3: text("agents.done"), 2: text("agents.working"), 1: text("agents.idle") };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
 const leadWord = (state) =>
@@ -83,8 +94,12 @@ export default class Agents extends View {
     if (props()?.sortMenu) return;
     this.folded = new Set();
     // Each agent's last state and when it changed (ms), kept across restarts.
-    this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
-    this.pendingPins = JSON.parse(localStorage.getItem("pins") ?? "[]");
+    const changed = readStored("changed", {}, isObject);
+    this.changed = {};
+    for (const [address, entry] of Object.entries(changed)) {
+      if (isObject(entry) && Number.isFinite(entry.at) && typeof entry.s === "string") this.changed[address] = entry;
+    }
+    this.pendingPins = readStored("pins", [], Array.isArray).filter((address) => typeof address === "string");
     if (!this.pendingPins.length) localStorage.removeItem("pins");
     this.migratingPins = new Set();
     this.handle = cx.focus_handle();
@@ -241,7 +256,7 @@ export default class Agents extends View {
       .gap(0)
       .items_center()
       .text_size(13)
-      .when(highlight === `sub-${k.address}`, (el) => el.track_focus(this.handle).focus_ring(t.focus, 8))
+      .when(this.highlight === `sub-${k.address}`, (el) => el.track_focus(this.handle).focus_ring(t.focus, 8))
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .keep_focus(true)

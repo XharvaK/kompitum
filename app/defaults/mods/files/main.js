@@ -1,7 +1,7 @@
 // A lazy file browser for the focused pane's folder, with bounded read-only previews.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, nextCommand, text } from "kompitum";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, layout, nextCommand, text } from "kompitum";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -11,6 +11,16 @@ function location() {
 }
 const key = () => JSON.stringify(location());
 const LANG = { ts: "js", tsx: "js", mts: "js", cts: "js", jsx: "js", mjs: "js", toml: "yaml", jsonc: "json", svelte: "html", vue: "html" };
+
+// Whether a node is on screen, through a hidden ancestor or a stack's other child.
+function nodeVisible(node, id, visible = true) {
+  if (!node) return false;
+  visible = visible && node.hidden !== true;
+  if (node.id === id) return visible;
+  const children = node.type === "stack" ? (node.children ?? []).filter(child => child.id === node.active) : node.children ?? [];
+  return children.some(child => nodeVisible(child, id, visible));
+}
+const visible = () => window()?.active === true && nodeVisible(layout(), "files");
 const PER_FOLDER = 500, TOTAL = 5000;
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 
@@ -51,7 +61,11 @@ export default class Files extends View {
       }
     });
     this.refresh(cx);
-    cx.timer.every(10000, cx => this.refresh(cx));
+    this.paused = !visible();
+    cx.timer.every(10000, cx => {
+      if (visible()) this.refresh(cx);
+      else this.paused = true;
+    });
   }
 
   watch(root, cx) {
@@ -173,7 +187,12 @@ export default class Files extends View {
   }
 
   render(cx) {
-    if (key() !== this.context?.key) this.refresh(cx);
+    const visibleNow = visible();
+    if (!visibleNow) this.paused = true;
+    else if (this.paused) {
+      this.paused = false;
+      this.refresh(cx);
+    } else if (key() !== this.context?.key) this.refresh(cx);
     const t = theme();
     return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
