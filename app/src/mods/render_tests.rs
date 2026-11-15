@@ -1280,7 +1280,7 @@ fn a_permission_card_uses_the_leads_folder_when_the_ask_has_no_cwd(cx: &mut Test
         "permission",
         json!({"tool_name": "Read", "tool_input": {"file_path": "C:\\work\\proj\\notes.txt"}}),
     );
-    values.get_mut("lead").unwrap()["folder"] = json!("c:\\work\\proj");
+    values.get_mut("settings").unwrap()["lead"] = json!({"folder": "c:\\work\\proj"});
     values.insert(
         "window".into(),
         json!({"platform":"windows","dictation":true,"titlebar":"none","buttons":true,"maximized":false,"fullscreen":false,"active":true}),
