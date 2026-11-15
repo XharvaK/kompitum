@@ -30,13 +30,12 @@ pub(crate) fn agent_note(addr: &str, alert: &Value) -> Option<SystemNote> {
 pub(crate) fn ask_note(id: &str, kind: &AskKind) -> SystemNote {
     SystemNote {
         tag: format!("needs-{id}"),
-        title: "Claude needs you".into(),
+        title: crate::strings::text("app.ask-title"),
         body: match kind {
-            AskKind::Permission => "A permission",
-            AskKind::Plan => "A plan to approve",
-            AskKind::Question => "A question",
-        }
-        .into(),
+            AskKind::Permission => crate::strings::text("app.ask-permission"),
+            AskKind::Plan => crate::strings::text("app.ask-plan"),
+            AskKind::Question => crate::strings::text("app.ask-question"),
+        },
     }
 }
 
@@ -82,8 +81,8 @@ pub(crate) fn workers_back(previous: &HashMap<String, String>, view: &Value) -> 
 /// The toast for a worker that came back.
 pub(crate) fn worker_back_toast(label: &str) -> Value {
     serde_json::json!({
-        "title": format!("{label} is back"),
-        "body": "It can take tasks again.",
+        "title": crate::strings::text_with("app.worker-back", &[("label", label)]),
+        "body": crate::strings::text("app.worker-back-body"),
         "level": "info",
     })
 }
