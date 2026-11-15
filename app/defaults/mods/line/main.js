@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
-import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, run, appLink, openLink, sheet } from "kompitum";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, run, appLink, openLink, sheet, text } from "kompitum";
 
 // The same two colors the Board's chips use: the lead's, and the other agent's.
 const OWN = "accent";
@@ -12,7 +12,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const pad = (n) => String(n).padStart(2, "0");
 
 const cap = (s) => (s ? String(s).replace(/^./, (c) => c.toUpperCase()) : "");
-const text = (v) => (typeof v === "string" ? v : "");
+const str = (v) => (typeof v === "string" ? v : "");
 const base = (p) => String(p ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 
@@ -81,7 +81,7 @@ function behindProblems(problems) {
 // each for who and the title, then the parts that may be absent.
 function noteHeight(note, agent) {
   const lines = bodyLines(note.body);
-  const project = Boolean(text(note.project));
+  const project = Boolean(str(note.project));
   const meta = metaOf(note, agent).length > 0;
   let children = 2;
   let height = 20 + 2 + 16 + 19;
@@ -100,11 +100,11 @@ function metaOf(note, agent) {
   const other = otherSide(note, agent);
   const reads = Array.isArray(note.read_by) ? note.read_by : [];
   const read = [...reads].reverse().find((r) => r && r.agent === other);
-  if (read) out.push(`read ${stamp(read.at)}`);
+  if (read) out.push(text("line.read", { when: stamp(read.at) }));
   if (note.done && typeof note.done === "object") {
-    out.push(`done ${stamp(note.done.at)}${note.done.why ? `: ${note.done.why}` : ""}`);
+    out.push(note.done.why ? text("line.done-why", { when: stamp(note.done.at), why: note.done.why }) : text("line.done", { when: stamp(note.done.at) }));
   } else if (typeof note.done === "string" && note.done) {
-    out.push(`done ${note.done}`);
+    out.push(text("line.done", { when: note.done }));
   }
   if (note.status && note.status !== "open") out.push(String(note.status));
   return out;
@@ -168,23 +168,23 @@ export default class Line extends View {
           try {
             data = JSON.parse(result.stdout);
           } catch (e) {
-            throw new Error(firstLine(e?.message ?? e) || "thread did not return JSON");
+            throw new Error(firstLine(e?.message ?? e) || text("line.thread-json"));
           }
-          if (!data || typeof data !== "object") throw new Error("thread did not return an object");
+          if (!data || typeof data !== "object") throw new Error(text("line.thread-object"));
           const notes = Array.isArray(data.notes) ? data.notes.filter((n) => n && typeof n === "object") : [];
-          const agent = text(data.agent) || this.agent;
+          const agent = str(data.agent) || this.agent;
           const paths = new Set(notes.map((n) => n.path).filter((p) => typeof p === "string"));
           if (this.loaded) {
             const fresh = notes.filter((n) => typeof n.path === "string" && !this.seen.has(n.path));
             for (const n of fresh) {
-              notify({ title: `${cap(n.from) || "Note"}: ${text(n.title) || base(n.path) || "new note"}` });
+              notify({ title: text("line.note-notify", { from: cap(n.from) || text("line.note"), title: str(n.title) || base(n.path) || text("line.new-note") }) });
             }
             if (fresh.length) playSound("done");
           }
-          const newest = notes.length ? text(notes[notes.length - 1].path) : "";
+          const newest = notes.length ? str(notes[notes.length - 1].path) : "";
           const first = !this.loaded;
           this.notes = notes;
-          this.vault = text(data.vault);
+          this.vault = str(data.vault);
           this.agent = agent;
           this.unpushed = Number.isFinite(Number(data.unpushed)) ? Number(data.unpushed) : 0;
           this.problems = Array.isArray(data.problems) ? data.problems : [];
@@ -199,7 +199,7 @@ export default class Line extends View {
           }
         }
       } catch (e) {
-        if (seq === this.seq) this.error = String(e?.message ?? e ?? "").trim() || "thread failed";
+        if (seq === this.seq) this.error = String(e?.message ?? e ?? "").trim() || text("line.thread-failed");
       } finally {
         if (seq === this.seq) {
           this.loading = false;
@@ -230,8 +230,8 @@ export default class Line extends View {
         .rounded(5)
         .text_color(t.muted)
         .cursor_pointer()
-        .tooltip("Close")
-        .accessibility_label("Close")
+        .tooltip(text("line.close"))
+        .accessibility_label(text("line.close"))
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => closeOverlay(props().overlay))
@@ -262,12 +262,12 @@ export default class Line extends View {
   // Drawn by the virtual list, so no handlers live here: on_item_click on the
   // list opens the note. Heights are what noteHeight() above promises.
   card(t, note) {
-    const path = text(note.path);
-    const from = text(note.from);
-    const title = text(note.title) || base(path) || "Note";
-    const kind = text(note.kind);
+    const path = str(note.path);
+    const from = str(note.from);
+    const title = str(note.title) || base(path) || text("line.note");
+    const kind = str(note.kind);
     const time = stamp(note.date);
-    const project = text(note.project);
+    const project = str(note.project);
     const meta = metaOf(note, this.agent);
     const lines = bodyLines(note.body);
     return v_flex()
@@ -279,7 +279,7 @@ export default class Line extends View {
       .border_1()
       .border_color(unread(note, this.agent) ? t.accent : t.border)
       .child(h_flex().h(16).gap(6).items_center()
-        .child(div().h(16).flex_none().truncate().text_size(11).font_semibold().text_color(this.senderColor(t, from)).child(cap(from) || "Note"))
+        .child(div().h(16).flex_none().truncate().text_size(11).font_semibold().text_color(this.senderColor(t, from)).child(cap(from) || text("line.note")))
         .when(Boolean(kind), (el) => el.child(this.chip(t, kind, t.muted)))
         .child(div().flex_1())
         .when(Boolean(time), (el) => el.child(div().h(16).flex_none().truncate().text_size(11).text_color(t.dim).child(time))))
@@ -294,7 +294,7 @@ export default class Line extends View {
     openOverlay({
       mod: "line",
       kind: "window",
-      key: `line-note:${text(note.path)}`,
+      key: `line-note:${str(note.path)}`,
       width: 760,
       height: 560,
       props: { note, vault: this.vault, agent: this.agent, with: this.other },
@@ -328,7 +328,7 @@ export default class Line extends View {
       app = appLink(scheme);
     } catch {}
     if (app) return openLink(link);
-    notify({ title: `Could not open ${name}`, body: `Nothing on this computer opens ${scheme}:// links.`, level: "error" });
+    notify({ title: text("line.open-failed", { name }), body: text("line.no-link", { scheme }), level: "error" });
   }
 
   renderPanel() {
@@ -346,13 +346,13 @@ export default class Line extends View {
       .text_color(t.foreground)
       .text_size(13)
       .child(h_flex().h(42).flex_none().px(12).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().font_semibold().child("Notes"))
+        .child(div().font_semibold().child(text("line.notes")))
         .child(this.other
-          ? div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(`with ${cap(this.other)}`)
+          ? div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(text("line.with", { name: cap(this.other) }))
           : div().flex_1())
         .when(Boolean(link) && this.appFor(link), (el) => el.child(h_flex().id("line-door").px(6).py(2).gap(4).items_center().rounded(5)
           .text_size(11).text_color(t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
-          .tooltip(`Open ${name}`)
+          .tooltip(text("line.open", { name }))
           .on_click(() => this.openDoor(link, name))
           .child(name)
           .child(svg("mods/lead/arrow-up-right.svg").size(11))))
@@ -363,23 +363,23 @@ export default class Line extends View {
           .rounded(5)
           .text_color(t.muted)
           .cursor_pointer()
-          .tooltip("Refresh")
-          .accessibility_label("Refresh")
+          .tooltip(text("line.refresh"))
+          .accessibility_label(text("line.refresh"))
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click((_e, cx) => this.refresh(cx))
           .child(svg("frame/settings/refresh.svg").size(13))))
       .when(this.unpushed > 0, (el) => el.child(div().px(12).pt(6).text_size(11).text_color(t.muted)
-        .child(`${this.unpushed} unpushed`)))
+        .child(text("line.unpushed", { count: this.unpushed }))))
       .when(details.length > 0, (el) => el.child(h_flex().id("line-behind").px(12).pt(6).gap(8).items_center()
-        .child(div().text_size(11).text_color(t.muted).child("Couldn't sync the notes."))
+        .child(div().text_size(11).text_color(t.muted).child(text("line.sync-failed")))
         .child(div().id("line-retry").text_size(11).text_color(t.accent).cursor_pointer()
           .hover((s) => s.text_color(t.foreground))
           .on_click((_e, cx) => this.retry(cx))
-          .child("Retry"))
+          .child(text("line.retry")))
         .child(div().id("line-details").text_size(11).text_color(t.dim).cursor_pointer()
           .hover((s) => s.text_color(t.foreground))
           .on_click((_e, cx) => { this.details = !this.details; cx.notify(); })
-          .child("Details"))))
+          .child(text("line.details")))))
       .when(this.details && details.length > 0, (el) => el.child(v_flex().px(12).pt(4).gap(2)
         .children(details.map((problem) => {
           const message = problemText(problem);
@@ -390,27 +390,27 @@ export default class Line extends View {
         .child(div().id("line-error-retry").text_size(11).text_color(t.accent).cursor_pointer()
           .hover((s) => s.text_color(t.foreground))
           .on_click((_e, cx) => this.retry(cx))
-          .child("Retry"))))
+          .child(text("line.retry")))))
       .when(filed.length > 0, (el) => el.child(div().id("line-filed").px(12).pt(6).text_size(11).text_color(t.dim).cursor_pointer()
         .hover((s) => s.text_color(t.foreground))
         .on_click(() => { closeOverlay(props()?.overlay); run("app.mailbox"); })
         .child(`${filed.length} ${filed.length === 1 ? "note" : "notes"} couldn't be filed · Open the mailbox`)))
       .child(v_flex().flex_1().min_h(0).relative()
         .when(this.notes.length === 0, (el) => el.p(12).child(div().text_size(12).text_color(t.muted)
-          .child(!this.other ? "No agent has joined yet." : this.error ? "No notes to show." : this.loaded ? "No notes yet." : "Loading notes…")))
+          .child(!this.other ? text("line.no-agent") : this.error ? text("line.no-notes-show") : this.loaded ? text("line.no-notes") : text("line.loading"))))
         .when(this.notes.length > 0, (el) => el
           .child(v_virtual_list(
             "line-notes",
             this.notes.length,
             this.notes.map((note) => noteHeight(note, this.agent)),
-            (i) => text(this.notes[i].path) || String(i),
+            (i) => str(this.notes[i].path) || String(i),
             (range) => this.notes.slice(range.start, range.end).map((note) => this.card(t, note)),
           )
             .size_full()
             .p(10)
             .track_scroll(this.scroll)
             .on_item_click((key) => {
-              const note = this.notes.find((n) => text(n.path) === key);
+              const note = this.notes.find((n) => str(n.path) === key);
               if (note) this.openNote(note);
             }))
           .child(Scrollbar.vertical("line-notes").absolute().inset_0())));
@@ -420,15 +420,15 @@ export default class Line extends View {
     const t = theme();
     const p = props() ?? {};
     const note = p.note ?? {};
-    const agent = text(p.agent) || "opus";
-    const from = text(note.from);
-    const kind = text(note.kind);
-    const title = text(note.title) || base(note.path) || "Note";
+    const agent = str(p.agent) || "opus";
+    const from = str(note.from);
+    const kind = str(note.kind);
+    const title = str(note.title) || base(note.path) || text("line.note");
     const time = stamp(note.date);
-    const project = text(note.project);
+    const project = str(note.project);
     const meta = metaOf(note, agent);
     const body = String(note.body ?? "");
-    const file = [text(p.vault).replace(/[\\/]+$/, ""), text(note.path)].filter(Boolean).join("/");
+    const file = [str(p.vault).replace(/[\\/]+$/, ""), str(note.path)].filter(Boolean).join("/");
     return v_flex()
       .id("line-note")
       .size_full()
@@ -444,20 +444,20 @@ export default class Line extends View {
         .p(14)
         .gap(8)
         .child(h_flex().gap(6).items_center()
-          .child(div().text_size(12).font_semibold().text_color(this.senderColor(t, from)).child(cap(from) || "Note"))
+          .child(div().text_size(12).font_semibold().text_color(this.senderColor(t, from)).child(cap(from) || text("line.note")))
           .when(Boolean(kind), (el) => el.child(this.chip(t, kind, t.muted)))
           .when(Boolean(time), (el) => el.child(div().text_size(11).text_color(t.dim).child(time)))
           .when(Boolean(project), (el) => el.child(div().text_size(11).text_color(t.dim).child(project))))
         .when(meta.length > 0, (el) => el.child(div().text_size(11).text_color(t.dim).child(meta.join(" · "))))
-        .child(v_flex().w_full().text_size(12).text_color(t.foreground).children(lines(body || "No body.")))
+        .child(v_flex().w_full().text_size(12).text_color(t.foreground).children(lines(body || text("line.no-body"))))
         .when(note.cut === true, (el) => el.child(div().text_size(11).text_color(t.muted)
-          .child(`cut at 4000 characters; the file is ${file || text(note.path)}`))));
+          .child(text("line.cut", { file: file || str(note.path) })))));
   }
 
   render() {
     if (this.mode === "note") return this.renderNote();
     const panel = this.renderPanel();
     if (!props()?.overlay || props()?.with) return panel;
-    return sheet({ title: "Notes", width: 880, onClose: () => closeOverlay(props().overlay) }, panel);
+    return sheet({ title: text("line.notes"), width: 880, onClose: () => closeOverlay(props().overlay) }, panel);
   }
 }

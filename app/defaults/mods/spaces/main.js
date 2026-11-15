@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, kom, theme, shared, setShared, watchFolder, window, layout, pickFolder, props } from "kompitum";
+import { spaces, machines, panes, run, openOverlay, exec, kom, theme, shared, setShared, watchFolder, window, layout, pickFolder, props, text } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -150,7 +150,7 @@ export default class Spaces extends View {
           if (r.code !== 0) {
             let error;
             try { error = JSON.parse(r.stdout || r.stderr).error?.message; } catch {}
-            throw new Error(error || r.stderr || r.stdout || "Couldn't connect.");
+            throw new Error(error || r.stderr || r.stdout || text("spaces.connect-failed"));
           }
         };
         if (!state.removed) {
@@ -253,7 +253,7 @@ export default class Spaces extends View {
   newSpace(machine, cx) {
     if (machine) return run("space.new", { machine });
     cx.spawn(async () => {
-      const folder = await pickFolder({ prompt: "Pick the folder this space works in" });
+      const folder = await pickFolder({ prompt: text("spaces.folder-prompt") });
       if (folder) run("space.new", { folder, machine: "" });
     });
   }
@@ -318,7 +318,7 @@ export default class Spaces extends View {
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
         || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
     };
-    const loadingRow = m => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, el => el.justify_center()).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
+    const loadingRow = m => h_flex().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(collapsed ? 0 : 8).items_center().when(collapsed, el => el.justify_center()).text_size(12).text_color(t.dim).child(collapsed ? "…" : text("spaces.loading"));
     if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.map(draw);
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
@@ -331,8 +331,8 @@ export default class Spaces extends View {
       const icon = svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none();
       const badge = div().absolute().right(-3).bottom(-2).size(6).rounded(3).border_1().border_color(t.chrome).bg(connected ? t.ansi2 : t.dim);
       const head = h_flex().id(`machine-${m ?? "local"}`).h(26).flex_none().px(collapsed ? 0 : 8).gap(7).items_center().text_size(11).text_color(t.dim)
-        .when(collapsed, el => el.mt(4).w(RAIL_CELL).justify_center().rounded(6).tooltip(m ? `${m} · ${connected ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " ")}` : "This computer"))
-        .when(collapsed, el => el.accessibility_label(m ? `${m} · ${connected ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " ")}` : "This computer"))
+        .when(collapsed, el => el.mt(4).w(RAIL_CELL).justify_center().rounded(6).tooltip(m ? `${m} · ${connected ? text("spaces.connected") : (machine?.state ?? text("spaces.asleep")).replace(/_/g, " ")}` : text("spaces.this-computer")))
+        .when(collapsed, el => el.accessibility_label(m ? `${m} · ${connected ? text("spaces.connected") : (machine?.state ?? text("spaces.asleep")).replace(/_/g, " ")}` : text("spaces.this-computer")))
         .cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .keep_focus(true)
         .on_click((_e, cx) => {
@@ -342,18 +342,19 @@ export default class Spaces extends View {
         })
         .when(!collapsed, el => el.child(icon))
         .when(collapsed, el => el.child(div().relative().flex_none().child(icon).when(Boolean(m), el => el.child(badge))))
-        .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? "This computer"))
-          .when(!connected && !rebuilt, el => el.child(div().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " "))))
+        .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? text("spaces.this-computer")))
+          .when(!connected && !rebuilt, el => el.child(div().flex_none().child((machine?.state ?? text("spaces.asleep")).replace(/_/g, " "))))
           .when(rebuilt, el => el.child(h_flex().flex_none().gap(3).items_center()
-            .child(div().max_w(140).truncate().child(firstLine(repair?.error) || repair?.error || "rebuilt ·"))
+            .child(div().max_w(140).truncate().child(firstLine(repair?.error) || repair?.error || text("spaces.rebuilt")))
             .child(div().id(`machine-connect-${m}`).text_color(repair?.error ? t.blocked : t.muted)
               .hover(s => s.text_color(t.foreground))
-              .tooltip(repair?.error || "This machine was rebuilt or replaced. Click to connect to the new one.")
-              .accessibility_label(repair?.error || "This machine was rebuilt or replaced. Click to connect to the new one.")
+              .tooltip(repair?.error || text("spaces.rebuilt-hint"))
+              .accessibility_label(repair?.error || text("spaces.rebuilt-hint"))
               .keep_focus(true)
               .on_click((_e, cx) => { cx.stop_propagation(); this.reconnect(machine, cx); })
-              .child(repair?.busy ? "Connecting…" : "Connect"))))
+              .child(repair?.busy ? text("spaces.connecting") : text("spaces.connect")))))
           .when(connected, el => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(4).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+            .accessibility_label(text("spaces.new-space"))
             .keep_focus(true)
             .on_click((_e, cx) => { cx.stop_propagation(); this.newSpace(m, cx); }).child("+")))
           .child(div().size(6).rounded(3).flex_none().bg(connected ? t.ansi2 : t.dim))
@@ -362,11 +363,11 @@ export default class Spaces extends View {
         .text_size(12).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .keep_focus(true)
         .on_click((_e, cx) => this.newSpace(m, cx))
-        .when(collapsed, el => el.w(RAIL_CELL).rounded(6).justify_center().tooltip(`New space on ${m ?? "this computer"}`)
-          .accessibility_label(`New space on ${m ?? "this computer"}`)
+        .when(collapsed, el => el.w(RAIL_CELL).rounded(6).justify_center().tooltip(text("spaces.new-space-on", { machine: m ?? text("spaces.this-computer-lower") }))
+          .accessibility_label(text("spaces.new-space-on", { machine: m ?? text("spaces.this-computer-lower") }))
           .child(h_flex().size(18).rounded(5).border_1().border_color(t.dim).items_center().justify_center()
             .child(svg("mods/workspace-chrome/plus.svg").size(10))))
-        .when(!collapsed, el => el.child(svg("mods/workspace-chrome/plus.svg").size(12)).child("New space there"));
+        .when(!collapsed, el => el.child(svg("mods/workspace-chrome/plus.svg").size(12)).child(text("spaces.new-space-there")));
       if (!collapsed && rebuilt) return [head];
       const cell = collapsed ? railCell : (el) => el;
       return [cell(head), ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : cell(empty)])];
@@ -452,8 +453,8 @@ export default class Spaces extends View {
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           // The open space shows a way to close it; closing still asks first.
           .when(on, el => el.child(div().id(`space-close-${w.id}`).flex_none().size(18).rounded(4).flex().items_center().justify_center()
-            .text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tooltip("Close space")
-            .accessibility_label("Close space").keep_focus(true)
+            .text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tooltip(text("spaces.close-space"))
+            .accessibility_label(text("spaces.close-space")).keep_focus(true)
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
             .on_click((_e, cx) => { cx.stop_propagation(); run("space.close", { id: w.id }); })
             .child(svg("mods/workspace-chrome/x.svg").size(11)))),
@@ -515,8 +516,9 @@ export default class Spaces extends View {
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(12).text_color(t.dim)
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
-        .when(!collapsed, el => el.child("Spaces"))
+        .when(!collapsed, el => el.child(text("spaces.title")))
         .child(div().id("space-new").size(28).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+          .accessibility_label(text("spaces.new-space"))
           .keep_focus(true)
           .on_click((_e, cx) => this.newSpace(null, cx)).child(svg("mods/workspace-chrome/plus.svg").size(14))))
       .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 8).pb(14).overflow_y_scrollbar().mode("always")

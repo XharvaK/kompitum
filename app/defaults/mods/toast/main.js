@@ -4,7 +4,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { props, closeOverlay, run, theme } from "kompitum";
+import { props, closeOverlay, run, theme, text } from "kompitum";
 
 const DOT = { error: "blocked", warning: "working", success: "done", info: "accent" };
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
@@ -25,8 +25,8 @@ export default class Toast extends View {
       .text_color(t.dim)
       .cursor_pointer()
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-      .tooltip("Dismiss")
-      .accessibility_label("Dismiss")
+      .tooltip(text("toast.dismiss"))
+      .accessibility_label(text("toast.dismiss"))
       .on_click((_e, cx) => {
         cx.stop_propagation();
         closeOverlay(p.overlay);

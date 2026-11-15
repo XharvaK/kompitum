@@ -17,6 +17,7 @@ mod bell;
 mod cli_errors;
 mod composer;
 mod keyboard;
+mod labels;
 mod limits;
 mod machines;
 mod mailbox;

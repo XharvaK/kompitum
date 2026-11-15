@@ -4,14 +4,14 @@
 // window menu.
 
 import { div } from "gpui-kit";
-import { panes, props, run, home } from "kompitum";
+import { panes, props, run, home, text } from "kompitum";
 import { C, unit, root, titleBar, programIcon, icon, dosPath, openMenu } from "./kit.js";
 
 export function paneTitle(p) {
   if (!p) return "";
   if (p.mod) return p.title || p.mod;
   const prog = p.program;
-  if (!prog || prog.shell) return `DOS Prompt - ${dosPath(p.cwd, home())}`;
+  if (!prog || prog.shell) return `${text("win98.dos-prompt")} - ${dosPath(p.cwd, home())}`;
   const t = (p.title ?? "").trim();
   return t && t !== prog.name ? `${prog.name} - ${t}` : `${prog.name} - ${dosPath(p.cwd, home())}`;
 }
@@ -27,14 +27,14 @@ export default class PaneWindow {
     const zoomed = Boolean(p?.zoomed);
     const menu = () =>
       openMenu([
-        { label: "&Restore", act: { run: ["pane.zoom", { pane: id }] }, disabled: !zoomed },
-        { label: "Mi&nimize", act: { run: ["tab.settle", { id: p?.tab }] } },
-        { label: "Ma&ximize", act: { run: ["pane.zoom", { pane: id }] }, disabled: zoomed },
+        { label: text("win98.restore"), act: { run: ["pane.zoom", { pane: id }] }, disabled: !zoomed },
+        { label: text("win98.minimize"), act: { run: ["tab.settle", { id: p?.tab }] } },
+        { label: text("win98.maximize"), act: { run: ["pane.zoom", { pane: id }] }, disabled: zoomed },
         { sep: true },
-        { label: "Split &Right", shortcut: "Ctrl+Shift+O", act: { run: ["pane.split", { direction: "right", pane: id }] } },
-        { label: "Split &Down", shortcut: "Ctrl+Shift+E", act: { run: ["pane.split", { direction: "down", pane: id }] } },
+        { label: text("win98.split-right"), shortcut: "Ctrl+Shift+O", act: { run: ["pane.split", { direction: "right", pane: id }] } },
+        { label: text("win98.split-down"), shortcut: "Ctrl+Shift+E", act: { run: ["pane.split", { direction: "down", pane: id }] } },
         { sep: true },
-        { label: "&Close", bold: true, shortcut: "Alt+F4", act: { run: ["pane.close", { pane: id }] } },
+        { label: text("win98.close"), bold: true, shortcut: "Alt+F4", act: { run: ["pane.close", { pane: id }] } },
       ]);
     const bar = titleBar(u, {
       id: `pw-${id}`,
@@ -43,9 +43,9 @@ export default class PaneWindow {
       active,
       icon: p?.mod ? icon(u, "programs", 16) : programIcon(u, p?.program, 16),
       controls: [
-        ["min", () => run("tab.settle", { id: p?.tab }), "Minimize"],
-        [zoomed ? "restore" : "max", () => run("pane.zoom", { pane: id }), zoomed ? "Restore" : "Maximize"],
-        ["close", () => run("pane.close", { pane: id }), "Close"],
+        ["min", () => run("tab.settle", { id: p?.tab }), text("win98.minimize-tip")],
+        [zoomed ? "restore" : "max", () => run("pane.zoom", { pane: id }), zoomed ? text("win98.restore-tip") : text("win98.maximize-tip")],
+        ["close", () => run("pane.close", { pane: id }), text("win98.close-tip")],
       ],
       onClick: () => run("pane.focus", { pane: id }),
       onDouble: () => run("pane.zoom", { pane: id }),

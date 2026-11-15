@@ -12269,6 +12269,9 @@ export default class ScrollSheet extends View {
         if !running_alone("settings_sheet_body") {
             return;
         }
+        // The sheet's mods read real files and the core; let those threads run
+        // rather than failing the deterministic scheduler on their activity.
+        cx.dispatcher.allow_parking();
         let (view, cx) = open_window(
             cx,
             "unused",

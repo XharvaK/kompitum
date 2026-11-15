@@ -6,7 +6,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, theme, window, shared, layout, settings, home, props, openOverlay, agents, lead, updates, kom } from "kompitum";
+import { spaces, panes, run, theme, window, shared, layout, settings, home, props, openOverlay, agents, lead, updates, kom, text } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -29,7 +29,7 @@ function folder(cwd) {
 // Claude's windows that count, as the composer counts them: a percentage, and a reset not yet past.
 function claudeWindows(usage) {
   const now = Date.now() / 1000;
-  return [{ short: "5h", limit: usage?.five_hour }, { short: "week", limit: usage?.seven_day }]
+  return [{ short: text("topbar.window-5h"), limit: usage?.five_hour }, { short: text("topbar.window-week"), limit: usage?.seven_day }]
     .map(({ short, limit }) => ({ short, pct: limit?.used_percentage, resets: limit?.resets_at }))
     .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
     .filter((w) => !(typeof w.resets === "number" && w.resets < now));
@@ -67,7 +67,7 @@ export default class TopBar extends View {
   status(t, button) {
     const windows = claudeWindows(lead()?.usage);
     const top = Math.max(0, ...windows.map((w) => w.pct));
-    const limitsTip = ["Limits", ...windows.map((w) => `${w.short} ${Math.round(w.pct)}%`)].join(" · ");
+    const limitsTip = [text("topbar.limits"), ...windows.map((w) => text("topbar.limit", { window: w.short, percent: Math.round(w.pct) }))].join(" · ");
     const limits = button("topbar-limits", svg("mods/workspace-chrome/gauge.svg").size(16),
       () => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "top-right" }))
       .text_color(t.muted)
@@ -85,8 +85,8 @@ export default class TopBar extends View {
       () => openOverlay({ mod: "bell", kind: "popup", width: 360, height: 440, at: "top-right" }))
       .relative()
       .text_color(t.muted)
-      .tooltip(count === 0 ? "Nothing needs you" : parts.filter(Boolean).join(" · "))
-      .accessibility_label(count === 0 ? "Nothing needs you" : parts.filter(Boolean).join(" · "))
+      .tooltip(count === 0 ? text("topbar.nothing-needs-you") : parts.filter(Boolean).join(" · "))
+      .accessibility_label(count === 0 ? text("topbar.nothing-needs-you") : parts.filter(Boolean).join(" · "))
       .when(count > 0, (el) => el.child(div().id("topbar-bell-count").absolute().top(-2).right(-2).h(16).min_w(16).px(4).rounded(8)
         .flex().items_center().justify_center().bg(t.accent_fill).text_color(t.accent_foreground).text_size(11).font_semibold()
         .child(count > 99 ? "99+" : String(count))));
@@ -126,15 +126,15 @@ export default class TopBar extends View {
       .rounded(6).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tooltip(tip)
       .accessibility_label(tip).keep_focus(true)
       .on_click(action).child(svg(icon).size(size));
-    const words = [["files", "Files"], ["changes", "Changes"], ["tasks", "Tasks"]]
+    const words = [["files", text("topbar.files")], ["changes", text("topbar.changes")], ["tasks", text("topbar.tasks")]]
       .filter(([id]) => enabled.includes(id))
       .map(([id, label]) => word(id, label));
     return h_flex().id("panel-head").size_full().px(8).gap(2).items_center().border_b(1).border_color(t.border)
       .children(words)
       .child(div().flex_1())
-      .child(iconButton("panel-terminal", "mods/workspace-chrome/terminal.svg", 15, "Open a terminal beside it",
+      .child(iconButton("panel-terminal", "mods/workspace-chrome/terminal.svg", 15, text("topbar.open-terminal"),
         () => run("pane.split", { direction: "right" })))
-      .child(iconButton("panel-close", "mods/workspace-chrome/x.svg", 12, "Close", () => run("layout.hide", { id: "panel" })));
+      .child(iconButton("panel-close", "mods/workspace-chrome/x.svg", 12, text("topbar.close"), () => run("layout.hide", { id: "panel" })));
   }
 
   // The side panel is remembered per space: switching shows that space's choice
@@ -178,7 +178,7 @@ export default class TopBar extends View {
     const program = shown
       ? panes().find((p) => p.tab === shown.id && p.program?.agent)?.program ?? panes().find((p) => p.tab === shown.id)?.program
       : null;
-    const name = shown ? (/^tb\d+$/.test(shown.name) ? program?.name ?? "Terminal" : shown.name) : "";
+    const name = shown ? (/^tb\d+$/.test(shown.name) ? program?.name ?? text("topbar.terminal") : shown.name) : "";
     // The shown tab's folder: its focused pane's, else its first pane's that has one.
     const tabPanes = shown ? panes().filter((p) => p.tab === shown.id) : [];
     const dir = folder((tabPanes.find((p) => p.focused && p.cwd) ?? tabPanes.find((p) => p.cwd))?.cwd);
@@ -188,8 +188,8 @@ export default class TopBar extends View {
     this.syncPanel(space, panel, body, enabled);
     this.rememberSurface(space, panel, body);
     const stop = (_e, cx) => cx.stop_propagation();
-    const button = (id, label, action) => div().id(id).size(28).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-      .keep_focus(true).on_mouse_down("left", stop).on_click(action).child(label);
+    const button = (id, label, action, name) => div().id(id).size(28).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .keep_focus(true).when(Boolean(name), (el) => el.accessibility_label(name)).on_mouse_down("left", stop).on_click(action).child(label);
     const open = Boolean(panel && !panel.hidden);
     const togglePanel = () => {
       if (open) {
@@ -202,8 +202,8 @@ export default class TopBar extends View {
     const toggle = button("panel-toggle", svg("mods/topbar/panel-right.svg").size(16), togglePanel)
       .text_color(open ? t.foreground : t.muted)
       .when(open, (el) => el.bg(t.selected))
-      .tooltip(open ? "Hide the side panel" : "Show the side panel")
-      .accessibility_label(open ? "Hide the side panel" : "Show the side panel");
+      .tooltip(open ? text("topbar.hide-panel") : text("topbar.show-panel"))
+      .accessibility_label(open ? text("topbar.hide-panel") : text("topbar.show-panel"));
     const machine = space?.machine, branch = space?.branch;
     const crumbs = h_flex().id("topbar-crumbs").min_w(0).gap(6).items_center()
       .when(Boolean(dirText), (el) => el.child(div().id("topbar-folder").min_w(0).truncate().text_size(13).text_color(t.dim).tooltip(dir).child(dirText)))
@@ -224,9 +224,9 @@ export default class TopBar extends View {
       // Space, not a line, sets the bell apart from the panel's toggle and the window's buttons.
       .child(div().w(8).flex_none())
       .when(enabled.length > 0, el => el.child(toggle))
-      .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize")))
-        .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize")))
-        .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"))
+      .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize"), text("topbar.minimize")))
+        .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize"), w.maximized ? text("topbar.restore") : text("topbar.maximize")))
+        .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"), text("topbar.close-window"))
           // Windows draws its own close button red on hover, and so does ours there (UD-FAM-001).
           .when(w.platform === "windows", (el) => el.hover((s) => s.bg("#C42B1C").text_color("#FFFFFF")).active((s) => s.bg("#C42B1CE6").text_color("#FFFFFF")))));
   }

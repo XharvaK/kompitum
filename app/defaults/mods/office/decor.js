@@ -1,7 +1,7 @@
 // The room's fixtures: wall pieces, the door, weather in the windows, seasonal touches.
 // Each function returns elements positioned in the scene's px.
 import { div } from "gpui-kit";
-import { run } from "kompitum";
+import { run, text } from "kompitum";
 import * as A from "./art.js";
 
 const WOOD = "#7a5c3e";
@@ -67,10 +67,10 @@ export function whiteboard(x, y, rows) {
 export function incidentSign(x, y, h, days, now) {
   return div().absolute().left(x).top(y).w(96).h(Math.min(h, 96)).p(5).bg("#f6d44c").border_3().border_color(INK)
     .flex().flex_col().items_center().justify_between().text_color(INK)
-    .child(div().text_size(8).font_bold().child("DAYS SINCE LAST"))
+    .child(div().text_size(8).font_bold().child(text("office.days-since")))
     .child(div().px(8).rounded(3).bg("#1d1d24").text_size(24).font_bold().text_color(now ? "#ff5a5a" : "#7dff9a")
       .child(String(now ? 0 : days)).when(now, (el) => el.loop("opacity", { from: 0.35, to: 1, period: 600 })))
-    .child(div().text_size(8).font_bold().child("INCIDENT"));
+    .child(div().text_size(8).font_bold().child(text("office.incident")));
 }
 
 // A framed head-and-shoulders of the busiest agent.
@@ -84,8 +84,8 @@ export function portrait(x, y, h, who) {
     .child(div().w(70).h(Math.min(h - 26, 62)).p(3).bg("#c99640").border_1().border_color("#8a6420")
       .child(div().relative().size_full().overflow_hidden().bg("#3d4a6b").child(face)))
     .child(div().w(84).py(1).rounded(2).bg("#e0b43d").flex().flex_col().items_center().text_color("#3b2a1a")
-      .child(div().text_size(7).font_bold().child("EMPLOYEE OF THE MONTH"))
-      .child(div().max_w(80).truncate().text_size(8).child(who?.name ?? "vacant")));
+      .child(div().text_size(7).font_bold().child(text("office.employee")))
+      .child(div().max_w(80).truncate().text_size(8).child(who?.name ?? text("office.vacant"))));
 }
 
 // A call on the wall with everyone working from another machine: each tile shows how
@@ -116,7 +116,7 @@ export function videoWall(x, y, h, remotes) {
   return div().absolute().left(x).top(y).p(4).bg("#1d1d24").rounded(3).border_2().border_color("#3b3b44").flex().flex_col().gap(3)
     .child(div().flex().items_center().gap(4).max_w(48 * 3 + 6).text_size(8).font_bold()
       .child(div().size(5).flex_none().rounded_full().bg("#e05252").loop("opacity", { from: 0.3, to: 1, period: 1200 }))
-      .child(div().truncate().text_color("#cfd6e0").child(`REMOTE · ${machines}`)))
+      .child(div().truncate().text_color("#cfd6e0").child(text("office.remote", { machines }))))
     .child(div().flex().flex_wrap().gap(3).max_w(48 * 3 + 6).max_h(h - 22).overflow_hidden().children(remotes.slice(0, 6).map(tile)));
 }
 
@@ -125,7 +125,7 @@ export function door(x, wallBottom, P, open) {
   const w = 16 * P, h = Math.min(28 * P, wallBottom - 30);
   return div().absolute().left(x).top(wallBottom - h).w(w).h(h)
     .child(div().absolute().left(w / 2 - 18).top(-20).w(36).h(14).rounded(2).bg("#2f9a50").flex().items_center().justify_center()
-      .text_size(8).font_bold().text_color("#eaffef").child("EXIT"))
+      .text_size(8).font_bold().text_color("#eaffef").child(text("office.exit")))
     .child(div().absolute().left(0).top(0).w(w).h(h).bg("#5c3a22"))
     .child(div().absolute().left(P).top(P).w(w - 2 * P).h(h - P).bg(open ? "#1f1a16" : "#8a5a35"))
     .when(open, (el) => el.child(div().absolute().left(P).top(h - 4 * P).w(w - 2 * P).h(3 * P).bg("#3a302a")))

@@ -2,7 +2,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, theme, home, openOverlay, window as win } from "kompitum";
+import { spaces, panes, run, theme, home, openOverlay, window as win, text } from "kompitum";
 
 const C = {
   tray: "#1d1f22",
@@ -78,9 +78,10 @@ function windowButton(id, icon, command) {
   );
 }
 
-function iconButton(id, icon, onClick) {
+function iconButton(id, icon, onClick, name) {
   return own(div())
     .id(id)
+    .accessibility_label(name)
     .flex_none()
     .p(7)
     .rounded(8)
@@ -170,8 +171,8 @@ export default class TerminalsBar extends View {
           .children(space.tabs.map(tab)),
       )
       .child(div().flex_1())
-      .child(iconButton("tm-keys", "command", () => run("app.palette")))
-      .child(iconButton("tm-new", "plus", () => run("tab.new", { space: space.id })))
+      .child(iconButton("tm-keys", "command", () => run("app.palette"), text("terminals-bar.command-palette")))
+      .child(iconButton("tm-new", "plus", () => run("tab.new", { space: space.id }), text("terminals-bar.new-terminal")))
       .when(Boolean(w.buttons), (el) =>
         el.child(
           h_flex()

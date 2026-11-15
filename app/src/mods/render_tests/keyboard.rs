@@ -360,6 +360,7 @@ fn sent_bodies(calls: &Rc<RefCell<Calls>>) -> Vec<String> {    calls
 /// leave the keyboard in the box: the next typing still reaches it.
 #[gpui::test]
 fn chrome_buttons_leave_the_composer_box_focused(cx: &mut TestAppContext) {
+    let _guard = RING_LOG.lock().unwrap_or_else(|poison| poison.into_inner());
     let (window, mut visual, calls) = mount_chrome(cx);
     click_composer_box(&mut visual);
     for (button, text) in [
@@ -659,6 +660,7 @@ fn tab_and_enter_press_a_settings_control(cx: &mut TestAppContext) {    let _gua
 /// keyboard back, and the next message typed reaches it.
 #[gpui::test]
 fn the_composer_box_takes_the_keyboard_after_a_card_closes(cx: &mut TestAppContext) {
+    let _guard = RING_LOG.lock().unwrap_or_else(|poison| poison.into_inner());
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let mut values = card_values();
@@ -697,6 +699,7 @@ fn the_composer_box_takes_the_keyboard_after_a_card_closes(cx: &mut TestAppConte
 /// the next message typed reaches it.
 #[gpui::test]
 fn the_composer_box_takes_the_keyboard_after_the_model_menu_closes(cx: &mut TestAppContext) {
+    let _guard = RING_LOG.lock().unwrap_or_else(|poison| poison.into_inner());
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let (window, mut visual, calls) = mount_mod(
@@ -965,6 +968,7 @@ fn question_cards_announce_radio_and_checkbox_options(cx: &mut TestAppContext) {
 /// and Enter sends the answers.
 #[gpui::test]
 fn arrow_keys_move_between_a_cards_options_and_space_picks(cx: &mut TestAppContext) {
+    let _guard = RING_LOG.lock().unwrap_or_else(|poison| poison.into_inner());
     cx.update(gpui_shell::init);
     let staged = Staged::new();
     let question = json!({"tool_input": {"questions": [

@@ -10,7 +10,7 @@
 //   clippy   the Office Assistant (a floating window)
 
 import { View, div } from "gpui-kit";
-import { props } from "kompitum";
+import { props, text } from "kompitum";
 import Taskbar from "./taskbar.js";
 import Desktop from "./desktop.js";
 import PaneWindow from "./window.js";
@@ -31,7 +31,7 @@ export default class Win98 extends View {
   }
 
   render(cx) {
-    if (!this.role) return div().child(`win98: no role "${props()?.role}"`);
+    if (!this.role) return div().child(text("win98.no-role", { role: String(props()?.role) }));
     return this.role.render(cx);
   }
 }

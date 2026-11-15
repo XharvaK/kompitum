@@ -5,19 +5,19 @@
 
 import { div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, run, shared, setShared, placement } from "kompitum";
+import { agents, run, shared, setShared, placement, text } from "kompitum";
 import { C, ASSETS, unit, root, button, label, sfx, own } from "./kit.js";
 
 const TIPS = [
-  "It looks like you're herding agents.\n\nDid you know? Ctrl+Esc opens the Start menu.",
-  "Click a tab's taskbar button while it's\nshown to minimize it (Kompitum settles it).\nClick again to bring it back.",
-  "Ctrl+Shift+Esc opens Close Program:\nevery terminal Kompitum runs, and End Task.",
-  "Right-click a folder on the desktop to\nrename or close that space.",
-  "Waiting on an agent? Mines is on\nthe desktop. I won't tell anyone.",
-  "Double-click a window's title bar to\nmaximize it. Double-click again to restore.",
-  "Start > Run... opens any command line\nin a new window, like it's 1998.",
-  "Shut Down > Restart in DOS mode\ntakes you to the Terminals layout.",
-  "Log Off takes you back to Kompitum's\nnormal layout. I'll miss you.",
+  text("clippy.tip-1"),
+  text("clippy.tip-2"),
+  text("clippy.tip-3"),
+  text("clippy.tip-4"),
+  text("clippy.tip-5"),
+  text("clippy.tip-6"),
+  text("clippy.tip-7"),
+  text("clippy.tip-8"),
+  text("clippy.tip-9"),
 ];
 
 export default class Clippy {
@@ -41,24 +41,24 @@ export default class Clippy {
     const right = placement()?.edge !== "left";
     let balloon = null;
     if (a) {
-      const name = a.program?.name ?? a.app ?? "Your agent";
+      const name = a.program?.name ?? a.app ?? text("clippy.your-agent");
       const where = `'${a.space_name} \\ ${a.tab_name}'`;
       const text =
         a.status === "blocked"
-          ? `It looks like ${name} in\n${where} is waiting for you.\n\nWould you like help?`
-          : `It looks like ${name} finished\nin ${where}.\n\nWant to see what it did?`;
+          ? text("clippy.blocked", { name, where })
+          : text("clippy.finished", { name, where });
       balloon = this.balloon(u, text, [
-        ["Take me there", () => {
+        [text("clippy.take-me"), () => {
           run("agent.focus", { terminal: a.address });
           this.dismissed.add(`${a.address}:${a.status}`);
         }],
-        ["Not now", () => this.dismissed.add(`${a.address}:${a.status}`)],
+        [text("clippy.not-now"), () => this.dismissed.add(`${a.address}:${a.status}`)],
       ]);
     } else if (this.tip !== null) {
       balloon = this.balloon(u, TIPS[this.tip % TIPS.length], [
-        ["Next tip", () => (this.tip = (this.tip + 1) % TIPS.length)],
-        ["Close", () => (this.tip = null)],
-        ["Hide me", () => setShared("win98.clippy", "off")],
+        [text("clippy.next-tip"), () => (this.tip = (this.tip + 1) % TIPS.length)],
+        [text("clippy.close"), () => (this.tip = null)],
+        [text("clippy.hide-me"), () => setShared("win98.clippy", "off")],
       ]);
     }
     // Clean the dismissed list once their agents moved on.

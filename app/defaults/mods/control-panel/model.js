@@ -1,6 +1,8 @@
+import { text } from "kompitum";
+
 export const CELL = 8, FONT = 40 / 3, ROW = 28, HISTORY_LIMIT = 128;
 export const READ_INTERVAL = 5000, EXIT_INTERVAL = 15000;
-export const STATUS = { working: "working", blocked: "needs you", done: "done", idle: "idle", dead: "exited", unavailable: "unavailable" };
+export const STATUS = { working: text("control-panel.working"), blocked: text("control-panel.needs-you"), done: text("control-panel.done"), idle: text("control-panel.idle"), dead: text("control-panel.exited"), unavailable: text("control-panel.unavailable") };
 const reported = new Set(["working", "blocked", "idle", "done"]);
 export const statusOf = value => value === "error" ? "blocked" : value;
 
@@ -73,7 +75,7 @@ export function collectRows(agents = [], terminals = [], spaces = []) {
       if (space && tab) return { space: space.id, space_name: space.name, tab: tab.id, tab_name: tab.name, tab_index: tab.index };
       t = raw.get(t.parent) ?? raw.get(qualify(t.parent));
     }
-    return { space: "", space_name: "unassigned", tab: "", tab_name: "child", tab_index: 0 };
+    return { space: "", space_name: text("control-panel.unassigned"), tab: "", tab_name: text("control-panel.child"), tab_index: 0 };
   };
   for (const t of terminals) {
     if (!t.address || !t.parent || result.has(t.address) || (t.state && t.state !== "live")) continue;
@@ -132,7 +134,7 @@ export function confirmExits(history, payload, liveAddresses) {
   return history.map(a => {
     if (liveAddresses.has(a.address)) return a;
     const t = all.get(a.address);
-    return t?.state === "finished" ? { ...a, exit: { state: "finished", code: t.exit_code ?? null, reason: plain(t.reason) || "exited" } } : a;
+    return t?.state === "finished" ? { ...a, exit: { state: "finished", code: t.exit_code ?? null, reason: plain(t.reason) || text("control-panel.exited") } } : a;
   });
 }
 export function gridSpec(width) {

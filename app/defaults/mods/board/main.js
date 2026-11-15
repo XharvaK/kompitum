@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings, knownAgents, lead, sheet } from "kompitum";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings, knownAgents, lead, sheet, text } from "kompitum";
 
 // The two orchestrators keep these colors in the Line panel too.
 const OPUS = "accent";
@@ -13,7 +13,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const pad = (n) => String(n).padStart(2, "0");
 
 const cap = (s) => (s ? String(s).replace(/^./, (c) => c.toUpperCase()) : "");
-const text = (v) => (typeof v === "string" ? v : "");
+const str = (v) => (typeof v === "string" ? v : "");
 const base = (p) => String(p ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
 const firstLine = (v) => String(v ?? "").trim().split(/\r?\n/).find(Boolean) ?? "";
 const count = (v, fallback) => (v == null || v === "" || !Number.isFinite(Number(v)) ? fallback : Number(v));
@@ -96,9 +96,9 @@ function untilText(value) {
 // The catalog names a worker's CLI ("OpenCode", not "opencode"); a plan after
 // the CLI's old label ("Go") stays.
 function workerName(catalog, worker) {
-  const cli = text(worker.cli);
+  const cli = str(worker.cli);
   const entry = cli ? catalog.find((item) => item.worker === cli || item.key === cli) : null;
-  const label = text(worker.label);
+  const label = str(worker.label);
   if (!entry?.name) return label;
   return label.toLowerCase().startsWith(cli.toLowerCase()) ? entry.name + label.slice(cli.length) : entry.name;
 }
@@ -112,7 +112,7 @@ function workerWords(catalog, worker) {
   const status = worker.status.replace(/_/g, " ");
   const blocked = /block|out/i.test(status);
   const until = blocked ? untilText(worker.until) : "";
-  return `${workerName(catalog, worker)} ${status}${until ? ` until ${until}` : ""}`;
+  return until ? text("board.worker-until", { name: workerName(catalog, worker), status, until }) : text("board.worker", { name: workerName(catalog, worker), status });
 }
 
 export default class Board extends View {
@@ -175,15 +175,15 @@ export default class Board extends View {
           try {
             data = JSON.parse(result.stdout);
           } catch (e) {
-            throw new Error(firstLine(e?.message ?? e) || "status did not return JSON");
+            throw new Error(firstLine(e?.message ?? e) || text("board.status-json"));
           }
-          if (!data || typeof data !== "object") throw new Error("status did not return an object");
+          if (!data || typeof data !== "object") throw new Error(text("board.status-object"));
           this.data = data;
           this.error = null;
           this.noteReviews(data);
         }
       } catch (e) {
-        this.error = firstLine(e?.message ?? e) || "status failed";
+        this.error = firstLine(e?.message ?? e) || text("board.status-failed");
       } finally {
         this.loading = false;
         cx.notify();
@@ -201,7 +201,7 @@ export default class Board extends View {
         if (this.seenReview.has(name)) continue;
         fresh = true;
         notify({
-          title: `${name} is ready for review`,
+          title: text("board.ready-for-review", { name }),
           action: { name: `board.openReview:${encodeURIComponent(name)}` },
         });
       }
@@ -212,7 +212,7 @@ export default class Board extends View {
   }
 
   fail(what, e) {
-    notify({ title: `${what} failed`, body: firstLine(e?.message ?? e), level: "error" });
+    notify({ title: text("board.failed", { what }), body: firstLine(e?.message ?? e), level: "error" });
   }
 
   review(name, cx) {
@@ -220,23 +220,23 @@ export default class Board extends View {
       try {
         const result = await kom(["task", "review", name]);
         if (result.code !== 0) throw new Error(errorText(result));
-        const body = text(result.stdout).trim() || "(no review text)";
+        const body = str(result.stdout).trim() || text("board.no-review-text");
         openOverlay({
           mod: "board",
           kind: "window",
           key: `board-review:${name}`,
           width: 760,
           height: 560,
-          props: { review: { title: `Review: ${name}`, body } },
+          props: { review: { title: text("board.review-title", { name }), body } },
         });
       } catch (e) {
-        this.fail(`Review ${name}`, e);
+        this.fail(text("board.review-word", { name }), e);
       }
     });
   }
 
   openAccept(name, cx) {
-    const input = InputState.new({ placeholder: "Review note, Enter to accept" });
+    const input = InputState.new({ placeholder: text("board.review-note-placeholder") });
     input.on("submit", (_e, cx) => this.accept(name, cx));
     this.accepting = { name, input };
     input.focus();
@@ -256,7 +256,7 @@ export default class Board extends View {
         if (result.code !== 0) throw new Error(errorText(result));
         this.refresh(cx);
       } catch (e) {
-        this.fail(`Accept ${name}`, e);
+        this.fail(text("board.accept-word", { name }), e);
       }
     });
   }
@@ -281,7 +281,7 @@ export default class Board extends View {
         if (result.code !== 0) throw new Error(errorText(result));
         this.refresh(cx);
       } catch (e) {
-        this.fail(`${cap(action)} ${name}`, e);
+        this.fail(text("board.action-word", { action: cap(action), name }), e);
       }
     });
   }
@@ -295,7 +295,7 @@ export default class Board extends View {
       layout: {
         type: "column",
         children: [
-          { type: "block", size: { px: 30 }, content: { mod: "board", props: { titlebar: `Watch: ${name}` } } },
+          { type: "block", size: { px: 30 }, content: { mod: "board", props: { titlebar: text("board.watch-title", { name }) } } },
           { type: "block", content: { terminal: name } },
         ],
       },
@@ -324,8 +324,8 @@ export default class Board extends View {
         .cursor_pointer()
         .tab_stop(true)
         .focus_ring(t.focus, 5)
-        .tooltip("Close")
-        .accessibility_label("Close")
+        .tooltip(text("board.close"))
+        .accessibility_label(text("board.close"))
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => closeOverlay(props().overlay))
@@ -348,7 +348,7 @@ export default class Board extends View {
   }
 
   byLabel(by) {
-    if (by === "owner") return "You";
+    if (by === "owner") return text("board.you");
     return typeof by === "string" ? cap(by) : "";
   }
 
@@ -388,26 +388,26 @@ export default class Board extends View {
     const show = kind === "review" || hovered || accepting;
     const asked = this.confirm?.key === key ? this.confirm.action : null;
     const repo = base(task.repo);
-    const worker = text(task.worker);
+    const worker = str(task.worker);
     const time = duration(task.seconds);
     const cost = money(task.cost_usd);
     const checks = (kind === "review" || kind === "recent") && typeof task.checks === "string" ? task.checks : "";
     const by = this.byLabel(task.by);
 
     const buttons = [];
-    buttons.push(this.action(t, `review-${key}`, "Review", false, () => this.review(task.name, cx)));
+    buttons.push(this.action(t, `review-${key}`, text("board.review"), false, () => this.review(task.name, cx)));
     if (kind === "review") {
-      buttons.push(this.action(t, `accept-${key}`, "Accept", true,
+      buttons.push(this.action(t, `accept-${key}`, text("board.accept"), true,
         () => accepting ? this.accept(task.name, cx) : this.openAccept(task.name, cx)));
-      buttons.push(this.action(t, `discard-${key}`, asked === "discard" ? "Discard?" : "Discard", false,
+      buttons.push(this.action(t, `discard-${key}`, asked === "discard" ? text("board.discard-ask") : text("board.discard"), false,
         () => asked === "discard" ? this.runTask("discard", task.name, cx) : this.ask(key, "discard", cx)));
     }
     if (kind === "running" || kind === "queued") {
-      buttons.push(this.action(t, `cancel-${key}`, asked === "cancel" ? "Cancel?" : "Cancel", false,
+      buttons.push(this.action(t, `cancel-${key}`, asked === "cancel" ? text("board.cancel-ask") : text("board.cancel"), false,
         () => asked === "cancel" ? this.runTask("cancel", task.name, cx) : this.ask(key, "cancel", cx)));
     }
     if (kind === "running") {
-      buttons.push(this.action(t, `watch-${key}`, "Watch", false, () => this.watch(task.name)));
+      buttons.push(this.action(t, `watch-${key}`, text("board.watch"), false, () => this.watch(task.name)));
     }
 
     const meta = [];
@@ -437,7 +437,7 @@ export default class Board extends View {
       .when(accepting, (el) => el.child(h_flex().pt(2).gap(6).items_center()
         .child(div().flex_1().min_w(0).h(24).px(6).rounded(5).border_1().border_color(t.accent).bg(t.background)
           .child(Input.new(this.accepting.input).h_full().text_size(11).text_color(t.foreground)))
-        .child(div().text_size(11).text_color(t.dim).child("Enter accepts"))));
+        .child(div().text_size(11).text_color(t.dim).child(text("board.enter-accepts")))));
   }
 
   section(t, title, list, kind, cx) {
@@ -461,13 +461,13 @@ export default class Board extends View {
     const reviewCount = count(waiting.review, review.length);
     const blockedCount = count(waiting.blocked, blocked);
     const waits = [];
-    if (reviewCount > 0) waits.push(`${reviewCount} to review`);
+    if (reviewCount > 0) waits.push(text("board.to-review", { count: reviewCount }));
     if (blockedCount > 0) waits.push(`${blockedCount} ${blockedCount === 1 ? "agent" : "agents"} blocked`);
     if (lead()?.ask) {
       const program = settings()?.lead?.program ?? "claude";
-      waits.push(`${leadName(this.catalog, program)} waits for you`);
+      waits.push(text("board.waits-for-you", { name: leadName(this.catalog, program) }));
     }
-    const headline = waits.length ? waits.join(" · ") : "Nothing waits for you";
+    const headline = waits.length ? waits.join(" · ") : text("board.nothing-waits");
     const workers = workersOf(data.workers);
     const ready = workers.filter((w) => w.status === "ready").length;
     const workerLine = ready === 1 ? "1 worker ready" : ready > 1 ? `${ready} workers ready` : "";
@@ -476,10 +476,10 @@ export default class Board extends View {
     const reset = claude ? Number(claude.five_hour_resets_at) : NaN;
     const resetAt = Number.isFinite(reset) && reset > 0 ? new Date(reset * 1000) : null;
     const sections = [
-      ["To review", review, "review"],
-      ["Running", running, "running"],
-      ["Queued", queued, "queued"],
-      ["Recent", recent, "recent"],
+      [text("board.section-review"), review, "review"],
+      [text("board.section-running"), running, "running"],
+      [text("board.section-queued"), queued, "queued"],
+      [text("board.section-recent"), recent, "recent"],
     ].filter(([, list]) => list.length > 0);
     const empty = sections.length === 0;
 
@@ -504,11 +504,11 @@ export default class Board extends View {
           .when(Boolean(workerDetail), (line) => line.tooltip(workerDetail))
           .child(workerLine)))
         .when(Boolean(resetAt), (el) => el.child(div().text_size(11).text_color(t.muted)
-          .child(`Claude's 5h limit resets at ${clock(resetAt)}`)))
+          .child(text("board.claude-reset", { time: clock(resetAt) }))))
         .when(Boolean(this.error), (el) => el.child(div().text_size(11).text_color(t.muted).child(this.error))))
       .child(v_flex().id("board-list").flex_1().min_h(0).overflow_y_scrollbar().mode("always").p(8)
-        .when(empty && !this.data && !this.error, (el) => el.child(div().p(6).text_size(12).text_color(t.muted).child("Loading board…")))
-        .when(empty && Boolean(this.data), (el) => el.child(div().p(6).text_size(12).text_color(t.muted).child("No tasks.")))
+        .when(empty && !this.data && !this.error, (el) => el.child(div().p(6).text_size(12).text_color(t.muted).child(text("board.loading"))))
+        .when(empty && Boolean(this.data), (el) => el.child(div().p(6).text_size(12).text_color(t.muted).child(text("board.no-tasks"))))
         .children(sections.map(([title, list, kind]) => this.section(t, title, list, kind, cx))));
   }
 
@@ -521,7 +521,7 @@ export default class Board extends View {
       .min_h(0)
       .bg(t.popover)
       .text_color(t.foreground)
-      .child(this.titlebar(t, text(review.title) || "Review"))
+      .child(this.titlebar(t, str(review.title) || text("board.review-label")))
       .child(div()
         .id("board-review-body")
         .flex_1()
@@ -535,7 +535,7 @@ export default class Board extends View {
 
   renderTitlebar() {
     const t = theme();
-    return v_flex().size_full().bg(t.surface).child(this.titlebar(t, text(props()?.titlebar)));
+    return v_flex().size_full().bg(t.surface).child(this.titlebar(t, str(props()?.titlebar)));
   }
 
   render(cx) {
@@ -543,6 +543,6 @@ export default class Board extends View {
     if (this.mode === "titlebar") return this.renderTitlebar();
     const panel = this.renderPanel(cx);
     if (!props()?.overlay) return panel;
-    return sheet({ title: "Board", width: 880, onClose: () => closeOverlay(props().overlay) }, panel);
+    return sheet({ title: text("board.title"), width: 880, onClose: () => closeOverlay(props().overlay) }, panel);
   }
 }

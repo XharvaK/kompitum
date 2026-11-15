@@ -7,7 +7,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { kom, exec, home, readTextFile, theme, props, closeOverlay, run, sheet } from "kompitum";
+import { kom, exec, home, readTextFile, theme, props, closeOverlay, run, sheet, text } from "kompitum";
 
 const I = (name) => `mods/workspace-chrome/${name}.svg`;
 
@@ -75,7 +75,7 @@ export default class MachineAdd extends View {
     this.pending = new Set();
     this.refreshing = false;
     this.typed = "";
-    this.input = InputState.new({ placeholder: "user@host" });
+    this.input = InputState.new({ placeholder: text("machine-add.placeholder") });
     this.input.on("change", (_e, cx) => { this.typed = this.input.value(); cx.notify(); });
     this.input.on("submit", (_e, cx) => this.add(this.typed, cx));
     this.inputFocused = true;
@@ -153,8 +153,8 @@ export default class MachineAdd extends View {
         // tooltip read it); the render shows the short line and the button.
         const quoted = shellQuote(target);
         this.pending.add(target);
-        this.state[target] = `Couldn't add ${target} here: it needs you to answer something (a password, a new host key, or installing kompitum-core there). Run \`kom machine add ${quoted}\` in a terminal. \`kom machine --help\` shows the options.`;
-      } else this.state[target] = why.message || "it didn't work";
+        this.state[target] = text("machine-add.needs-answer", { target, command: `kom machine add ${quoted}` });
+      } else this.state[target] = why.message || text("machine-add.failed");
       await this.refresh();
       cx.notify();
     });
@@ -182,13 +182,13 @@ export default class MachineAdd extends View {
       .bg(t.blocked + "14")
       .border_1()
       .border_color(t.blocked + "40")
-      .child(div().text_size(13).font_semibold().text_color(t.foreground).child(`${mac.name} is a Mac: allow its folders once`))
+      .child(div().text_size(13).font_semibold().text_color(t.foreground).child(text("machine-add.mac-folders", { name: mac.name })))
       .child(
         div()
           .text_size(12)
           .line_height("18px")
           .text_color(t.muted)
-          .child("macOS asks on the Mac's own screen before an agent reads Desktop, Documents or Downloads, and waits until someone answers. Give kompitum-core Full Disk Access there and it never asks again: in the list, press + and pick this file:"),
+          .child(text("machine-add.mac-about")),
       )
       .child(div().px(8).py(4).rounded(6).bg(t.background).border_1().border_color(t.border).text_size(12).text_color(t.foreground).child(mac.core))
       .child(
@@ -215,9 +215,9 @@ export default class MachineAdd extends View {
                 cx.notify();
               })
               .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
-              .child(`Open the setting on ${mac.name}`),
+              .child(text("machine-add.open-setting", { name: mac.name })),
           )
-          .when(Boolean(this.opened[target]), (el) => el.child(div().text_size(12).text_color(t.dim).child("It's open on the Mac's screen."))),
+          .when(Boolean(this.opened[target]), (el) => el.child(div().text_size(12).text_color(t.dim).child(text("machine-add.setting-open")))),
       );
   }
 
@@ -236,7 +236,7 @@ export default class MachineAdd extends View {
           .text_size(12)
           .line_height("16px")
           .text_color(t.muted)
-          .child(`${target} needs an answer from you: a password, a new host key, or installing Kompitum there.`),
+          .child(text("machine-add.answer", { target })),
       )
       .child(
         div()
@@ -252,20 +252,20 @@ export default class MachineAdd extends View {
           .font_medium()
           .cursor_pointer()
           .relative()
-          .tooltip(`Runs \`kom machine add ${shellQuote(target)}\` in a new tab.`)
+          .tooltip(text("machine-add.answer-tip", { command: `kom machine add ${shellQuote(target)}` }))
           .on_click((_e, cx) => {
             run("terminal.open", {
               argv: [KOM, "machine", "add", target],
               place: "tab",
               stay: true,
               machine: "",
-              name: `Add ${target}`,
+              name: text("machine-add.add-name", { target }),
             });
             this.close();
             cx.stop_propagation();
           })
           .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
-          .child("Finish in a terminal"),
+          .child(text("machine-add.finish")),
       );
   }
 
@@ -294,9 +294,9 @@ export default class MachineAdd extends View {
     const done = this.isAdded(target);
     const answer = this.pending.has(target);
     const right = done
-      ? h_flex().gap(5).items_center().text_size(12).text_color(t.ansi2).child(svg(I("circle-check")).size(13)).child("Added")
+      ? h_flex().gap(5).items_center().text_size(12).text_color(t.ansi2).child(svg(I("circle-check")).size(13)).child(text("machine-add.added"))
       : st === "adding"
-        ? div().id(`ma-add-${target}`).h(26).px(8).flex().items_center().rounded(6).text_size(12).text_color(t.dim).child("Adding…")
+        ? div().id(`ma-add-${target}`).h(26).px(8).flex().items_center().rounded(6).text_size(12).text_color(t.dim).child(text("machine-add.adding"))
         : answer
           ? div()
           : div()
@@ -312,7 +312,7 @@ export default class MachineAdd extends View {
               .cursor_pointer()
               .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
               .on_click((_e, cx) => this.add(target, cx))
-              .child("Add");
+              .child(text("machine-add.add"));
     const message = this.reply(t, target);
     return v_flex()
       .flex_none()
@@ -351,9 +351,9 @@ export default class MachineAdd extends View {
           .text_size(13)
           .line_height("19px")
           .text_color(t.muted)
-          .child("Kompitum reaches it over SSH. Agents there keep working while this computer sleeps."),
+          .child(text("machine-add.intro")),
       )
-      .child(div().pt(16).pb(6).text_size(12).font_medium().text_color(t.dim).child(hosts.length ? "From your ssh config" : "Your ssh config lists no hosts"))
+      .child(div().pt(16).pb(6).text_size(12).font_medium().text_color(t.dim).child(hosts.length ? text("machine-add.from-config") : text("machine-add.no-hosts")))
       .child(
         v_flex()
           .id("ma-hosts")
@@ -363,11 +363,11 @@ export default class MachineAdd extends View {
           .overflow_y_scroll()
           .children(
             this.hosts === null
-              ? [div().px(10).py(8).text_size(12).text_color(t.dim).child("Reading ~/.ssh/config…")]
-              : hosts.map((h) => this.row(t, h.alias, h.alias, [h.user, h.hostname].filter(Boolean).join("@") || (h.aliases.length ? `also ${h.aliases.join(", ")}` : ""))),
+              ? [div().px(10).py(8).text_size(12).text_color(t.dim).child(text("machine-add.reading"))]
+              : hosts.map((h) => this.row(t, h.alias, h.alias, [h.user, h.hostname].filter(Boolean).join("@") || (h.aliases.length ? text("machine-add.also", { aliases: h.aliases.join(", ") }) : ""))),
           ),
       )
-      .child(div().pt(14).pb(6).text_size(12).font_medium().text_color(t.dim).child("Or type its address"))
+      .child(div().pt(14).pb(6).text_size(12).font_medium().text_color(t.dim).child(text("machine-add.or-address")))
       .child(
         h_flex()
           .gap(8)
@@ -401,10 +401,10 @@ export default class MachineAdd extends View {
               .when(Boolean(typed), (el) => el.bg(t.accent_fill).text_color(t.accent_foreground).cursor_pointer()
                 .on_click((_e, cx) => this.add(this.typed, cx))
                 .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))))
-              .child("Add"),
+              .child(text("machine-add.add")),
           ),
       )
       .when(Boolean(typedMessage), (el) => el.child(div().pt(8).child(typedMessage)));
-    return sheet({ title: "Add a machine", width: 640, onClose: () => this.close() }, content);
+    return sheet({ title: text("machine-add.title"), width: 640, onClose: () => this.close() }, content);
   }
 }

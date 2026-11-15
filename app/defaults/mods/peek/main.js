@@ -5,7 +5,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, terminals, panes, run, theme, props, closeOverlay } from "kompitum";
+import { agents, terminals, panes, run, theme, props, closeOverlay, text } from "kompitum";
 
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 // The icon from the app's program table: a one-color glyph or a picture.
@@ -13,7 +13,7 @@ function icon(p, size, color) {
   if (!p?.icon) return null;
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
 }
-const WORDS = { working: "working", blocked: "needs you", done: "finished", idle: "idle" };
+const WORDS = { working: text("peek.working"), blocked: text("peek.needs-you"), done: text("peek.finished"), idle: text("peek.idle") };
 
 export default class Peek extends View {
   init(_props, cx) {
@@ -63,14 +63,14 @@ export default class Peek extends View {
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().truncate().font_semibold().text_color(t.foreground).child(k?.name || k?.template || k?.program?.name || terminal || ""))
       .when(Boolean(st), (el) => el.child(div().flex_none().text_color(t[st] ?? t.dim).child(WORDS[st] ?? st)))
-      .when(Boolean(parent), (el) => el.child(div().truncate().text_color(t.dim).child(`from ${parent.name || parent.address}`)))
+      .when(Boolean(parent), (el) => el.child(div().truncate().text_color(t.dim).child(text("peek.from", { name: parent.name || parent.address }))))
       .child(div().flex_1())
       .child(
-        this.button(t, "keep", home ? "↗ go to" : "↗ keep", () => {
+        this.button(t, "keep", home ? text("peek.go-to") : text("peek.keep"), () => {
           run(home ? "pane.focus" : "terminal.keep", { terminal });
           closeOverlay(overlay);
         }),
       )
-      .child(this.button(t, "close", "✕", () => closeOverlay(overlay)));
+      .child(this.button(t, "close", "✕", () => closeOverlay(overlay)).accessibility_label(text("peek.close")));
   }
 }

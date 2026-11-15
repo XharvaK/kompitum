@@ -3,7 +3,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, lead, knownAgents, nextCommand } from "kompitum";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, lead, knownAgents, nextCommand, text } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -53,14 +53,14 @@ const kidStatus = (k, listed) => {
   return s === "error" ? "blocked" : s === "done" ? "idle" : s;
 };
 const SORTS = [
-  { id: "priority", label: "Priority", icon: "clock" },
-  { id: "grouped", label: "Grouped by space", icon: "layers" },
+  { id: "priority", label: text("agents.priority"), icon: "clock" },
+  { id: "grouped", label: text("agents.grouped-by-space"), icon: "layers" },
 ];
 const sortOf = () => SORTS.find((s) => s.id === shared("agents.sort")) ?? SORTS[0];
-const SECTION = { 4: "Needs you", 3: "Done", 2: "Working", 1: "Idle" };
+const SECTION = { 4: text("agents.needs-you"), 3: text("agents.done"), 2: text("agents.working"), 1: text("agents.idle") };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
 const leadWord = (state) =>
-  state === "working" ? "Working" : state === "asking" ? "Waiting for you" : state === "waiting" ? "Your turn" : null;
+  state === "working" ? text("agents.working") : state === "asking" ? text("agents.waiting-for-you") : state === "waiting" ? text("agents.your-turn") : null;
 const leadColor = (t, state) => (state === "asking" ? t.working : state === "waiting" ? t.done : t.accent);
 const leadName = (key, entry) => (key === "claude" ? "Claude" : entry?.name ?? key);
 
@@ -190,7 +190,7 @@ export default class Agents extends View {
       .p(5)
       .bg(t.popover)
       .text_size(13)
-      .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("Sort agents"))
+      .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child(text("agents.sort-agents")))
       .children(SORTS.map((s) => h_flex()
         .id(`sort-${s.id}`)
         .h(31)
@@ -259,7 +259,7 @@ export default class Agents extends View {
     const color = t[a.status] ?? t.dim;
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
     if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(11).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
-    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(11).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
+    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(11).font_semibold().text_color(t.blocked).flex().items_center().child(text("agents.needs-you"));
     // Idle: a ring; done: a dot.
     if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
     return div().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
@@ -385,8 +385,8 @@ export default class Agents extends View {
         .text_color(t.dim)
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-        .tooltip(isPinned ? "Unpin" : "Pin to the top")
-        .accessibility_label(isPinned ? "Unpin" : "Pin to the top")
+        .tooltip(isPinned ? text("agents.unpin") : text("agents.pin"))
+        .accessibility_label(isPinned ? text("agents.unpin") : text("agents.pin"))
         .keep_focus(true)
         .on_click((_e, cx) => {
           cx.stop_propagation();
@@ -427,7 +427,7 @@ export default class Agents extends View {
           })).child(pic)))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
           .child(div().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
-          .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${more}`))))
+          .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(text("agents.detail", { detail: more })))))
         .when(Boolean(machine), el => el.child(div().text_size(11).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
         .when(this.hovered === a.address, el => el.child(pin))
@@ -437,7 +437,7 @@ export default class Agents extends View {
 
     // Groups in list order: spaces (grouped) or priority sections. Agents of a
     // space are next to each other in agents(), so neighbours make a group.
-    const groups = pinned.length ? [{ id: "pinned", label: "Pinned", status: null, members: pinned }] : [];
+    const groups = pinned.length ? [{ id: "pinned", label: text("agents.pinned"), status: null, members: pinned }] : [];
     for (const a of rest) {
       const r = rankOf(a) || RANK.idle;
       const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
@@ -481,7 +481,7 @@ export default class Agents extends View {
       // Its icon and name are the CLI's, not those of the shell around it.
       const program = entry ?? leadTerminal.program;
       const name = leadName(key, entry);
-      const word = leadQuiet ? "Working?" : leadWord(leadState);
+      const word = leadQuiet ? text("agents.working-question") : leadWord(leadState);
       const on = focused()?.terminal === leadTerminal.address;
       if (collapsed) {
         return h_flex()
@@ -515,7 +515,7 @@ export default class Agents extends View {
         .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
         .when(Boolean(word), (el) => el.child(div().flex_none().text_size(12)
           .text_color(leadQuiet ? t.muted : leadColor(t, leadState))
-          .when(leadQuiet, (w) => w.tooltip("No word from the lead for 10 minutes."))
+          .when(leadQuiet, (w) => w.tooltip(text("agents.quiet-tooltip")))
           .child(word)));
     };
     // The plain terminals no other row lists: tabs of the active space with a terminal, but not the
@@ -529,7 +529,7 @@ export default class Agents extends View {
     const terminalRow = (tab) => {
       const terms = paneList.filter((p) => p.tab === tab.id && p.terminal);
       const program = terms[0]?.program;
-      const name = /^tb\d+$/.test(tab.name) ? program?.name ?? "Terminal" : tab.name;
+      const name = /^tb\d+$/.test(tab.name) ? program?.name ?? text("agents.terminal") : tab.name;
       const key = `term-${tab.id}`;
       if (collapsed) {
         return h_flex()
@@ -578,14 +578,14 @@ export default class Agents extends View {
           .text_color(t.dim)
           .cursor_pointer()
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-          .tooltip("Close")
-          .accessibility_label("Close")
+          .tooltip(text("agents.close"))
+          .accessibility_label(text("agents.close"))
           .keep_focus(true)
           .on_click((_e, cx) => {
             cx.stop_propagation();
             // A plain shell closes at once; anything else runs something, so ask first.
             if (terms.every((p) => p.program?.shell === true)) run("tab.close", { id: tab.id });
-            else openOverlay({ mod: "confirm", kind: "dialog", width: 380, props: { title: "Close terminal?", detail: `${name} is still running.`, command: { name: "tab.close", args: { id: tab.id } } } });
+            else openOverlay({ mod: "confirm", kind: "dialog", width: 380, props: { title: text("agents.close-terminal"), detail: text("agents.close-terminal-detail", { name }), command: { name: "tab.close", args: { id: tab.id } } } });
           })
           .child(svg("mods/pane/close.svg").size(13))));
     };
@@ -625,7 +625,7 @@ export default class Agents extends View {
     const terminalSection = plainTabs.length
       ? [
         ...(collapsed ? [] : [h_flex().id("ag-terminals").px(8).h(36).pt(10).pb(5).flex_none().items_center()
-          .child(div().text_size(12).font_medium().text_color(t.dim).child("Terminals"))]),
+          .child(div().text_size(12).font_medium().text_color(t.dim).child(text("agents.terminals")))]),
         ...plainTabs.map(terminalRow),
       ]
       : [];
@@ -653,7 +653,7 @@ export default class Agents extends View {
             .flex_none()
             .items_center()
             .justify_between()
-            .child(div().text_size(12).font_medium().text_color(t.dim).child("Agents"))
+            .child(div().text_size(12).font_medium().text_color(t.dim).child(text("agents.title")))
             .child(
               div()
                 .id("ag-sort")
@@ -662,14 +662,14 @@ export default class Agents extends View {
                 .hover((s) => s.text_color(t.foreground))
                 .keep_focus(true)
                 .on_click(() => openOverlay({ mod: "agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
-                .tooltip(`Sort agents: ${sort.label}`)
-                .accessibility_label(`Sort agents: ${sort.label}`)
+                .tooltip(text("agents.sort-tooltip", { sort: sort.label }))
+                .accessibility_label(text("agents.sort-tooltip", { sort: sort.label }))
                 .child(svg(`mods/workspace-chrome/${sort.icon}.svg`).size(14)),
             ),
         ),
       )
       .when(list.length === 0 && leadRows.length === 0 && !collapsed, (el) =>
-        el.child(div().px(12).text_size(13).text_color(t.dim).child("No agents running.")),
+        el.child(div().px(12).text_size(13).text_color(t.dim).child(text("agents.no-agents"))),
       )
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
       .when(collapsed, (el) =>
@@ -681,6 +681,7 @@ export default class Agents extends View {
             .child(
               div()
                 .id("collapse")
+                .accessibility_label(text("agents.show-hide-sidebar"))
                 .text_size(13)
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))

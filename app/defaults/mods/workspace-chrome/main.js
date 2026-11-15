@@ -1,6 +1,6 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex, Popover } from "gpui-base";
-import { theme, run, props, window, shared, setShared, updates, layout, spaces, knownAgents, pickFolder, notify, kom, openOverlay } from "kompitum";
+import { theme, run, props, window, shared, setShared, updates, layout, spaces, knownAgents, pickFolder, notify, kom, openOverlay, text } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -57,7 +57,7 @@ export default class WorkspaceChrome extends View {
         this.busy = ["running", "queued"].reduce((n, key) => n + (Array.isArray(data?.tasks?.[key]) ? data.tasks[key].length : 0), 0);
         this.tasksError = null;
       } catch (error) {
-        this.tasksError = firstLine(error?.message ?? error) || "It didn't work.";
+        this.tasksError = firstLine(error?.message ?? error) || text("workspace-chrome.error");
       }
       cx.notify();
     });
@@ -65,11 +65,11 @@ export default class WorkspaceChrome extends View {
 
   // The Tasks row's tooltip: what runs and what waits for review, or the read's error.
   tasksTip() {
-    if (this.tasksError) return `Tasks · couldn't read them: ${this.tasksError}`;
+    if (this.tasksError) return text("workspace-chrome.tasks-error", { error: this.tasksError });
     const parts = [];
-    if (this.busy > 0) parts.push(`${this.busy} running`);
-    if (this.review > 0) parts.push(`${this.review} to review`);
-    return parts.length ? parts.join(" · ") : "No tasks";
+    if (this.busy > 0) parts.push(text("workspace-chrome.tasks-running", { count: this.busy }));
+    if (this.review > 0) parts.push(text("workspace-chrome.tasks-review", { count: this.review }));
+    return parts.length ? parts.join(" · ") : text("workspace-chrome.tasks-none");
   }
 
   // Which agents are installed, read each time the menu opens, so one installed meanwhile shows.
@@ -99,13 +99,13 @@ export default class WorkspaceChrome extends View {
     this.closeSpaceMenu(cx);
     cx.spawn(async (cx) => {
       try {
-        const folder = await pickFolder({ prompt: "Open" });
+        const folder = await pickFolder({ prompt: text("workspace-chrome.open-folder-prompt") });
         if (!folder) return;
         const space = spaces().find((p) => p.folder === folder);
         if (space) run("space.select", { id: space.id });
         else run("space.new", { folder });
       } catch (e) {
-        notify({ title: "Couldn't open that folder", body: String(e?.message ?? e), level: "error" });
+        notify({ title: text("workspace-chrome.open-folder-failed"), body: String(e?.message ?? e), level: "error" });
       }
     });
   }
@@ -136,7 +136,7 @@ export default class WorkspaceChrome extends View {
       .bg(t.popover)
       .child(
         row("space-current", (_e, cx) => this.openFolder(cx))
-          .tooltip("Open another folder as the space")
+          .tooltip(text("workspace-chrome.open-folder-tip"))
           .child(svg("mods/workspace-chrome/folder.svg").size(15).flex_none().text_color(t.muted))
           .child(
             v_flex()
@@ -150,7 +150,7 @@ export default class WorkspaceChrome extends View {
       .child(
         row("space-new-terminal", (_e, cx) => { run("tab.new", {}); this.closeSpaceMenu(cx); })
           .child(svg("mods/workspace-chrome/terminal.svg").size(15).flex_none().text_color(t.muted))
-          .child(div().text_color(t.foreground).child("New terminal")),
+          .child(div().text_color(t.foreground).child(text("workspace-chrome.new-terminal"))),
       )
       .children(
         this.agents.filter((agent) => agent.installed).map((agent) =>
@@ -166,8 +166,8 @@ export default class WorkspaceChrome extends View {
     const trigger = h_flex().id("space-menu").w(28).h(28).flex_none().items_center().justify_center().rounded(7)
       .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .keep_focus(true)
-      .tooltip("Space and new terminals")
-      .accessibility_label("Space and new terminals")
+      .tooltip(text("workspace-chrome.space-menu"))
+      .accessibility_label(text("workspace-chrome.space-menu"))
       .child(svg("mods/workspace-chrome/plus.svg").size(16));
     return Popover.new("space-menu-menu")
       .anchor("top_left")
@@ -213,7 +213,7 @@ export default class WorkspaceChrome extends View {
   // The sidebar's rows (the nav block): Search opens the palette; Tasks opens the Board and says what it holds.
   nav(t, collapsed) {
     const { review, busy } = this;
-    const tasks = this.navRow(t, collapsed, "sidebar-tasks", "mods/workspace-chrome/list-checks.svg", "Tasks", this.tasksTip(),
+    const tasks = this.navRow(t, collapsed, "sidebar-tasks", "mods/workspace-chrome/list-checks.svg", text("workspace-chrome.tasks"), this.tasksTip(),
       () => this.openTasks())
       .when(!collapsed, (el) => el.child(div().flex_1()))
       .when(!collapsed && review > 0, (el) => el.child(div().id("sidebar-tasks-review").h(18).min_w(18).px(5).rounded(9).flex().items_center().justify_center()
@@ -221,7 +221,7 @@ export default class WorkspaceChrome extends View {
       .when(!collapsed && review <= 0 && busy > 0, (el) => el.child(div().id("sidebar-tasks-count").text_size(12).text_color(t.dim).child(String(busy))))
       .when(collapsed && review > 0, (el) => el.child(div().size(6).rounded_full().bg(t.accent).absolute().top(8).right(8)));
     return v_flex().size_full().px(8).py(4)
-      .child(this.navRow(t, collapsed, "sidebar-search", "mods/workspace-chrome/search.svg", "Search", "Search", () => run("app.palette")))
+      .child(this.navRow(t, collapsed, "sidebar-search", "mods/workspace-chrome/search.svg", text("workspace-chrome.search"), text("workspace-chrome.search"), () => run("app.palette")))
       .child(tasks);
   }
 
@@ -230,8 +230,8 @@ export default class WorkspaceChrome extends View {
   foot(t, collapsed) {
     const u = updates();
     const settingsButton = h_flex().id("settings").w(32).h(32).flex_none().items_center().justify_center().rounded(8)
-      .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tooltip("Settings")
-      .accessibility_label("Settings").keep_focus(true)
+      .cursor_pointer().text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tooltip(text("workspace-chrome.settings"))
+      .accessibility_label(text("workspace-chrome.settings")).keep_focus(true)
       .on_click(() => run("app.settings"))
       .child(svg("mods/workspace-chrome/settings.svg").size(16))
       .when(Boolean(u.app.ready), (el) => el.relative().child(div().size(6).rounded_full().bg(t.accent).absolute().top(4).right(4)));
@@ -249,6 +249,6 @@ export default class WorkspaceChrome extends View {
       .when(!collapsed, el => el.child(h_flex().flex_1().gap(8).items_center().child(image("frame/welcome/kompitum.png").size(20).rounded(5)).child(div().font_semibold().text_color(t.foreground).child("Kompitum"))))
       .when(!collapsed, el => el.child(this.spaceMenu(t)))
       // On the macOS rail the traffic lights fill the row; the agents list's » unfolds it.
-      .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/workspace-chrome/sidebar.svg").size(15), toggleSidebar)));
+      .when(!(collapsed && window()?.platform === "macos"), el => el.child(this.button("sidebar-toggle", svg("mods/workspace-chrome/sidebar.svg").size(15), toggleSidebar).accessibility_label(text("workspace-chrome.show-hide-sidebar"))));
   }
 }

@@ -3,37 +3,44 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { keys, props, closeOverlay, theme, shared, sheet } from "kompitum";
+import { keys, props, closeOverlay, theme, shared, sheet, text } from "kompitum";
+
+const DIRECTIONS = {
+  left: text("help.direction-left"),
+  right: text("help.direction-right"),
+  up: text("help.direction-up"),
+  down: text("help.direction-down"),
+};
 
 const GROUPS = [
-  ["Spaces", /^space\./],
-  ["Tabs", /^tab\./],
-  ["Panes", /^pane\./],
-  ["Agents", /^agent\./],
-  ["Terminal", /^terminal\.|^send:/],
-  ["Window", /./],
+  [text("help.spaces"), /^space\./],
+  [text("help.tabs"), /^tab\./],
+  [text("help.panes"), /^pane\./],
+  [text("help.agents"), /^agent\./],
+  [text("help.terminal"), /^terminal\.|^send:/],
+  [text("help.window"), /./],
 ];
 
 // On the desk layout the groups are the palette's (frame/palette/main.js): this
 // table is its DESK, by action and title, and every other command falls under
 // More. Keep it in step with that one.
-const DESK_GROUPS = ["Lead", "Agents", "Terminals", "Window", "More"];
+const DESK_GROUPS = [text("help.lead"), text("help.agents"), text("help.terminals"), text("help.window"), text("help.more")];
 const DESK = [
-  ["Lead", "lead.open", "Open the lead"],
-  ["Agents", "agent.next", "Next agent"],
-  ["Agents", "agent.prev", "Previous agent"],
-  ["Terminals", "tab.new", "New terminal"],
-  ["Terminals", "mod.open:picker", "Go to terminal…"],
-  ["Terminals", "tab.rename", "Rename terminal"],
-  ["Terminals", "tab.close", "Close terminal"],
-  ["Terminals", "tab.next", "Next terminal"],
-  ["Terminals", "tab.prev", "Previous terminal"],
-  ["Window", "app.mailbox", "Mailbox"],
-  ["Window", "app.settings", "Settings"],
-  ["Window", "app.help", "Keys"],
-  ["Window", "app.zoom_in", "Zoom in"],
-  ["Window", "app.zoom_out", "Zoom out"],
-  ["Window", "app.zoom_reset", "Reset zoom"],
+  [text("help.lead"), "lead.open", text("help.open-the-lead")],
+  [text("help.agents"), "agent.next", text("help.next-agent")],
+  [text("help.agents"), "agent.prev", text("help.previous-agent")],
+  [text("help.terminals"), "tab.new", text("help.new-terminal")],
+  [text("help.terminals"), "mod.open:picker", text("help.go-to-terminal")],
+  [text("help.terminals"), "tab.rename", text("help.rename-terminal")],
+  [text("help.terminals"), "tab.close", text("help.close-terminal")],
+  [text("help.terminals"), "tab.next", text("help.next-terminal")],
+  [text("help.terminals"), "tab.prev", text("help.previous-terminal")],
+  [text("help.window"), "app.mailbox", text("help.mailbox")],
+  [text("help.window"), "app.settings", text("help.settings")],
+  [text("help.window"), "app.help", text("help.keys")],
+  [text("help.window"), "app.zoom_in", text("help.zoom-in")],
+  [text("help.window"), "app.zoom_out", text("help.zoom-out")],
+  [text("help.window"), "app.zoom_reset", text("help.reset-zoom")],
 ];
 
 // The shown layout (desk when none is shown yet, as settings reads it).
@@ -41,64 +48,64 @@ const onDesk = () => (shared("layout") ?? "desk") === "desk";
 
 // The group a command's row sits in.
 function groupOf(action) {
-  if (onDesk()) return DESK.find(([, a]) => a === action)?.[0] ?? "More";
+  if (onDesk()) return DESK.find(([, a]) => a === action)?.[0] ?? text("help.more");
   return GROUPS.find(([, re]) => re.test(action))[0];
 }
 
 // The palette's names (frame/palette/main.js), so both screens call a command
 // the same thing. Keep this table in step with that one.
 const NAMED = [
-  ["tab.new", undefined, "New tab"],
-  ["mod.open", "picker", "Go to space or tab…"],
-  ["tab.rename", undefined, "Rename tab"],
-  ["tab.close", undefined, "Close tab"],
-  ["tab.next", undefined, "Next tab"],
-  ["tab.prev", undefined, "Previous tab"],
-  ["pane.split", "right", "Split right"],
-  ["pane.split", "down", "Split down"],
-  ["pane.close", undefined, "Close pane"],
-  ["pane.zoom", undefined, "Zoom pane"],
-  ...["left", "right", "up", "down"].map((d) => ["pane.go", d, `Focus pane ${d}`]),
-  ...["left", "right", "up", "down"].map((d) => ["pane.swap", d, `Swap pane ${d}`]),
-  ["space.new", undefined, "New space"],
-  ["space.rename", undefined, "Rename space"],
-  ["space.close", undefined, "Close space"],
-  ["space.next", undefined, "Next space"],
-  ["space.prev", undefined, "Previous space"],
-  ["layout.reset", undefined, "Reset layout"],
-  ["layout.clone", undefined, "Duplicate layout"],
-  ["mod.clone", undefined, "Duplicate mod"],
-  ["terminal.open", undefined, "New terminal"],
-  ["terminal.copy", undefined, "Copy"],
-  ["terminal.paste", undefined, "Paste"],
-  ["agent.next", undefined, "Next agent"],
-  ["agent.prev", undefined, "Previous agent"],
-  ["lead.open", undefined, "Open the lead"],
-  ["window.minimize", undefined, "Minimize window"],
-  ["window.maximize", undefined, "Maximize window"],
-  ["window.close", undefined, "Close window"],
-  ["app.settings", undefined, "Settings"],
-  ["app.help", undefined, "Keys"],
-  ["app.welcome", undefined, "Welcome"],
-  ["app.whats_new", undefined, "What's new"],
-  ["app.reset", undefined, "Reset to the default screen"],
-  ["app.zoom_in", undefined, "Zoom in"],
-  ["app.zoom_out", undefined, "Zoom out"],
-  ["app.zoom_reset", undefined, "Reset zoom"],
-  ["app.quit", undefined, "Quit Kompitum"],
+  ["tab.new", undefined, text("help.new-tab")],
+  ["mod.open", "picker", text("help.go-to-space-or-tab")],
+  ["tab.rename", undefined, text("help.rename-tab")],
+  ["tab.close", undefined, text("help.close-tab")],
+  ["tab.next", undefined, text("help.next-tab")],
+  ["tab.prev", undefined, text("help.previous-tab")],
+  ["pane.split", "right", text("help.split-right")],
+  ["pane.split", "down", text("help.split-down")],
+  ["pane.close", undefined, text("help.close-pane")],
+  ["pane.zoom", undefined, text("help.zoom-pane")],
+  ...["left", "right", "up", "down"].map((d) => ["pane.go", d, text("help.focus-pane", { direction: DIRECTIONS[d] })]),
+  ...["left", "right", "up", "down"].map((d) => ["pane.swap", d, text("help.swap-pane", { direction: DIRECTIONS[d] })]),
+  ["space.new", undefined, text("help.new-space")],
+  ["space.rename", undefined, text("help.rename-space")],
+  ["space.close", undefined, text("help.close-space")],
+  ["space.next", undefined, text("help.next-space")],
+  ["space.prev", undefined, text("help.previous-space")],
+  ["layout.reset", undefined, text("help.reset-layout")],
+  ["layout.clone", undefined, text("help.duplicate-layout")],
+  ["mod.clone", undefined, text("help.duplicate-mod")],
+  ["terminal.open", undefined, text("help.new-terminal")],
+  ["terminal.copy", undefined, text("help.copy")],
+  ["terminal.paste", undefined, text("help.paste")],
+  ["agent.next", undefined, text("help.next-agent")],
+  ["agent.prev", undefined, text("help.previous-agent")],
+  ["lead.open", undefined, text("help.open-the-lead")],
+  ["window.minimize", undefined, text("help.minimize-window")],
+  ["window.maximize", undefined, text("help.maximize-window")],
+  ["window.close", undefined, text("help.close-window")],
+  ["app.settings", undefined, text("help.settings")],
+  ["app.help", undefined, text("help.keys")],
+  ["app.welcome", undefined, text("help.welcome")],
+  ["app.whats_new", undefined, text("help.whats-new")],
+  ["app.reset", undefined, text("help.reset-default")],
+  ["app.zoom_in", undefined, text("help.zoom-in")],
+  ["app.zoom_out", undefined, text("help.zoom-out")],
+  ["app.zoom_reset", undefined, text("help.reset-zoom")],
+  ["app.quit", undefined, text("help.quit")],
 ];
 
 // Commands the palette keeps out of its list, but the sheet still needs words for.
 const TITLES = {
-  "space.select": "Go to space",
-  "tab.select": "Go to tab",
-  "layout.toggle": "Show or hide the sidebar",
-  "layout.switch": "Switch layout",
-  "terminal.paste_image": "Paste an image",
-  terminal: "Give the key to the terminal",
-  "app.hide": "Hide Kompitum",
-  "app.hide_others": "Hide others",
-  "app.show_all": "Show all",
+  "space.select": text("help.go-to-space"),
+  "tab.select": text("help.go-to-tab"),
+  "layout.toggle": text("help.show-hide-sidebar"),
+  "layout.switch": text("help.switch-layout"),
+  "terminal.paste_image": text("help.paste-image"),
+  terminal: text("help.give-key"),
+  "app.hide": text("help.hide-kompitum"),
+  "app.hide_others": text("help.hide-others"),
+  "app.show_all": text("help.show-all"),
 };
 
 function titleOf(name) {
@@ -108,14 +115,14 @@ function titleOf(name) {
 }
 
 function titleFor(action) {
-  if (action.startsWith("send:")) return "Type " + JSON.stringify(action.slice(5));
+  if (action.startsWith("send:")) return text("help.type", { keys: JSON.stringify(action.slice(5)) });
   const desk = DESK.find(([, a]) => a === action);
   if (desk && onDesk()) return desk[2];
   const [name, arg] = action.split(":");
   const exact = NAMED.find(([n, a]) => n === name && (a === undefined || a === arg));
   if (exact) return exact[2];
-  if (TITLES[name]) return ["space.select", "tab.select"].includes(name) && arg ? `${TITLES[name]} ${arg}` : TITLES[name];
-  return arg ? `${titleOf(name)} ${arg}` : titleOf(name);
+  if (TITLES[name]) return ["space.select", "tab.select"].includes(name) && arg ? text("help.numbered", { label: TITLES[name], index: arg }) : TITLES[name];
+  return arg ? text("help.numbered", { label: titleOf(name), index: arg }) : titleOf(name);
 }
 
 const KEY_NAMES = {
@@ -155,7 +162,7 @@ function numberedRow(list, base) {
   return {
     base,
     keys: `${prefix}1\u2013${last}`,
-    label: `${TITLES[base]} 1\u2013${last}`,
+    label: text("help.range", { label: TITLES[base], last }),
     section: rows[0].section,
   };
 }
@@ -184,7 +191,7 @@ function rowsFor(list) {
 export default class Help extends View {
   init(_props, cx) {
     this.filter = "";
-    this.input = InputState.new({ placeholder: "Type to filter…" });
+    this.input = InputState.new({ placeholder: text("help.filter-placeholder") });
     this.input.on("change", (_e, cx) => { this.filter = this.input.value(); cx.notify(); });
     this.input.focus();
     cx.timer.after(600, () => this.input.focus());
@@ -254,6 +261,6 @@ export default class Help extends View {
             ),
           ),
       );
-    return sheet({ title: "Keyboard shortcuts", width: 640, onClose: () => closeOverlay(props().overlay) }, content);
+    return sheet({ title: text("help.title"), width: 640, onClose: () => closeOverlay(props().overlay) }, content);
   }
 }

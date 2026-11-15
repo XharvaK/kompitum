@@ -15,7 +15,7 @@
 import { div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import {
-  props, closeOverlay, run, shared, setShared, terminals, spaces, agents, updates, kom, layout, openOverlay, home, settings,
+  props, closeOverlay, run, shared, setShared, terminals, spaces, agents, updates, kom, layout, openOverlay, home, settings, text,
 } from "kompitum";
 import {
   C, ASSETS, FONT, DOS, unit, root, win, bevel, button, field, well, label, plain, icon, programIcon, sfx, perform, etch,
@@ -24,17 +24,17 @@ import {
 import { userName } from "./taskbar.js";
 
 const KIND_TITLE = {
-  run: "Run",
-  shutdown: "Shut Down Kompitum",
-  logoff: "Log Off Kompitum",
-  about: "About Kompitum 98",
-  taskman: "Close Program",
-  display: "Display Properties",
-  datetime: "Date/Time Properties",
-  welcome: "Welcome to Kompitum 98",
-  mycomputer: "My Computer",
-  network: "Network Neighborhood",
-  bin: "Recycle Bin",
+  run: text("win98.run"),
+  shutdown: text("win98.shut-down-kompitum"),
+  logoff: text("win98.log-off-kompitum"),
+  about: text("win98.about-98"),
+  taskman: text("win98.close-program"),
+  display: text("win98.display-properties"),
+  datetime: text("win98.datetime-properties"),
+  welcome: text("win98.welcome-98"),
+  mycomputer: text("win98.my-computer"),
+  network: text("win98.network-neighborhood"),
+  bin: text("win98.recycle-bin"),
 };
 
 function lines(text) {
@@ -125,10 +125,10 @@ export default class Dialog {
             .text_size(u(32))
             .line_height(`${u(40)}px`)
             .text_color("#ff9c00")
-            .child("It's now safe to turn off")
-            .child("your computer."),
+            .child(text("win98.safe-off-1"))
+            .child(text("win98.safe-off-2")),
         );
-    const msg = this.p.mode === "shutdown" || this.stage === 0 ? "Kompitum is shutting down..." : "Starting Kompitum 98...";
+    const msg = this.p.mode === "shutdown" || this.stage === 0 ? text("win98.shutting-down") : text("win98.starting");
     return div()
       .size_full()
       .relative()
@@ -316,8 +316,8 @@ export default class Dialog {
   }
 
   frame(u, title, body, o = {}) {
-    const controls = o.help === false ? [] : [["help", () => {}, "Help"]];
-    controls.push(["close", () => this.close(), "Close"]);
+    const controls = o.help === false ? [] : [["help", () => {}, text("win98.help-tip")]];
+    controls.push(["close", () => this.close(), text("win98.close-tip")]);
     return win(u, {
       id: "dlg",
       title,
@@ -335,13 +335,13 @@ export default class Dialog {
     const chips = this.machines.length
       ? v_flex()
           .gap(u(4))
-          .child(label("Computer:"))
+          .child(label(text("win98.computer")))
           .child(
             h_flex()
               .gap(u(10))
               .flex_wrap()
               .children([null, ...this.machines.map((m) => m.name)].map((m, i) =>
-                this.radio(u, `m${i}`, m ?? "This computer", this.machine === m, () => (this.machine = m)),
+                this.radio(u, `m${i}`, m ?? text("win98.this-computer"), this.machine === m, () => (this.machine = m)),
               )),
           )
       : null;
@@ -356,12 +356,12 @@ export default class Dialog {
           .child(v_flex().flex_1().gap(u(8)).child(v_flex().children(lines(p.text))).child(this.input(u, this.text))),
       )
       .when(Boolean(chips), (el) => el.child(div().pl(u(44)).child(chips)))
-      .child(this.buttons(u, [this.btn(u, "ok", "OK", () => this.ok(), { default: true }), this.btn(u, "cancel", "Cancel", () => this.close())], "end"));
+      .child(this.buttons(u, [this.btn(u, "ok", text("win98.ok"), () => this.ok(), { default: true }), this.btn(u, "cancel", text("win98.cancel"), () => this.close())], "end"));
   }
 
   renderConfirm(u) {
     const p = this.p;
-    const bs = p.buttons ?? [{ label: "OK", default: true }];
+    const bs = p.buttons ?? [{ label: text("win98.ok"), default: true }];
     return v_flex()
       .p(u(12))
       .gap(u(14))
@@ -394,13 +394,13 @@ export default class Dialog {
           .gap(u(12))
           .items_start()
           .child(icon(u, "run", 32))
-          .child(v_flex().flex_1().children(lines("Type the name of a program, and Kompitum will\nopen it for you in a new window."))),
+          .child(v_flex().flex_1().children(lines(text("win98.run-text")))),
       )
       .child(
         h_flex()
           .gap(u(8))
           .items_center()
-          .child(div().w(u(32)).child(label("&Open:")))
+          .child(div().w(u(32)).child(label(text("win98.open-label"))))
           .child(
             h_flex()
               .flex_1()
@@ -415,15 +415,15 @@ export default class Dialog {
       )
       .child(
         this.buttons(u, [
-          this.btn(u, "ok", "OK", () => this.ok(), { default: true }),
-          this.btn(u, "cancel", "Cancel", () => this.close()),
-          this.btn(u, "browse", "&Browse...", null, { disabled: true }),
+          this.btn(u, "ok", text("win98.ok"), () => this.ok(), { default: true }),
+          this.btn(u, "cancel", text("win98.cancel"), () => this.close()),
+          this.btn(u, "browse", text("win98.browse"), null, { disabled: true }),
         ], "end"),
       );
   }
 
   renderShutdown(u) {
-    const opts = ["&Stand by", "Sh&ut down", "&Restart", "Restart in &DOS mode"];
+    const opts = [text("win98.stand-by"), text("win98.shut-down-option"), text("win98.restart"), text("win98.restart-dos")];
     return v_flex()
       .p(u(10))
       .gap(u(12))
@@ -435,15 +435,15 @@ export default class Dialog {
           .child(
             v_flex()
               .gap(u(8))
-              .child("What do you want the computer to do?")
+              .child(text("win98.shutdown-question"))
               .children(opts.map((o, i) => this.radio(u, `sd${i}`, o, this.choice === i, () => (this.choice = i)))),
           ),
       )
       .child(
         this.buttons(u, [
-          this.btn(u, "ok", "OK", () => this.ok(), { default: true }),
-          this.btn(u, "cancel", "Cancel", () => this.close()),
-          this.btn(u, "help", "&Help", () => run("app.help", {})),
+          this.btn(u, "ok", text("win98.ok"), () => this.ok(), { default: true }),
+          this.btn(u, "cancel", text("win98.cancel"), () => this.close()),
+          this.btn(u, "help", text("win98.help"), () => run("app.help", {})),
         ]),
       );
   }
@@ -452,8 +452,8 @@ export default class Dialog {
     return v_flex()
       .p(u(12))
       .gap(u(14))
-      .child(h_flex().gap(u(14)).items_center().child(icon(u, "logoff", 32)).child("Are you sure you want to log off?"))
-      .child(this.buttons(u, [this.btn(u, "yes", "&Yes", () => this.ok(), { default: true }), this.btn(u, "no", "&No", () => this.close())]));
+      .child(h_flex().gap(u(14)).items_center().child(icon(u, "logoff", 32)).child(text("win98.logoff-question")))
+      .child(this.buttons(u, [this.btn(u, "yes", text("win98.yes"), () => this.ok(), { default: true }), this.btn(u, "no", text("win98.no"), () => this.close())]));
   }
 
   renderAbout(u) {
@@ -473,23 +473,23 @@ export default class Dialog {
             v_flex()
               .flex_1()
               .gap(u(2))
-              .child("Kompitum 98")
-              .child(`Version ${up?.app?.version ?? "4.10.1998"} Second Edition`)
-              .child("Copyright \u00a9 1981-2026 The Herd Corp.")
+              .child(text("win98.kompitum-98"))
+              .child(text("win98.version", { version: up?.app?.version ?? "4.10.1998" }))
+              .child(text("win98.copyright"))
               .child(div().h(u(6)))
-              .child("This product is licensed to:")
+              .child(text("win98.licensed-to"))
               .child(div().pl(u(12)).child(userName()))
-              .child(div().pl(u(12)).child("Personal Use Edition"))
+              .child(div().pl(u(12)).child(text("win98.personal-use")))
               .child(div().h(u(6)))
               .child(etch(u))
               .child(div().h(u(4)))
-              .child(`Terminals running:  ${n}`)
-              .child(`Agents at work:  ${a}`)
-              .child(`kompitum-core:  ${up?.core?.version ?? "?"}`)
-              .child("Physical memory available to agents:  64.0 MB RAM"),
+              .child(text("win98.terminals-running", { count: n }))
+              .child(text("win98.agents-at-work", { count: a }))
+              .child(text("win98.core-version", { version: up?.core?.version ?? "?" }))
+              .child(text("win98.memory")),
           ),
       )
-      .child(this.buttons(u, [this.btn(u, "ok", "OK", () => this.close(), { default: true })], "end"));
+      .child(this.buttons(u, [this.btn(u, "ok", text("win98.ok"), () => this.close(), { default: true })], "end"));
   }
 
   renderTaskman(u) {
@@ -527,22 +527,22 @@ export default class Dialog {
       .child(field(u, list, { pad: [1, 1] }))
       .child(
         v_flex()
-          .children(lines("WARNING: Pressing CTRL+ALT+DEL again will restart your\ncomputer. You will lose unsaved information in all\nprograms that are running.")),
+          .children(lines(text("win98.taskman-warning"))),
       )
       .child(
         this.buttons(u, [
-          this.btn(u, "end", "&End Task", () => this.endTask(), { default: true }),
-          this.btn(u, "sd", "Sh&ut Down", () => {
+          this.btn(u, "end", text("win98.end-task"), () => this.endTask(), { default: true }),
+          this.btn(u, "sd", text("win98.shut-down-menu"), () => {
             this.close();
             openDialog("shutdown", {});
           }),
-          this.btn(u, "cancel", "Cancel", () => this.close()),
+          this.btn(u, "cancel", text("win98.cancel"), () => this.close()),
         ]),
       );
   }
 
   renderDisplay(u) {
-    const tabs = ["Background", "Effects", "Settings"];
+    const tabs = [text("win98.background"), text("win98.effects"), text("win98.settings")];
     const tabRow = h_flex()
       .items_end()
       .pl(u(4))
@@ -576,7 +576,7 @@ export default class Dialog {
         }),
       );
     const desktop = shared("win98.desktop") ?? "#008080";
-    const colors = [["(None)", "#008080"], ["Black", "#000000"], ["Navy", "#000080"], ["Plum", "#5c3566"], ["Forest", "#004000"], ["Clouds", "clouds"]];
+    const colors = [[text("win98.none"), "#008080"], [text("win98.black"), "#000000"], [text("win98.navy"), "#000080"], [text("win98.plum"), "#5c3566"], [text("win98.forest"), "#004000"], [text("win98.clouds"), "clouds"]];
     const scaleNow = scale();
     const page = [
       v_flex()
@@ -602,7 +602,7 @@ export default class Dialog {
                 ),
             ),
         )
-        .child(label("&Wallpaper:"))
+        .child(label(text("win98.wallpaper")))
         .child(
           field(
             u,
@@ -624,18 +624,18 @@ export default class Dialog {
       v_flex()
         .gap(u(10))
         .p(u(6))
-        .child(this.check(u, "snd", "Play &sounds (startup, dialogs, games)", shared("win98.mute") !== true, () => setShared("win98.mute", shared("win98.mute") !== true)))
-        .child(this.check(u, "clippy", "Show the &Office Assistant", shared("win98.clippy") !== "off", () => setShared("win98.clippy", shared("win98.clippy") === "off" ? "on" : "off")))
+        .child(this.check(u, "snd", text("win98.play-sounds"), shared("win98.mute") !== true, () => setShared("win98.mute", shared("win98.mute") !== true)))
+        .child(this.check(u, "clippy", text("win98.show-assistant"), shared("win98.clippy") !== "off", () => setShared("win98.clippy", shared("win98.clippy") === "off" ? "on" : "off")))
         .child(etch(u))
-        .child(v_flex().text_color(C.gray).children(lines("Sounds also follow Kompitum's own setting\n(Control Panel > Alerts)."))),
+        .child(v_flex().text_color(C.gray).children(lines(text("win98.sounds-note")))),
       v_flex()
         .gap(u(10))
         .p(u(6))
-        .child(label("Font size:"))
-        .child(this.radio(u, "s1", "&Small Fonts (pixel perfect)", scaleNow === 1, () => setShared("win98.scale", 1)))
-        .child(this.radio(u, "s2", "&Large Fonts (every pixel doubled)", scaleNow === 2, () => setShared("win98.scale", 2)))
+        .child(label(text("win98.font-size")))
+        .child(this.radio(u, "s1", text("win98.small-fonts"), scaleNow === 1, () => setShared("win98.scale", 1)))
+        .child(this.radio(u, "s2", text("win98.large-fonts"), scaleNow === 2, () => setShared("win98.scale", 2)))
         .child(etch(u))
-        .child(v_flex().text_color(C.gray).children(lines(`Kompitum's zoom is ${settings()?.zoom ?? 1}x; Kompitum 98 draws whole\npixels at any zoom.`))),
+        .child(v_flex().text_color(C.gray).children(lines(text("win98.zoom-note", { zoom: settings()?.zoom ?? 1 })))),
     ][this.page];
     return v_flex()
       .p(u(8))
@@ -645,9 +645,9 @@ export default class Dialog {
       .child(div().h(u(10)))
       .child(
         this.buttons(u, [
-          this.btn(u, "ok", "OK", () => this.close(), { default: true }),
-          this.btn(u, "cancel", "Cancel", () => this.close()),
-          this.btn(u, "apply", "&Apply", null, { disabled: true }),
+          this.btn(u, "ok", text("win98.ok"), () => this.close(), { default: true }),
+          this.btn(u, "cancel", text("win98.cancel"), () => this.close()),
+          this.btn(u, "apply", text("win98.apply"), null, { disabled: true }),
         ], "end"),
       );
   }
@@ -700,8 +700,8 @@ export default class Dialog {
           )
           .child(v_flex().gap(u(6)).items_center().child(clockFace(u, d)).child(field(u, div().w(u(90)).flex().justify_center().child(time)))),
       )
-      .child(div().child(`Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone}`))
-      .child(this.buttons(u, [this.btn(u, "ok", "OK", () => this.close(), { default: true }), this.btn(u, "cancel", "Cancel", () => this.close())], "end"));
+      .child(div().child(text("win98.time-zone", { zone: Intl.DateTimeFormat().resolvedOptions().timeZone })))
+      .child(this.buttons(u, [this.btn(u, "ok", text("win98.ok"), () => this.close(), { default: true }), this.btn(u, "cancel", text("win98.cancel"), () => this.close())], "end"));
   }
 
   explorer(u, items, status) {
@@ -743,11 +743,11 @@ export default class Dialog {
             .h(u(200))
             .id("ex-scroll")
             .overflow_y_scroll()
-            .child(items.length ? grid : div().p(u(10)).text_color(C.gray).child("This folder is empty.")),
+            .child(items.length ? grid : div().p(u(10)).text_color(C.gray).child(text("win98.folder-empty"))),
           { pad: [0, 0] },
         ),
       )
-      .child(h_flex().pt(u(2)).gap(u(2)).child(well(u, div().child(status)).flex_1()).child(well(u, h_flex().gap(u(4)).child(icon(u, "computer", 16)).child("My Computer")).w(u(120))));
+      .child(h_flex().pt(u(2)).gap(u(2)).child(well(u, div().child(status)).flex_1()).child(well(u, h_flex().gap(u(4)).child(icon(u, "computer", 16)).child(text("win98.my-computer"))).w(u(120))));
   }
 
   renderMyComputer(u) {
@@ -757,31 +757,31 @@ export default class Dialog {
       icon: s.machine ? "netdrive" : "drive",
       act: { run: ["space.select", { id: s.id }] },
     }));
-    items.push({ label: "Control Panel", icon: "control", act: { run: ["app.settings", {}] } });
-    items.push({ label: "Printers", icon: "printer", act: { dialog: { kind: "message", title: "Printers", icon: "error", text: "There are no printers installed.\nPrinting a terminal is a choice, not a feature." } } });
-    return this.explorer(u, items, `${items.length} object(s)`);
+    items.push({ label: text("win98.control-panel-label"), icon: "control", act: { run: ["app.settings", {}] } });
+    items.push({ label: text("win98.printers"), icon: "printer", act: { dialog: { kind: "message", title: text("win98.printers"), icon: "error", text: text("win98.no-printers") } } });
+    return this.explorer(u, items, text("win98.objects", { count: items.length }));
   }
 
   renderNetwork(u) {
     const items = [
-      { label: "Entire Network", icon: "network", act: null },
-      { label: "This computer", icon: "computer", act: { dialog: { kind: "prompt", title: "New Space", text: "Type a name for the new space:", icon: "folder", command: { name: "space.new", args: { machine: "" } } } } },
+      { label: text("win98.entire-network"), icon: "network", act: null },
+      { label: text("win98.this-computer"), icon: "computer", act: { dialog: { kind: "prompt", title: text("win98.new-space"), text: text("win98.new-space-text"), icon: "folder", command: { name: "space.new", args: { machine: "" } } } } },
       ...this.machines.map((m) => ({
         label: m.name,
         icon: "computer",
-        act: { dialog: { kind: "prompt", title: `New Space on ${m.name}`, text: `Type a name for the new space on ${m.name}:`, icon: "netdrive", command: { name: "space.new", args: { machine: m.name } } } },
+        act: { dialog: { kind: "prompt", title: text("win98.new-space-on", { name: m.name }), text: text("win98.new-space-on-text", { name: m.name }), icon: "netdrive", command: { name: "space.new", args: { machine: m.name } } } },
       })),
     ];
-    return this.explorer(u, items, `${items.length} object(s)`);
+    return this.explorer(u, items, text("win98.objects", { count: items.length }));
   }
 
   renderWelcome(u) {
     const items = [
-      { icon: "programs", title: "Begin an Agent", text: "Kompitum runs your coding agents in windows,\nlike it's 1998 and the future at once.\n\nStart one from Start > Programs > Agents,\nor open the Run box and type its name.", go: "&Run...", act: { dialog: { kind: "run", value: "claude" } } },
-      { icon: "help", title: "Discover Kompitum 98", text: "The taskbar is your tabs. The folders on\nthe desktop are your spaces. Each window\nis a pane: double-click its title bar to\nmaximize it, or use _ to minimize the tab.\n\nCtrl+Esc opens the Start menu.", go: "&Help", act: { run: ["app.help", {}] } },
-      { icon: "mines", title: "Play Mines", text: "Your agent is thinking.\nYou've earned a break.\n\nSolitaire is on the desktop too.", go: "&Play", act: { app: "mines" } },
-      { icon: "taskman", title: "Maintain Your Computer", text: "See every program Kompitum runs, and end\nthe ones you don't need anymore.\n\nCtrl+Shift+Esc opens it anytime.", go: "&Open", act: { dialog: { kind: "taskman" } } },
-      { icon: "logoff", title: "Leave Kompitum 98", text: "Miss the future? Log Off takes you\nback to Kompitum's normal layout.\nYour terminals keep running.", go: "&Log Off", act: { dialog: { kind: "logoff" } } },
+      { icon: "programs", title: text("win98.begin-agent"), text: text("win98.begin-agent-text"), go: text("win98.run-menu"), act: { dialog: { kind: "run", value: "claude" } } },
+      { icon: "help", title: text("win98.discover-98"), text: text("win98.discover-98-text"), go: text("win98.help"), act: { run: ["app.help", {}] } },
+      { icon: "mines", title: text("win98.play-mines"), text: text("win98.play-mines-text"), go: text("win98.play"), act: { app: "mines" } },
+      { icon: "taskman", title: text("win98.maintain"), text: text("win98.maintain-text"), go: text("win98.open"), act: { dialog: { kind: "taskman" } } },
+      { icon: "logoff", title: text("win98.leave-98"), text: text("win98.leave-98-text"), go: text("win98.log-off"), act: { dialog: { kind: "logoff" } } },
     ];
     const it = items[this.sel] ?? items[0];
     const show = shared("win98.welcome") !== "off";
@@ -800,9 +800,9 @@ export default class Dialog {
               .items_end()
               .gap(u(6))
               .child(icon(u, "start", 32))
-              .child(div().text_size(u(22)).line_height(`${u(26)}px`).text_color(C.navy).child("Welcome to"))
-              .child(div().text_size(u(22)).line_height(`${u(26)}px`).font_weight(700).text_color(C.text).child("Kompitum"))
-              .child(div().text_size(u(22)).line_height(`${u(26)}px`).text_color("#d07000").child("98")),
+              .child(div().text_size(u(22)).line_height(`${u(26)}px`).text_color(C.navy).child(text("win98.welcome-to")))
+              .child(div().text_size(u(22)).line_height(`${u(26)}px`).font_weight(700).text_color(C.text).child(text("win98.kompitum")))
+              .child(div().text_size(u(22)).line_height(`${u(26)}px`).text_color("#d07000").child(text("win98.98"))),
           ),
       )
       .child(
@@ -815,7 +815,7 @@ export default class Dialog {
               .p(u(8))
               .gap(u(2))
               .bg("#000080")
-              .child(div().pb(u(4)).text_color("#ffff80").font_weight(700).child("CONTENTS"))
+              .child(div().pb(u(4)).text_color("#ffff80").font_weight(700).child(text("win98.contents")))
               .children(
                 items.map((x, i) =>
                   h_flex()
@@ -859,16 +859,16 @@ export default class Dialog {
           .p(u(8))
           .justify_between()
           .items_center()
-          .child(this.check(u, "wl-show", "&Show this screen each time Kompitum 98 starts", show, () => setShared("win98.welcome", show ? "off" : "on")))
-          .child(this.btn(u, "close", "&Close", () => this.close())),
+          .child(this.check(u, "wl-show", text("win98.show-screen"), show, () => setShared("win98.welcome", show ? "off" : "on")))
+          .child(this.btn(u, "close", text("win98.close"), () => this.close())),
       );
   }
 
   renderBin(u) {
     return v_flex()
-      .child(this.explorer(u, [], "0 object(s)"))
+      .child(this.explorer(u, [], text("win98.objects", { count: 0 })))
       .child(div().h(u(8)))
-      .child(this.buttons(u, [this.btn(u, "empty", "&Empty Recycle Bin", () => sfx("recycle"), { w: 120 })], "end"));
+      .child(this.buttons(u, [this.btn(u, "empty", text("win98.empty-recycle-bin"), () => sfx("recycle"), { w: 120 })], "end"));
   }
 
   render(_cx) {
@@ -892,7 +892,7 @@ export default class Dialog {
         network: () => this.renderNetwork(u),
         bin: () => this.renderBin(u),
         welcome: () => this.renderWelcome(u),
-      }[this.kind]?.() ?? div().p(u(10)).child(`Unknown dialog ${this.kind}`);
+      }[this.kind]?.() ?? div().p(u(10)).child(text("win98.unknown-dialog", { kind: this.kind }));
     const explorerish = ["mycomputer", "network", "bin"].includes(this.kind);
     const iconFor = { mycomputer: "computer", network: "network", bin: "bin", display: "display", run: "run", taskman: "taskman", datetime: "clock" }[this.kind];
     return root(
@@ -904,7 +904,7 @@ export default class Dialog {
         .w_full()
         .min_h(0),
     ).child(
-      this.frame(u, p.title ?? KIND_TITLE[this.kind] ?? "Kompitum", body, {
+      this.frame(u, p.title ?? KIND_TITLE[this.kind] ?? text("win98.kompitum"), body, {
         icon: iconFor ? icon(u, iconFor, 16) : null,
         help: !explorerish,
       }),

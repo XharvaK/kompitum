@@ -1,6 +1,6 @@
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, spaces, panes, props, run, setAgentOrder } from "kompitum";
+import { agents, spaces, panes, props, run, setAgentOrder, text } from "kompitum";
 
 const wood = "#ab7748", ink = "#414b34";
 const icon = (p) => p?.icon ? (p.tint ? svg(p.icon).text_color(p.color ?? ink) : image(p.icon)).size(17) : div().size(17);
@@ -32,13 +32,13 @@ export default class Pasture extends View {
     if (p.role === "pane") {
       const pane = panes().find((x) => x.pane === p.pane);
       return h_flex().size_full().px(12).gap(9).items_center().bg("#ceab78").text_color("#493724").text_size(12).font_weight(600)
-        .child(icon(pane?.program)).child(div().child(pane?.program.name ?? "Terminal"))
-        .child(div().flex_1()).child(div().child(pane?.status === "blocked" ? "needs you" : pane?.status ?? ""));
+        .child(icon(pane?.program)).child(div().child(pane?.program.name ?? text("pasture.terminal")))
+        .child(div().flex_1()).child(div().child(pane?.status === "blocked" ? text("pasture.needs-you") : pane?.status ?? ""));
     }
     if (p.role === "rail") {
       const s = spaces().find((s) => s.active), tab = s?.tabs.find((t) => t.active);
       return h_flex().size_full().bg(wood).px(20).items_center().justify_between().text_color("#fff4d9").text_size(13).font_weight(600)
-        .child(div().child(`${s?.name ?? ""}  /  ${tab?.name ?? ""}`)).child(div().text_size(11).child("THE WORKSHED"));
+        .child(div().child(`${s?.name ?? ""}  /  ${tab?.name ?? ""}`)).child(div().text_size(11).child(text("pasture.workshed")));
     }
     const list = agents();
     setAgentOrder(list.map((a) => a.address));
@@ -46,14 +46,14 @@ export default class Pasture extends View {
     return div().relative().size_full().overflow_hidden()
       .child(image("mods/pasture/meadow.svg").absolute().size_full())
       .child(v_flex().absolute().left(28).top(23).gap(3).text_color(ink)
-        .child(div().text_size(30).font_weight(800).child("The pasture"))
-        .child(div().text_size(13).child(`${list.length} sheep, one happy herd.`)))
+        .child(div().text_size(30).font_weight(800).child(text("pasture.title")))
+        .child(div().text_size(13).child(text("pasture.herd", { count: list.length }))))
       .child(div().absolute().left(75).top(160).w(14).h(150).bg("#8d623d"))
       .child(v_flex().absolute().left(30).top(139).w(177).py(12).px(16).gap(3).rounded(6).bg("#d2a673").border(3).border_color("#9b6b40").text_color("#573c27")
-        .child(div().text_size(11).font_weight(600).child("WELCOME TO"))
-        .child(div().text_size(21).font_weight(800).child(active?.name ?? "your space")))
+        .child(div().text_size(11).font_weight(600).child(text("pasture.welcome-to")))
+        .child(div().text_size(21).font_weight(800).child(active?.name ?? text("pasture.your-space"))))
       .children(list.map((a, i) => this.sheep(a, i)))
       .child(h_flex().absolute().right(30).top(25).gap(18).text_size(12).text_color(ink)
-        .children([["working", "wandering"], ["blocked", "need you"], ["done", "resting"]].map(([state, name]) => div().child(`${list.filter((a) => a.status === state).length} ${name}`))));
+        .children([["working", text("pasture.wandering")], ["blocked", text("pasture.need-you")], ["done", text("pasture.resting")]].map(([state, name]) => div().child(text("pasture.count", { count: list.filter((a) => a.status === state).length, name })))));
   }
 }

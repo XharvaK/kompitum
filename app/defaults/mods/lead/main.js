@@ -5,10 +5,10 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView } from "gpui-base";
-import { kom, theme, notify, openOverlay, closeOverlay, shared, setShared, props, appLink, openLink, settings } from "kompitum";
+import { kom, theme, notify, openOverlay, closeOverlay, shared, setShared, props, appLink, openLink, settings, text } from "kompitum";
 
 const LEAD_KEY = "lead";
-const TASK_SECTIONS = [["review", "To review"], ["running", "Running"], ["queued", "Queued"]];
+const TASK_SECTIONS = [["review", text("lead.to-review")], ["running", text("lead.running")], ["queued", text("lead.queued")]];
 
 const cap = (word) => (word ? word[0].toUpperCase() + word.slice(1) : "");
 
@@ -76,7 +76,7 @@ function messageOf(value) {
 }
 
 function errorText(e) {
-  if (e == null) return "The command failed.";
+  if (e == null) return text("lead.command-failed");
   if (typeof e === "string") return e;
   if (typeof e.message === "string" && e.message.trim()) return e.message.trim();
   for (const raw of [e.stderr, e.stdout]) {
@@ -87,7 +87,7 @@ function errorText(e) {
     } catch {}
     return raw.trim();
   }
-  if (typeof e.code === "number") return `The command failed with exit code ${e.code}.`;
+  if (typeof e.code === "number") return text("lead.command-exit", { code: e.code });
   return String(e);
 }
 
@@ -98,9 +98,9 @@ async function komJson(args) {
   try {
     data = JSON.parse(r.stdout);
   } catch {
-    throw new Error(`The command returned no JSON: ${String(r.stdout ?? "").trim() || "empty output"}`);
+    throw new Error(text("lead.no-json", { message: String(r.stdout ?? "").trim() || text("lead.empty-output") }));
   }
-  if (data && data.error) throw new Error(messageOf(data) ?? "The command failed.");
+  if (data && data.error) throw new Error(messageOf(data) ?? text("lead.command-failed"));
   return data;
 }
 
@@ -128,8 +128,8 @@ function resetLine(status) {
       if (Number.isFinite(n) && n > 0) times.push(n);
     }
   }
-  if (!times.length) return "Claude's reset time is unknown.";
-  return `Claude is back at ${localTime(Math.max(...times))} (local time).`;
+  if (!times.length) return text("lead.reset-unknown");
+  return text("lead.back-at", { when: localTime(Math.max(...times)) });
 }
 
 function minutes(seconds) {
@@ -146,12 +146,12 @@ function taskLine(task) {
   const bits = [];
   if (task.repo) bits.push(String(task.repo));
   if (task.worker) bits.push(String(task.worker));
-  bits.push(`started by ${task.by ? String(task.by) : "unknown"}`);
+  bits.push(text("lead.started-by", { by: task.by ? String(task.by) : text("lead.unknown") }));
   const took = minutes(task.seconds);
   if (took) bits.push(took);
   const cost = money(task.cost_usd);
   if (cost) bits.push(cost);
-  return `${task.name ? String(task.name) : "(unnamed)"} — ${bits.join(", ")}`;
+  return text("lead.task-line", { name: task.name ? String(task.name) : text("lead.unnamed"), bits: bits.join(", ") });
 }
 
 function managerTaskLine(task) {
@@ -159,17 +159,18 @@ function managerTaskLine(task) {
   if (task.state) bits.push(String(task.state));
   const cost = money(task.cost_usd);
   if (cost) bits.push(cost);
-  return `${task.name ? String(task.name) : "(unnamed)"}${bits.length ? ` — ${bits.join(", ")}` : ""}`;
+  const name = task.name ? String(task.name) : text("lead.unnamed");
+  return bits.length ? text("lead.manager-task-line", { name, bits: bits.join(", ") }) : name;
 }
 
 function openNoteLine(note) {
-  const title = note.title ? String(note.title) : "(untitled)";
-  const from = note.from ? String(note.from) : "unknown";
-  return `${title} — from ${from} — ${note.path ? String(note.path) : "no path"}`;
+  const title = note.title ? String(note.title) : text("lead.untitled");
+  const from = note.from ? String(note.from) : text("lead.unknown");
+  return text("lead.open-note-line", { title, from, path: note.path ? String(note.path) : text("lead.no-path") });
 }
 
 function backNoteLine(note) {
-  return `${note.title ? String(note.title) : "(untitled)"} — ${note.path ? String(note.path) : "no path"}`;
+  return text("lead.back-note-line", { title: note.title ? String(note.title) : text("lead.untitled"), path: note.path ? String(note.path) : text("lead.no-path") });
 }
 
 function noteLines(notes) {
@@ -190,16 +191,16 @@ async function handoffMarkdown() {
     komJson(["vault", "open", "--json", "--as", "opus"]),
   ]);
   const parts = [
-    "The Owner handed Manager the lead because Claude's quota is out.",
+    text("lead.handoff-first"),
     resetLine(status),
   ];
   for (const [key, title] of TASK_SECTIONS) {
     const tasks = asArray(status.tasks && status.tasks[key]);
-    if (tasks.length) parts.push(`## ${title}\n${tasks.map((task) => `- ${taskLine(task)}`).join("\n")}`);
+    if (tasks.length) parts.push(`${text("lead.section", { title })}\n${tasks.map((task) => `- ${taskLine(task)}`).join("\n")}`);
   }
   const notes = asArray(vault.notes).filter((note) => note && note.status === "open");
-  if (notes.length) parts.push(`## Open for Opus\n${noteLines(notes)}`);
-  parts.push("This is the raw list: no summary was written.");
+  if (notes.length) parts.push(`${text("lead.open-for-opus")}\n${noteLines(notes)}`);
+  parts.push(text("lead.raw-list"));
   return markdown(parts);
 }
 
@@ -208,7 +209,7 @@ async function backMarkdown(at) {
     komJson(["status", "--json"]),
     komJson(["vault", "thread", "manager", "--json", "--as", "opus"]),
   ]);
-  const parts = ["The lead is back with Opus."];
+  const parts = [text("lead.back-first")];
   const tasks = [];
   if (status.tasks && typeof status.tasks === "object") {
     for (const section of Object.values(status.tasks)) {
@@ -218,7 +219,7 @@ async function backMarkdown(at) {
     }
   }
   if (tasks.length) {
-    parts.push(`## Manager's tasks since the hand-off\n${tasks.map((task) => `- ${managerTaskLine(task)}`).join("\n")}`);
+    parts.push(`${text("lead.manager-tasks")}\n${tasks.map((task) => `- ${managerTaskLine(task)}`).join("\n")}`);
   }
   const notes = asArray(vault.notes).filter((note) => {
     if (!note || note.from !== "manager") return false;
@@ -226,7 +227,7 @@ async function backMarkdown(at) {
     return Number.isFinite(when) && when > at;
   });
   if (notes.length) {
-    parts.push(`## Manager's notes since the hand-off\n${notes.map((note) => `- ${backNoteLine(note)}`).join("\n")}`);
+    parts.push(`${text("lead.manager-notes")}\n${notes.map((note) => `- ${backNoteLine(note)}`).join("\n")}`);
   }
   return markdown(parts);
 }
@@ -260,13 +261,13 @@ export default class Lead extends View {
           height: 540,
           props: {
             mode: "handoff",
-            title: to === "opus" ? "Take the lead back for Opus" : "Hand the lead to Manager",
+            title: to === "opus" ? text("lead.take-back-title") : text("lead.handoff-title"),
             markdown: body,
             send: to,
           },
         });
       } catch (e) {
-        notify({ title: "The lead did not change", body: errorText(e), level: "error" });
+        notify({ title: text("lead.did-not-change"), body: errorText(e), level: "error" });
       } finally {
         this.busy = false;
         cx.notify();
@@ -291,14 +292,14 @@ export default class Lead extends View {
   door(other) {
     const link = String(props()?.door ?? other.link);
     const scheme = link.split(":")[0];
-    const fail = (body) => notify({ title: `Could not open ${other.name}`, body, level: "error" });
+    const fail = (body) => notify({ title: text("lead.could-not-open", { name: other.name }), body, level: "error" });
     let app;
     try {
       app = appLink(scheme);
     } catch (e) {
       return fail(errorText(e));
     }
-    if (!app) return fail(`Nothing on this computer opens ${scheme}:// links.`);
+    if (!app) return fail(text("lead.nothing-opens", { scheme }));
     openLink(link);
   }
 
@@ -306,7 +307,7 @@ export default class Lead extends View {
     const p = props() ?? {};
     if (this.sending) return;
     const to = p.send === "opus" ? "opus" : "manager";
-    const title = to === "opus" ? "The lead is back with Opus" : "You have the lead until Claude is back";
+    const title = to === "opus" ? text("lead.back-title") : text("lead.hold-title");
     this.sending = true;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -333,24 +334,24 @@ export default class Lead extends View {
         closeOverlay(p.overlay);
         if (result && result.pushed === false) {
           notify({
-            title: to === "manager" ? "Hand-off written" : "Note written",
+            title: to === "manager" ? text("lead.handoff-written") : text("lead.note-written"),
             body:
               typeof result.said === "string" && result.said.trim()
                 ? result.said.trim()
-                : "The note is written but still only on this computer.",
+                : text("lead.note-local"),
             level: "warning",
           });
         } else {
           notify({
-            title: to === "manager" ? "Lead handed over" : "Lead taken back",
-            body: to === "manager" ? "The hand-off went to Manager." : "The lead is back with Opus.",
+            title: to === "manager" ? text("lead.handed-over") : text("lead.taken-back"),
+            body: to === "manager" ? text("lead.handoff-went") : text("lead.back-title"),
             level: "success",
           });
         }
       } catch (e) {
         this.sending = false;
         cx.notify();
-        notify({ title: "The note was not sent", body: errorText(e), level: "error" });
+        notify({ title: text("lead.note-not-sent"), body: errorText(e), level: "error" });
       }
     });
   }
@@ -398,9 +399,9 @@ export default class Lead extends View {
     if (!other) return bar;
     bar = bar.child(
       item("lead-notes")
-        .tooltip(`Notes with ${cap(other.agent)}`)
+        .tooltip(text("lead.notes-with", { agent: cap(other.agent) }))
         .on_click(() => openOverlay({ mod: "line", kind: "popup", width: 420, height: 460, props: { with: other.agent } }))
-        .child("Notes")
+        .child(text("lead.notes"))
         .child(svg("mods/lead/chevron-up.svg").size(12)),
     );
     if (!this.appFor(other.link)) return bar;
@@ -408,7 +409,7 @@ export default class Lead extends View {
       .child(div().w(1).h(12).bg(t.border))
       .child(
         item("lead-door")
-          .tooltip(`Open ${other.name}`)
+          .tooltip(text("lead.open-app", { name: other.name }))
           .on_click(() => this.door(other))
           .child(other.name)
           .child(svg("mods/lead/arrow-up-right.svg").size(11)),
@@ -417,7 +418,7 @@ export default class Lead extends View {
 
   renderHandoff(t) {
     const p = props() ?? {};
-    const sendLabel = p.send === "opus" ? "Send to Opus" : "Send to Manager";
+    const sendLabel = p.send === "opus" ? text("lead.send-opus") : text("lead.send-manager");
     return v_flex()
       .id("lead-handoff")
       .size_full()
@@ -440,10 +441,11 @@ export default class Lead extends View {
           .bg(t.chrome)
           .border_b(1)
           .border_color(t.border)
-          .child(div().text_size(13).font_semibold().child(p.title ?? "The lead"))
+          .child(div().text_size(13).font_semibold().child(p.title ?? text("lead.the-lead")))
           .child(
             h_flex()
               .id("lead-close")
+              .accessibility_label(text("lead.close"))
               .w(22)
               .h(22)
               .items_center()
@@ -481,11 +483,11 @@ export default class Lead extends View {
           .gap(8)
           .border_t(1)
           .border_color(t.border)
-          .child(this.button("lead-cancel", "Cancel", false, () => closeOverlay(p.overlay), t))
+          .child(this.button("lead-cancel", text("lead.cancel"), false, () => closeOverlay(p.overlay), t))
           .child(
             this.button(
               "lead-send",
-              this.sending ? "Sending…" : sendLabel,
+              this.sending ? text("lead.sending") : sendLabel,
               true,
               (_e, cx) => this.send(cx),
               t,

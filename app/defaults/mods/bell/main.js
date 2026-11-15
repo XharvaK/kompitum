@@ -4,7 +4,7 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { kom, theme, run, props, openOverlay, closeOverlay, settings, knownAgents, agents, lead, updates, shared, setShared } from "kompitum";
+import { kom, theme, run, props, openOverlay, closeOverlay, settings, knownAgents, agents, lead, updates, shared, setShared, text } from "kompitum";
 
 // The toasts that left, newest first (Kompitum keeps 20); the bell shows this many.
 const RECENT = "notifications.recent";
@@ -13,7 +13,7 @@ const EARLIER_ROWS = 5;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const pad = (n) => String(n).padStart(2, "0");
 const cap = (s) => (s ? String(s).replace(/^./, (c) => c.toUpperCase()) : "");
-const text = (v) => (typeof v === "string" ? v : "");
+const str = (v) => (typeof v === "string" ? v : "");
 const base = (p) => String(p ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
 const firstLine = (v) => String(v ?? "").trim().split(/\r?\n/).find(Boolean) ?? "";
 
@@ -52,7 +52,7 @@ function errorText(result) {
       if (message) return firstLine(message);
     } catch {}
   }
-  return firstLine(result?.stderr) || firstLine(result?.stdout) || `kom exited ${result?.code ?? "?"}`;
+  return firstLine(result?.stderr) || firstLine(result?.stdout) || text("bell.kom-exited", { code: result?.code ?? "?" });
 }
 
 // Whatever kom status gives for workers: an array, or an object holding one.
@@ -66,9 +66,9 @@ function workersOf(workers) {
 
 // The catalog names a worker's CLI ("OpenCode", not "opencode"); a plan after the CLI's old label ("Go") stays.
 function workerName(catalog, worker) {
-  const cli = text(worker.cli);
+  const cli = str(worker.cli);
   const entry = cli ? catalog.find((item) => item.worker === cli || item.key === cli) : null;
-  const label = text(worker.label);
+  const label = str(worker.label);
   if (!entry?.name) return label;
   return label.toLowerCase().startsWith(cli.toLowerCase()) ? entry.name + label.slice(cli.length) : entry.name;
 }
@@ -120,7 +120,7 @@ export default class Bell extends View {
           this.statusError = errorText(r);
         }
       } catch (e) {
-        this.statusError = firstLine(e?.message ?? e) || "status failed";
+        this.statusError = firstLine(e?.message ?? e) || text("bell.status-failed");
       }
       try {
         const r = await kom(["vault", "open", "--json", "--as", "owner"]);
@@ -132,7 +132,7 @@ export default class Bell extends View {
           this.vaultError = errorText(r);
         }
       } catch (e) {
-        this.vaultError = firstLine(e?.message ?? e) || "The vault didn't answer.";
+        this.vaultError = firstLine(e?.message ?? e) || text("bell.vault-no-answer");
       }
       // The agents' names change only with an install: read them once.
       if (this.catalog.length === 0) {
@@ -186,12 +186,12 @@ export default class Bell extends View {
     const rows = [];
     if (lead()?.ask) {
       const program = settings()?.lead?.program ?? "claude";
-      rows.push(this.item(t, "bell-lead", `${leadName(this.catalog, program)} is asking you`, "",
-        { label: "Open", go: () => run("lead.open") }));
+      rows.push(this.item(t, "bell-lead", text("bell.lead-asking", { name: leadName(this.catalog, program) }), "",
+        { label: text("bell.open"), go: () => run("lead.open") }));
     }
     for (const a of agents().filter((agent) => agent.status === "blocked")) {
-      rows.push(this.item(t, `bell-agent-${a.address}`, `${agentName(a)} needs you`, text(a.detail),
-        { label: "Show", go: () => run("pane.focus", { pane: a.pane }) }));
+      rows.push(this.item(t, `bell-agent-${a.address}`, text("bell.agent-needs-you", { name: agentName(a) }), str(a.detail),
+        { label: text("bell.show"), go: () => run("pane.focus", { pane: a.pane }) }));
     }
     return rows;
   }
@@ -202,18 +202,18 @@ export default class Bell extends View {
     const rows = [];
     const u = updates();
     if (u.app.ready) {
-      rows.push(this.item(t, "bell-update-app", `Kompitum ${u.app.ready} is ready`, "Restart to update. Your terminals keep running.",
-        { label: "Restart", go: () => run("app.update") }));
+      rows.push(this.item(t, "bell-update-app", text("bell.update-app", { version: u.app.ready }), text("bell.update-app-detail"),
+        { label: text("bell.restart"), go: () => run("app.update") }));
     }
     if (u.core.ready && !u.core.updating) {
-      rows.push(this.item(t, "bell-update-core", `kompitum-core ${u.core.ready} is ready`, "Your terminals keep running.",
-        { label: "Update", go: () => run("app.update_core") }));
+      rows.push(this.item(t, "bell-update-core", text("bell.update-core", { version: u.core.ready }), text("bell.update-core-detail"),
+        { label: text("bell.update"), go: () => run("app.update_core") }));
     }
     const next = this.workers.find((worker) => worker.key && worker.key === this.nextWorker);
-    const goesTo = next ? `Tasks go to ${workerName(this.catalog, next)}.` : "Tasks go to the next worker.";
+    const goesTo = next ? text("bell.tasks-go-to", { name: workerName(this.catalog, next) }) : text("bell.tasks-next");
     for (const w of this.workers.filter((worker) => /block|out/i.test(worker.status))) {
       const back = backWords(w.until);
-      rows.push(this.item(t, `bell-limit-${w.cli ?? w.label}`, `${workerName(this.catalog, w)} is out${back ? ` until ${back}` : ""}`,
+      rows.push(this.item(t, `bell-limit-${w.cli ?? w.label}`, back ? text("bell.worker-out-until", { name: workerName(this.catalog, w), when: back }) : text("bell.worker-out", { name: workerName(this.catalog, w) }),
         goesTo, null));
     }
     return rows;
@@ -222,20 +222,20 @@ export default class Bell extends View {
   // The toasts that left, newest first: each with its first line and when it came, and Show when it had an action.
   earlier(t) {
     const recent = shared(RECENT);
-    const list = Array.isArray(recent) ? recent.filter((n) => n && typeof n === "object" && text(n.title)) : [];
+    const list = Array.isArray(recent) ? recent.filter((n) => n && typeof n === "object" && str(n.title)) : [];
     return list.slice(0, EARLIER_ROWS).map((n, index) => {
       const detail = [firstLine(n.body), Number.isFinite(n.at) ? stamp(n.at) : ""].filter(Boolean).join(" · ");
       const action = n.action && typeof n.action.name === "string" ? n.action : null;
-      return this.item(t, `bell-recent-${index}`, n.title, detail, action ? { label: "Show", go: () => run(action.name, action.args ?? {}) } : null);
+      return this.item(t, `bell-recent-${index}`, n.title, detail, action ? { label: text("bell.show"), go: () => run(action.name, action.args ?? {}) } : null);
     });
   }
 
   // A waiting note: its title, its sender and when it came. Open shows it in the mailbox.
   noteItem(t, note, index) {
-    const path = text(note.path);
-    const title = text(note.title) || base(path).replace(/\.md$/, "") || "Note";
-    const detail = [text(note.from), stamp(note.date)].filter(Boolean).join(" · ");
-    return this.item(t, `bell-note-${index}`, title, detail, { label: "Open", go: () => run("app.mailbox", { note: path }) });
+    const path = str(note.path);
+    const title = str(note.title) || base(path).replace(/\.md$/, "") || text("bell.note");
+    const detail = [str(note.from), stamp(note.date)].filter(Boolean).join(" · ");
+    return this.item(t, `bell-note-${index}`, title, detail, { label: text("bell.open"), go: () => run("app.mailbox", { note: path }) });
   }
 
   render() {
@@ -249,19 +249,19 @@ export default class Bell extends View {
       notes.push(div().id("bell-vault-error").px(8).py(4).text_size(12).text_color(t.dim).child(this.vaultError));
     } else if (this.notes.length === 0) {
       // The empty mailbox is one row with its own button, not a sentence and a bare link.
-      notes.push(this.item(t, "bell-mailbox", "Mailbox", "No notes waiting.", { label: "Open", go: () => run("app.mailbox") }));
+      notes.push(this.item(t, "bell-mailbox", text("bell.mailbox"), text("bell.no-notes"), { label: text("bell.open"), go: () => run("app.mailbox") }));
     } else {
       notes.push(...this.notes.slice(0, 8).map((note, index) => this.noteItem(t, note, index)));
-      if (this.notes.length > 8) notes.push(this.link(t, "bell-more", `All ${this.notes.length} notes`, () => run("app.mailbox")));
+      if (this.notes.length > 8) notes.push(this.link(t, "bell-more", text("bell.all-notes", { count: this.notes.length }), () => run("app.mailbox")));
     }
     return v_flex().id("bell").size_full().min_h(0).bg(t.chrome).text_color(t.foreground).text_size(13).px(8).pt(2).pb(8).gap(2).overflow_y_scroll()
       // With nothing to act on, one calm line says so in place of the heading over an empty list.
-      .when(needs.length > 0, (el) => el.child(this.header(t, "Needs you")).children(needs))
-      .when(needs.length === 0, (el) => el.child(div().id("bell-calm").px(8).pt(12).pb(2).text_size(13).text_color(t.muted).child("Nothing needs you.")))
+      .when(needs.length > 0, (el) => el.child(this.header(t, text("bell.needs-you"))).children(needs))
+      .when(needs.length === 0, (el) => el.child(div().id("bell-calm").px(8).pt(12).pb(2).text_size(13).text_color(t.muted).child(text("bell.nothing-needs-you"))))
       .when(Boolean(this.statusError), (el) => el.child(div().id("bell-status-error").px(8).pb(4).text_size(12).text_color(t.dim).child(this.statusError)))
-      .when(news.length > 0, (el) => el.child(this.header(t, "Updates")).children(news))
+      .when(news.length > 0, (el) => el.child(this.header(t, text("bell.updates"))).children(news))
       .when(earlier.length > 0, (el) => el.child(h_flex().px(8).pt(12).pb(4).items_center()
-        .child(div().text_size(12).font_medium().text_color(t.muted).child("Earlier"))
+        .child(div().text_size(12).font_medium().text_color(t.muted).child(text("bell.earlier")))
         .child(div().flex_1())
         .child(div().id("bell-recent-clear").text_size(12).text_color(t.muted).cursor_pointer()
           .keep_focus(true)
@@ -269,10 +269,10 @@ export default class Bell extends View {
           .focus_ring(t.focus, 0)
           .hover((s) => s.text_color(t.foreground))
           .on_click(() => setShared(RECENT, []))
-          .child("Clear")))
+          .child(text("bell.clear"))))
         .children(earlier))
       .child(h_flex().px(8).pt(12).pb(4).items_center()
-        .child(div().text_size(12).font_medium().text_color(t.muted).child("Notes"))
+        .child(div().text_size(12).font_medium().text_color(t.muted).child(text("bell.notes")))
         .child(div().flex_1())
         .when(Boolean(other), (el) => el.child(div().id("bell-thread").text_size(12).text_color(t.muted).cursor_pointer()
           .keep_focus(true)
@@ -283,7 +283,7 @@ export default class Bell extends View {
             closeOverlay(props().overlay);
             openOverlay({ mod: "line", kind: "popup", width: 420, height: 460, props: { with: other.agent, name: other.name, link: other.link } });
           })
-          .child(`With ${cap(other.agent)}`))))
+          .child(text("bell.with", { name: cap(other.agent) })))))
       .children(notes);
   }
 }

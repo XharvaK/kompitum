@@ -9,7 +9,7 @@
 // (ipapi.co and Open-Meteo) is removed, so this mod reaches no network.
 // Hover anyone to see what they're working on; click them to go to their terminal.
 import { View, div, svg } from "gpui-kit";
-import { agents, terminals, spaces, panes, shared, run, setAgentOrder } from "kompitum";
+import { agents, terminals, spaces, panes, shared, run, setAgentOrder, text } from "kompitum";
 import * as A from "./art.js";
 import * as D from "./decor.js";
 
@@ -25,11 +25,11 @@ const COUCH_SEATS = 3;
 const MIN_DESKS = 3;
 const FRONT_ROW = 6;
 const DAY = 86400000;
-const CHAT = ["…", "☕", "lgtm", "standup?", "🍩", "ship it", "nice", "brb", "tabs > spaces", "🎉", "coffee?", "hmm"];
-const PIZZA_CHAT = ["🍕", "nom", "pizza!", "🍕", "best day", "nom nom"];
+const CHAT = [text("office.chat-ellipsis"), text("office.chat-coffee"), text("office.chat-lgtm"), text("office.chat-standup"), text("office.chat-donut"), text("office.chat-ship-it"), text("office.chat-nice"), text("office.chat-brb"), text("office.chat-tabs"), text("office.chat-party"), text("office.chat-coffee-question"), text("office.chat-hmm")];
+const PIZZA_CHAT = [text("office.pizza"), text("office.nom"), text("office.pizza-excl"), text("office.pizza"), text("office.best-day"), text("office.nom-nom")];
 const CODE = ["#7fd1b9", "#f2b866", "#9aa8ff", "#e88fb0"];
 const CONFETTI = ["#e05252", "#e0b43d", "#58b368", "#3d8be0", "#9b6bdc", "#e05c8c"];
-const POSTERS = [["SHIP\nIT", "#e07a5f"], ["LGTM", "#3d8be0"], ["BE KIND\nTO YOUR\nAGENTS", "#58a368"], ["push\n--force?\nno.", "#9b6bdc"]];
+const POSTERS = [[text("office.poster-ship"), "#e07a5f"], [text("office.poster-lgtm"), "#3d8be0"], [text("office.poster-kind"), "#58a368"], [text("office.poster-push"), "#9b6bdc"]];
 const STATUS = { working: "#3d8be0", blocked: "#e05252", done: "#58c26b", idle: "#9aa0aa" };
 // The sidebar's space colors (mods/my-spaces), by stored name.
 const MARK = { ansi6: "#22a99a", ansi3: "#e3814f", ansi4: "#5b8def", ansi5: "#8b7cf6", ansi2: "#3fae6a", ansi1: "#d9649a" };
@@ -341,23 +341,23 @@ export default class Office extends View {
     const napping = list.filter((a) => this.at[a.address]?.spot === "couch").length;
     const interns = list.reduce((n, a) => n + descendants(all, a.address).length, 0);
     els.push(D.whiteboard(zoneX, 14, [
-      ["#3d8be0", `WORKING  ${count("working")}`],
-      ["#58a368", `DONE     ${count("done")}`],
-      ["#e05252", `BLOCKED  ${count("blocked")}`],
-      ["#8a8f99", `ON BREAK ${count("idle") - napping}`],
-      ["#6b5fb5", `NAPPING  ${napping}`, napping > 0],
-      ["#c0643f", `INTERNS  ${interns}`, interns > 0],
-      ["#d94a3a", "PIZZA!!", Boolean(this.party)],
+      ["#3d8be0", text("office.working-count", { count: count("working") })],
+      ["#58a368", text("office.done-count", { count: count("done") })],
+      ["#e05252", text("office.blocked-count", { count: count("blocked") })],
+      ["#8a8f99", text("office.on-break-count", { count: count("idle") - napping })],
+      ["#6b5fb5", text("office.napping-count", { count: napping }), napping > 0],
+      ["#c0643f", text("office.interns-count", { count: interns }), interns > 0],
+      ["#d94a3a", text("office.pizza-party"), Boolean(this.party)],
     ]));
     if (when === "winter" || when === "newyear") els.push(...D.stringLights(W, 2));
-    if (when === "newyear") els.push(D.banner(W, wallBottom - 9 * P - 30, "HAPPY NEW YEAR", "#9b6bdc"));
-    if (when === "valentine") els.push(D.banner(W, wallBottom - 9 * P - 30, "♥  HAPPY VALENTINE'S  ♥", "#e05c8c"));
+    if (when === "newyear") els.push(D.banner(W, wallBottom - 9 * P - 30, text("office.new-year"), "#9b6bdc"));
+    if (when === "valentine") els.push(D.banner(W, wallBottom - 9 * P - 30, text("office.valentine"), "#e05c8c"));
     return els;
   }
 
   sign(W, g) {
     return div().absolute().left(W / 2 - 140).top(g.wallBottom - 34).w(280).py(4).rounded(4).bg("#00000033")
-      .text_size(11).text_color("#fffaf0").flex().justify_center().child("Nobody's in yet. Start an agent and they'll show up.");
+      .text_size(11).text_color("#fffaf0").flex().justify_center().child(text("office.empty"));
   }
 
   prop(art, x, g, lift = 0) {
@@ -409,7 +409,7 @@ export default class Office extends View {
 
   ding(P) {
     return div().absolute().left(15 * P).top((A.BOX - 21) * P).text_size(10).font_bold().text_color("#b8860b")
-      .child("ding!").loop("opacity", { from: 0, to: 1, period: 640 });
+      .child(text("office.ding")).loop("opacity", { from: 0, to: 1, period: 640 });
   }
 
   // Paper falling over the desk, for as long as the news is unread.
@@ -488,7 +488,7 @@ export default class Office extends View {
       if (now < gr.start + GRAD_BOW) {
         const body = this.pose(gr.pal, -1, [A.STAND.backLeg, A.STAND.frontLeg, A.STAND.arm], gr.p)
           .child(this.part(A.STAND.body, gr.pal, -1, gr.p).left(-gr.p).loop("top", { from: 0, to: 2 * gr.p, period: 900 }));
-        return [box(body, gr.x, gr.y).child(this.bubble((A.BOX - 20) * gr.p - 18, "#3b3b44", gr.p).child("🎓 thx!"))];
+        return [box(body, gr.x, gr.y).child(this.bubble((A.BOX - 20) * gr.p - 18, "#3b3b44", gr.p).child(text("office.grad-thanks")))];
       }
       const at = this.walk(`grad:${k}`, "door", g.door.x, g.door.y, WALK_SPEED, cx, { x: gr.x, y: gr.y });
       if (now >= at.until && at.until > 0) { delete this.grads[k]; delete this.at[`grad:${k}`]; return []; }
@@ -521,7 +521,7 @@ export default class Office extends View {
       : this.pose(A.COURIER, 1, [A.STAND.backLeg, A.STAND.frontLeg, A.STAND.body, A.STAND.armUp]);
     return div().id("courier").absolute().left(at.x).top(at.y - A.BOX * g.P).w(A.PERSON * g.P).h(A.BOX * g.P)
       .transition("left", { duration: at.dur, easing: "ease-in-out" }).transition("top", { duration: at.dur, easing: "ease-in-out" })
-      .child(body).when(!walking, (el) => el.child(this.bubble((A.BOX - 20) * g.P - 20, "#d94a3a").child("pizza! 🍕")));
+      .child(body).when(!walking, (el) => el.child(this.bubble((A.BOX - 20) * g.P - 20, "#d94a3a").child(text("office.pizza-courier"))));
   }
 
   person(a, at, g, placeFace, tab, alarmed) {
@@ -574,7 +574,7 @@ export default class Office extends View {
     else if (at.spot === "pizza") bubble = this.bubble(top, "#d94a3a").frames(rotate(PIZZA_CHAT, pal.salt % PIZZA_CHAT.length), 1800 + (pal.salt % 900));
     else if (at.spot === "cooler") bubble = this.bubble(top, "#3b3b44").frames(rotate(CHAT, pal.salt % CHAT.length), 2200 + (pal.salt % 1500));
     else if (napping) bubble = this.bubble(top, "#6b5fb5").frames(["z", "zZ", "zZz", "zZ"], 900);
-    else if (alarmed) bubble = this.bubble(top, "#e05252").child("HELP!!").loop("opacity", { from: 0.5, to: 1, period: 400 });
+    else if (alarmed) bubble = this.bubble(top, "#e05252").child(text("office.help")).loop("opacity", { from: 0.5, to: 1, period: 400 });
     else if (st === "blocked") bubble = this.bubble(top, "#e05252").child("!").loop("opacity", { from: 0.5, to: 1, period: 700 });
     else if (st === "done") bubble = this.bubble(top, "#2f9a50").child("✓");
     at.headTop = headTop;
@@ -594,12 +594,12 @@ export default class Office extends View {
   // What they're working on, in a thought cloud over their head.
   thought(a, at, g) {
     const P = g.P;
-    const text = (a.title || a.tab_name || a.program?.name || "thinking…").replace(/\s+/g, " ").trim();
+    const words = (a.title || a.tab_name || a.program?.name || text("office.thinking")).replace(/\s+/g, " ").trim();
     const x = at.x + 8 * P;
     const y = at.y - A.BOX * P + (A.BOX - (at.headTop ?? 22)) * P;
     return div().absolute().left(Math.max(4, x - 20)).top(Math.max(2, y - 54))
       .child(div().max_w(260).px(8).py(4).rounded(10).bg("#ffffff").border_1().border_color("#3b3b44")
-        .text_size(10).text_color("#3b3b44").child(div().truncate().child(`💭 ${text}`)))
+        .text_size(10).text_color("#3b3b44").child(div().truncate().child(`💭 ${words}`)))
       .child(div().absolute().left(16).top(26).size(7).rounded_full().bg("#ffffff").border_1().border_color("#3b3b44"))
       .child(div().absolute().left(22).top(35).size(4).rounded_full().bg("#ffffff").border_1().border_color("#3b3b44"));
   }

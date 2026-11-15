@@ -1,7 +1,7 @@
 // A text prompt. Enter saves, Esc cancels.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { run, props, closeOverlay, theme } from "kompitum";
+import { run, props, closeOverlay, theme, text } from "kompitum";
 
 export default class Prompt extends View {
   init(_props, cx) {
@@ -40,11 +40,11 @@ export default class Prompt extends View {
     return v_flex().id("prompt").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
       .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().child((p.title ?? "").replace(/^./, (c) => c.toUpperCase()))))
-      .child(label("Name"))
+      .child(label(text("prompt.name")))
       .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(this.inputFocused ? t.accent : t.input).bg(t.background).text_size(13).text_color(t.foreground))
       .when(Boolean(p.hint), el => el.child(div().pt(6).text_size(12).text_color(t.dim).child(p.hint)))
       .child(h_flex().pt(20).gap(8).justify_end()
-        .child(button("pm-cancel", "Cancel", false, () => closeOverlay(p.overlay)))
-        .child(button("pm-save", "Save", true, () => this.submit())));
+        .child(button("pm-cancel", text("prompt.cancel"), false, () => closeOverlay(p.overlay)))
+        .child(button("pm-save", text("prompt.save"), true, () => this.submit())));
   }
 }

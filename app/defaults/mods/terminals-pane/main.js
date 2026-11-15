@@ -2,7 +2,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, props, run, home } from "kompitum";
+import { panes, props, run, home, text } from "kompitum";
 
 
 function folder(cwd) {
@@ -16,10 +16,11 @@ export default class TerminalsPane extends View {
     return panes().find((p) => p.pane === props()?.pane);
   }
 
-  button(id, icon, command, args) {
+  button(id, icon, command, args, name) {
     return div()
       .id(id)
       .p(4)
+      .accessibility_label(name)
       .rounded(5)
       .text_color("#5d6168")
       .cursor_pointer()
@@ -38,7 +39,7 @@ export default class TerminalsPane extends View {
     const g = p.program;
     const where = folder(p.cwd);
     // Shells often put the folder in their title already.
-    const title = p.title || "shell";
+    const title = p.title || text("terminals-pane.shell");
     const dir = where && !title.includes(where) && !/^[~/]/.test(title) ? where : "";
     return h_flex()
       .id(`tm-head-${pane}`)
@@ -54,9 +55,9 @@ export default class TerminalsPane extends View {
       )
       .child(div().flex_none().max_w(320).truncate().font_semibold().text_color(p.focused ? "#e8e9eb" : "#a9adb3").child(title))
       .child(div().flex_1().truncate().text_color("#8b8f95").child(dir))
-      .child(this.button(`th-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }))
-      .child(this.button(`th-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }))
-      .child(this.button(`th-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }))
-      .child(this.button(`th-x-${pane}`, "close", "pane.close", { pane }));
+      .child(this.button(`th-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }, text("terminals-pane.split-right")))
+      .child(this.button(`th-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }, text("terminals-pane.split-down")))
+      .child(this.button(`th-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }, p.zoomed ? text("terminals-pane.restore-pane") : text("terminals-pane.zoom-pane")))
+      .child(this.button(`th-x-${pane}`, "close", "pane.close", { pane }, text("terminals-pane.close-pane")));
   }
 }
