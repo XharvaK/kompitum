@@ -539,8 +539,28 @@ impl Core {
         size: Option<(u16, u16)>,
         display: Value,
     ) -> Result<String> {
-        let env =
+        self.run_with_env(argv, cwd, labels, on, size, display, Value::Null)
+    }
+
+    /// The same, with the environment a lead needs on top of the terminal's own.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_with_env(
+        &self,
+        argv: Vec<String>,
+        cwd: Option<String>,
+        labels: Value,
+        on: Option<&str>,
+        size: Option<(u16, u16)>,
+        display: Value,
+        extra_env: Value,
+    ) -> Result<String> {
+        let mut env =
             json!({"TERM": "xterm-256color", "COLORTERM": "truecolor", "TERM_PROGRAM": "kompitum"});
+        if let (Some(env), Value::Object(extra)) = (env.as_object_mut(), &extra_env) {
+            for (key, value) in extra {
+                env.insert(key.clone(), value.clone());
+            }
+        }
         let mut params = json!({"argv": argv, "cwd": cwd, "env": env, "labels": labels, "on": on, "keep": true, "display": display});
         // Released cores ignore unknown parameters, including when forwarding to another machine.
         if let Some((cols, rows)) = size {

@@ -871,10 +871,11 @@ fn arrows_move_the_agents_highlight_and_enter_opens_the_row(cx: &mut TestAppCont
     press_key(&mut visual, "up");
     draw(&mut visual);
     assert_eq!(rings_named("ag-t2"), 1, "Up stops at the first row");
-    press_key(&mut visual, "down");
-    press_key(&mut visual, "down");
-    press_key(&mut visual, "down");
-    draw(&mut visual);
+    // A frame between presses: each key moves the highlight the row it last drew.
+    for _ in 0..3 {
+        press_key(&mut visual, "down");
+        draw(&mut visual);
+    }
     assert_eq!(rings_named("ag-t3"), 1, "Down stops at the last row");
     press_key(&mut visual, "enter");
     let calls = calls.borrow();

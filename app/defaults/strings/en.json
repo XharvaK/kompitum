@@ -89,6 +89,7 @@
   "app.what-changed": "What changed",
   "app.worker-back": "{label} is back",
   "app.worker-back-body": "It can take tasks again.",
+  "composer.code-row": "Code",
   "lead.add-tools-failed": "Couldn't add Kompitum's tools to Claude Code: {error}",
   "lead.asking": "Claude is asking something: answer it first",
   "lead.bash-ran": "Ran a command",
@@ -140,6 +141,12 @@
   "lead.turn-stopped-sign-in-failed": "The turn stopped: sign-in failed.",
   "lead.waiting-continue": "Claude is waiting for you to continue.",
   "lead.working-compact": "Claude is working: it can tidy up once it has finished",
+  "settings.code-mode": "Code Mode (experimental)",
+  "settings.code-mode-about": "Claude writes code that makes several tool calls in one step. Applies to new lead sessions; a resumed session keeps the mode it started with.",
+  "settings.code-mode-first": "The first time, Claude Code asks in the lead's terminal: choose “Yes, turn on Code Mode”.",
+  "settings.code-mode-off": "Off in this session.",
+  "settings.code-mode-on": "On in this session.",
+  "settings.code-mode-unavailable": "Not available: {reason}",
   "tray.exit": "Exit",
   "tray.open": "Open Kompitum"
 }

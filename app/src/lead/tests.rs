@@ -10,6 +10,97 @@ fn catalog(session: Value, flags: Option<Value>) -> CatalogEntry {
 }
 
 #[test]
+fn code_mode_is_fixed_by_the_setting_or_the_session_it_resumes() {
+    assert_eq!(code_mode_env(true), json!({ CODE_MODE_VAR: "1" }));
+    assert_eq!(code_mode_env(false), json!({ CODE_MODE_VAR: "0" }));
+    let fresh = Choice::New { id: "new".into() };
+    assert!(start_code_mode(true, &fresh, None), "a new conversation takes the setting");
+    assert!(!start_code_mode(false, &fresh, Some(true)), "a new conversation ignores the old session");
+    let resume = Choice::Resume { id: "old".into() };
+    assert!(
+        start_code_mode(false, &resume, Some(true)),
+        "a resume whose session was on stays on though the setting is off"
+    );
+    assert!(
+        !start_code_mode(true, &resume, Some(false)),
+        "a resume whose session was off stays off though the setting is on"
+    );
+    assert!(start_code_mode(true, &Choice::Continue, None));
+}
+
+#[test]
+fn an_old_session_record_without_code_mode_reads_as_off() {
+    let session: Session = serde_json::from_value(json!({"state": "waiting"})).unwrap();
+    assert!(!session.code_mode);
+    let saved = serde_json::to_value(Session {
+        code_mode: true,
+        ..Session::default()
+    })
+    .unwrap();
+    assert_eq!(saved["code_mode"], json!(true));
+}
+
+#[test]
+fn the_start_line_says_code_mode_is_on_off_or_unavailable() {
+    assert_eq!(
+        code_mode_status_from_screen("some earlier line\nCode Mode (experimental) is on · writes code\n"),
+        CodeModeStatus::On
+    );
+    assert_eq!(
+        code_mode_status_from_screen("Code Mode (experimental) isn't available: needs an interactive terminal\n"),
+        CodeModeStatus::Unavailable("needs an interactive terminal".into())
+    );
+    assert_eq!(
+        code_mode_status_from_screen("Code Mode (experimental) isn't available\nit needs a terminal\n"),
+        CodeModeStatus::Unavailable("it needs a terminal".into())
+    );
+    assert_eq!(
+        code_mode_status_from_screen("Welcome to Claude Code\n> \n"),
+        CodeModeStatus::Off
+    );
+    assert_eq!(
+        serde_json::to_value(CodeModeStatus::On).unwrap(),
+        json!("on")
+    );
+    assert_eq!(
+        serde_json::to_value(CodeModeStatus::Unavailable("a reason".into())).unwrap(),
+        json!({"unavailable": "a reason"})
+    );
+}
+
+#[test]
+fn hooks_that_decide_nothing_continue_when_they_fail() {
+    let value = claude_settings(
+        Path::new("/apps/kompitum-app"),
+        Path::new("/apps/kom"),
+        Path::new("/home/kompitum"),
+    );
+    let hooks = value["hooks"].as_object().expect("hooks");
+    for (event, entries) in hooks {
+        for entry in entries.as_array().into_iter().flatten() {
+            let deciding = event == "PermissionRequest"
+                || event == "PreCompact"
+                || (event == "PreToolUse" && entry["matcher"] == json!("AskUserQuestion"));
+            for hook in entry["hooks"].as_array().into_iter().flatten() {
+                if deciding {
+                    assert_eq!(
+                        hook.get("onFailure"),
+                        None,
+                        "{event} gives a decision and must stay blocking: {hook}"
+                    );
+                } else {
+                    assert_eq!(
+                        hook.get("onFailure"),
+                        Some(&json!("continue")),
+                        "{event} decides nothing and must not block: {hook}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn the_argv_puts_the_session_right_after_the_program() {
     let entry = catalog(
         json!({
@@ -258,6 +349,7 @@ fn claude_settings_carry_its_hooks_and_memory_off() {
             "command": "/apps/Kompitum/kompitum-app.exe",
             "args": ["hook", "SessionStart", "/home/kompitum"],
             "timeout": 10,
+            "onFailure": "continue",
         })
     );
     assert_eq!(
@@ -267,6 +359,7 @@ fn claude_settings_carry_its_hooks_and_memory_off() {
             "command": "/apps/kom/kom.exe",
             "args": ["vault", "memory", "--hook"],
             "timeout": 30,
+            "onFailure": "continue",
         })
     );
     let command = |event: &str| {
@@ -299,6 +392,7 @@ fn claude_settings_carry_its_hooks_and_memory_off() {
         assert!(entry.get("matcher").is_none(), "{event}");
         let mut hook = command(event);
         hook["async"] = json!(true);
+        hook["onFailure"] = json!("continue");
         assert_eq!(entry["hooks"], json!([hook]), "{event}");
     }
     let idle = value["hooks"]["Notification"]
@@ -309,6 +403,7 @@ fn claude_settings_carry_its_hooks_and_memory_off() {
         .expect("idle_prompt");
     let mut hook = command("Notification");
     hook["async"] = json!(true);
+    hook["onFailure"] = json!("continue");
     assert_eq!(idle["hooks"], json!([hook]));
 
     assert_eq!(value["modelSettings"], model_settings());
@@ -349,6 +444,7 @@ fn claude_settings_install_the_chat_view_hooks() {
     let async_command = |event: &str| {
         let mut hook = command(event);
         hook["async"] = json!(true);
+        hook["onFailure"] = json!("continue");
         hook
     };
     let entries = |event: &str| {
@@ -1227,4 +1323,71 @@ fn published_session_carries_the_permission_mode_and_whether_it_is_guessed() {
     session.mode_guessed = true;
     assert_eq!(published_session(&session)["permission_mode"], json!("acceptEdits"));
     assert_eq!(published_session(&session)["mode_guessed"], json!(true));
+}
+
+#[test]
+fn published_session_carries_code_mode_status() {
+    let mut session = Session::default();
+    assert_eq!(published_session(&session)["code_mode_status"], json!("off"));
+    session.code_mode_status = CodeModeStatus::On;
+    assert_eq!(published_session(&session)["code_mode_status"], json!("on"));
+    session.code_mode_status = CodeModeStatus::Unavailable("needs a terminal".into());
+    assert_eq!(
+        published_session(&session)["code_mode_status"],
+        json!({"unavailable": "needs a terminal"})
+    );
+}
+
+#[test]
+fn a_finished_turn_writes_its_line_with_two_tools_and_a_code_run() {
+    let transcript = r#"
+{"type":"user","message":{"role":"user","content":"Change the code"}}
+{"type":"assistant","message":{"id":"m1","role":"assistant","content":[],"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":300,"cache_creation_input_tokens":40}}}
+{"type":"assistant","message":{"id":"m2","role":"assistant","content":[],"usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":5,"cache_creation_input_tokens":6}}}
+"#;
+    let mut turn = Turn::new(1_000);
+    turn.note_tool("u1", "Read");
+    turn.note_tool("u2", "Bash");
+    turn.note_tool("r1", "REPL");
+    turn.note_tool("u1", "Read");
+    let tokens = turn_tokens(transcript);
+    let line = turn_record(&turn, 3_500, "session-1", true, "Claude Opus", "stop", tokens);
+    assert_eq!(line["tool_calls"], json!(2));
+    assert_eq!(line["code_runs"], json!(1));
+    assert_eq!(line["input_tokens"], json!(11));
+    assert_eq!(line["output_tokens"], json!(22));
+    assert_eq!(line["cache_read_tokens"], json!(305));
+    assert_eq!(line["cache_write_tokens"], json!(46));
+    assert_eq!(line["seconds"], json!(2.5));
+    assert_eq!(line["ended_by"], json!("stop"));
+    assert_eq!(line["code_mode"], json!(true));
+    assert_eq!(line["session"], json!("session-1"));
+    assert_eq!(line["model"], json!("Claude Opus"));
+
+    let dir = std::env::temp_dir().join(format!("kompitum-lead-turns-{}-{}", std::process::id(), now_nanos()));
+    append_turn(&dir, &line).unwrap();
+    let text = std::fs::read_to_string(dir.join("lead-turns.jsonl")).unwrap();
+    let written: Value = serde_json::from_str(text.trim()).unwrap();
+    assert_eq!(written, line);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_failed_turn_says_failure() {
+    let mut turn = Turn::new(2_000);
+    turn.note_tool("u1", "Bash");
+    let line = turn_record(&turn, 2_500, "s", false, "model", "failure", TurnTokens::default());
+    assert_eq!(line["ended_by"], json!("failure"));
+    assert_eq!(line["tool_calls"], json!(1));
+    assert_eq!(line["code_runs"], json!(0));
+    assert_eq!(line["input_tokens"], Value::Null);
+    assert_eq!(line["output_tokens"], Value::Null);
+    assert_eq!(line["cache_read_tokens"], Value::Null);
+    assert_eq!(line["cache_write_tokens"], Value::Null);
+}
+
+#[test]
+fn an_ended_time_is_rfc_3339_in_utc() {
+    assert_eq!(rfc3339(0), "1970-01-01T00:00:00Z");
+    assert_eq!(rfc3339(1_700_000_000_000), "2023-11-14T22:13:20Z");
 }

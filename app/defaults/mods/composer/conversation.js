@@ -199,6 +199,8 @@ export default {
   toolItem(t, item, cx) {
     const open = Boolean(this.openTools[item.id]);
     const result = typeof item.result === "string" && item.result ? item.result : "";
+    const code = typeof item.code === "string" && item.code ? item.code : "";
+    const mono = settings()?.font_family ?? "Google Sans Code";
     return v_flex()
       .id(`composer-item-${item.id}`)
       .w_full()
@@ -216,6 +218,20 @@ export default {
           .child(this.toolIcon(t, item.state))
           .child(this.toolSummary(t, item.summary ?? item.name ?? "A tool")),
       )
+      .when(open && code, (el) =>
+        el.child(
+          div()
+            .id(`composer-tool-code-${item.id}`)
+            .px(10)
+            .py(8)
+            .rounded(8)
+            .bg(t.surface)
+            .text_size(12)
+            .font_family(mono)
+            .text_color(t.dim)
+            .child(code),
+        ),
+      )
       .when(open && result, (el) =>
         el.child(
           div()
@@ -225,7 +241,7 @@ export default {
             .rounded(8)
             .bg(t.surface)
             .text_size(12)
-            .font_family(settings()?.font_family ?? "Google Sans Code")
+            .font_family(mono)
             .text_color(t.dim)
             .child(result.split(/\r?\n/).slice(0, 12).join("\n")),
         ),

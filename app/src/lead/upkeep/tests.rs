@@ -171,6 +171,14 @@ fn a_compact_command_is_not_a_turn_and_an_asked_for_compaction_ends_waiting() {
     let prompt = |text: &str| json!({ "prompt": text });
     assert_eq!(state_after_hook("UserPromptSubmit", &prompt("hello")), Some(State::Working));
     assert_eq!(state_after_hook("UserPromptSubmit", &prompt("/compact")), None);
+    assert_eq!(
+        state_after_hook(
+            "UserPromptSubmit",
+            &json!({ "prompt": "the code printed this", "source": "poll_event" })
+        ),
+        None,
+        "Code Mode's background output is not a turn"
+    );
     assert_eq!(state_after_hook("Stop", &Value::Null), Some(State::Waiting));
     assert_eq!(state_after_hook("PostCompact", &json!({ "trigger": "manual" })), Some(State::Waiting));
     assert_eq!(state_after_hook("PostCompact", &json!({ "trigger": "auto" })), None);

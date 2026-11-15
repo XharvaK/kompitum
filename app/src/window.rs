@@ -928,6 +928,8 @@ pub struct AppWindow {
     lead_restart_pending: bool,
     /// The lead was ended by hand (`lead.restart`): its start shows no toast when it works.
     lead_restart_quiet: bool,
+    /// The Code Mode a restart carries from the session it restarts, until the new start takes it.
+    lead_resume_code_mode: Option<bool>,
     /// The height each lead's composer asked for (`lead.fit`), by the lead's terminal.
     composer_px: HashMap<String, f32>,
     /// When the core came back after it went away: a layout conflict just after its restart is its doing,
@@ -1080,6 +1082,7 @@ impl AppWindow {
             lead_restarts_tried: HashSet::new(),
             lead_restart_pending: false,
             lead_restart_quiet: false,
+            lead_resume_code_mode: None,
             composer_px: HashMap::new(),
             core_back_at: None,
             worker_states: None,
@@ -3943,6 +3946,7 @@ impl AppWindow {
         on: Option<&str>,
         size: Option<(u16, u16)>,
         extra_labels: Option<Value>,
+        code_mode: Option<bool>,
         window: &Window,
     ) -> Result<(String, String), String> {
         let argv = argv.unwrap_or_default();
@@ -3955,14 +3959,16 @@ impl AppWindow {
                 labels.insert(key.clone(), value.clone());
             }
         }
+        let extra_env = code_mode.map_or(Value::Null, crate::lead::code_mode_env);
         let (addr, cwd) = run_following_folder(cwd, follow, on, |cwd| {
-            match self.core.run(
+            match self.core.run_with_env(
                 argv.clone(),
                 cwd.clone(),
                 labels.clone(),
                 on,
                 size,
                 crate::terminal::initial_display(window),
+                extra_env.clone(),
             ) {
                 // An agent on a machine without `sh` (Windows): in its PowerShell instead.
                 Err(e)
@@ -3970,13 +3976,14 @@ impl AppWindow {
                         && argv.first().map(String::as_str) == Some("sh")
                         && format!("{e:#}").contains("not found") =>
                 {
-                    self.core.run(
+                    self.core.run_with_env(
                         Self::powershell_argv(&argv),
                         cwd,
                         labels.clone(),
                         on,
                         size,
                         crate::terminal::initial_display(window),
+                        extra_env.clone(),
                     )
                 }
                 r => r,
@@ -4247,6 +4254,7 @@ impl AppWindow {
         folder: &str,
         program: &str,
         argv: &[String],
+        code_mode: bool,
         window: &Window,
     ) -> Result<Value, String> {
         let labels = Some(json!({ "lead": program }));
@@ -4283,6 +4291,7 @@ impl AppWindow {
                 argv,
                 None,
                 labels,
+                Some(code_mode),
                 true,
                 window,
             ),
@@ -4294,6 +4303,7 @@ impl AppWindow {
                 None,
                 None,
                 labels,
+                Some(code_mode),
                 true,
                 window,
             ),
@@ -4359,6 +4369,13 @@ impl AppWindow {
             &folder,
             &crate::lead::fresh_id(crate::lead::now_nanos(), std::process::id(), &folder),
         );
+        let carried = self.lead_resume_code_mode.take().or_else(|| {
+            let running = mods::shared("lead.running").unwrap_or(Value::Null);
+            (running.get("program").and_then(Value::as_str) == Some(program.as_str()))
+                .then(|| running.get("code_mode").and_then(Value::as_bool))
+                .flatten()
+        });
+        let code_mode = crate::lead::start_code_mode(lead.code_mode, &choice, carried);
         let mut all = match streams {
             Value::Object(all) => all,
             _ => serde_json::Map::new(),
@@ -4389,7 +4406,7 @@ impl AppWindow {
             argv.insert(1, "--settings".into());
             argv.insert(2, settings_file.to_string_lossy().into_owned());
         }
-        let started = self.start_lead_tab(&folder, &program, &argv, window)?;
+        let started = self.start_lead_tab(&folder, &program, &argv, code_mode, window)?;
         let terminal = started["terminal"]
             .as_str()
             .ok_or("the lead's tab returned no terminal")?
@@ -4399,6 +4416,7 @@ impl AppWindow {
             "lead.running".into(),
             json!({
                 "program": program, "terminal": terminal, "model": lead.model, "effort": lead.effort,
+                "code_mode": code_mode,
             }),
         );
         self.ensure_composer(&terminal)?;
@@ -4407,6 +4425,7 @@ impl AppWindow {
             self.model.focus_pane(&pane);
         }
         let session = self.lead_sessions.entry(terminal.clone()).or_default();
+        session.code_mode = code_mode;
         // Only Claude asks its trust question before SessionStart; other lead programs have no hook to wait for.
         session.started = !checks_auth;
         if checks_auth {
@@ -4569,6 +4588,10 @@ impl AppWindow {
                     model.as_deref(),
                     effort.as_deref(),
                 );
+                let code_mode = settings::load_person()
+                    .ok()
+                    .and_then(|person| person.lead)
+                    .is_some_and(|lead| lead.code_mode);
                 if program == "claude" {
                     let app = match std::env::current_exe() {
                         Ok(app) => app,
@@ -4595,12 +4618,13 @@ impl AppWindow {
                         Err(error) => return this.lead_failed(error, window, cx),
                     }
                 }
-                match this.start_lead_tab(&folder, &program, &argv, window) {
+                match this.start_lead_tab(&folder, &program, &argv, code_mode, window) {
                     Ok(started) => {
-                        if let Some(terminal) = started["terminal"].as_str()
-                            && let Err(error) = this.ensure_composer(terminal)
-                        {
-                            tracing::warn!("cannot dock the composer after a retry: {error}");
+                        if let Some(terminal) = started["terminal"].as_str() {
+                            this.lead_sessions.entry(terminal.to_owned()).or_default().code_mode = code_mode;
+                            if let Err(error) = this.ensure_composer(terminal) {
+                                tracing::warn!("cannot dock the composer after a retry: {error}");
+                            }
                         }
                         if let Some(terminal) = started["terminal"].as_str()
                             && let Some(pane) = this.model.pane_of(terminal)
@@ -4652,6 +4676,38 @@ impl AppWindow {
         crate::lead::apply_transcript_path(session, transcript)
     }
 
+    /// Reads the lead terminal's start line with `terminal.read`, the app's way of reading a
+    /// terminal: "Code Mode (experimental) is on" is on; "isn't available" keeps the reason
+    /// shown; neither is off.
+    fn read_code_mode_status(&mut self, terminal: String, cx: &mut Context<Self>) {
+        let core = self.core.clone();
+        let address = terminal.clone();
+        cx.spawn(async move |this, cx| {
+            let text = cx
+                .background_executor()
+                .spawn(async move {
+                    core.call("terminal.read", json!({ "terminal": address, "lines": 200 }))
+                        .ok()
+                        .and_then(|value| value["text"].as_str().map(str::to_owned))
+                })
+                .await;
+            let Some(text) = text else {
+                return;
+            };
+            let status = crate::lead::code_mode_status_from_screen(&text);
+            let _ = this.update(cx, |this, cx| {
+                let Some(session) = this.lead_sessions.get_mut(&terminal) else {
+                    return;
+                };
+                if session.code_mode_status != status {
+                    session.code_mode_status = status;
+                    this.publish_lead(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     /// A live lead this window hasn't read the conversation of (the app restarted with the lead running):
     /// the transcript its record names becomes the panel's items. Read once per lead, never over a
     /// conversation that is already open.
@@ -4679,8 +4735,14 @@ impl AppWindow {
             let marker = mods::shared("lead.started");
             let started = program != "claude"
                 || crate::lead::started_on_reattach(marker.as_ref().and_then(Value::as_str), &terminal);
+            let running = mods::shared("lead.running").unwrap_or(Value::Null);
+            let code_mode = (running.get("terminal").and_then(Value::as_str) == Some(terminal.as_str()))
+                .then(|| running.get("code_mode").and_then(Value::as_bool))
+                .flatten()
+                .unwrap_or(false);
             let session = self.lead_sessions.entry(terminal.clone()).or_default();
             session.started = started;
+            session.code_mode = code_mode;
             if !started {
                 crate::lead::apply_startup_reveal(&mut session.conversation);
             }
@@ -4691,6 +4753,7 @@ impl AppWindow {
         if skipped > 0 {
             tracing::debug!(skipped, "skipped unknown transcript line types");
         }
+        self.read_code_mode_status(terminal.clone(), cx);
         self.apply_lead_terminal_layout(&terminal);
         self.publish_lead(cx);
     }
@@ -4750,6 +4813,7 @@ impl AppWindow {
                 if skipped > 0 {
                     tracing::debug!(skipped, "skipped unknown transcript line types");
                 }
+                self.read_code_mode_status(terminal.clone(), cx);
                 self.apply_lead_terminal_layout(&terminal);
                 self.publish_lead(cx);
             }
@@ -4819,12 +4883,67 @@ impl AppWindow {
             self.hold_ask(crate::lead::Ask { id, terminal, kind, input }, reply, window, cx);
             return;
         }
+        let finished_turn = if from_lead && matches!(event, "Stop" | "StopFailure") {
+            self.lead_sessions.get_mut(&terminal).and_then(|session| {
+                let turn = session.turn.take()?;
+                let session_id = session
+                    .usage
+                    .as_ref()
+                    .and_then(|usage| usage["session_id"].as_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                let model = session
+                    .model
+                    .as_ref()
+                    .and_then(|model| {
+                        model["name"]
+                            .as_str()
+                            .or_else(|| model["id"].as_str())
+                    })
+                    .unwrap_or_default()
+                    .to_owned();
+                Some((turn, session_id, session.code_mode, model))
+            })
+        } else {
+            None
+        };
         let folded = if from_lead {
             let session = self.lead_sessions.entry(terminal.clone()).or_default();
-            crate::lead::apply_hook_event(session, event, &input)
+            let owners = session
+                .conversation
+                .items
+                .iter()
+                .filter(|item| matches!(item, crate::lead::Item::Owner { .. }))
+                .count();
+            let folded = crate::lead::apply_hook_event(session, event, &input);
+            if event == "UserPromptSubmit"
+                && session
+                    .conversation
+                    .items
+                    .iter()
+                    .filter(|item| matches!(item, crate::lead::Item::Owner { .. }))
+                    .count()
+                    > owners
+            {
+                session.turn = Some(crate::lead::Turn::new(model::now_ms()));
+            }
+            folded
         } else {
             false
         };
+        if from_lead && event == "PreToolUse" {
+            let name = input.get("tool_name").and_then(Value::as_str).unwrap_or_default();
+            let id = input
+                .get("tool_use_id")
+                .or_else(|| input.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(session) = self.lead_sessions.get_mut(&terminal)
+                && let Some(turn) = session.turn.as_mut()
+            {
+                turn.note_tool(id, name);
+            }
+        }
         if folded {
             self.apply_lead_terminal_layout(&terminal);
         }
@@ -4849,6 +4968,55 @@ impl AppWindow {
         if let Some(reply) = reply {
             // Never return displayContent; MessageDisplay and the other async hooks get {}.
             let _ = reply.send(json!({}));
+        }
+        if let Some((turn, session_id, code_mode, model)) = finished_turn {
+            let ended_by = if event == "Stop" { "stop" } else { "failure" };
+            let ended_ms = model::now_ms();
+            let stream = {
+                let program = settings::load_person()
+                    .ok()
+                    .and_then(|person| person.lead)
+                    .and_then(|lead| lead.program)
+                    .filter(|program| !program.is_empty())
+                    .unwrap_or_else(|| "claude".to_owned());
+                let streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
+                crate::lead::stream_of(&streams, &program)
+            };
+            let session_id = if session_id.is_empty() {
+                stream
+                    .as_ref()
+                    .and_then(|stream| stream.session.clone())
+                    .unwrap_or_default()
+            } else {
+                session_id
+            };
+            let transcript = input
+                .get("transcript_path")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| stream.and_then(|stream| stream.transcript));
+            let dir = mods::app_dir();
+            cx.background_executor()
+                .spawn(async move {
+                    let tokens = transcript
+                        .and_then(|path| std::fs::read_to_string(path).ok())
+                        .as_deref()
+                        .map(crate::lead::turn_tokens)
+                        .unwrap_or_default();
+                    let record = crate::lead::turn_record(
+                        &turn,
+                        ended_ms,
+                        &session_id,
+                        code_mode,
+                        &model,
+                        ended_by,
+                        tokens,
+                    );
+                    if let Err(error) = crate::lead::append_turn(&dir, &record) {
+                        tracing::warn!("couldn't append the lead's turn: {error}");
+                    }
+                })
+                .detach();
         }
     }
 
@@ -5200,6 +5368,7 @@ impl AppWindow {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
+        self.lead_resume_code_mode = self.lead_sessions.get(&terminal).map(|session| session.code_mode);
         let core = self.core.clone();
         let guard = crate::inflight::track();
         let address = terminal.clone();
@@ -5331,6 +5500,7 @@ impl AppWindow {
         task: Option<&str>,
         machine: Option<String>,
         labels: Option<Value>,
+        code_mode: Option<bool>,
         stay: bool,
         window: &Window,
     ) -> Result<Value, String> {
@@ -5373,6 +5543,7 @@ impl AppWindow {
             on,
             size,
             labels,
+            code_mode,
             window,
         )?;
         let ctx_name = ctx_name.map(str::trim).unwrap_or_default();
@@ -5398,6 +5569,7 @@ impl AppWindow {
         argv: Option<Vec<String>>,
         task: Option<&str>,
         labels: Option<Value>,
+        code_mode: Option<bool>,
         stay: bool,
         window: &Window,
     ) -> Result<Value, String> {
@@ -5435,6 +5607,7 @@ impl AppWindow {
             on.as_deref(),
             size,
             labels,
+            code_mode,
             window,
         )?;
         self.model
@@ -5538,6 +5711,7 @@ impl AppWindow {
             &ctx,
             on.as_deref(),
             size,
+            None,
             None,
             window,
         )?;
@@ -6201,6 +6375,7 @@ impl AppWindow {
                     Self::arg(a, "task"),
                     Self::owned(a, "machine").filter(|m| !m.is_empty()),
                     None,
+                    None,
                     true,
                     window,
                 );
@@ -6308,6 +6483,7 @@ impl AppWindow {
                             Self::arg(a, "task"),
                             None,
                             None,
+                            None,
                             true,
                             window,
                         )
@@ -6318,6 +6494,7 @@ impl AppWindow {
                         Self::owned(a, "folder"),
                         Self::argv(a),
                         Self::arg(a, "task"),
+                        None,
                         None,
                         true,
                         window,
@@ -6594,6 +6771,7 @@ impl AppWindow {
                                         argv,
                                         None,
                                         None,
+                                        None,
                                         stay,
                                         window,
                                     ),
@@ -6605,6 +6783,7 @@ impl AppWindow {
                                         None,
                                         on,
                                         None,
+                                        None,
                                         stay,
                                         window,
                                     ),
@@ -6615,6 +6794,7 @@ impl AppWindow {
                                 &name,
                                 folder,
                                 argv,
+                                None,
                                 None,
                                 None,
                                 stay,
@@ -12849,6 +13029,76 @@ export default class Probe extends View {
             assert!(early["output"].is_null());
             assert!(this.lead_sessions["t1"].ask.is_none());
         });
+    }
+
+    #[test]
+    fn a_lead_turn_is_written_when_it_stops() {
+        in_own_process("lead_turn_written");
+    }
+
+    /// One Owner prompt, two tool calls and a REPL call, then Stop: one line lands in
+    /// `lead-turns.jsonl` in the app's home, with the call counts and no prompt text.
+    #[gpui::test]
+    fn lead_turn_written(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_turn_written") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        let dir = crate::mods::app_dir();
+        let path = dir.join("lead-turns.jsonl");
+        let _ = std::fs::remove_file(&path);
+        view.update_in(cx, |this, window, cx| {
+            this.live.insert(
+                "t1".into(),
+                json!({"state": "live", "labels": {"lead": "claude"}}),
+            );
+            let session = this.lead_sessions.entry("t1".into()).or_default();
+            session.usage = Some(json!({"session_id": "session-1"}));
+            session.model = Some(json!({"id": "opus", "name": "Opus 5.5"}));
+            session.code_mode = true;
+            let hook = |event: &str, input: serde_json::Value| {
+                json!({"event": event, "terminal": "t1", "input": input})
+            };
+            this.lead_hook(
+                &hook("UserPromptSubmit", json!({"prompt": "the Owner's words"})),
+                None,
+                window,
+                cx,
+            );
+            for (id, name, input) in [
+                ("u1", "Read", json!({"file_path": "a.rs"})),
+                ("u2", "Bash", json!({"command": "ls"})),
+                ("r1", "REPL", json!({"code": "return 1"})),
+            ] {
+                this.lead_hook(
+                    &hook(
+                        "PreToolUse",
+                        json!({"tool_name": name, "tool_use_id": id, "tool_input": input}),
+                    ),
+                    None,
+                    window,
+                    cx,
+                );
+            }
+            this.lead_hook(&hook("Stop", json!({})), None, window, cx);
+        });
+        cx.run_until_parked();
+        let text = std::fs::read_to_string(&path).expect("the turn's line");
+        let line: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(line["session"], json!("session-1"));
+        assert_eq!(line["code_mode"], json!(true));
+        assert_eq!(line["model"], json!("Opus 5.5"));
+        assert_eq!(line["tool_calls"], json!(2));
+        assert_eq!(line["code_runs"], json!(1));
+        assert_eq!(line["ended_by"], json!("stop"));
+        assert!(!text.contains("the Owner's words"), "{text}");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
