@@ -396,7 +396,13 @@ pub fn claude_settings(app: &Path, core: &Path, home: &Path) -> Value {
                 "matcher": "AskUserQuestion",
                 "hooks": [blocking("PreToolUse", 3600)],
             },
-            { "hooks": [async_hook("PreToolUse")] },
+            // Every other tool, for the conversation's rows. Never a question too: the app holds the newer
+            // ask from a terminal, so this hook arriving second would win the card, the blocking one would
+            // be answered with nothing, and Claude would show its own dialog (a JavaScript regex).
+            {
+                "matcher": "^(?!AskUserQuestion$)",
+                "hooks": [async_hook("PreToolUse")],
+            },
         ]),
     );
     hooks.insert(

@@ -1281,3 +1281,11 @@ fn the_transcript_edits_come_from_the_input() {
         })
     );
 }
+
+/// Windows leads run commands with the PowerShell tool: its rows name the command as Bash's do.
+#[test]
+fn powershell_rows_name_their_command() {
+    let input = json!({"command": "py -c \"print(1)\""});
+    assert_eq!(tool_summary("PowerShell", &input, ToolState::Running), "Running `py -c \"print(1)\"`");
+    assert_eq!(tool_summary("PowerShell", &input, ToolState::Done), "Ran `py -c \"print(1)\"`");
+}

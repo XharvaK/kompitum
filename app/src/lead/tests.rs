@@ -467,7 +467,9 @@ fn claude_settings_install_the_chat_view_hooks() {
     let mut ask = command("PreToolUse");
     ask["timeout"] = json!(3600);
     assert_eq!(pre[0]["hooks"], json!([ask]));
-    assert!(pre[1].get("matcher").is_none(), "every tool, no matcher");
+    // Every tool but AskUserQuestion: a second hook on a question would be held as the newer ask, and the
+    // blocking one, answered with nothing, would leave Claude showing its own dialog.
+    assert_eq!(pre[1]["matcher"], json!("^(?!AskUserQuestion$)"), "every tool but the question");
     assert_eq!(pre[1]["hooks"], json!([async_command("PreToolUse")]));
 
     let post = entries("PostToolUse");

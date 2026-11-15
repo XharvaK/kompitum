@@ -847,7 +847,7 @@ pub fn tool_summary(name: &str, input: &Value, state: ToolState) -> String {
             }
         }
         "Write" | "Edit" | "NotebookEdit" | "MultiEdit" => edited_summary(input),
-        "Bash" => {
+        "Bash" | "PowerShell" => {
             let command = path(&["command"]);
             let running = state == ToolState::Running;
             match (command.is_empty(), running) {
