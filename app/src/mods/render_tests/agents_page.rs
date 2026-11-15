@@ -133,6 +133,77 @@ fn agent_built_in_workers_have_no_remove_button_and_added_ones_do(cx: &mut TestA
     assert!(tree[row..].contains("Claude Haiku 5.5"), "the id reads as a name: {tree}");
 }
 
+/// Each worker row's arrows and × are named, tab stops with the frame's ring.
+#[gpui::test]
+fn agent_worker_buttons_have_names_and_tab_stops(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let workers = agent_workers(
+        json!(["cc", "mine"]),
+        json!([
+            agent_worker("cc", "Command Code", "command_code", "commandcode/x#max", "ready", "", 0),
+            agent_worker("mine", "My worker", "opencode", "opencode/x#max", "ready", "", 0)
+        ]),
+    );
+    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        agents_values(agent_catalog(), workers, status),
+        None,
+    )
+    .unwrap();
+    for (id, label) in [
+        ("st-worker-up-mine", "Move up"),
+        ("st-worker-down-mine", "Move down"),
+        ("st-worker-remove-mine", "Remove"),
+    ] {
+        let line = tree
+            .lines()
+            .find(|line| line.contains(&format!(":id[Str(\"{id}\")]")))
+            .unwrap_or_else(|| panic!("no {id}: {tree}"));
+        assert!(line.contains(&format!(":tooltip[Str(\"{label}\")]")), "{id}: {line}");
+        assert!(
+            line.contains(&format!(":accessibility_label[Str(\"{label}\")]")),
+            "{id}: {line}"
+        );
+        assert!(line.contains(":tab_stop"), "{id} is a tab stop: {line}");
+        assert!(line.contains(":focus_ring"), "{id} has the ring: {line}");
+    }
+}
+
+/// × asks first: one press only says "Remove?", and a second press within it removes the worker.
+#[gpui::test]
+fn agent_remove_asks_before_removing(cx: &mut TestAppContext) {
+    let workers = || {
+        agent_workers(
+            json!(["cc", "mine"]),
+            json!([
+                agent_worker("cc", "Command Code", "command_code", "commandcode/x#max", "ready", "", 0),
+                agent_worker("mine", "My worker", "opencode", "opencode/x#max", "ready", "", 0)
+            ]),
+        )
+    };
+    let remove = vec![json!("workers"), json!("--remove"), json!("mine")];
+    let once = agents_kom_after_clicks(
+        cx,
+        agent_catalog(),
+        workers(),
+        "",
+        &["st-worker-remove-mine"],
+    );
+    assert!(!once.contains(&remove), "the first press only asks: {once:?}");
+    let twice = agents_kom_after_clicks(
+        cx,
+        agent_catalog(),
+        workers(),
+        "",
+        &["st-worker-remove-mine", "st-worker-remove-mine"],
+    );
+    assert!(twice.contains(&remove), "the second press removes: {twice:?}");
+}
+
 #[gpui::test]
 fn agent_worker_action_error_is_drawn_under_the_workers_heading(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);

@@ -1393,6 +1393,152 @@ fn appearance_offers_reduce_motion(cx: &mut TestAppContext) {
     assert!(on.contains("\"On\""), "{on}");
 }
 
+fn appearance_values(person: Value) -> BTreeMap<String, Value> {
+    let mut p = props();
+    p["section"] = json!("appearance");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("person".into(), person);
+    values.insert(
+        "themes".into(),
+        json!([
+            {"name": "graphite", "light": false, "colors": {}},
+            {"name": "paper", "light": true, "colors": {}},
+            {"name": "moss", "light": false, "colors": {}}
+        ]),
+    );
+    values
+}
+
+/// The appearance tiles are titled "Light or dark", and a Theme row after them lists the themes.
+#[gpui::test]
+fn appearance_has_a_light_or_dark_row_and_a_theme_menu(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        appearance_values(json!({})),
+        Some("this.themeMenu = { open: true };"),
+    )
+    .unwrap();
+    assert!(tree.contains("Light or dark"), "{tree}");
+    assert!(tree.contains("st-ap-System"), "{tree}");
+    assert!(tree.contains("st-theme"), "{tree}");
+    assert!(tree.contains("text \"Theme\""), "{tree}");
+    for name in ["graphite", "paper", "moss"] {
+        assert!(
+            tree.contains(&format!("st-theme-{name}")),
+            "missing {name}: {tree}"
+        );
+    }
+}
+
+/// The fonts are read once when the page opens: both lists keep the first answer through every render.
+#[gpui::test]
+fn fonts_are_read_once_per_page_opening(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = appearance_values(json!({}));
+    values.insert("fonts".into(), json!(["Alpha Sans"]));
+    values.insert("fontsAfter".into(), json!(["Beta Sans"]));
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        values,
+        Some("this.advancedOpen = { appearance: true }; this.fontMenus = { font: { open: true }, ui_font: { open: true } };"),
+    )
+    .unwrap();
+    assert!(tree.contains("Alpha Sans"), "{tree}");
+    assert!(!tree.contains("Beta Sans"), "fonts() was read again: {tree}");
+    assert!(
+        tree.matches("Alpha Sans").count() >= 2,
+        "both font lists reuse the one reading: {tree}"
+    );
+}
+
+/// Picking a theme runs app.theme with its name.
+#[gpui::test]
+fn picking_a_theme_runs_app_theme(cx: &mut TestAppContext) {
+    let (effects, _) = settings_effects_after_clicks(
+        cx,
+        appearance_values(json!({})),
+        "",
+        &["st-theme", "st-theme-paper"],
+        &[],
+    );
+    assert!(
+        effects.iter().any(|(name, args)| {
+            name == "run"
+                && args.first() == Some(&json!("app.theme"))
+                && args.get(1) == Some(&json!({"name": "paper"}))
+        }),
+        "{effects:?}"
+    );
+}
+
+/// The menu marks the theme the current light or dark half uses.
+#[gpui::test]
+fn the_theme_menu_marks_the_theme_in_use(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = appearance_values(json!({}));
+    values.get_mut("settings").unwrap()["theme"] = json!("paper");
+    values.get_mut("settings").unwrap()["theme_light"] = json!("paper");
+    values.get_mut("settings").unwrap()["dark"] = json!(false);
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        values,
+        Some("this.themeMenu = { open: true };"),
+    )
+    .unwrap();
+    let lines: Vec<&str> = tree.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| line.contains("st-theme-paper"))
+        .unwrap_or_else(|| panic!("paper row missing: {tree}"));
+    let row = lines[at..(at + 8).min(lines.len())].join("\n");
+    assert!(row.contains("check.svg"), "the picked theme is marked: {row}");
+    let at = lines
+        .iter()
+        .position(|line| line.contains("st-theme-moss"))
+        .unwrap_or_else(|| panic!("moss row missing: {tree}"));
+    let row = lines[at..(at + 8).min(lines.len())].join("\n");
+    assert!(!row.contains("check.svg"), "another theme is not marked: {row}");
+}
+
+/// Search finds "Theme" at its new row, and "light or dark" through the light-or-dark row's words.
+#[gpui::test]
+fn theme_search_points_at_the_theme_row(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        props(),
+        updates("current", "current"),
+        Some("this.search = 'theme';"),
+    )
+    .unwrap();
+    assert!(tree.contains("Appearance › Theme"), "{tree}");
+    let tree = describe(
+        cx,
+        &staged,
+        "frame/settings",
+        true,
+        props(),
+        updates("current", "current"),
+        Some("this.search = 'appearance';"),
+    )
+    .unwrap();
+    assert!(tree.contains("Appearance › Light or dark"), "{tree}");
+}
+
 /// Appearance draws the three theme tiles and a sample in the chosen fonts.
 #[gpui::test]
 fn appearance_offers_three_tiles_and_a_sample(cx: &mut TestAppContext) {
@@ -1802,6 +1948,124 @@ fn import_writes_the_person_then_the_worker_commands(cx: &mut TestAppContext) {
     ] {
         assert!(commands.contains(&want.as_array().cloned().unwrap_or_default()), "missing {want}: {commands:?}");
     }
+}
+
+fn failed_save_values() -> BTreeMap<String, Value> {
+    let mut p = props();
+    p["section"] = json!("notifications");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("person".into(), json!({}));
+    values.insert("settingsWriteFail".into(), json!("disk full"));
+    values
+}
+
+/// A setting whose write fails leaves the switch as it was, says why at the top of the page, and
+/// posts the same words as an error toast.
+#[gpui::test]
+fn a_setting_that_cannot_be_saved_says_so_and_toasts(cx: &mut TestAppContext) {
+    let (effects, found) = settings_effects_after_clicks(
+        cx,
+        failed_save_values(),
+        "",
+        &["st-sounds"],
+        &["st-save-error"],
+    );
+    assert_eq!(found, vec![("st-save-error".into(), true)]);
+    assert!(
+        effects.iter().any(|(name, args)| {
+            name == "notify"
+                && args.first().is_some_and(|n| {
+                    n["level"] == json!("error")
+                        && n["title"]
+                            .as_str()
+                            .is_some_and(|title| title.starts_with("Couldn't save the setting: ") && title.contains("disk full"))
+                })
+        }),
+        "the failure is a toast too: {effects:?}"
+    );
+    let tree = describe_settled(
+        cx,
+        &Staged::new(),
+        "frame/settings",
+        failed_save_values(),
+        Some("this.saveError = 'disk full';"),
+    )
+    .unwrap();
+    assert!(tree.contains("Couldn't save the setting: disk full"), "{tree}");
+}
+
+/// "Copied." clears two seconds after it was set, whether or not an update check is running.
+#[gpui::test]
+fn copied_clears_two_seconds_after_it_was_set(cx: &mut TestAppContext) {
+    use gpui::{IntoElement as _, Render};
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut p = props();
+    p["section"] = json!("about");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("person".into(), json!({}));
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-copied.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("frame/settings", "this.copiedAt = Date.now() - 2100;");
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    assert!(
+        visual.debug_bounds("st-copied").is_some(),
+        "Copied is drawn before its timer runs"
+    );
+    visual.executor().advance_clock(std::time::Duration::from_millis(350));
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    assert!(
+        visual.debug_bounds("st-copied").is_none(),
+        "Copied clears two seconds after it was set"
+    );
+    assert!(calls.borrow().unexpected.is_empty(), "{:?}", calls.borrow().unexpected);
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+}
+
+/// A folder picker that cannot open says why under the lead's folder row.
+#[gpui::test]
+fn a_folder_picker_that_cannot_open_says_so(cx: &mut TestAppContext) {
+    let mut values = lead_values("claude");
+    values.insert("pickFolderFail".into(), json!("no picker here"));
+    let (effects, found) = settings_effects_after_clicks(
+        cx,
+        values,
+        "",
+        &["st-lead-folder"],
+        &["st-folder-error"],
+    );
+    assert_eq!(found, vec![("st-folder-error".into(), true)]);
+    assert!(
+        effects.iter().any(|(name, _)| name == "pickFolder"),
+        "the picker was tried: {effects:?}"
+    );
+    let tree = describe_settled(
+        cx,
+        &Staged::new(),
+        "frame/settings",
+        lead_values("claude"),
+        Some("this.folderError = 'no picker here';"),
+    )
+    .unwrap();
+    assert!(
+        tree.contains("Couldn't open the folder picker: no picker here"),
+        "{tree}"
+    );
 }
 
 /// Copy diagnostics puts the lines on the clipboard, with the home folder and tokens taken out, and

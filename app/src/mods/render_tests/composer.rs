@@ -133,6 +133,46 @@ fn picking_a_level_saves_it_and_keeps_the_menu_open(cx: &mut TestAppContext) {
     );
 }
 
+/// A pick writes settings.json and then reads it back, instead of waiting for the fallback timer.
+#[gpui::test]
+fn a_lead_pick_reads_settings_again_after_its_write(cx: &mut TestAppContext) {
+    let mut values = usage_values(Value::Null, json!({}));
+    values.insert("person".into(), saved_lead_with_folder("sonnet", "low"));
+    let effects = composer_live_run_after_clicks(cx, values, "this.modelOpen = true;", &["composer-level-high"]);
+    let write = effects.iter().position(|args| {
+        args.first() == Some(&json!("/fixture/app/settings.json")) && args.len() > 1
+    });
+    let read = effects.iter().rposition(|args| {
+        args.first() == Some(&json!("/fixture/app/settings.json")) && args.len() == 1
+    });
+    assert!(
+        write.is_some() && read.is_some_and(|read| write.is_some_and(|write| read > write)),
+        "the settings are read again after the write: {effects:?}"
+    );
+}
+
+/// A changed settings() value makes the composer read settings.json again, without waiting for
+/// the fallback timer.
+#[gpui::test]
+fn a_changed_settings_value_reloads_the_composer(cx: &mut TestAppContext) {
+    let mut values = conversation_values(json!([]), "hidden", Value::Null, None);
+    values.insert(
+        "settingsAfter".into(),
+        json!({"font_family": "Beta Sans", "zoom": 2}),
+    );
+    let effects = composer_live_run_after_clicks(cx, values, "", &[]);
+    let reads = effects
+        .iter()
+        .filter(|args| {
+            args.first() == Some(&json!("/fixture/app/settings.json")) && args.len() == 1
+        })
+        .count();
+    assert!(
+        reads >= 2,
+        "the changed settings() reads the file again: {effects:?}"
+    );
+}
+
 /// A helper's shared values for the fixture: `lead.running` as the app sets it at each start.
 fn with_shared(mut values: BTreeMap<String, Value>, shared: Value) -> BTreeMap<String, Value> {
     values.insert("sharedValues".into(), shared);
@@ -402,6 +442,7 @@ fn composer_live_run_after_clicks(
                 || name == "kom"
                 || name == "pickFiles"
                 || name == "pickFolder"
+                || name == "readTextFile"
                 || name == "writeTextFile"
                 || name == "openOverlay"
         })
@@ -498,6 +539,44 @@ fn each_conversation_item_kind_draws(cx: &mut TestAppContext) {
     }
     assert!(!tree.contains("lead-terminal"), "{tree}");
     assert!(!tree.contains("Ask the lead anything."), "{tree}");
+}
+
+/// Two running tools end out of order: the earlier one's row is read again when the conversation's
+/// version changes, so it does not stay "running" after the later one is done.
+#[gpui::test]
+fn an_earlier_tool_that_ends_after_a_later_one_is_updated(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let done = json!([
+        {"kind": "tool", "id": "t1", "name": "Bash", "summary": "Ran first", "state": "done", "result": "one"},
+        {"kind": "notice", "id": "n1", "text": "Between"},
+        {"kind": "tool", "id": "t2", "name": "Bash", "summary": "Ran second", "state": "done", "result": "two"}
+    ]);
+    let values = conversation_values(done, "hidden", Value::Null, None);
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        values,
+        Some(
+            "this.items = [\
+                { kind: 'tool', id: 't1', name: 'Bash', summary: 'Ran first', state: 'running' },\
+                { kind: 'notice', id: 'n1', text: 'Between' },\
+                { kind: 'tool', id: 't2', name: 'Bash', summary: 'Ran second', state: 'running' }\
+            ]; this.seenVersion = 0;",
+        ),
+    )
+    .unwrap();
+    let lines: Vec<&str> = tree.lines().collect();
+    for id in ["t1", "t2"] {
+        let at = lines
+            .iter()
+            .position(|line| line.contains(&format!("composer-tool-{id}")))
+            .unwrap_or_else(|| panic!("no {id} row: {tree}"));
+        let row = lines[at..(at + 4).min(lines.len())].join("\n");
+        assert!(row.contains("check.svg"), "{id} is done: {row}");
+        assert!(!row.contains("spinner.svg"), "{id} is done: {row}");
+    }
 }
 
 /// A REPL call draws as one Code row: folded it is only its title; open it shows the code in the
@@ -1082,6 +1161,7 @@ fn a_missing_folder_asks_once_and_a_cancel_saves_nothing(cx: &mut TestAppContext
     assert!(
         !effects.iter().any(|args| {
             args.first().and_then(Value::as_str) == Some("/fixture/app/settings.json")
+                && args.len() > 1
         }),
         "a cancelled pick saves nothing: {effects:?}"
     );
@@ -2264,6 +2344,57 @@ fn question_with_preview() -> Value {
             ]
         }]}
     })
+}
+
+fn ten_options_question() -> Value {
+    let labels = ["One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
+    let options: Vec<Value> = labels.iter().map(|label| json!({"label": label})).collect();
+    json!({
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": [{
+            "question": "Which one?",
+            "header": "Pick",
+            "multiSelect": false,
+            "options": options
+        }]}
+    })
+}
+
+/// Only the first nine options carry a number: the tenth can't be reached by a key.
+#[gpui::test]
+fn question_options_number_only_the_first_nine(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "mods/composer",
+        composer_with_ask("question", ten_options_question()),
+        Some("this.askId = 'a1'; this.askSince = 0;"),
+    )
+    .unwrap();
+    assert!(tree.contains("9. Nine"), "{tree}");
+    assert!(!tree.contains("10. Ten"), "{tree}");
+    assert!(tree.contains("text \"Ten\""), "{tree}");
+}
+
+/// The ninth key picks the ninth option.
+#[gpui::test]
+fn the_ninth_key_picks_the_ninth_option(cx: &mut TestAppContext) {
+    let effects = composer_run_effects_after_keys(
+        cx,
+        composer_with_ask("question", ten_options_question()),
+        "9 enter",
+        Some("this.askId = 'a1'; this.askSince = 0;"),
+    );
+    assert!(
+        effects.iter().any(|args| {
+            args.first() == Some(&json!("lead.answer"))
+                && args.get(1)
+                    == Some(&json!({"id": "a1", "answer": {"action": "answers", "answers": {"Which one?": "Nine"}}}))
+        }),
+        "{effects:?}"
+    );
 }
 
 fn question_multi() -> Value {

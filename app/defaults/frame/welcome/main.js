@@ -390,6 +390,11 @@ export default class Welcome extends View {
       .bg(on ? t.accent_fill : t.hover)
       .flex()
       .when(on, (el) => el.justify_end())
+      .tab_stop(true)
+      .focus_ring(t.focus, 10)
+      .on_key_down((e, cx) => {
+        if (e.key === "enter" || e.key === "space") cx.stop_propagation();
+      })
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click(onClick)
       .child(div().w(16).h(16).rounded(8).bg(on ? t.accent_foreground : t.muted));
@@ -481,6 +486,11 @@ export default class Welcome extends View {
           .bg(chosen ? t.selected : t.background)
           .cursor_pointer()
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+          .tab_stop(true)
+          .focus_ring(t.focus, 10)
+          .on_key_down((e, cx) => {
+            if (e.key === "enter" || e.key === "space") cx.stop_propagation();
+          })
           .on_click((_e, cx) => {
             this.chosen = agent.key;
             cx.notify();
@@ -547,6 +557,11 @@ export default class Welcome extends View {
       .bg(on ? t.selected : t.background)
       .cursor_pointer()
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .tab_stop(true)
+      .focus_ring(t.focus, 10)
+      .on_key_down((e, cx) => {
+        if (e.key === "enter" || e.key === "space") cx.stop_propagation();
+      })
       .on_click(onClick)
       .child(this.radio(t, on))
       .child(

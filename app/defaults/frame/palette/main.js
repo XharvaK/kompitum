@@ -105,6 +105,16 @@ const DESK = [
 // The shown layout (its name; desk when none is shown yet, as settings reads it).
 const onDesk = () => (shared("layout") ?? "desk") === "desk";
 
+// A saved list that doesn't parse, or isn't an array of strings, counts as empty.
+function loadRecent() {
+  try {
+    const list = JSON.parse(localStorage.getItem("recent") ?? "[]");
+    return Array.isArray(list) ? list.filter((item) => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
 // The desk entries, in DESK's order, then every other entry under More.
 function deskEntries(list) {
   const keyFor = (name, args) => `${name}:${JSON.stringify(args)}`;
@@ -213,7 +223,7 @@ export default class Palette extends View {
     this.at = 0;
     // How far the list is scrolled, px.
     this.scroll = 0;
-    this.recent = JSON.parse(localStorage.getItem("recent") ?? "[]");
+    this.recent = loadRecent();
     this.handle = cx.focus_handle();
   }
 

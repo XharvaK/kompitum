@@ -7,7 +7,7 @@
 
 import { View } from "gpui-kit";
 import { v_flex, TextareaState, VirtualListScrollHandle } from "gpui-base";
-import { kom, run, theme, props, shared, setShared, terminals, knownAgents, appHome, readTextFile, writeTextFile, pickFolder, lead as leadOf, nextCommand, text } from "kompitum";
+import { kom, run, theme, settings, props, shared, setShared, terminals, knownAgents, appHome, readTextFile, writeTextFile, pickFolder, lead as leadOf, nextCommand, text } from "kompitum";
 import { errorText, CARD_WAIT_MS, COMPACT_FIRST_TOKENS, PULSE_MS } from "./util.js";
 import cards from "./cards.js";
 import model, { leadUsage } from "./model.js";
@@ -154,11 +154,14 @@ export default class Composer extends View {
     this.applyKeyContext();
     this.takeAsk(cx);
     this.syncDraft();
+    this.settingsStamp = JSON.stringify(settings());
     cx.spawn(async (cx) => {
       await this.load(cx);
       cx.notify();
     });
-    cx.timer.every(5000, (cx) => {
+    // The app reloads settings.json when it changes, so a changed settings() is the signal;
+    // this only catches a change the app missed.
+    cx.timer.every(60000, (cx) => {
       this.load(cx);
     });
     cx.timer.every(500, (cx) => {
@@ -181,6 +184,15 @@ export default class Composer extends View {
         cx.notify();
       }
     });
+  }
+
+  // The app re-reads settings.json when the file changes and redraws every mod; the
+  // composer follows the settings() value it sees instead of polling the file.
+  syncSettings(cx) {
+    const stamp = JSON.stringify(settings());
+    if (stamp === this.settingsStamp || this.loading) return;
+    this.settingsStamp = stamp;
+    this.load(cx);
   }
 
   async load(cx) {
@@ -235,6 +247,7 @@ export default class Composer extends View {
         const folder = await pickFolder({ prompt: text("composer.choose-folder-prompt") });
         if (!folder) return;
         await this.writeLead({ folder });
+        await this.load(cx);
         run("lead.open");
       } catch (error) {
         this.error = text("composer.folder-choose-failed", { error: String(error?.message ?? error) });
@@ -447,6 +460,7 @@ export default class Composer extends View {
     cx.spawn(async (cx) => {
       try {
         await this.writeLead(patch);
+        await this.load(cx);
       } catch (error) {
         this.error = text("composer.model-save-failed", { error: String(error?.message ?? error) });
         cx.notify();
@@ -464,6 +478,7 @@ export default class Composer extends View {
     cx.spawn(async (cx) => {
       try {
         await this.writeLead(patch);
+        await this.load(cx);
         run("lead.open");
       } catch (error) {
         this.error = text("composer.model-save-failed", { error: String(error?.message ?? error) });
@@ -581,6 +596,7 @@ export default class Composer extends View {
 
   render(cx) {
     const t = theme();
+    this.syncSettings(cx);
     if (this.needsFirstPick() || this.leadLive()) return this.compose(t, cx);
     return this.empty(t);
   }

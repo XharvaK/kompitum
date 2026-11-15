@@ -264,12 +264,18 @@ function saveLead(view, patch, cx) {
 }
 
 function chooseFolder(view, cx) {
+  view.folderError = null;
   cx.spawn(async (cx) => {
-    const folder = await pickFolder({ prompt: text("settings.choose-folder-prompt") });
-    if (!folder) return; // a cancelled pick keeps the old choice
-    view.change((person) => {
-      person.lead = { ...(person.lead ?? {}), folder };
-    }, cx);
+    try {
+      const folder = await pickFolder({ prompt: text("settings.choose-folder-prompt") });
+      if (!folder) return; // a cancelled pick keeps the old choice
+      view.change((person) => {
+        person.lead = { ...(person.lead ?? {}), folder };
+      }, cx);
+    } catch (error) {
+      view.folderError = String(error?.message ?? error);
+      cx.notify();
+    }
   });
 }
 
@@ -446,6 +452,15 @@ function leadSection(view, t, cx, s) {
         .child(view.button(t, "st-lead-folder", text("settings.choose"), (_e, cx) => chooseFolder(view, cx))),
       "folder",
     ))
+    .when(Boolean(view.folderError), (el) => el.child(
+      div()
+        .id("st-folder-error")
+        .pb(6)
+        .text_size(12)
+        .line_height("18px")
+        .text_color(t.blocked)
+        .child(text("settings.folder-picker-failed", { reason: view.folderError })),
+    ))
     .child(div().pt(8).text_size(12).text_color(t.dim).child(text("settings.applies-restart")));
 }
 
@@ -473,13 +488,49 @@ const ICON_UP = "mods/lead/chevron-up.svg";
 const ICON_DOWN = "mods/workspace-chrome/chevron-down.svg";
 const ICON_CLOSE = "frame/settings/close.svg";
 
-function keyButton(t, id, icon, onClick) {
+function keyButton(t, id, icon, label, onClick) {
   return div().id(id).w(28).h(28).flex_none().flex().items_center().justify_center().rounded(6)
     .text_color(t.dim)
     .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+    .tab_stop(true)
+    .focus_ring(t.focus, 6)
+    .tooltip(label)
+    .accessibility_label(label)
     .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
     .on_click(onClick)
     .child(svg(icon).size(14));
+}
+
+// × asks first: the first press becomes "Remove?" for three seconds; a second press within them removes.
+function removeButton(view, t, id, onClick) {
+  const asked = view.removeAsk?.id === id ? view.removeAsk : null;
+  return div().id(id).h(28).min_w(28).flex_none().flex().items_center().justify_center().rounded(6)
+    .px(asked ? 6 : 0)
+    .text_size(12)
+    .text_color(asked ? t.blocked : t.dim)
+    .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+    .tab_stop(true)
+    .focus_ring(t.focus, 6)
+    .tooltip(text("settings.remove"))
+    .accessibility_label(text("settings.remove"))
+    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+    .on_click((_e, cx) => {
+      if (asked) {
+        view.removeAsk = null;
+        onClick(_e, cx);
+        cx.notify();
+        return;
+      }
+      const marker = { id };
+      view.removeAsk = marker;
+      cx.notify();
+      cx.timer.after(3000, (cx) => {
+        if (view.removeAsk !== marker) return;
+        view.removeAsk = null;
+        cx.notify();
+      });
+    })
+    .child(asked ? text("settings.remove-confirm") : svg(ICON_CLOSE).size(14));
 }
 
 // Claude's own entry: the catalog's when it lists one, else its bundled mark. Its workers and its subagents draw it.
@@ -531,9 +582,9 @@ function workerRow(view, t, cx, s, worker, index) {
         .child(div().text_size(12).text_color(t.dim).truncate()
           .when(Boolean(model), (el) => el.tooltip(model))
           .child(modelLabel(entry, model))))
-      .child(keyButton(t, `st-worker-up-${worker.key}`, ICON_UP, (_e, cx) => workerStep(view, index, -1, cx)))
-      .child(keyButton(t, `st-worker-down-${worker.key}`, ICON_DOWN, (_e, cx) => workerStep(view, index, 1, cx)))
-      .when(!BUILTIN.has(worker.key), (el) => el.child(keyButton(t, `st-worker-remove-${worker.key}`, ICON_CLOSE, (_e, cx) => removeWorker(view, worker, cx)))))
+      .child(keyButton(t, `st-worker-up-${worker.key}`, ICON_UP, text("settings.move-up"), (_e, cx) => workerStep(view, index, -1, cx)))
+      .child(keyButton(t, `st-worker-down-${worker.key}`, ICON_DOWN, text("settings.move-down"), (_e, cx) => workerStep(view, index, 1, cx)))
+      .when(!BUILTIN.has(worker.key), (el) => el.child(removeButton(view, t, `st-worker-remove-${worker.key}`, (_e, cx) => removeWorker(view, worker, cx)))))
     .when(Boolean(state), (el) => el.child(state))
     .when(Boolean(usage), (el) => el.child(usage));
   return row;
@@ -568,9 +619,9 @@ function subagentRow(view, t, cx, s, name, index) {
       .child(v_flex().flex_1().min_w(0).gap(2)
         .child(div().text_size(13).text_color(t.foreground).child("Claude Code"))
         .child(div().text_size(12).text_color(t.dim).child(name)))
-      .child(keyButton(t, `st-subagent-up-${name}`, ICON_UP, (_e, cx) => workerStep(view, `sub:${index}`, -1, cx)))
-      .child(keyButton(t, `st-subagent-down-${name}`, ICON_DOWN, (_e, cx) => workerStep(view, `sub:${index}`, 1, cx)))
-      .child(keyButton(t, `st-subagent-remove-${name}`, ICON_CLOSE, (_e, cx) => removeSubagent(view, name, cx))));
+      .child(keyButton(t, `st-subagent-up-${name}`, ICON_UP, text("settings.move-up"), (_e, cx) => workerStep(view, `sub:${index}`, -1, cx)))
+      .child(keyButton(t, `st-subagent-down-${name}`, ICON_DOWN, text("settings.move-down"), (_e, cx) => workerStep(view, `sub:${index}`, 1, cx)))
+      .child(removeButton(view, t, `st-subagent-remove-${name}`, (_e, cx) => removeSubagent(view, name, cx))));
   return row;
 }
 

@@ -656,6 +656,40 @@ fn tab_and_enter_press_a_settings_control(cx: &mut TestAppContext) {    let _gua
     cx.run_until_parked();
 }
 
+/// Welcome: Tab reaches an agent row, a folder row and the permission toggle, each with its ring.
+#[gpui::test]
+fn tab_reaches_welcome_rows_and_the_toggle(cx: &mut TestAppContext) {
+    let _guard = RING_LOG.lock().unwrap_or_else(|poison| poison.into_inner());
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for (step, wanted) in [
+        ("1", "w-agent-claude"),
+        ("2", "w-folder-user"),
+        ("3", "w-claude-setup"),
+    ] {
+        let setup = format!("this.step = {step};");
+        let values = welcome_values(json!({"lead": {"program": "claude"}}), welcome_agents());
+        let (window, mut visual, calls) = mount_mod(cx, &staged, "frame/welcome", values, &setup);
+        assert!(
+            tab_to(&mut visual, wanted, 120),
+            "Tab reaches {wanted}: {:?}",
+            focus_ring_test_support::painted()
+        );
+        press_key(&mut visual, "enter");
+        visual.run_until_parked();
+        draw(&mut visual);
+        assert!(
+            visual.debug_bounds(wanted).is_some(),
+            "Enter pressed {wanted}, not Continue or Start"
+        );
+        assert!(calls.borrow().unexpected.is_empty(), "{:?}", calls.borrow().unexpected);
+        drop(visual);
+        cx.run_until_parked();
+        window.update(cx, |_, window, _| window.remove_window()).ok();
+        cx.run_until_parked();
+    }
+}
+
 /// The card closes as the hook's reply would close it: the box takes the
 /// keyboard back, and the next message typed reaches it.
 #[gpui::test]

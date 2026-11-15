@@ -55,6 +55,36 @@ fn welcome_step_one_title_asks_who_to_talk_to(cx: &mut TestAppContext) {
     assert!(tree.contains("Who do you want to talk to?"), "{tree}");
 }
 
+/// The agent rows, the folder rows and the permission toggle are tab stops with the frame's ring.
+#[gpui::test]
+fn welcome_rows_and_toggle_are_keyboard_controls(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for (step, ids) in [
+        ("1", vec!["w-agent-opencode", "w-agent-claude"]),
+        ("2", vec!["w-folder-user", "w-choose-folder"]),
+        ("3", vec!["w-claude-setup"]),
+    ] {
+        let setup = format!("this.step = {step};");
+        let tree = describe_settled(
+            cx,
+            &staged,
+            "frame/welcome",
+            welcome_values(json!({"lead": {"program": "claude"}}), welcome_agents()),
+            Some(setup.as_str()),
+        )
+        .unwrap();
+        for id in ids {
+            let line = tree
+                .lines()
+                .find(|line| line.contains(&format!(":id[Str(\"{id}\")]")))
+                .unwrap_or_else(|| panic!("no {id}: {tree}"));
+            assert!(line.contains(":tab_stop"), "{id} is a tab stop: {line}");
+            assert!(line.contains(":focus_ring"), "{id} has the ring: {line}");
+        }
+    }
+}
+
 /// With a lead other than Claude Code there are two steps, and the second one's button is Start.
 #[gpui::test]
 fn welcome_with_another_lead_the_second_step_ends_in_start(cx: &mut TestAppContext) {

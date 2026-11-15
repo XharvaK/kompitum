@@ -2,7 +2,7 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, fonts, settings, shared, window, text } from "kompitum";
+import { run, fonts, settings, shared, themes, window, text } from "kompitum";
 import { dropdown } from "./ui.js";
 
 const APPEARANCES = [
@@ -213,6 +213,23 @@ function motionDropdown(view, t) {
   });
 }
 
+// Theme: every theme app.theme can use, marked for the half the window shows now.
+function themeDropdown(view, t) {
+  const s = settings();
+  view.themeMenu ??= {};
+  return dropdown(t, "st-theme", {
+    items: themes().map((theme) => ({ value: theme.name, label: theme.name })),
+    value: s.theme ?? "",
+    onPick: (name, cx) => {
+      run("app.theme", { name });
+      view.handle.focus();
+      cx.notify();
+    },
+    state: view.themeMenu,
+    width: 200,
+  });
+}
+
 // Sidebar glass: the window material behind the sidebar (Windows; settings.json's `glass`).
 function glassDropdown(view, t) {
   view.glassMenu ??= {};
@@ -241,12 +258,24 @@ function fontMenu(view, which) {
   return (view.fontMenus[which] ??= {});
 }
 
+// The machine's fonts, read once per page opening: the two lists share it.
+function fontNames(view) {
+  return (view.fontNames ??= fonts());
+}
+
+function fontChoices(view, def) {
+  view.fontChoices ??= {};
+  return (view.fontChoices[def] ??= [
+    { value: "", label: def, detail: text("settings.kompitum-default"), font: def },
+    ...fontNames(view).map((name) => ({ value: name, label: name, font: name })),
+  ]);
+}
+
 function fontDropdown(view, t, cx, which, def) {
   const saved = view.person?.[which] ?? "";
-  const names = fonts();
-  const items = [{ value: "", label: def, detail: text("settings.kompitum-default"), font: def }];
-  if (saved && !names.includes(saved)) items.push({ value: saved, label: saved, font: saved });
-  for (const name of names) items.push({ value: name, label: name, font: name });
+  const names = fontNames(view);
+  const items = [...fontChoices(view, def)];
+  if (saved && !names.includes(saved)) items.splice(1, 0, { value: saved, label: saved, font: saved });
   return dropdown(t, `st-f-${which}`, {
     items,
     value: saved,
@@ -295,10 +324,11 @@ export function appearancePage(view, t, cx) {
         .py(12)
         .border_b(1)
         .border_color(t.border)
-        .when(view.lit("theme"), (el) => el.bg(t.selected).rounded(7))
-        .child(div().text_size(13).text_color(t.foreground).child(text("settings.theme")))
+        .when(view.lit("light-dark"), (el) => el.bg(t.selected).rounded(7))
+        .child(div().text_size(13).text_color(t.foreground).child(text("settings.light-dark")))
         .child(appearanceTiles(view, t)),
     )
+    .child(view.row(t, text("settings.theme"), null, themeDropdown(view, t), "theme"))
     .when(window()?.platform === "windows", (el) =>
       el.child(
         view.row(

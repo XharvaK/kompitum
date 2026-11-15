@@ -190,6 +190,7 @@ fn module_with_lead(
     let memory_json = values.remove("memoryJson");
     let memory_fail = values.remove("memoryFail");
     let memory_write_fail = values.remove("memoryWriteFail");
+    let settings_write_fail = values.remove("settingsWriteFail");
     let thread_json = values.remove("threadJson");
     let thread_fail = values.remove("threadFail");
     let send_fail = values.remove("sendFail");
@@ -197,9 +198,12 @@ fn module_with_lead(
     let lead_commands = values.remove("leadCommands");
     let list_dirs = values.remove("listDirs");
     let picked_files = values.remove("pickedFiles");
+    let pick_folder_fail = values.remove("pickFolderFail");
     let picked_save = values.remove("pickSavePath");
     let import_file = values.remove("importFile");
     let system_info = values.remove("system");
+    let fonts_after = values.remove("fontsAfter");
+    let settings_after = values.remove("settingsAfter");
     let conversation_items = values.remove("conversation").unwrap_or(json!([]));
     // A test can say what `lead()` answers once `lead.answer` runs, so a card
     // closes as the real window's hook reply would close it.
@@ -209,6 +213,28 @@ fn module_with_lead(
     let mut module = HostModule::new("kompitum").script_with("sheet", sheet_export());
     for (name, value) in values {
         if name == "person" || (name == "lead" && lead.is_some()) {
+            continue;
+        }
+        if name == "fonts" && fonts_after.is_some() {
+            let first = value.clone();
+            let after = fonts_after.clone().unwrap_or_else(|| value.clone());
+            let reads = Rc::new(Cell::new(0usize));
+            module = module.function("fonts", move |_| {
+                let at = reads.get();
+                reads.set(at + 1);
+                Ok(to_host(if at == 0 { &first } else { &after }))
+            });
+            continue;
+        }
+        if name == "settings" && settings_after.is_some() {
+            let first = value.clone();
+            let after = settings_after.clone().unwrap_or_else(|| value.clone());
+            let reads = Rc::new(Cell::new(0usize));
+            module = module.function("settings", move |_| {
+                let at = reads.get();
+                reads.set(at + 1);
+                Ok(to_host(if at == 0 { &first } else { &after }))
+            });
             continue;
         }
         if name == "lead" {
@@ -301,7 +327,16 @@ fn module_with_lead(
             .borrow_mut()
             .effects
             .push(("pickFolder".into(), vec![json!("pickFolder")]));
-        Ok(async { Ok(HostValue::Null) })
+        let failure = pick_folder_fail.clone();
+        Ok(async move {
+            match failure {
+                Some(error) => {
+                    let message = error.as_str().unwrap_or("picker failed").to_string();
+                    Err(HostError::new(message))
+                }
+                None => Ok(HostValue::Null),
+            }
+        })
     });
     // Recorded as a call of its own, so a test can see that "+" opened the picker.
     let picked = calls.clone();
@@ -366,6 +401,7 @@ fn module_with_lead(
         let memory_json = memory_json.clone();
         let memory_fail = memory_fail.clone();
         let memory_write_fail = memory_write_fail.clone();
+        let settings_write_fail = settings_write_fail.clone();
         let thread_json = thread_json.clone();
         let thread_fail = thread_fail.clone();
         let send_fail = send_fail.clone();
@@ -374,11 +410,17 @@ fn module_with_lead(
         module = module.async_function(name, move |a| {
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
             let reply = match name {
-                "readTextFile" if first == "/fixture/app/settings.json" => Some(
-                    person
-                        .clone()
-                        .map_or(Value::Null, |person| Value::String(person.to_string())),
-                ),
+                "readTextFile" if first == "/fixture/app/settings.json" => {
+                    calls
+                        .borrow_mut()
+                        .effects
+                        .push(("readTextFile".into(), vec![first.clone()]));
+                    Some(
+                        person
+                            .clone()
+                            .map_or(Value::Null, |person| Value::String(person.to_string())),
+                    )
+                }
                 "writeTextFile" => {
                     calls.borrow_mut().effects.push((
                         "writeTextFile".into(),
@@ -615,7 +657,17 @@ fn module_with_lead(
                 }
                 _ => None,
             };
-            let result = if let Some(reply) = reply {
+            let result = if name == "writeTextFile"
+                && first == "/fixture/app/settings.json"
+                && settings_write_fail.is_some()
+            {
+                let message = settings_write_fail
+                    .as_ref()
+                    .and_then(Value::as_str)
+                    .unwrap_or("write failed")
+                    .to_string();
+                Err(HostError::new(message))
+            } else if let Some(reply) = reply {
                 Ok(to_host(&reply))
             } else {
                 let message = format!("unexpected {name}: {first}, {:?}", a.get(1));

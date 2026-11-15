@@ -54,10 +54,10 @@ function contextFraction(usage) {
 function usageWindows(usage) {
   const now = Date.now() / 1000;
   return [
-    { short: text("composer.window-5h"), long: "5-hour limit", window: usage?.five_hour },
-    { short: text("composer.window-week"), long: "Week", window: usage?.seven_day },
+    { short: text("composer.window-5h"), window: usage?.five_hour },
+    { short: text("composer.window-week"), window: usage?.seven_day },
   ]
-    .map(({ short, long, window }) => ({ short, long, pct: window?.used_percentage, resets: window?.resets_at }))
+    .map(({ short, window }) => ({ short, pct: window?.used_percentage, resets: window?.resets_at }))
     .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
     .filter((w) => !(typeof w.resets === "number" && w.resets < now));
 }

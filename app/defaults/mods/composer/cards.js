@@ -102,7 +102,7 @@ export default {
     }
     // A key held back by the wait or by a draft is still stopped here, so it reaches nothing else.
     if (ask.kind === "question") {
-      if (/^[1-4]$/.test(event.keystroke)) {
+      if (/^[1-9]$/.test(event.keystroke)) {
         if (Date.now() - this.askSince >= CARD_WAIT_MS) this.pickOption(ask, Number(event.keystroke) - 1, cx);
         cx.stop_propagation();
       } else if (event.keystroke === "space") {
@@ -492,7 +492,8 @@ export default {
                 this.optionAt = at;
                 this.toggleOption(question, label, cx);
               })
-              .child(div().text_size(12).font_medium().text_color(t.foreground).child(text("composer.option-numbered", { number: optionIndex + 1, label })))
+              .child(div().text_size(12).font_medium().text_color(t.foreground)
+                .child(optionIndex < 9 ? text("composer.option-numbered", { number: optionIndex + 1, label }) : label))
               .when(
                 Boolean(option.description) && !repeatsLabel(label, option.description),
                 (el) => el.child(div().text_size(12).text_color(t.dim).child(option.description)),

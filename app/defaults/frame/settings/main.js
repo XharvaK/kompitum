@@ -2,7 +2,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input, TextareaState } from "gpui-base";
-import { kom, run, theme, updates, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared, sheet, text } from "kompitum";
+import { kom, run, theme, updates, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared, sheet, text, notify } from "kompitum";
 import { loadVault, vaultSection } from "./vault.js";
 import { loadMemory, memoryPage, saveMemory, forgetMemory } from "./memory.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
@@ -49,7 +49,8 @@ function liveSections() {
 // What the search field finds: one entry per row the sections draw, so search
 // never reads the drawn tree. `key` matches the row's highlight key.
 const SEARCH = [
-  { section: "appearance", key: "theme", title: () => text("settings.theme"), words: "light dark system appearance" },
+  { section: "appearance", key: "light-dark", title: () => text("settings.light-dark"), words: "light dark system appearance" },
+  { section: "appearance", key: "theme", title: () => text("settings.theme"), words: "theme colors look" },
   { section: "appearance", key: "glass", title: () => text("settings.sidebar-glass"), words: "transparency blur mica desktop sidebar", only: "windows" },
   { section: "appearance", key: "motion", title: () => text("settings.reduce-motion"), words: "animation spinners still calm accessibility" },
   { section: "appearance", key: "layout", title: () => text("settings.window"), words: "layout reset desk window shape back" },
@@ -90,7 +91,6 @@ export default class Settings extends View {
     const wanted = RENAMED_SECTIONS[asked] ?? asked;
     this.section = SECTIONS.some((s) => s.id === wanted) ? wanted : "appearance";
     this.picking = null; // "font" | "ui_font" while its list is open
-    this.themeOpen = false;
     ensureAgents(this);
     this.filter = "";
     this.search = "";
@@ -157,6 +157,7 @@ export default class Settings extends View {
     this.importError = null;
     this.importSheet = null;
     this.copiedAt = null;
+    this.saveError = null;
     this.diagnosticError = null;
     this.openExport = (cx) => exportSettings(this, cx);
     this.openImport = (cx) => importSettings(this, cx);
@@ -179,10 +180,13 @@ export default class Settings extends View {
     // After "Check now": follow the look (the answer comes from the app), then
     // "Up to date" for a moment.
     cx.timer.every(300, (cx) => {
+      if (this.copiedAt && Date.now() - this.copiedAt >= 2000) {
+        this.copiedAt = null;
+        cx.notify();
+      }
       if (!this.asked) return;
       if (updates().checking) this.asked = Date.now();
       else if (Date.now() - this.asked >= 3000) this.asked = null;
-      if (this.copiedAt && Date.now() - this.copiedAt >= 2000) this.copiedAt = null;
       cx.notify();
     });
     cx.timer.every(3000, (cx) => {
@@ -217,18 +221,27 @@ export default class Settings extends View {
   change(edit, cx, after = null) {
     cx.spawn(async (cx) => {
       let saved = false;
+      let reason = null;
       for (let attempt = 0; attempt < 3; attempt++) {
-        await this.load();
-        const next = JSON.parse(JSON.stringify(this.person));
-        edit(next);
         try {
+          await this.load();
+          const next = JSON.parse(JSON.stringify(this.person));
+          edit(next);
           await writeTextFile(this.file(), JSON.stringify(next, null, 2) + "\n", this.raw);
           this.person = next;
           saved = true;
           break;
-        } catch {}
+        } catch (error) {
+          reason = String(error?.message ?? error);
+        }
       }
-      if (saved && after) after(cx);
+      if (saved) {
+        this.saveError = null;
+        if (after) after(cx);
+      } else {
+        this.saveError = reason;
+        notify({ title: text("settings.save-failed", { reason }), level: "error" });
+      }
       cx.notify();
     });
   }
@@ -269,7 +282,6 @@ export default class Settings extends View {
   openMatch(match, cx) {
     this.section = match.section;
     this.picking = null;
-    this.themeOpen = false;
     this.machineEdit = null;
     const at = Date.now();
     this.highlight = { section: match.section, key: match.key, at };
@@ -885,7 +897,6 @@ export default class Settings extends View {
             .on_click((_e, cx) => {
               this.section = s.id;
               this.picking = null;
-              this.themeOpen = false;
               this.machineEdit = null;
               this.highlight = null;
               this.handle.focus();
@@ -919,7 +930,6 @@ export default class Settings extends View {
         if (k !== "escape") return;
         if (this.search) this.clearSearch(cx);
         else if (this.picking) this.picking = null;
-        else if (this.themeOpen) this.themeOpen = false;
         // Nothing open inside: Esc reaches the app's one close, on the Overlay key context.
         else return;
         this.handle.focus();
@@ -951,6 +961,16 @@ export default class Settings extends View {
                     div()
                       .px(28)
                       .py(22)
+                      .when(Boolean(this.saveError), (el) =>
+                        el.child(
+                          div()
+                            .id("st-save-error")
+                            .pb(10)
+                            .text_size(12)
+                            .line_height("18px")
+                            .text_color(t.blocked)
+                            .child(text("settings.save-failed", { reason: this.saveError })),
+                        ))
                       .child(
                         section === "appearance"
                           ? appearancePage(this, t, cx)

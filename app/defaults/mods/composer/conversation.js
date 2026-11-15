@@ -16,7 +16,12 @@ export default {
       return;
     }
     if (meta.version === this.seenVersion) return;
-    let start = this.items.length > 0 ? Math.max(0, this.items.length - 1) : 0;
+    // An earlier row can change after a later one: a tool ends out of order, and an
+    // assistant keeps streaming. Read again from the first row that is still open.
+    let start = Math.max(0, this.items.length - 1);
+    const open = this.items.findIndex((item) =>
+      (item?.kind === "tool" && item.state === "running") || (item?.kind === "assistant" && !item.done));
+    if (open >= 0 && open < start) start = open;
     if ((meta.length ?? 0) < this.items.length) start = 0;
     let fresh = [];
     try {

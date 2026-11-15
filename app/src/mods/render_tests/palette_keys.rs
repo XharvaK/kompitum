@@ -26,6 +26,42 @@ fn palette_on_desk_groups_terminals_and_drops_tab_words(cx: &mut TestAppContext)
     assert!(!tree.contains("New tab"), "{tree}");
 }
 
+/// A saved recent list that doesn't parse, or isn't an array of strings, counts as empty.
+#[gpui::test]
+fn a_corrupt_recent_list_is_empty(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    for saved in ["{not json", "{\"not\":\"a list\"}", "[1, 2]"] {
+        std::fs::write(
+            staged.0.join("main.js"),
+            format!(
+                r#"
+import Real from './frame/palette/main.js';
+export default class Scenario extends Real {{
+  init(props, cx) {{
+    localStorage.setItem('recent', {saved:?});
+    super.init(props, cx);
+  }}
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let tree = describe(
+            cx,
+            &staged,
+            ".",
+            true,
+            props(),
+            updates("current", "current"),
+            None,
+        )
+        .unwrap_or_else(|error| panic!("{saved}: {error:#}"));
+        assert!(tree.contains("New terminal"), "{saved}: {tree}");
+        assert!(!tree.contains("Recent"), "{saved}: no recent group: {tree}");
+    }
+}
+
 #[gpui::test]
 fn shortcuts_sheet_on_desk_draws_each_command_once(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
