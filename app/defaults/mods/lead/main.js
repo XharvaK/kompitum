@@ -132,6 +132,17 @@ function resetLine(status) {
   return text("lead.back-at", { when: localTime(Math.max(...times)) });
 }
 
+// A Claude window the status line says is used up, with a reset still to come.
+function claudeOut(status) {
+  const claude = status && status.claude;
+  if (!claude) return false;
+  return ["five_hour", "seven_day"].some((window) => {
+    const used = Number(claude[`${window}_used_percentage`]);
+    const reset = Number(claude[`${window}_resets_at`]);
+    return Number.isFinite(used) && used >= 100 && Number.isFinite(reset) && reset > 0;
+  });
+}
+
 function minutes(seconds) {
   const n = Number(seconds);
   return Number.isFinite(n) ? `${Math.max(0, Math.floor(n / 60))}m` : "";
@@ -191,7 +202,7 @@ async function handoffMarkdown() {
     komJson(["vault", "open", "--json", "--as", "opus"]),
   ]);
   const parts = [
-    text("lead.handoff-first"),
+    `The Owner handed Manager the lead.${claudeOut(status) ? " Claude's quota is out." : ""}`,
     resetLine(status),
   ];
   for (const [key, title] of TASK_SECTIONS) {

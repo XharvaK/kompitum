@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, kom, theme, shared, setShared, watchFolder, window, layout, pickFolder, props, text } from "kompitum";
+import { spaces, machines, panes, run, openOverlay, exec, kom, theme, shared, setShared, watchFolder, window, layout, pickFolder, notify, props, text } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -31,6 +31,16 @@ const railCell = (el) => h_flex().flex_none().justify_center().child(el);
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
+// A saved value that doesn't parse, or has the wrong shape, is the default.
+function readStored(key, fallback, ok) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? "null");
+    return ok(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 // Changes made outside Kompitum (an editor's save, a commit in another app): looked
 // for this often, in repos the list shows, while the window is in front.
 const FALLBACK = 60000;
@@ -65,21 +75,24 @@ export default class Spaces extends View {
     this.pressed = null;
     this.over = null;
     this.machines = [];
-    this.reconnecting = JSON.parse(localStorage.getItem("machines.reconnecting") ?? "{}");
-    for (const state of Object.values(this.reconnecting)) state.busy = false;
-    this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
+    this.reconnecting = readStored("machines.reconnecting", {}, isObject);
+    for (const [name, state] of Object.entries(this.reconnecting)) {
+      if (!isObject(state)) delete this.reconnecting[name];
+      else state.busy = false;
+    }
+    this.folded = new Set(readStored("machines.folded", [], Array.isArray).filter((name) => typeof name === "string"));
+    this.swept = null;
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
-    cx.timer.every(250, (cx) => this.checkNew(cx));
+    cx.timer.every(3000, (cx) => { if (window()?.active === true) this.checkNew(cx); });
   }
 
-  checkNew(cx) {
+  checkNew(cx, sp = spaces(), ps = panes()) {
     const now = Date.now();
-    const sp = spaces();
     for (const s of sp) if (!this.shown.has(s.id)) this.born[s.id] ??= now;
-    const due = this.due(now, sp, panes());
+    const due = this.due(now, sp, ps);
     if (due.size) this.refreshGit(due, cx);
     if (sp.some((s) => !this.shown.has(s.id)) || this.orderingDue(now)) cx.notify();
   }
@@ -253,8 +266,12 @@ export default class Spaces extends View {
   newSpace(machine, cx) {
     if (machine) return run("space.new", { machine });
     cx.spawn(async () => {
-      const folder = await pickFolder({ prompt: text("spaces.folder-prompt") });
-      if (folder) run("space.new", { folder, machine: "" });
+      try {
+        const folder = await pickFolder({ prompt: text("spaces.folder-prompt") });
+        if (folder) run("space.new", { folder, machine: "" });
+      } catch (e) {
+        notify({ title: text("spaces.open-folder-failed"), body: String(e?.message ?? e), level: "error" });
+      }
     });
   }
 
@@ -500,6 +517,12 @@ export default class Spaces extends View {
   render(cx) {
     const t = theme();
     const collapsed = narrow();
+    const listedSpaces = spaces(), listedPanes = panes();
+    const sweep = JSON.stringify([listedSpaces, listedPanes]);
+    if (sweep !== this.swept) {
+      this.swept = sweep;
+      this.checkNew(cx, listedSpaces, listedPanes);
+    }
     this.fit(cx);
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();

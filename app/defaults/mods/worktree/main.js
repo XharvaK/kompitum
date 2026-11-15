@@ -208,7 +208,6 @@ export default class Worktree extends View {
   }
 
   async remove() {
-    const s = this.space();
     const status = await git(this.repo.top, ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain"], this.on);
     if (!status.ok) return status.err || text("worktree.status-failed");
     // git refuses a worktree with submodules unless forced, because their
@@ -219,11 +218,13 @@ export default class Worktree extends View {
     this.dirty ||= status.out !== "";
     this.unpushed = [...new Set([...this.unpushed, ...unpushed])];
     if (changed) return text("worktree.changed");
-    // Terminals first: a shell sitting in the folder keeps it busy on Windows.
-    run("space.close", { id: s.id, confirmed: true });
     const force = this.dirty || mods.length > 0;
     const r = await git(this.repo.main, ["worktree", "remove", ...(force ? ["--force"] : []), this.repo.top], this.on, 600_000);
-    return r.ok ? "" : r.err || text("worktree.remove-failed");
+    if (!r.ok) return r.err || text("worktree.remove-failed");
+    // The space goes only after git let go of the folder; one already gone needs no close.
+    const space = this.space();
+    if (space?.id) run("space.close", { id: space.id, confirmed: true });
+    return "";
   }
 
   key(e, cx) {

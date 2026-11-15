@@ -1,6 +1,6 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand, text } from "kompitum";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, layout, nextCommand, text } from "kompitum";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -9,6 +9,15 @@ function location() {
   return { cwd: pane?.cwd || f?.cwd || space?.folder, on };
 }
 const key = () => JSON.stringify(location());
+// Whether a node is on screen, through a hidden ancestor or a stack's other child.
+function nodeVisible(node, id, visible = true) {
+  if (!node) return false;
+  visible = visible && node.hidden !== true;
+  if (node.id === id) return visible;
+  const children = node.type === "stack" ? (node.children ?? []).filter((child) => child.id === node.active) : node.children ?? [];
+  return children.some((child) => nodeVisible(child, id, visible));
+}
+const visible = () => window()?.active === true && nodeVisible(layout(), "changes");
 // Reads write nothing under .git (no index refresh or lock, no fsmonitor cookie):
 // the folder watch would see it, and every refresh would start the next one.
 const READ = ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "diff.autoRefreshIndex=false"];
@@ -48,7 +57,11 @@ export default class Changes extends View {
       }
     });
     this.refresh(cx);
-    cx.timer.every(10000, (cx) => this.refresh(cx));
+    this.paused = !visible();
+    cx.timer.every(10000, (cx) => {
+      if (visible()) this.refresh(cx);
+      else this.paused = true;
+    });
   }
 
   watch(root, cx) {
@@ -180,7 +193,12 @@ export default class Changes extends View {
   }
 
   render(cx) {
-    if (key() !== this.context) this.refresh(cx);
+    const visibleNow = visible();
+    if (!visibleNow) this.paused = true;
+    else if (this.paused) {
+      this.paused = false;
+      this.refresh(cx);
+    } else if (key() !== this.context) this.refresh(cx);
     const t = theme(), add = this.files.reduce((n, f) => n + f.add, 0), del = this.files.reduce((n, f) => n + f.del, 0);
     const enabled = Boolean(this.message.trim() && this.root && !this.busy && !this.loading);
     return v_flex().id("changes").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)

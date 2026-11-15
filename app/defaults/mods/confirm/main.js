@@ -9,7 +9,7 @@ import { run, props, closeOverlay, theme, text } from "kompitum";
 export default class Confirm extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
-    this.handle.focus();
+    cx.timer.after(600, () => this.handle.focus());
   }
 
   yes() {

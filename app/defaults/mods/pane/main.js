@@ -6,7 +6,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, props, run, theme, home, text } from "kompitum";
+import { panes, props, run, theme, home, openOverlay, text } from "kompitum";
 
 function icon(p, size, color) {
   if (!p?.icon) return null;
@@ -28,7 +28,7 @@ export default class Pane extends View {
     return panes().find((p) => p.pane === props()?.pane);
   }
 
-  button(t, id, icon, command, args, name) {
+  button(t, id, icon, command, args, name, action) {
     return div()
       .id(id)
       .p(3)
@@ -38,9 +38,17 @@ export default class Pane extends View {
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_click((_e, cx) => {
         cx.stop_propagation();
-        run(command, args);
+        if (action) action();
+        else run(command, args);
       })
       .child(svg(`mods/pane/${icon}.svg`).size(14));
+  }
+
+  close(t, p) {
+    const pane = p.pane, name = p.title || p.program?.name || p.terminal || text("pane.shell");
+    // A plain shell closes at once; anything else runs something, so ask first.
+    if (!p.terminal || p.program?.shell === true) run("pane.close", { pane });
+    else openOverlay({ mod: "confirm", kind: "dialog", width: 380, props: { title: text("pane.close-terminal"), detail: text("pane.close-terminal-detail", { name }), command: { name: "pane.close", args: { pane } } } });
   }
 
   render(cx) {
@@ -73,6 +81,6 @@ export default class Pane extends View {
         .child(this.button(t, `ph-r-${pane}`, "split-right", "pane.split", { direction: "right", pane }, text("pane.split-right")))
         .child(this.button(t, `ph-d-${pane}`, "split-down", "pane.split", { direction: "down", pane }, text("pane.split-down")))
         .child(this.button(t, `ph-z-${pane}`, p.zoomed ? "unzoom" : "zoom", "pane.zoom", { pane }, p.zoomed ? text("pane.restore-pane") : text("pane.zoom-pane")))
-        .child(this.button(t, `ph-x-${pane}`, "close", "pane.close", { pane }, text("pane.close-pane"))));
+        .child(this.button(t, `ph-x-${pane}`, "close", "pane.close", { pane }, text("pane.close-pane"), () => this.close(t, p))));
   }
 }

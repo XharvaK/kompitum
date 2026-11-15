@@ -11,10 +11,18 @@ function find(node, id) {
   return null;
 }
 
+// A saved value that doesn't parse, or has the wrong shape, is the default.
+const isObject = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
 export default class Tabs extends View {
   init() {
     this.pressed = null;
-    this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
+    try {
+      const panels = JSON.parse(localStorage.getItem("panels") ?? "null");
+      this.panels = isObject(panels) ? panels : {};
+    } catch {
+      this.panels = {};
+    }
   }
 
   // The side panel is remembered per space: switching shows that space's choice
@@ -54,8 +62,14 @@ export default class Tabs extends View {
       .when(Boolean(name), (el) => el.accessibility_label(name))
       .on_mouse_down("left", stop).on_click(action).child(label);
     const item = (c, i) => {
-      const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
+      const tabPanes = panes().filter(p => p.tab === c.id);
+      const program = tabPanes.find(p => p.program?.agent)?.program ?? tabPanes[0]?.program;
       const name = /^tb\d+$/.test(c.name) ? program?.name ?? text("tabs.terminal") : c.name;
+      const close = () => {
+        // A plain shell closes at once; anything else runs something, so ask first.
+        if (tabPanes.filter(p => p.terminal).every(p => p.program?.shell === true)) run("tab.close", { id: c.id });
+        else openOverlay({ mod: "confirm", kind: "dialog", width: 380, props: { title: text("tabs.close-terminal"), detail: text("tabs.close-terminal-detail", { name }), command: { name: "tab.close", args: { id: c.id } } } });
+      };
       return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(13)
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
@@ -70,7 +84,7 @@ export default class Tabs extends View {
         .child(div().max_w(170).truncate().child(c.zoomed ? text("tabs.zoomed", { name }) : name))
         .when(c.status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
         .when(c.status === "blocked" || c.status === "done", el => el.child(div().size(6).rounded(3).bg(t[c.status])))
-        .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(t.dim).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); run("tab.close", { id: c.id }); }).child(svg("mods/pane/close.svg").size(12))));
+        .when(c.active, el => el.child(div().id(`close-${c.id}`).text_color(t.dim).on_mouse_down("left", stop).on_click((_e, cx) => { cx.stop_propagation(); close(); }).child(svg("mods/pane/close.svg").size(12))));
     };
     const root = layout(), sidebar = find(root, "sidebar"), w = window();
     // Old saved rails and a dragged-narrow sidebar can be smaller than the window buttons.

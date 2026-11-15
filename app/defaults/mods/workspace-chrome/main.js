@@ -27,6 +27,10 @@ function firstLine(text) {
   return String(text ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
 }
 
+// Windows paths come with either slash and any case: compare them without that.
+const norm = (p) => String(p ?? "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+const sameFolder = (a, b) => Boolean(a) && Boolean(b) && norm(a) === norm(b);
+
 export default class WorkspaceChrome extends View {
   // Only the nav copy reads the tasks: the brand row and the foot don't need them.
   init(_props, cx) {
@@ -101,7 +105,7 @@ export default class WorkspaceChrome extends View {
       try {
         const folder = await pickFolder({ prompt: text("workspace-chrome.open-folder-prompt") });
         if (!folder) return;
-        const space = spaces().find((p) => p.folder === folder);
+        const space = spaces().find((p) => sameFolder(p.folder, folder));
         if (space) run("space.select", { id: space.id });
         else run("space.new", { folder });
       } catch (e) {

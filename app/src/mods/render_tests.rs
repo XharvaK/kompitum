@@ -22,6 +22,7 @@ mod limits;
 mod machines;
 mod mailbox;
 mod memory;
+mod pack15;
 mod palette_keys;
 mod settings_pages;
 mod sheets;
@@ -68,7 +69,7 @@ impl Staged {
     fn wrapper(&self, entry: &str, setup: &str) -> PathBuf {
         let dir = self.0.clone();
         std::fs::write(dir.join("main.js"), format!(
-            "import Real from './{entry}/main.js'; export default class Scenario extends Real {{ init(props, cx) {{ super.init(props, cx); {setup} }} }}"
+            "import Real from './{entry}/main.js'; import {{ run }} from 'kompitum'; export default class Scenario extends Real {{ init(props, cx) {{ super.init(props, cx); {setup} }} }}"
         )).unwrap();
         dir
     }
