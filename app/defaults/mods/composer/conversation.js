@@ -334,7 +334,9 @@ export default {
         div()
           .text_size(12)
           .text_color(t.muted)
-          .child(`${summary.files} ${summary.files === 1 ? "file changed" : "files changed"}`),
+          .child(summary.files === 1
+            ? text("composer.files-changed-one", { count: summary.files })
+            : text("composer.files-changed", { count: summary.files })),
       )
       .child(div().text_size(12).text_color(t.muted).child(text("composer.diff-count", { added: summary.added, removed: summary.removed })))
       .child(

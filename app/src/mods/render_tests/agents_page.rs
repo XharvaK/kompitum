@@ -204,6 +204,74 @@ fn agent_remove_asks_before_removing(cx: &mut TestAppContext) {
     assert!(twice.contains(&remove), "the second press removes: {twice:?}");
 }
 
+/// A long lead folder is clipped in the middle, so the folder's own name stays in the row.
+#[gpui::test]
+fn agent_folder_keeps_the_folders_name_when_the_path_is_long(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let long = r"C:\Users\Ada\AppData\Local\kompitum\projects\clients\acme-corp-website";
+    let workers = agent_workers(
+        json!(["cc"]),
+        json!([agent_worker("cc", "Command Code", "command_code", "commandcode/x#max", "ready", "", 0)]),
+    );
+    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
+    let mut values = agents_values(agent_catalog(), workers, status);
+    values.insert("person".into(), json!({"lead": {"program": "claude", "folder": long}}));
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    assert!(tree.contains(r"C:\\Users\\…\\clients\\acme-corp-website"), "{tree}");
+    assert!(!tree.contains(r"C:\\Users\\Ada\\AppData"), "the whole path is gone: {tree}");
+}
+
+/// The Lead section is drawn as soon as the catalog is read: a slow `kom workers`
+/// only leaves the Workers section saying it is reading.
+#[gpui::test]
+fn a_slow_workers_read_leaves_the_lead_drawn(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let workers = agent_workers(
+        json!(["cc"]),
+        json!([agent_worker("cc", "Command Code", "command_code", "commandcode/x#max", "ready", "", 0)]),
+    );
+    let status = json!({"tasks": {"review": [], "running": [], "queued": []}, "claude": null});
+    let values = agents_values(agent_catalog(), workers, status);
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let (tx, rx) = async_channel::bounded(1);
+    calls.borrow_mut().workers_gate = Some(rx);
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-slow-workers.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.0.join("frame/settings");
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    assert!(
+        visual.debug_bounds("st-lead-cli").is_some(),
+        "the Lead section is drawn before kom workers answers"
+    );
+    assert!(
+        visual.debug_bounds("st-worker-cc").is_none(),
+        "the workers wait for kom workers"
+    );
+    tx.send_blocking(()).unwrap();
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    assert!(
+        visual.debug_bounds("st-worker-cc").is_some(),
+        "the workers draw once kom workers answers"
+    );
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+}
+
 #[gpui::test]
 fn agent_worker_action_error_is_drawn_under_the_workers_heading(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);

@@ -51,7 +51,7 @@ export default class WorkspaceChrome extends View {
       try {
         const r = await kom(["status", "--json"]);
         if (r?.code !== 0) {
-          this.tasksError = firstLine(r?.stderr || r?.stdout) || `exit ${r?.code ?? "?"}`;
+          this.tasksError = firstLine(r?.stderr || r?.stdout) || text("workspace-chrome.exit-code", { code: r?.code ?? "?" });
           cx.notify();
           return;
         }

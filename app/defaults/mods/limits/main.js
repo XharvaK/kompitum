@@ -26,7 +26,7 @@ function errorText(result) {
       if (message) return firstLine(message);
     } catch {}
   }
-  return firstLine(result?.stderr) || firstLine(result?.stdout) || `kom exited ${result?.code ?? "?"}`;
+  return firstLine(result?.stderr) || firstLine(result?.stdout) || text("limits.kom-exited", { code: result?.code ?? "?" });
 }
 
 const runWords = (runs) => `${runs} ${runs === 1 ? "run" : "runs"}`;
