@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState, TextView } from "gpui-base";
-import { kom, readTextFile, home, props, closeOverlay, notify, theme } from "kompitum";
+import { kom, readTextFile, home, props, closeOverlay, notify, theme, sheet } from "kompitum";
 
 const OUTSIDE = "The vault is outside your home folder, so the mailbox can't read its notes.";
 // The vault's marks are append-only, so a close written now could never be undone.
@@ -718,58 +718,23 @@ export default class Mailbox extends View {
       );
   }
 
-  // The sheet's top: its name, and the close that the Settings sheet draws too.
-  sheetHeader(t) {
-    return h_flex()
-      .h(52)
-      .w_full()
-      .flex_none()
-      .pl(16)
-      .pr(12)
-      .items_center()
-      .border_b(1)
-      .border_color(t.border)
-      .child(div().flex_1().min_w(0).text_size(15).font_semibold().text_color(t.foreground).child("Mailbox"))
-      .child(
-        div()
-          .id("mail-sheet-close")
-          .w(28)
-          .h(28)
-          .flex_none()
-          .rounded(6)
-          .flex()
-          .items_center()
-          .justify_center()
-          .text_color(t.muted)
-          .cursor_pointer()
-          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-          .on_click(() => closeOverlay(props()?.overlay))
-          .child(svg("mods/workspace-chrome/x.svg").size(14)),
-      );
-  }
-
   render(cx) {
     const t = theme();
     const rows = this.rows();
     const sync = this.problems.filter((problem) => isSyncProblem(problem));
     const filed = this.problems.filter((problem) => !isSyncProblem(problem));
-    return v_flex()
+    const content = v_flex()
       .id("mailbox")
       .track_focus(this.handle)
       .w_full()
-      .h(620)
       .min_h(0)
       .on_key_down((e, cx) => {
         const k = e.key;
-        if (k === "escape") {
-          closeOverlay(props()?.overlay);
-        } else if ((k === "up" || k === "down") && !this.answering) {
-          this.move(k === "up" ? -1 : 1, cx);
-        } else return;
+        if ((k !== "up" && k !== "down") || this.answering) return;
+        this.move(k === "up" ? -1 : 1, cx);
         cx.stop_propagation();
         cx.notify();
       })
-      .child(this.sheetHeader(t))
       .child(
         h_flex()
           .flex_1()
@@ -847,5 +812,6 @@ export default class Mailbox extends View {
           )
           .child(this.notePane(t, cx)),
       );
+    return sheet({ title: "Mailbox", width: 880, onClose: () => closeOverlay(props()?.overlay) }, content);
   }
 }

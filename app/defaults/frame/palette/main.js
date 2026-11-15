@@ -152,7 +152,6 @@ const KEY_NAMES = {
   insert: "Insert",
   enter: "Enter",
   tab: "Tab",
-  escape: "Esc",
   left: "Left",
   right: "Right",
   up: "Up",
@@ -360,8 +359,7 @@ export default class Palette extends View {
           .border_color(t.accent)
           .bg(t.background)
           .child(svg(win()?.platform === "macos" ? "frame/palette/command.svg" : "mods/workspace-chrome/search.svg").size(16).text_color(t.dim))
-          .child(Input.new(this.input).flex_1().h_full().text_size(13).text_color(t.foreground))
-          .child(div().text_size(11).text_color(t.dim).child("Esc")),
+          .child(Input.new(this.input).flex_1().h_full().text_size(13).text_color(t.foreground)),
       )
       .child(
         rows.length

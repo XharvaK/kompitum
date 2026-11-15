@@ -104,7 +104,13 @@
 //! author can still see the sentence.
 
 use std::{
-    cell::Cell, collections::BTreeMap, fmt, fmt::Write as _, future::Future, pin::Pin, rc::Rc,
+    cell::Cell,
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    fmt::Write as _,
+    future::Future,
+    pin::Pin,
+    rc::Rc,
 };
 
 use crate::component::ComponentFactory;
@@ -419,6 +425,9 @@ pub struct HostModule {
     /// synchronous or asynchronous, never both.
     async_functions: BTreeMap<String, HostAsyncFunction>,
     components: BTreeMap<String, ComponentFactory>,
+    /// Values the runtime's own script surface already built: exported as they
+    /// are, rather than wrapped as host calls. See [`HostModule::script`].
+    script_exports: BTreeSet<String>,
     /// The module's TypeScript face, if the host wrote one. See
     /// [`HostModule::declarations`].
     declarations: Option<String>,
@@ -437,6 +446,7 @@ impl HostModule {
             functions: BTreeMap::new(),
             async_functions: BTreeMap::new(),
             components: BTreeMap::new(),
+            script_exports: BTreeSet::new(),
             declarations: None,
         }
     }
@@ -455,12 +465,33 @@ impl HostModule {
         let name = name.into();
         self.functions.remove(&name);
         self.async_functions.remove(&name);
+        self.script_exports.remove(&name);
         self.components.insert(name, ComponentFactory::new(build));
+        self
+    }
+
+    /// Re-exports one value the runtime's script surface already built as
+    /// `globalThis.__gpui.<name>`.
+    ///
+    /// This is for helpers written in the runtime's own JavaScript prelude
+    /// rather than in Rust: they are ordinary script values, so a host call
+    /// cannot return them. The name is listed in the module's declarations
+    /// like any function, and the loader exports the value itself.
+    pub fn script(mut self, name: impl Into<String>) -> Self {
+        let name = name.into();
+        self.functions.remove(&name);
+        self.async_functions.remove(&name);
+        self.components.remove(&name);
+        self.script_exports.insert(name);
         self
     }
 
     pub(crate) fn component_names(&self) -> impl Iterator<Item = &str> {
         self.components.keys().map(String::as_str)
+    }
+
+    pub(crate) fn script_names(&self) -> impl Iterator<Item = &str> {
+        self.script_exports.iter().map(String::as_str)
     }
 
     pub(crate) fn resolve_component(&self, name: &str) -> Result<ComponentFactory, HostError> {
@@ -489,6 +520,7 @@ impl HostModule {
         let name = name.into();
         self.components.remove(&name);
         self.async_functions.remove(&name);
+        self.script_exports.remove(&name);
         self.functions.insert(name, Rc::new(body));
         self
     }
@@ -558,6 +590,7 @@ impl HostModule {
         // beside it keeps `function_names` a single list and stops a call
         // having to decide which of two entries it meant.
         self.functions.remove(&name);
+        self.script_exports.remove(&name);
         self.async_functions.insert(
             name,
             Rc::new(move |arguments| {
@@ -627,7 +660,7 @@ impl HostModule {
     }
 
     fn has_export(&self, name: &str) -> bool {
-        self.has(name) || self.components.contains_key(name)
+        self.has(name) || self.components.contains_key(name) || self.script_exports.contains(name)
     }
 
     /// Whether this name answers with a promise.
@@ -689,6 +722,7 @@ impl HostModule {
             .function_names()
             .into_iter()
             .chain(self.component_names())
+            .chain(self.script_names())
             .filter(|name| !declared.contains(name))
             .collect();
         let extra: Vec<&str> = declared

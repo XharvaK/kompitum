@@ -619,6 +619,9 @@ fn mismatch_words(mismatch: crate::kom::Mismatch) -> String {
 #[derive(Clone, Copy, PartialEq)]
 enum OverlayKind {
     Dialog,
+    /// A centred sheet the mod frames itself: a header, body and optional
+    /// footer over a scrim. The host owns placement, the scrim and Esc.
+    Sheet,
     Popup,
     Toast,
     /// Stays until closed, moves where it's dropped, comes to the front when
@@ -627,20 +630,35 @@ enum OverlayKind {
 }
 
 impl OverlayKind {
-    /// Dialogs and popups hold the keyboard while open (Esc closes them).
+    /// Dialogs, sheets and popups hold the keyboard while open (Esc closes them).
     fn modal_keys(self) -> bool {
-        matches!(self, OverlayKind::Dialog | OverlayKind::Popup)
+        matches!(
+            self,
+            OverlayKind::Dialog | OverlayKind::Sheet | OverlayKind::Popup
+        )
     }
 
     /// What `kompitum-app status` calls it.
     fn name(self) -> &'static str {
         match self {
             OverlayKind::Dialog => "dialog",
+            OverlayKind::Sheet => "sheet",
             OverlayKind::Popup => "popup",
             OverlayKind::Toast => "toast",
             OverlayKind::Window => "window",
         }
     }
+}
+
+/// The scrim behind a sheet: black at 40% in dark themes, 30% in light ones.
+fn sheet_scrim(dark: bool) -> gpui::Hsla {
+    hsla(0.0, 0.0, 0.0, if dark { 0.40 } else { 0.30 })
+}
+
+/// A sheet's height cap: the window's height less 96 px, and its top edge
+/// below the top bar (the same 48 px on each side).
+fn sheet_max_height(viewport: Size<Pixels>) -> Pixels {
+    (viewport.height - settings::z(96.0)).max(px(0.0))
 }
 
 /// How long a toast stays. `timeout: 0` means it waits for a click or a close,
@@ -1497,18 +1515,15 @@ impl AppWindow {
             self.run("app.settings", json!({ "section": "about" }), window, cx);
             return;
         }
-        let viewport = window.viewport_size();
         // A sheet inside the window, never over its top bar and status bar: longer notes scroll.
-        let width = 640.0_f32.min((f32::from(viewport.width) / settings::zoom() - 24.0).max(1.0));
-        let height = 560.0_f32.min((f32::from(viewport.height) / settings::zoom() - 96.0).max(1.0));
-        let spec = json!({ "mod": "frame-whatsnew", "kind": "window", "width": width, "height": height, "props": { "notes": notes } });
+        let spec = json!({ "mod": "frame-whatsnew", "kind": "sheet", "width": 880, "props": { "notes": notes } });
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 
     fn open_welcome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // A window over the live app (nothing dims), centered and movable:
-        // each step changes what's behind it, and a click beside it doesn't end it.
-        let spec = json!({ "mod": "frame-welcome", "kind": "window", "width": 640, "height": 560 });
+        // A sheet over the live app; a click beside it doesn't end it, as the
+        // window it used to be did, because each step changes what's behind it.
+        let spec = json!({ "mod": "frame-welcome", "kind": "sheet", "width": 640, "modal": true });
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 
@@ -7136,7 +7151,7 @@ impl AppWindow {
                     self.close_overlay("settings", window, cx);
                 }
                 if !open || section.is_some() {
-                    let spec = json!({ "mod": "frame-settings", "kind": "dialog", "width": 880, "props": { "section": section } });
+                    let spec = json!({ "mod": "frame-settings", "kind": "sheet", "width": 880, "props": { "section": section } });
                     self.open_overlay("settings".into(), spec, window, cx);
                 }
                 return;
@@ -7149,7 +7164,7 @@ impl AppWindow {
                     self.close_overlay("mailbox", window, cx);
                 }
                 if !open || note.is_some() {
-                    let spec = json!({ "mod": "frame-mailbox", "kind": "dialog", "width": 880, "props": { "note": note } });
+                    let spec = json!({ "mod": "frame-mailbox", "kind": "sheet", "width": 880, "props": { "note": note } });
                     self.open_overlay("mailbox".into(), spec, window, cx);
                 }
                 return;
@@ -7165,8 +7180,7 @@ impl AppWindow {
                 if self.overlays.iter().any(|o| o.id == "help") {
                     self.close_overlay("help", window, cx);
                 } else {
-                    let spec =
-                        json!({ "mod": "help", "kind": "dialog", "width": 640, "height": 520 });
+                    let spec = json!({ "mod": "help", "kind": "sheet", "width": 640 });
                     self.open_overlay("help".into(), spec, window, cx);
                 }
                 return;
@@ -7484,6 +7498,7 @@ impl AppWindow {
         cx: &mut Context<Self>,
     ) {
         let kind = match spec.get("kind").and_then(Value::as_str) {
+            Some("sheet") => OverlayKind::Sheet,
             Some("popup") => OverlayKind::Popup,
             Some("toast") => OverlayKind::Toast,
             Some("window") => OverlayKind::Window,
@@ -7539,6 +7554,9 @@ impl AppWindow {
             OverlayKind::Toast => size(TOAST_WIDTH, num("height", toast_height(&props))),
             // No size: as big as its content (0 = unset).
             OverlayKind::Window => size(num("width", 0.0), num("height", 0.0)),
+            // A sheet's width is its two designed widths; its height is its
+            // content's, capped when it is drawn.
+            OverlayKind::Sheet => size(num("width", 880.0), 0.0),
             // No height: as tall as the content, up to most of the window.
             _ => size(num("width", 420.0), num("height", 0.85)),
         };
@@ -7562,7 +7580,7 @@ impl AppWindow {
             self.remove_overlay(&old, window, cx);
         }
         let fit = layout.is_none()
-            && (kind == OverlayKind::Popup
+            && (matches!(kind, OverlayKind::Popup | OverlayKind::Sheet)
                 || (matches!(kind, OverlayKind::Dialog | OverlayKind::Window)
                     && spec.get("height").is_none()));
         if kind == OverlayKind::Window
@@ -7615,7 +7633,9 @@ impl AppWindow {
             note,
             fit,
             modal: spec.get("modal").and_then(Value::as_bool).unwrap_or(false),
-            bare: spec.get("frame").and_then(Value::as_str) == Some("none"),
+            // A sheet draws its own frame (the shared one in gpui-kit).
+            bare: kind == OverlayKind::Sheet
+                || spec.get("frame").and_then(Value::as_str) == Some("none"),
             place,
             key: key.clone(),
             frame: spec
@@ -8961,6 +8981,7 @@ impl AppWindow {
                 Some(l) => self.render_node(l, &HashSet::new(), None, cx),
                 None => self.render_slot(&o.slot, cx),
             };
+            let sheet = o.kind == OverlayKind::Sheet;
             let body = div()
                 .id(SharedString::from(format!("ov-{}", o.id)))
                 .track_focus(&o.focus)
@@ -8969,7 +8990,8 @@ impl AppWindow {
                     d.key_context("Overlay")
                 })
                 .when(sized(o.size.width), |d| d.w(w))
-                .when(sized(o.size.height), |d| {
+                .when(sheet, |d| d.max_h(sheet_max_height(viewport)))
+                .when(!sheet && sized(o.size.height), |d| {
                     if o.fit { d.max_h(h) } else { d.h(h) }
                 })
                 .when(!o.bare, |d| {
@@ -8989,6 +9011,28 @@ impl AppWindow {
                 .child(content);
             match o.kind {
                 OverlayKind::Window => out.push(self.render_window(o, body, viewport, cx)),
+                OverlayKind::Sheet => out.push(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(sheet_scrim(settings::get().dark))
+                        .occlude()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        // Below the top bar: the same 48 px each sheet keeps
+                        // clear at the bottom, and the height cap in `body`.
+                        .pt(settings::z(48.0))
+                        .pb(settings::z(48.0))
+                        .when(!o.modal, |d| {
+                            d.on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, w, cx| this.close_overlay(&id, w, cx)),
+                            )
+                        })
+                        .child(body)
+                        .into_any_element(),
+                ),
                 OverlayKind::Dialog => out.push(
                     div()
                         .absolute()
@@ -11149,6 +11193,16 @@ mod tests {
         std::fs::write(folder.join("main.js"), main_js).unwrap();
         std::fs::create_dir_all(home.join("layouts")).unwrap();
         std::fs::write(home.join("layouts/test.json"), layout.to_string()).unwrap();
+        // An existing install at this version: no What's new sheet over the test
+        // layout, which would take the keyboard the test is about.
+        std::fs::write(
+            home.join("update-notes.json"),
+            format!(
+                "{{\"last_run\":\"{}\",\"presented\":[]}}",
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .unwrap();
         cx.update(crate::mods::init);
         let requests = crate::mods::install_policy();
         crate::mods::set_shared("layout".into(), json!("test"));
@@ -11459,6 +11513,225 @@ export default class Composer extends View {
         });
     }
 
+    const SHEET_DEMO: &str = r#"
+import { View, div } from 'gpui-kit';
+import { sheet } from 'kompitum';
+export default class SheetDemo extends View {
+  render() {
+    return sheet(
+      { title: 'Sheet demo', width: 880, onClose: () => {} },
+      div().child('Sheet body'),
+    );
+  }
+}
+"#;
+
+    #[test]
+    fn escape_closes_the_top_sheet_and_popup() {
+        in_own_process("escape_closes_sheet_and_popup");
+    }
+
+    #[gpui::test]
+    fn escape_closes_sheet_and_popup(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("escape_closes_sheet_and_popup") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "sheet-demo",
+            SHEET_DEMO,
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.open_overlay(
+                    "sheet-one".into(),
+                    json!({"kind": "sheet", "mod": "sheet-demo", "width": 880}),
+                    window,
+                    cx,
+                );
+                this.open_overlay(
+                    "popup-one".into(),
+                    json!({"kind": "popup", "mod": "sheet-demo"}),
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        view.update(cx, |this, _| {
+            assert!(
+                !this.overlays.iter().any(|o| o.id == "popup-one"),
+                "Esc closes the top popup"
+            );
+            assert!(
+                this.overlays.iter().any(|o| o.id == "sheet-one"),
+                "the sheet under it stays"
+            );
+        });
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        view.update(cx, |this, _| {
+            assert!(
+                !this.overlays.iter().any(|o| o.id == "sheet-one"),
+                "Esc closes the top sheet"
+            );
+        });
+    }
+
+    const TALL_SHEET: &str = r#"
+import { View, div } from 'gpui-kit';
+import { sheet } from 'kompitum';
+export default class TallSheet extends View {
+  render() {
+    return sheet(
+      { title: 'Tall sheet', width: 880, onClose: () => {} },
+      div().id('tall-body').size_full().overflow_y_scroll()
+        .children(Array.from({ length: 200 }, (_, i) => div().h(30).child(`row ${i}`))),
+    );
+  }
+}
+"#;
+
+    #[test]
+    fn a_tall_sheet_is_capped_to_the_window() {
+        in_own_process("tall_sheet_capped");
+    }
+
+    #[gpui::test]
+    fn tall_sheet_capped(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("tall_sheet_capped") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "tall-sheet",
+            TALL_SHEET,
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.open_overlay(
+                    "tall".into(),
+                    json!({"kind": "sheet", "mod": "tall-sheet", "width": 880}),
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let viewport = cx.update(|window, _| window.viewport_size());
+        let sheet = cx.debug_bounds("sheet").expect("the sheet is drawn");
+        assert!(
+            f32::from(sheet.size.height) <= f32::from(super::sheet_max_height(viewport)) + 1.0,
+            "the sheet stays inside the cap: {sheet:?} in {viewport:?}"
+        );
+        assert!(sheet.size.height > px(52.0), "its body is drawn: {sheet:?}");
+        let body = cx.debug_bounds("tall-body").expect("the tall body is drawn");
+        assert!(
+            f32::from(body.size.height) > 0.0,
+            "the body keeps a height to scroll in: {body:?}"
+        );
+    }
+
+    #[test]
+    fn the_settings_sheet_keeps_its_page_body() {
+        in_own_process("settings_sheet_body");
+    }
+
+    #[gpui::test]
+    fn settings_sheet_body(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("settings_sheet_body") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.open_overlay(
+                    "settings".into(),
+                    json!({"kind": "sheet", "mod": "frame-settings", "width": 880}),
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let body = cx.debug_bounds("st-body").expect("Settings draws its page body");
+        assert!(
+            f32::from(body.size.height) > 100.0,
+            "the page body is not collapsed under the sheet: {body:?}"
+        );
+    }
+
+    #[test]
+    fn a_scrim_click_closes_a_sheet_but_not_a_modal_one() {
+        in_own_process("scrim_click_closes_sheet");
+    }
+
+    #[gpui::test]
+    fn scrim_click_closes_sheet(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("scrim_click_closes_sheet") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "sheet-demo",
+            SHEET_DEMO,
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.open_overlay(
+                    "settings".into(),
+                    json!({"kind": "sheet", "mod": "sheet-demo", "width": 880}),
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.run_until_parked();
+        cx.simulate_click(point(px(20.0), px(20.0)), Default::default());
+        cx.run_until_parked();
+        view.update(cx, |this, _| {
+            assert!(
+                !this.overlays.iter().any(|o| o.id == "settings"),
+                "a click on the scrim closes the sheet"
+            );
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.open_overlay(
+                    "welcome".into(),
+                    json!({"kind": "sheet", "mod": "sheet-demo", "width": 640, "modal": true}),
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.run_until_parked();
+        cx.simulate_click(point(px(20.0), px(20.0)), Default::default());
+        cx.run_until_parked();
+        view.update(cx, |this, _| {
+            assert!(
+                this.overlays.iter().any(|o| o.id == "welcome"),
+                "a modal sheet keeps today's behaviour: a click beside it does not close it"
+            );
+        });
+    }
+
     #[test]
     fn a_second_rename_press_closes_the_prompt() {
         in_own_process("rename_prompt_opens_once");
@@ -11620,6 +11893,24 @@ export default class Composer extends View {
                 assert!(this.pane_term("pa").unwrap().focus.is_focused(window));
             })
         });
+    }
+
+    /// A sheet's height cap is the window's height less 96 px, so it stays
+    /// below the top bar and clear of the bottom edge.
+    #[test]
+    fn a_sheet_is_capped_to_the_window_less_96() {
+        assert_eq!(
+            super::sheet_max_height(size(px(1000.0), px(800.0))),
+            px(800.0) - crate::settings::z(96.0)
+        );
+        assert_eq!(super::sheet_max_height(size(px(1000.0), px(60.0))), px(0.0));
+    }
+
+    /// The scrim is black at 40% in dark themes and 30% in light ones.
+    #[test]
+    fn a_sheets_scrim_follows_the_themes_lightness() {
+        assert_eq!(super::sheet_scrim(true), gpui::hsla(0.0, 0.0, 0.0, 0.40));
+        assert_eq!(super::sheet_scrim(false), gpui::hsla(0.0, 0.0, 0.0, 0.30));
     }
 
     /// Toasts and corner popups arrive on a spring that starts at 0, ends exactly at 1 and never passes it.
@@ -12717,6 +13008,7 @@ export default class Probe extends View {
             }
         );
         assert_eq!(super::OverlayKind::Dialog.name(), "dialog");
+        assert_eq!(super::OverlayKind::Sheet.name(), "sheet");
         assert_eq!(super::OverlayKind::Popup.name(), "popup");
         assert_eq!(super::OverlayKind::Toast.name(), "toast");
         assert_eq!(super::OverlayKind::Window.name(), "window");

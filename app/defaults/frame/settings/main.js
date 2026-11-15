@@ -2,7 +2,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input, TextareaState } from "gpui-base";
-import { kom, run, theme, updates, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared } from "kompitum";
+import { kom, run, theme, updates, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared, sheet } from "kompitum";
 import { loadVault, vaultSection } from "./vault.js";
 import { loadMemory, memoryPage, saveMemory, forgetMemory } from "./memory.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
@@ -880,11 +880,10 @@ export default class Settings extends View {
             .when(s.id === "about" && waiting, (el) => el.child(div().w(7).h(7).rounded(4).bg(t.accent)));
         }),
       ));
-    return v_flex()
+    const content = v_flex()
       .id("settings")
       .track_focus(this.handle)
       .w_full()
-      .h(620)
       .min_h(0)
       .on_key_down((e, cx) => {
         const k = e.key;
@@ -896,58 +895,16 @@ export default class Settings extends View {
           cx.notify();
           return;
         }
-        if (k === "escape") {
-          if (this.search) this.clearSearch(cx);
-          else if (this.picking) this.picking = null;
-          else if (this.themeOpen) this.themeOpen = false;
-          else return this.close();
-          this.handle.focus();
-        } else return;
+        if (k !== "escape") return;
+        if (this.search) this.clearSearch(cx);
+        else if (this.picking) this.picking = null;
+        else if (this.themeOpen) this.themeOpen = false;
+        // Nothing open inside: Esc reaches the app's one close, on the Overlay key context.
+        else return;
+        this.handle.focus();
         cx.stop_propagation();
         cx.notify();
       })
-      .child(
-        h_flex()
-          .flex_none()
-          .h(44)
-          .px(16)
-          .items_center()
-          .border_b(1)
-          .border_color(t.border)
-          .child(
-            // Where the person is: Settings › the page's title, or Search while the field has text.
-            h_flex()
-              .id("st-crumbs")
-              .items_center()
-              .child(div().text_size(15).font_semibold().text_color(t.dim).child("Settings"))
-              .child(div().px(6).text_size(15).font_semibold().text_color(t.dim).child("›"))
-              .child(
-                div()
-                  .text_size(15)
-                  .font_semibold()
-                  .text_color(t.foreground)
-                  .child(query ? "Search" : SECTIONS.find((s) => s.id === section)?.title ?? ""),
-              ),
-          )
-          .child(div().flex_1())
-          .child(
-            div()
-              .id("st-close")
-              .w(26)
-              .h(26)
-              .rounded(7)
-              .flex()
-              .items_center()
-              .justify_center()
-              .text_color(t.muted)
-              .cursor_pointer()
-              .tab_stop(true)
-              .focus_ring(t.focus, 7)
-              .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-              .on_click(() => this.close())
-              .child(svg("mods/workspace-chrome/x.svg").size(14)),
-          ),
-      )
       .child(
         h_flex()
           .flex_1()
@@ -995,5 +952,7 @@ export default class Settings extends View {
               .child(Scrollbar.vertical("st-body").mode("always").absolute().inset_0()),
           ),
       );
+    const where = query ? "Search" : SECTIONS.find((s) => s.id === section)?.title ?? "";
+    return sheet({ title: `Settings › ${where}`, width: 880, onClose: () => this.close() }, content);
   }
 }

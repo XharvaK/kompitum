@@ -519,6 +519,20 @@ export function settings(): Record<string, unknown>;
 /** Every key binding: { section, keys, action }. */
 export function keys(): { section: string; keys: string; action: string }[];
 
+/** One sheet's frame: a 52 px header with the title (15 px, semibold, left) and a 28 × 28
+ *  close button (tooltip and accessibility label "Close"), the body, and an optional 60 px
+ *  footer. `width` is 640 (Shortcuts, Add a machine, Welcome) or 880 (the rest); the app
+ *  caps the height at the window's height minus 96, centers it below the top bar and draws
+ *  the scrim. Esc and a click on the scrim close it; `onClose` runs for the close button too.
+ *  Draw one with `openOverlay({kind: "sheet", width, ...})`, or use it in a pane. */
+export function sheet(options: {
+  title: string;
+  width: 640 | 880;
+  onClose: () => void;
+  /** The footer's content; the app draws the 60 px bar around it. */
+  footer?: unknown;
+}, body: unknown): any;
+
 export interface OverlaySpec {
   /** One mod, or `layout`. */
   mod?: string;
@@ -527,13 +541,16 @@ export interface OverlaySpec {
    *  `props().overlay`. Esc goes to its terminals (agents use it), so give it a way to close.
    *  Closes itself when its terminal ends. */
   layout?: unknown;
-  /** dialog: centered, dims the window. popup: at `at` (default: the pointer).
+  /** dialog: centered, dims the window. sheet: centered below the top bar over a black scrim
+   *  (40% in dark themes, 30% in light ones), as tall as its content up to the window's height
+   *  minus 96; the mod draws its frame with `sheet()`, and Esc or a click on the scrim closes it
+   *  (unless `modal`). popup: at `at` (default: the pointer), no scrim.
    *  window: stays open until closed (no dimming, a click beside it doesn't close it, Esc goes to
    *  the mod); dragged by any press the mod doesn't stop (`cx.stop_propagation()` on its controls'
    *  mouse down) and stays where dropped; the one pressed last is on top; at `at` (its top left),
    *  else centered; as big as its content unless width/height. It doesn't take the keyboard
    *  when it opens (a mod may focus itself). A layout switch closes windows. */
-  kind?: "dialog" | "popup" | "window";
+  kind?: "dialog" | "sheet" | "popup" | "window";
   /** A dialog a click beside it doesn't close (Esc and its own buttons still do). */
   modal?: boolean;
   /** "none": no border, rounded corners, shadow or background around it; the mod draws its own. */

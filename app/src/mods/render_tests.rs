@@ -23,6 +23,7 @@ mod mailbox;
 mod memory;
 mod palette_keys;
 mod settings_pages;
+mod sheets;
 mod strings;
 mod welcome;
 mod window_bar;
@@ -203,7 +204,7 @@ fn module_with_lead(
     // closes as the real window's hook reply would close it.
     let lead_after_answer = values.remove("leadAfterAnswer");
     let answered = Rc::new(Cell::new(false));
-    let mut module = HostModule::new("kompitum");
+    let mut module = HostModule::new("kompitum").script("sheet");
     for (name, value) in values {
         if name == "person" || (name == "lead" && lead.is_some()) {
             continue;
@@ -2128,9 +2129,9 @@ fn machine_picker_keeps_long_lists_scrollable(cx: &mut TestAppContext) {
     );
     assert!(scroll.contains(".min_h[Number(0.0)]"), "{tree}");
     assert!(tree.contains("ma-row-host-29"), "{tree}");
-    assert_eq!(
-        tree.matches(".flex_none").count(),
-        60,
+    assert_eq!(tree.matches("ma-row-host-").count(), 30, "{tree}");
+    assert!(
+        tree.matches(".flex_none").count() >= 60,
         "rows must not shrink into the viewport: {tree}"
     );
 }
@@ -2482,7 +2483,7 @@ fn settings_nav_lists_every_section_and_an_unknown_one_opens_appearance(cx: &mut
         !tree.contains("st-s-keyboard"),
         "Keyboard is a macOS page: {tree}"
     );
-    assert!(tree.contains("st-close"), "{tree}");
+    assert!(tree.contains("sheet-close"), "{tree}");
     assert!(tree.contains("st-feedback"), "{tree}");
     assert!(tree.contains("Send feedback"), "{tree}");
 

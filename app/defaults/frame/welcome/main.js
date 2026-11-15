@@ -22,6 +22,7 @@ import {
   terminals,
   spaces,
   leadSetup,
+  sheet,
 } from "kompitum";
 
 const W = (name) => `mods/workspace-chrome/${name}.svg`;
@@ -643,37 +644,6 @@ export default class Welcome extends View {
     const last = step === steps;
     const enabled = this.canContinue() && !this.busy;
 
-    const header = h_flex()
-      .flex_none()
-      .h(52)
-      // Only the header drags the window, and only it shows the grab hand.
-      .cursor_grab()
-      .pl(20)
-      .pr(12)
-      .gap(10)
-      .items_center()
-      .border_b(1)
-      .border_color(t.border)
-      .child(image("frame/welcome/kompitum.png").w(24).h(24).rounded(6).flex_none())
-      .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Welcome to Kompitum"))
-      .child(div().flex_1())
-      .child(
-        div()
-          .id("w-close")
-          .w(28)
-          .h(28)
-          .rounded(7)
-          .flex()
-          .items_center()
-          .justify_center()
-          .text_color(t.muted)
-          .cursor_pointer()
-          .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-          .on_click(() => this.done("skipped"))
-          .child(svg(W("x")).size(14)),
-      );
-
     const progress = h_flex()
       .flex_none()
       .h(36)
@@ -719,13 +689,10 @@ export default class Welcome extends View {
       .child(Scrollbar.vertical("w-body").mode("always").absolute().inset_0());
 
     const footer = h_flex()
-      .flex_none()
-      .h(60)
+      .w_full()
       .px(20)
       .items_center()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .border_t(1)
-      .border_color(t.border)
       .when(step > 1, (el) => el.child(this.rowButton(t, "w-back", "Back", (_e, cx) => this.back(cx))))
       .child(div().flex_1())
       .child(
@@ -734,34 +701,25 @@ export default class Welcome extends View {
           : this.primaryButton(t, "w-next", "Continue", enabled, (_e, cx) => this.next(cx)),
       );
 
-    return v_flex()
+    const content = v_flex()
       .id("welcome")
       .track_focus(this.handle)
-      .size_full()
-      .items_center()
-      .justify_center()
+      .w_full()
+      .min_h(0)
       .on_key_down((e, cx) => {
         const k = e.key;
         const m = e.modifiers;
-        if (k === "escape") return this.done("skipped");
         if (m.control || m.alt || m.platform || k !== "enter") return;
         cx.stop_propagation();
         if (!enabled) return;
         if (last) this.start(cx);
         else this.next(cx);
       })
-      .child(
-        v_flex()
-          .w(640)
-          .h(560)
-          .flex_none()
-          .rounded(14)
-          .overflow_hidden()
-          .bg(t.popover)
-          .child(header)
-          .child(progress)
-          .child(body)
-          .child(footer),
-      );
+      .child(progress)
+      .child(body);
+    return sheet(
+      { title: "Welcome to Kompitum", width: 640, onClose: () => this.done("skipped"), footer },
+      content,
+    );
   }
 }

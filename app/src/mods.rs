@@ -1442,6 +1442,9 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
     let props = inst.props.clone();
     HostModule::new(name)
         .declarations(DECLARATIONS)
+        // The toolkit's sheet frame, re-exported so a mod imports every sheet
+        // and overlay helper from the one module it already reads.
+        .script("sheet")
         .async_function("exec", |a| {
             let command = a.string(0)?.to_owned();
             Ok(exec_future(command, strings(a.get(1)), opt_str(a.get(2), "cwd"), opt_str(a.get(2), "on"), exec_limit(a.get(2))?))

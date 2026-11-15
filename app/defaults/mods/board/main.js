@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings, knownAgents, lead } from "kompitum";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, nextCommand, settings, knownAgents, lead, sheet } from "kompitum";
 
 // The two orchestrators keep these colors in the Line panel too.
 const OPUS = "accent";
@@ -428,7 +428,7 @@ export default class Board extends View {
       .when(accepting, (el) => el.child(h_flex().pt(2).gap(6).items_center()
         .child(div().flex_1().min_w(0).h(24).px(6).rounded(5).border_1().border_color(t.accent).bg(t.background)
           .child(Input.new(this.accepting.input).h_full().text_size(11).text_color(t.foreground)))
-        .child(div().text_size(11).text_color(t.dim).child("Enter accepts · Esc closes"))));
+        .child(div().text_size(11).text_color(t.dim).child("Enter accepts"))));
   }
 
   section(t, title, list, kind, cx) {
@@ -532,6 +532,8 @@ export default class Board extends View {
   render(cx) {
     if (this.mode === "review") return this.renderReview();
     if (this.mode === "titlebar") return this.renderTitlebar();
-    return this.renderPanel(cx);
+    const panel = this.renderPanel(cx);
+    if (!props()?.overlay) return panel;
+    return sheet({ title: "Board", width: 880, onClose: () => closeOverlay(props().overlay) }, panel);
   }
 }

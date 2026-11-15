@@ -1225,8 +1225,10 @@ fn settings_shows_where_you_are(cx: &mut TestAppContext) {
             None,
         )
         .unwrap();
-        let crumbs = crumb_lines(&tree);
-        assert!(crumbs.contains(&format!("text \"{title}\"")), "{section}: {tree}");
+        assert!(
+            tree.contains(&format!("Settings › {title}")),
+            "{section}: the sheet's title says where you are: {tree}"
+        );
     }
     let tree = describe(
         cx,
@@ -1238,20 +1240,7 @@ fn settings_shows_where_you_are(cx: &mut TestAppContext) {
         Some("this.search = 'zoom';"),
     )
     .unwrap();
-    assert!(crumb_lines(&tree).contains("text \"Search\""), "{tree}");
-}
-
-/// The breadcrumb's own lines (`st-crumbs` and what is nested in it), found by indentation.
-fn crumb_lines(tree: &str) -> String {
-    let lines: Vec<&str> = tree.lines().collect();
-    let at = lines
-        .iter()
-        .position(|line| line.contains("st-crumbs"))
-        .unwrap_or_else(|| panic!("no st-crumbs: {tree}"));
-    let indent = |line: &str| line.len() - line.trim_start().len();
-    let mut crumbs = vec![lines[at]];
-    crumbs.extend(lines[at + 1..].iter().copied().take_while(|line| indent(line) > indent(lines[at])));
-    crumbs.join("\n")
+    assert!(tree.contains("Settings › Search"), "{tree}");
 }
 
 /// The rarely used rows sit under Advanced: shown only when the fold is opened.

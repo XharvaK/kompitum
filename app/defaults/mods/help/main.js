@@ -3,7 +3,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { keys, props, closeOverlay, theme, shared } from "kompitum";
+import { keys, props, closeOverlay, theme, shared, sheet } from "kompitum";
 
 const GROUPS = [
   ["Spaces", /^space\./],
@@ -129,7 +129,6 @@ const KEY_NAMES = {
   insert: "Insert",
   enter: "Enter",
   tab: "Tab",
-  escape: "Esc",
   left: "Left",
   right: "Right",
   up: "Up",
@@ -205,26 +204,14 @@ export default class Help extends View {
       .filter(([, rows]) => rows.length > 0);
     const keycap = (p) =>
       div().px(5).rounded(4).border_1().border_color(t.border).bg(t.raised).text_size(11).text_color(t.dim).child(p);
-    return v_flex()
+    const content = v_flex()
       .id("help")
       .track_focus(this.handle)
-      .on_key_down((e, cx) => {
-        if (e.key === "escape") return closeOverlay(props().overlay);
-      })
-      .size_full()
+      .w_full()
       .min_h(0)
       .p(18)
       .gap(14)
-      .bg(t.popover)
       .text_size(12)
-      .child(
-        h_flex()
-          .h(22)
-          .items_center()
-          .justify_between()
-          .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Keyboard shortcuts"))
-          .child(div().text_size(11).text_color(t.dim).child("Esc")),
-      )
       .child(Input.new(this.input).h(36).flex_none().px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(13).text_color(t.foreground))
       .child(
         v_flex()
@@ -267,5 +254,6 @@ export default class Help extends View {
             ),
           ),
       );
+    return sheet({ title: "Keyboard shortcuts", width: 640, onClose: () => closeOverlay(props().overlay) }, content);
   }
 }

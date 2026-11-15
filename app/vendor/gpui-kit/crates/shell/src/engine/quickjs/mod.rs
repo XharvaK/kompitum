@@ -6819,6 +6819,85 @@ globalThis.__gpui = (() => {
     return cachedTheme;
   };
 
+  // One sheet frame: a 52 px header with its title and close button, the
+  // body, and an optional 60 px footer. The host places it and draws the
+  // scrim; the mod supplies only what is inside the body and footer.
+  const sheet = (options, body) => {
+    if (options === null || typeof options !== "object" || Array.isArray(options)) {
+      throw new TypeError("sheet(options, body) expects an options object");
+    }
+    const title = options.title;
+    const width = options.width;
+    const onClose = options.onClose;
+    const footer = options.footer;
+    if (typeof title !== "string" || title.trim() === "") {
+      throw new TypeError("sheet: options.title must be a non-empty string");
+    }
+    if (width !== 640 && width !== 880) {
+      throw new TypeError("sheet: options.width must be 640 or 880");
+    }
+    if (typeof onClose !== "function") {
+      throw new TypeError("sheet: options.onClose must be a function");
+    }
+    if (body === null || body === undefined || body.__id === undefined) {
+      throw new TypeError("sheet: body must be an element");
+    }
+    if (footer !== undefined && footer !== null && footer.__id === undefined) {
+      throw new TypeError("sheet: options.footer must be an element when given");
+    }
+    const t = currentTheme().colors;
+    const close = element(__div())
+      .id("sheet-close")
+      .size(28)
+      .flex_none()
+      .rounded(6)
+      .flex()
+      .items_center()
+      .justify_center()
+      .text_color(t.muted_foreground)
+      .cursor_pointer()
+      .tooltip("Close")
+      .accessibility_label("Close")
+      .hover((s) => s.bg(t.accent).text_color(t.foreground))
+      .active((s) => s.bg(t.secondary))
+      .on_click(onClose)
+      .child(element(__svg("frame/settings/close.svg")).size(14));
+    const header = element(__h_flex())
+      .flex_none()
+      .h(52)
+      .pl(16)
+      .pr(12)
+      .items_center()
+      .border_b(1)
+      .border_color(t.border)
+      .child(element(__div()).flex_1().min_w(0).text_size(15).font_semibold().text_color(t.foreground).child(title))
+      .child(close);
+    const frame = element(__v_flex())
+      .id("sheet")
+      .w(width)
+      .max_h("100%")
+      .overflow_hidden()
+      .rounded(16)
+      .bg(t.surface)
+      .border_1()
+      .border_color(t.border)
+      .shadow_lg()
+      .child(header)
+      .child(body);
+    if (footer !== undefined && footer !== null) {
+      frame.child(
+        element(__h_flex())
+          .flex_none()
+          .h(60)
+          .items_center()
+          .border_t(1)
+          .border_color(t.border)
+          .child(footer),
+      );
+    }
+    return frame;
+  };
+
   // Every member of `cx` gates on `check()` and then does ordinary ambient
   // work. That gate is the whole difference between a call-scoped `cx` and an
   // async one, so a member added here is right for both flavors at once and
@@ -6946,6 +7025,7 @@ globalThis.__gpui = (() => {
   return {
     __element: element,
     View,
+    sheet,
     div: () => element(__div()),
     h_flex: () => element(__h_flex()),
     v_flex: () => element(__v_flex()),

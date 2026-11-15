@@ -275,6 +275,17 @@ impl Loader for HostModuleLoader {
                 "export const {component} = globalThis.__gpui.component({module:?}, {component:?});"
             );
         }
+        for script in found.script_names() {
+            if !is_identifier(script) {
+                return Err(Exception::throw_message(
+                    ctx,
+                    &format!(
+                        "HostModule `{module}` script `{script}` is not a JavaScript identifier"
+                    ),
+                ));
+            }
+            let _ = writeln!(source, "export const {script} = globalThis.__gpui.{script};");
+        }
 
         Module::declare(ctx.clone(), name, source)
     }
@@ -290,6 +301,11 @@ fn surface_key(module: &host_modules::HostModule) -> String {
     }
     for name in module.component_names() {
         hash.update([2]);
+        hash.update(name.as_bytes());
+        hash.update([0]);
+    }
+    for name in module.script_names() {
+        hash.update([3]);
         hash.update(name.as_bytes());
         hash.update([0]);
     }

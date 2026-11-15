@@ -3,7 +3,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, v_virtual_list, VirtualListScrollHandle, Scrollbar } from "gpui-base";
-import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, run, appLink, openLink } from "kompitum";
+import { kom, theme, notify, playSound, openOverlay, closeOverlay, props, run, appLink, openLink, sheet } from "kompitum";
 
 // The same two colors the Board's chips use: the lead's, and the other agent's.
 const OWN = "accent";
@@ -456,6 +456,8 @@ export default class Line extends View {
 
   render() {
     if (this.mode === "note") return this.renderNote();
-    return this.renderPanel();
+    const panel = this.renderPanel();
+    if (!props()?.overlay || props()?.with) return panel;
+    return sheet({ title: "Notes", width: 880, onClose: () => closeOverlay(props().overlay) }, panel);
   }
 }

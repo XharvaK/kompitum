@@ -1082,13 +1082,23 @@ All of it is in `kompitum.d.ts`. In short:
   Terminal copy/paste and implicit right-click routing follow the focused block.
 - Floating: `placement()` (null unless this copy floats).
 - Act: `run(command, args)`.
-- Overlays: `openOverlay({ mod, props, kind: "dialog" | "popup" | "window", width, height, at, frame })`
+- Overlays: `openOverlay({ mod, props, kind: "dialog" | "sheet" | "popup" | "window", width, height, at, frame })`
   returns an id; the mod gets `props().overlay` and closes itself with
-  `closeOverlay(id)`; Esc closes the top dialog or popup. `frame: "none"`
+  `closeOverlay(id)`; Esc closes the top dialog, sheet or popup. `frame: "none"`
   drops Kompitum's border, corners and shadow so the mod draws its own.
   `notify({ title, body, level, icon, timeout })` posts a notification, drawn by the `toast` mod:
   at the top right, newest first, three at a time; the bell lists it under Earlier once it leaves.
   `at: "top-right"` opens a popup in that corner.
+- Sheets (`kind: "sheet"`): one family, drawn with `sheet({ title, width, onClose, footer? }, body)`
+  from `kompitum`. The frame has a 52 px header — the title at 15 px semibold on
+  the left, a 28 × 28 close icon button on the right with tooltip and accessibility label "Close" —
+  the body, and an optional 60 px footer. `width` is 640 (Shortcuts, Add a machine, Welcome) or
+  880 (the rest). The app caps the height at the window's height minus 96, centers it below the
+  top bar, and draws a black scrim (40% in dark themes, 30% in light ones). Esc closes it, and so
+  does a click on the scrim; pass `modal: true` to `openOverlay` when a click beside it must not
+  close it (the welcome). No sheet prints the word "Esc".
+- Popovers (`kind: "popup"`: the bell, notes, the model menu, Limits, menus and the palette) have
+  no header and no scrim; Esc and a click outside close them.
 - Windows (`kind: "window"`): stay open until closed, over the layout and
   under dialogs; a press the mod doesn't stop drags it (stop it on your
   controls, like a title bar's buttons), it stays where dropped, and the one

@@ -39,8 +39,7 @@ export default class Prompt extends View {
       .on_click(action).child(div().absolute().top(-1).left(-1).right(-1).bottom(-1).rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))).child(text);
     return v_flex().id("prompt").track_focus(this.handle).on_key_down((e, cx) => this.key(e, cx))
       .w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
-      .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().child((p.title ?? "").replace(/^./, (c) => c.toUpperCase())))
-        .child(div().text_size(11).text_color(t.dim).child("Esc")))
+      .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().child((p.title ?? "").replace(/^./, (c) => c.toUpperCase()))))
       .child(label("Name"))
       .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(this.inputFocused ? t.accent : t.input).bg(t.background).text_size(13).text_color(t.foreground))
       .when(Boolean(p.hint), el => el.child(div().pt(6).text_size(12).text_color(t.dim).child(p.hint)))

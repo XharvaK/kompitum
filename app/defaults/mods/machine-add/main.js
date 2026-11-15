@@ -7,7 +7,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { kom, exec, home, readTextFile, theme, props, closeOverlay, run } from "kompitum";
+import { kom, exec, home, readTextFile, theme, props, closeOverlay, run, sheet } from "kompitum";
 
 const I = (name) => `mods/workspace-chrome/${name}.svg`;
 
@@ -225,10 +225,6 @@ export default class MachineAdd extends View {
     closeOverlay(props().overlay);
   }
 
-  key(e, cx) {
-    if (e.key === "escape") { this.close(); cx.stop_propagation(); }
-  }
-
   // "It needs you to answer something": one short line and the way to do it
   // where the questions can be asked.
   answer(t, target) {
@@ -342,16 +338,13 @@ export default class MachineAdd extends View {
     const hosts = this.hosts ?? [];
     const typed = this.typed.trim();
     const typedMessage = typed ? this.reply(t, typed) : null;
-    return v_flex()
+    const content = v_flex()
       .id("machine-add")
       .track_focus(this.handle)
-      .on_key_down((e, cx) => this.key(e, cx))
       .w_full()
       .min_h(0)
       .p(18)
-      .bg(t.popover)
       .text_color(t.foreground)
-      .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().child("Add a machine")).child(div().text_size(11).text_color(t.dim).child("Esc")))
       .child(
         div()
           .pt(6)
@@ -412,5 +405,6 @@ export default class MachineAdd extends View {
           ),
       )
       .when(Boolean(typedMessage), (el) => el.child(div().pt(8).child(typedMessage)));
+    return sheet({ title: "Add a machine", width: 640, onClose: () => this.close() }, content);
   }
 }
