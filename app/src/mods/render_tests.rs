@@ -23,6 +23,7 @@ mod machines;
 mod mailbox;
 mod memory;
 mod pack15;
+mod pack17a;
 mod pack17b;
 mod palette_keys;
 mod settings_pages;

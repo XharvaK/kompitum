@@ -1,8 +1,8 @@
 // The lead's model and reasoning, its context and limits, and the menus and ring that show them.
 
-import { div, svg, image, PathBuilder, Background } from "gpui-kit";
+import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb } from "gpui-base";
-import { run, lead as leadOf, shared, openOverlay, text } from "kompitum";
+import { run, lead as leadOf, shared, text } from "kompitum";
 
 export function modelLabel(entry, id) {
   return entry?.models?.find((model) => model.id === id)?.label ?? id;
@@ -40,62 +40,10 @@ export function effortIds(entry) {
     .filter(Boolean);
 }
 
-// The lead's context and Claude's limits, from lead().usage. Times are Unix seconds; every field may be missing.
-const WEEKDAY_WORDS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-const MONTH_WORDS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-const pad2 = (n) => String(n).padStart(2, "0");
-
+// The lead's context and Claude's limits, from lead().usage.
 export function leadUsage() {
   const usage = leadOf()?.usage;
   return usage && typeof usage === "object" ? usage : null;
-}
-
-// The clock time when a reset is today, the weekday within a week, else "23 Nov" (the rule of Settings > Agents).
-function resetWords(seconds) {
-  if (typeof seconds !== "number" || !Number.isFinite(seconds) || seconds <= 0) return null;
-  const when = new Date(seconds * 1000);
-  const now = new Date();
-  const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const days = Math.round((midnight(when) - midnight(now)) / 86400000);
-  if (days === 0) return `${pad2(when.getHours())}:${pad2(when.getMinutes())}`;
-  if (Math.abs(days) < 7) return WEEKDAY_WORDS[when.getDay()];
-  return `${when.getDate()} ${MONTH_WORDS[when.getMonth()]}`;
-}
-
-// The present window with the higher share, when it is at 75 or more; null otherwise.
-function limitLine(windows) {
-  const top = windows.reduce((best, w) => (!best || w.pct > best.pct ? w : best), null);
-  if (!top || top.pct < 75) return null;
-  const when = resetWords(top.resets);
-  if (top.pct >= 100) {
-    return {
-      text: when
-        ? text("composer.limit-used-up-back", { window: top.short, when })
-        : text("composer.limit-used-up", { window: top.short }),
-      blocked: true,
-    };
-  }
-  const pct = Math.round(top.pct);
-  return {
-    text: when
-      ? text("composer.limit-resets", { window: top.short, percent: pct, when })
-      : text("composer.limit-percent", { window: top.short, percent: pct }),
-    blocked: false,
-  };
-}
-
-// The ring's paths, 16 px across: a 2 px stroke on a circle of radius 7, drawn from the top, clockwise.
-function ringPath(fraction) {
-  const c = 8;
-  const r = 7;
-  const builder = PathBuilder.stroke(2).move_to(c, c - r);
-  if (fraction >= 1) return builder.arc_to(r, r, 0, false, true, c, c + r).arc_to(r, r, 0, false, true, c, c - r).build();
-  const angle = 2 * Math.PI * Math.min(fraction, 0.999);
-  const x = c + r * Math.sin(angle);
-  const y = c - r * Math.cos(angle);
-  return builder.arc_to(r, r, 0, fraction > 0.5, true, x, y).build();
 }
 
 export default {
@@ -174,7 +122,7 @@ export default {
         .items_center()
         .border_t_1()
         .border_color(t.border)
-        .child(div().flex_1().text_size(12).text_color(t.dim).child(text("composer.applies-turn")));
+        .child(div().flex_1().text_size(13).text_color(t.dim).child(text("composer.applies-turn")));
     }
     const live = this.state !== "working" && !this.ask && leadOf()?.compacting !== true;
     let button = h_flex()
@@ -183,7 +131,7 @@ export default {
       .px(10)
       .items_center()
       .rounded(7)
-      .text_size(12)
+      .text_size(13)
       .font_medium();
     if (live) {
       button = button
@@ -208,7 +156,7 @@ export default {
       .items_center()
       .border_t_1()
       .border_color(t.border)
-      .child(div().flex_1().text_size(12).text_color(t.dim).child(text("composer.applies-restart")))
+      .child(div().flex_1().text_size(13).text_color(t.dim).child(text("composer.applies-restart")))
       .child(button.child(text("composer.restart-now")));
   },
 
@@ -298,7 +246,7 @@ export default {
       .children(levels.map((level) =>
         div()
           .id(`composer-effort-level-${level}`)
-          .text_size(11)
+          .text_size(12)
           .cursor_pointer()
           .text_color(level === current ? t.foreground : t.dim)
           .hover((s) => s.text_color(t.foreground))
@@ -317,7 +265,7 @@ export default {
       .w_full()
       .gap(2)
       .child(div().text_size(18).font_semibold().text_color(t.foreground).child(effortWord(preview) ?? text("composer.default")))
-      .child(div().text_size(12).text_color(t.dim).child(effortLine(preview)));
+      .child(div().text_size(13).text_color(t.dim).child(effortLine(preview)));
     const slider = this.effortSliderEl(t, entry);
     if (slider) body = body.child(slider).child(this.effortLevelWords(t, levels, preview));
     return body;
@@ -328,7 +276,7 @@ export default {
     const models = entry?.models ?? [];
     return v_flex()
       .w(220)
-      .child(div().px(8).pt(4).pb(2).text_size(12).text_color(t.dim).child(text("composer.model-heading")))
+      .child(div().px(8).pt(4).pb(2).text_size(13).text_color(t.dim).child(text("composer.model-heading")))
       .children(models.map((model) =>
         h_flex()
           .id(`composer-model-${model.id}`)
@@ -342,7 +290,7 @@ export default {
           .focus_ring(t.focus, 7)
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click((_e, cx) => this.pickModel(model.id, cx))
-          .child(div().flex_1().text_size(13).text_color(t.foreground).child(model.label ?? model.id))
+          .child(div().flex_1().text_size(14).text_color(t.foreground).child(model.label ?? model.id))
           .when(model.id === lead.model, (el) =>
             el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)))));
   },
@@ -368,11 +316,11 @@ export default {
         this.saveLead({ effort: level }, cx);
         cx.notify();
       })
-      .child(div().flex_1().text_size(13).text_color(t.foreground).child(label))
+      .child(div().flex_1().text_size(14).text_color(t.foreground).child(label))
       .when(level === saved, (el) => el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)));
     return v_flex()
       .w(150)
-      .child(div().px(8).pt(4).pb(2).text_size(12).text_color(t.dim).child(text("composer.reasoning-heading")))
+      .child(div().px(8).pt(4).pb(2).text_size(13).text_color(t.dim).child(text("composer.reasoning-heading")))
       .child(row("composer-level-default", text("composer.default"), null, text("composer.default-setting")))
       .children(effortIds(entry).map((level) => row(`composer-level-${level}`, effortWord(level), level, null)));
   },
@@ -420,11 +368,11 @@ export default {
     let name = h_flex().gap(6).items_center();
     if (icon) name = name.child(icon);
     if (model) {
-      trigger = trigger.child(name.child(div().text_size(12).text_color(t.foreground).child(model)));
+      trigger = trigger.child(name.child(div().text_size(13).text_color(t.foreground).child(model)));
       // The level follows the model after the row's gap, set apart by its color.
-      if (level) trigger = trigger.child(div().text_size(12).text_color(t.muted).child(level));
+      if (level) trigger = trigger.child(div().text_size(13).text_color(t.muted).child(level));
     } else {
-      trigger = trigger.child(name.child(div().text_size(12).text_color(t.muted).child(text("composer.choose-model"))));
+      trigger = trigger.child(name.child(div().text_size(13).text_color(t.muted).child(text("composer.choose-model"))));
     }
     if (pending) trigger = trigger.child(div().id("composer-model-pending").w(6).h(6).rounded(3).bg(t.working));
     // The models and the reasoning levels side by side; the strip under both while a saved change waits.
@@ -463,51 +411,5 @@ export default {
       })
       .trigger(trigger)
       .content(content);
-  },
-
-  // The ring for how full the lead's context is: a track and an arc, 16 px across in a 28 px hit area.
-  usageRing(t, fraction) {
-    const color = fraction >= 0.95 ? t.blocked : fraction >= 0.75 ? t.working : t.muted;
-    let drawing = div()
-      .relative()
-      .w(16)
-      .h(16)
-      .flex_none()
-      .child(window.paint_path(ringPath(1), Background.solid(t.border)).absolute().top(0).left(0).size_full());
-    if (fraction > 0) {
-      drawing = drawing.child(
-        window.paint_path(ringPath(fraction), Background.solid(color)).absolute().top(0).left(0).size_full(),
-      );
-    }
-    return h_flex()
-      .id("composer-usage")
-      .w(28)
-      .h(28)
-      .flex_none()
-      .items_center()
-      .justify_center()
-      .rounded(6)
-      .cursor_pointer()
-      .keep_focus(true)
-      .tab_stop(true)
-      .focus_ring(t.focus, 6)
-      .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-      .tooltip(text("composer.context-limits", { percent: Math.round(fraction * 100) }))
-      .accessibility_label(text("composer.context-limits", { percent: Math.round(fraction * 100) }))
-      .on_click(() => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "pointer", props: { terminal: this.terminal } }))
-      .child(drawing);
-  },
-
-  // The limit in words, only when a present window is at 75% or more.
-  usageLimit(t, windows) {
-    const line = limitLine(windows);
-    if (!line) return null;
-    return div()
-      .id("composer-limit")
-      .min_w(0)
-      .truncate()
-      .text_size(12)
-      .text_color(line.blocked ? t.blocked : t.working)
-      .child(line.text);
   },
 };

@@ -4,7 +4,7 @@
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { kom, exec, knownAgents, pickFolder, window, text, lead as leadOf } from "kompitum";
+import { kom, exec, knownAgents, pickFolder, window, text, lead as leadOf, run, shared } from "kompitum";
 import { dropdown } from "./ui.js";
 import { shortPath } from "./paths.js";
 
@@ -47,6 +47,7 @@ export function ensureAgents(view) {
     leadCli: {},
     leadModel: {},
     leadEffort: {},
+    leadPermissionMode: {},
     addOpen: false,
     add: {},
     drag: null,
@@ -130,7 +131,7 @@ function usageMeters(t, meters) {
     if (parts.length) parts.push(div().text_color(t.dim).child(" \u00b7 "));
     parts.push(div().text_color(color).child(text("settings.usage-meter", { window: label, percent: used })));
   }
-  return parts.length ? h_flex().text_size(12).text_color(t.dim).children(parts) : null;
+  return parts.length ? h_flex().text_size(13).text_color(t.dim).children(parts) : null;
 }
 
 // Claude's own status report, drawn under the Lead section.
@@ -258,7 +259,7 @@ function defaultModel(entry) {
   return null;
 }
 
-function saveLead(view, patch, cx) {
+function saveLead(view, patch, cx, after = null) {
   view.change((person) => {
     const lead = { ...(person.lead ?? {}) };
     for (const [key, value] of Object.entries(patch)) {
@@ -266,7 +267,7 @@ function saveLead(view, patch, cx) {
       else lead[key] = value;
     }
     person.lead = lead;
-  }, cx);
+  }, cx, after);
 }
 
 function chooseFolder(view, cx) {
@@ -330,12 +331,32 @@ function cap(word) {
   return String(word ?? "").replace(/^./, (c) => c.toUpperCase());
 }
 
+// Claude Code's permission modes, as its hooks' ids: the word Settings and the composer's toast use.
+function permissionWord(mode) {
+  if (mode === "default") return text("composer.mode-ask-first");
+  if (mode === "acceptEdits") return text("composer.mode-accept-edits");
+  if (mode === "plan") return text("composer.mode-plan-first");
+  if (mode === "auto") return text("composer.mode-auto");
+  if (mode === "bypassPermissions") return text("composer.mode-full-access");
+  if (mode === "dontAsk") return text("composer.mode-dont-ask");
+  return mode;
+}
+
+function permissionModes() {
+  return [
+    { value: "default", label: text("composer.mode-ask-first"), detail: text("composer.mode-ask-first-line") },
+    { value: "acceptEdits", label: text("composer.mode-accept-edits"), detail: text("composer.mode-accept-edits-line") },
+    { value: "plan", label: text("composer.mode-plan-first"), detail: text("composer.mode-plan-first-line") },
+    { value: "auto", label: text("composer.mode-auto"), detail: text("composer.mode-auto-line") },
+  ];
+}
+
 function leadSection(view, t, cx, s) {
   const list = leadPrograms(s);
   if (!list.length) {
     return v_flex().w_full()
       .child(view.heading(t, text("settings.heading-lead")))
-      .child(div().py(12).text_size(12).text_color(t.dim).child(s.known ? text("settings.no-cli-lead") : text("settings.reading-agents")));
+      .child(div().py(12).text_size(13).text_color(t.dim).child(s.known ? text("settings.no-cli-lead") : text("settings.reading-agents")));
   }
   const entry = leadProgram(view, s);
   if (!entry) return v_flex().w_full().child(view.heading(t, text("settings.heading-lead")));
@@ -381,9 +402,9 @@ function leadSection(view, t, cx, s) {
   const typed = (sState.leadModel.query ?? "").trim();
   if (typed && !seen.has(typed)) modelItems.push({ value: typed, label: typed, detail: text("settings.use-model-id") });
   const modelNote = live?.loading
-    ? div().pt(4).text_size(12).text_color(t.dim).child(text("settings.reading-models", { name: entry.name ?? entry.key }))
+    ? div().pt(4).text_size(13).text_color(t.dim).child(text("settings.reading-models", { name: entry.name ?? entry.key }))
     : live?.error
-      ? div().pt(4).text_size(12).line_height("17px").text_color(t.blocked)
+      ? div().pt(4).text_size(13).line_height("17px").text_color(t.blocked)
         .child(text("settings.models-read-failed", { name: entry.name ?? entry.key, error: live.error }))
       : null;
   const modelMenu = dropdown(t, "st-lead-model", {
@@ -410,10 +431,29 @@ function leadSection(view, t, cx, s) {
         width: 200,
       })
     : null;
+  const running = leadOf();
+  const permissionModesList = permissionModes();
+  const permissionValue = permissionModesList.some((mode) => mode.value === lead.permission_mode)
+    ? lead.permission_mode
+    : "auto";
+  const sessionMode = running?.permission_mode;
+  const sessionNote = running && running.mode_guessed !== true
+    && typeof sessionMode === "string" && sessionMode && sessionMode !== permissionValue
+    ? text("settings.permission-mode-session", { mode: permissionWord(sessionMode) })
+    : null;
+  const permissionMenu = dropdown(t, "st-lead-permission-mode", {
+    items: permissionModesList,
+    value: permissionValue,
+    onPick: (value, cx) => saveLead(view, { permission_mode: value }, cx, () => {
+      const terminal = shared("lead.running")?.terminal;
+      if (terminal && leadOf()) run("lead.set_mode", { terminal, mode: value });
+    }),
+    state: sState.leadPermissionMode,
+    width: 300,
+  });
   // Claude reports its own limits; they belong under the lead only while Claude is the lead.
   const usage = entry.key === "claude" ? claudeMeters(t, s.status?.claude) : null;
   const codeMode = lead.code_mode === true;
-  const running = leadOf();
   const codeModeStatus = running?.code_mode_status;
   const statusLine = !running
     ? null
@@ -428,13 +468,15 @@ function leadSection(view, t, cx, s) {
             : null;
   return v_flex().w_full()
     .child(view.heading(t, text("settings.heading-lead")))
-    .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim)
+    .child(div().pb(8).text_size(13).line_height("18px").text_color(t.dim)
       .child(text("settings.lead-about")))
     .child(view.row(t, text("settings.agent"), null, cliMenu, "lead"))
     .when(Boolean(usage), (el) => el.child(div().pt(6).child(usage)))
     .child(view.row(t, text("settings.model"), null, modelMenu, "lead_model"))
     .when(Boolean(modelNote), (el) => el.child(modelNote))
     .when(Boolean(effortMenu), (el) => el.child(view.row(t, text("settings.reasoning"), null, effortMenu, "lead_model")))
+    .child(view.row(t, text("settings.permission-mode"), null, permissionMenu, "lead_permission_mode"))
+    .when(Boolean(sessionNote), (el) => el.child(div().pt(6).text_size(13).text_color(t.muted).child(sessionNote)))
     .child(view.row(
       t,
       text("settings.code-mode"),
@@ -442,9 +484,9 @@ function leadSection(view, t, cx, s) {
       view.toggle(t, "st-code-mode", codeMode, (_e, cx) => saveLead(view, { code_mode: !codeMode }, cx)),
       "lead_code_mode",
     ))
-    .when(codeMode, (el) => el.child(div().pt(6).text_size(12).line_height("18px").text_color(t.dim)
+    .when(codeMode, (el) => el.child(div().pt(6).text_size(13).line_height("18px").text_color(t.dim)
       .child(text("settings.code-mode-first"))))
-    .when(Boolean(statusLine), (el) => el.child(div().pt(4).text_size(12).line_height("18px").text_color(t.muted)
+    .when(Boolean(statusLine), (el) => el.child(div().pt(4).text_size(13).line_height("18px").text_color(t.muted)
       .child(statusLine)))
     .child(view.row(
       t,
@@ -454,7 +496,7 @@ function leadSection(view, t, cx, s) {
         .flex_none()
         .gap(8)
         .items_center()
-        .child(div().min_w(0).truncate().text_size(13).text_color(t.muted).child(lead.folder ? shortPath(lead.folder) : text("settings.not-set")))
+        .child(div().min_w(0).truncate().text_size(14).text_color(t.muted).child(lead.folder ? shortPath(lead.folder) : text("settings.not-set")))
         .child(view.button(t, "st-lead-folder", text("settings.choose"), (_e, cx) => chooseFolder(view, cx))),
       "folder",
     ))
@@ -462,17 +504,17 @@ function leadSection(view, t, cx, s) {
       div()
         .id("st-folder-error")
         .pb(6)
-        .text_size(12)
+        .text_size(13)
         .line_height("18px")
         .text_color(t.blocked)
         .child(text("settings.folder-picker-failed", { reason: view.folderError })),
     ))
-    .child(div().pt(8).text_size(12).text_color(t.dim).child(text("settings.applies-restart")));
+    .child(div().pt(8).text_size(13).text_color(t.dim).child(text("settings.applies-restart")));
 }
 
 // The worker's own line: what it is waiting for, in words the page builds (never the core's sentence, which is the tooltip).
 function workerState(t, worker) {
-  if (worker.state === "not_installed") return div().w_full().text_size(12).text_color(t.dim).truncate().child(text("settings.not-installed"));
+  if (worker.state === "not_installed") return div().w_full().text_size(13).text_color(t.dim).truncate().child(text("settings.not-installed"));
   if (worker.state !== "out") return null;
   const window = WINDOWS.find((w) => w.block === worker.window);
   let line;
@@ -485,7 +527,7 @@ function workerState(t, worker) {
     const back = backWords(worker.until_ms);
     line = back ? text("settings.worker-out-back", { when: back }) : text("settings.out-of-quota");
   }
-  return div().w_full().text_size(12).text_color(t.working).truncate()
+  return div().w_full().text_size(13).text_color(t.working).truncate()
     .when(Boolean(worker.sentence), (el) => el.tooltip(worker.sentence))
     .child(line);
 }
@@ -512,7 +554,7 @@ function removeButton(view, t, id, onClick) {
   const asked = view.removeAsk?.id === id ? view.removeAsk : null;
   return div().id(id).h(28).min_w(28).flex_none().flex().items_center().justify_center().rounded(6)
     .px(asked ? 6 : 0)
-    .text_size(12)
+    .text_size(13)
     .text_color(asked ? t.blocked : t.dim)
     .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
     .tab_stop(true)
@@ -550,7 +592,7 @@ function workerRow(view, t, cx, s, worker, index) {
   const state = workerState(t, worker);
   const reported = entry.key ? usageMeters(t, s.usage[entry.key]) : null;
   const usage = reported ?? (entry.key && s.usageError[entry.key]
-    ? div().text_size(12).text_color(t.dim).child(text("settings.usage-report-failed", { name: entry.name ?? entry.key }))
+    ? div().text_size(13).text_color(t.dim).child(text("settings.usage-report-failed", { name: entry.name ?? entry.key }))
     : null);
   const from = s.drag?.from;
   const row = v_flex()
@@ -584,8 +626,8 @@ function workerRow(view, t, cx, s, worker, index) {
     .child(h_flex().gap(8).items_center()
       .child(programIcon(entry, 16, t))
       .child(v_flex().flex_1().min_w(0).gap(2)
-        .child(div().text_size(13).text_color(t.foreground).truncate().child(worker.label))
-        .child(div().text_size(12).text_color(t.dim).truncate()
+        .child(div().text_size(14).text_color(t.foreground).truncate().child(worker.label))
+        .child(div().text_size(13).text_color(t.dim).truncate()
           .when(Boolean(model), (el) => el.tooltip(model))
           .child(modelLabel(entry, model))))
       .child(keyButton(t, `st-worker-up-${worker.key}`, ICON_UP, text("settings.move-up"), (_e, cx) => workerStep(view, index, -1, cx)))
@@ -623,8 +665,8 @@ function subagentRow(view, t, cx, s, name, index) {
     .child(h_flex().gap(8).items_center()
       .child(programIcon(claude, 16, t))
       .child(v_flex().flex_1().min_w(0).gap(2)
-        .child(div().text_size(13).text_color(t.foreground).child("Claude Code"))
-        .child(div().text_size(12).text_color(t.dim).child(name)))
+        .child(div().text_size(14).text_color(t.foreground).child("Claude Code"))
+        .child(div().text_size(13).text_color(t.dim).child(name)))
       .child(keyButton(t, `st-subagent-up-${name}`, ICON_UP, text("settings.move-up"), (_e, cx) => workerStep(view, `sub:${index}`, -1, cx)))
       .child(keyButton(t, `st-subagent-down-${name}`, ICON_DOWN, text("settings.move-down"), (_e, cx) => workerStep(view, `sub:${index}`, 1, cx)))
       .child(removeButton(view, t, `st-subagent-remove-${name}`, (_e, cx) => removeSubagent(view, name, cx))));
@@ -758,7 +800,7 @@ function failLine(t, text) {
   const message = firstLine(text);
   if (!message) return null;
   return div()
-    .text_size(12)
+    .text_size(13)
     .text_color(t.blocked)
     .line_height("16px")
     .max_h(32)
@@ -790,8 +832,8 @@ function addReadyRow(t, s, { key, name, iconEntry, onAdd }) {
       v_flex()
         .flex_1()
         .min_w(0)
-        .child(div().text_size(13).text_color(t.foreground).truncate().child(name))
-        .when(Boolean(detail), (el) => el.child(div().text_size(12).text_color(t.dim).truncate().child(detail))),
+        .child(div().text_size(14).text_color(t.foreground).truncate().child(name))
+        .when(Boolean(detail), (el) => el.child(div().text_size(13).text_color(t.dim).truncate().child(detail))),
     )
     .child(
       h_flex()
@@ -801,7 +843,7 @@ function addReadyRow(t, s, { key, name, iconEntry, onAdd }) {
         .items_center()
         .rounded(6)
         .cursor_pointer()
-        .text_size(12)
+        .text_size(13)
         .text_color(t.foreground)
         .hover((el) => el.bg(t.hover).text_color(t.foreground)).active((el) => el.bg(t.selected))
         .tab_stop(true)
@@ -886,7 +928,7 @@ function addPanel(view, t, cx, s) {
     .on_click((_e, cx) => { s.addOpen = false; cx.notify(); })
     .child(svg("frame/settings/close.svg").size(14));
 
-  const header = (title) => div().text_size(12).font_semibold().text_color(t.dim).child(title);
+  const header = (title) => div().text_size(13).font_semibold().text_color(t.dim).child(title);
 
   let card = v_flex()
     .id("st-add")
@@ -913,7 +955,7 @@ function addPanel(view, t, cx, s) {
   }
   if (!entries.length) {
     return card.child(
-      div().text_size(12).text_color(t.dim).child(text("settings.no-other-cli")),
+      div().text_size(13).text_color(t.dim).child(text("settings.no-other-cli")),
     );
   }
 
@@ -1000,7 +1042,7 @@ function addPanel(view, t, cx, s) {
           .child(s.addBusy === "own" ? text("settings.adding") : text("settings.add")),
       ),
   );
-  card = card.when(Boolean(s.addNote), (el) => el.child(div().text_size(12).text_color(t.dim).child(s.addNote)));
+  card = card.when(Boolean(s.addNote), (el) => el.child(div().text_size(13).text_color(t.dim).child(s.addNote)));
   card = card.when(Boolean(s.addOwnError), (el) => el.child(failLine(t, s.addOwnError)));
   return card;
 }
@@ -1051,17 +1093,17 @@ function workersSection(view, t, cx, s) {
   const clis = Array.isArray(s.workers?.clis) ? s.workers.clis : [];
   return v_flex().w_full()
     .child(view.heading(t, text("settings.heading-workers")))
-    .child(div().pb(6).text_size(12).text_color(t.dim).child(text("settings.workers-about")))
-    .when(Boolean(s.workerError), (el) => el.child(div().pb(6).text_size(12).text_color(t.blocked).truncate()
+    .child(div().pb(6).text_size(13).text_color(t.dim).child(text("settings.workers-about")))
+    .when(Boolean(s.workerError), (el) => el.child(div().pb(6).text_size(13).text_color(t.blocked).truncate()
       .tooltip(s.workerError).child(firstLine(s.workerError) || s.workerError)))
     .when(rows.length > 0, (el) => el.children(rows))
-    .when(rows.length === 0, (el) => el.child(div().py(10).text_size(12).text_color(t.dim).child(s.workers ? text("settings.no-workers") : text("settings.reading-workers"))))
+    .when(rows.length === 0, (el) => el.child(div().py(10).text_size(13).text_color(t.dim).child(s.workers ? text("settings.no-workers") : text("settings.reading-workers"))))
     .child(h_flex().pt(10).child(view.button(t, "st-add-worker", text("settings.add-worker"), (_e, cx) => { s.addOpen = !s.addOpen; cx.notify(); })))
     .when(s.addOpen, (el) => el.child(addPanel(view, t, cx, s)))
     .when(clis.length > 0, (el) => el.child(v_flex().pt(12).gap(3).when(view.lit("clis"), (line) => line.bg(t.selected).rounded(7))
       .children(clis.map((cli) => {
         const line = cliLine(cli, Date.now());
-        return div().text_size(12).text_color(t.dim).tooltip(line).child(firstLine(line) || line);
+        return div().text_size(13).text_color(t.dim).tooltip(line).child(firstLine(line) || line);
       }))));
 }
 
@@ -1069,7 +1111,7 @@ export function agentsPage(view, t, cx) {
   const s = ensureAgents(view);
   return v_flex().w_full()
     .when(s.errors.length > 0, (el) => el.children(s.errors.map((error) =>
-      div().pb(8).text_size(12).line_height("18px").text_color(t.blocked).tooltip(error).child(firstLine(error) || error))))
+      div().pb(8).text_size(13).line_height("18px").text_color(t.blocked).tooltip(error).child(firstLine(error) || error))))
     .child(leadSection(view, t, cx, s))
     .child(div().h(24))
     .child(workersSection(view, t, cx, s));

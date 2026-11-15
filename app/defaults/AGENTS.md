@@ -665,9 +665,13 @@ The main ones:
   `lead.running`, `{program, terminal, model, effort}`: what the running lead was started with and last changed
   to, which the composer's chip reads (`shared("lead.running")`) to show its reasoning and a dot while a saved
   change waits.
-  `lead.mode {terminal}` (press Shift+Tab in the lead's terminal for the Owner's click on the mode word: Claude Code's
-  next permission mode; refused while it asks, shows a menu or tidies up). `lead()` carries `permission_mode` (from
-  Claude Code's hooks) and `mode_guessed` (true from a click until the next hook says the mode).
+  `lead.mode {terminal}` (press Shift+Tab in the lead's terminal for the composer's Shift+Tab: Claude Code's next
+  permission mode, then read Claude's own mode line off its screen; refused while it asks, shows a menu or tidies up).
+  `lead.set_mode {terminal, mode}` (switch the lead to `mode`, one of `default`, `acceptEdits`, `plan` and `auto`:
+  read the mode line, press Shift+Tab and read again until it shows, at most six presses, then a toast if it never
+  did; held until the lead waits while it asks or tidies up; Settings › Agents runs it after saving
+  `lead.permission_mode`). `lead()` carries `permission_mode` (from Claude Code's hooks and its mode line) and
+  `mode_guessed` (true from a press until the screen or the next hook says the mode).
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
   `lead.steer {terminal, text}` (mark a message the Owner sent while the lead works as steering: it shows
   as on its way until Claude takes it).

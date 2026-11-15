@@ -270,6 +270,11 @@ pub const COMMANDS: &[Command] = &[
         "Press Shift+Tab in the lead's terminal: Claude Code's next permission mode. The one key the app presses for the Owner, on their click. Refused while the lead asks, shows a menu or tidies up.",
     ),
     cmd(
+        "lead.set_mode",
+        &[req("terminal"), req("mode")],
+        "Switch the lead to a permission mode by pressing Shift+Tab and reading Claude's own mode line, up to six times. Held until the lead waits; says so when it never takes.",
+    ),
+    cmd(
         "lead.fit",
         &[req("terminal"), req("px")],
         "Size the lead's composer to its text while its lead isn't asking: px from 44 to 320.",

@@ -4607,6 +4607,7 @@ impl AppWindow {
             )?;
             argv.insert(1, "--settings".into());
             argv.insert(2, settings_file.to_string_lossy().into_owned());
+            argv = crate::lead::with_permission_mode(argv, lead.permission_mode.as_deref());
         }
         let started = self.start_lead_tab(&folder, &program, &argv, code_mode, window)?;
         let terminal = started["terminal"]
@@ -4819,6 +4820,12 @@ impl AppWindow {
                         Ok(path) => {
                             argv.insert(1, "--settings".into());
                             argv.insert(2, path.to_string_lossy().into_owned());
+                            let permission_mode = this
+                                .person
+                                .lead
+                                .as_ref()
+                                .and_then(|lead| lead.permission_mode.clone());
+                            argv = crate::lead::with_permission_mode(argv, permission_mode.as_deref());
                         }
                         Err(error) => return this.lead_failed(error, window, cx),
                     }
@@ -5622,6 +5629,19 @@ impl AppWindow {
         if self.lead_sessions.get(&terminal).is_some_and(|session| session.apply_held) {
             self.apply_lead_change(&terminal, cx);
         }
+        // A mode the lead couldn't take when it was asked for goes as soon as it can switch.
+        let held_mode = self
+            .lead_sessions
+            .get(&terminal)
+            .and_then(|session| session.set_mode_held.clone());
+        if let Some(mode) = held_mode
+            && crate::lead::mode_refusal(self.lead_sessions.get(&terminal)).is_none()
+        {
+            if let Some(session) = self.lead_sessions.get_mut(&terminal) {
+                session.set_mode_held = None;
+            }
+            self.set_lead_mode_now(terminal.clone(), mode, window, cx);
+        }
         if self.lead_check_running || self.lead_compact_after.is_some_and(|after| started < after) {
             return;
         }
@@ -5735,39 +5755,136 @@ impl AppWindow {
     }
 
     /// Presses Shift+Tab in the lead's terminal for the Owner's click on the mode word, off the UI thread. When the
-    /// core refuses the key, the old mode comes back and a toast says so.
+    /// core refuses the key, the old mode comes back and a toast says so. A press that works is followed by a
+    /// read of Claude's own mode line: the guess lasts only until that answer.
     fn press_lead_mode_key(&mut self, terminal: String, old: Option<String>, window: &Window, cx: &mut Context<Self>) {
         let core = self.core.clone();
         let guard = crate::inflight::track();
         let address = terminal.clone();
         cx.spawn_in(window, async move |this, cx| {
+            let keys_core = core.clone();
+            let keys_address = address.clone();
             let pressed = cx
                 .background_executor()
                 .spawn(async move {
                     let _guard = guard;
-                    core.call("terminal.keys", json!({ "terminal": address, "keys": ["shift+tab"] }))
+                    keys_core.call("terminal.keys", json!({ "terminal": keys_address, "keys": ["shift+tab"] }))
+                })
+                .await;
+            if let Err(error) = pressed {
+                let _ = this.update_in(cx, |this, window, cx| {
+                    if let Some(session) = this.lead_sessions.get_mut(&terminal) {
+                        session.permission_mode = old;
+                        session.mode_guessed = false;
+                    }
+                    this.publish_lead(cx);
+                    let notification = json!({
+                        "title": strings::text_with("app.lead-mode-failed", &[("error", &error.to_string())]),
+                        "body": strings::text("app.lead-mode-stays"),
+                        "level": "error",
+                    });
+                    this.open_overlay(
+                        mods::new_overlay_id(),
+                        json!({ "kind": "toast", "notification": notification }),
+                        window,
+                        cx,
+                    );
+                });
+                return;
+            }
+            cx.background_executor()
+                .timer(Duration::from_millis(crate::lead::MODE_WAIT_MS))
+                .await;
+            let read_core = core.clone();
+            let read = cx
+                .background_executor()
+                .spawn(async move {
+                    read_core.call("terminal.read", json!({ "terminal": address, "lines": 50 }))
+                })
+                .await;
+            let mode = read.ok().and_then(|value| {
+                value["text"]
+                    .as_str()
+                    .and_then(crate::lead::mode_from_screen)
+                    .map(str::to_owned)
+            });
+            let Some(mode) = mode else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, _window, cx| {
+                let Some(session) = this.lead_sessions.get_mut(&terminal) else {
+                    return;
+                };
+                session.permission_mode = Some(mode);
+                session.mode_guessed = false;
+                this.publish_lead(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// `lead.set_mode`: reads Claude's mode line first, then presses Shift+Tab and reads again until the target
+    /// shows, at most `MODE_PRESSES` times. A miss ends on the last mode read with the app's error toast.
+    fn set_lead_mode_now(&mut self, terminal: String, target: String, window: &Window, cx: &mut Context<Self>) {
+        // A guess is no starting point: only a mode a hook or the screen confirmed is.
+        let current = self
+            .lead_sessions
+            .get(&terminal)
+            .filter(|session| !session.mode_guessed)
+            .and_then(|session| session.permission_mode.clone());
+        let core = self.core.clone();
+        let guard = crate::inflight::track();
+        let address = terminal.clone();
+        let wanted = target.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let switch = cx
+                .background_executor()
+                .spawn(async move {
+                    let _guard = guard;
+                    let read = || {
+                        core.call("terminal.read", json!({ "terminal": address, "lines": 50 }))
+                            .ok()
+                            .and_then(|value| {
+                                value["text"]
+                                    .as_str()
+                                    .and_then(crate::lead::mode_from_screen)
+                                    .map(str::to_owned)
+                            })
+                    };
+                    // The screen is the truth: a press from a wrong starting point would walk past the target.
+                    let start = read().or(current);
+                    crate::lead::switch_mode(&wanted, start, || {
+                        if core
+                            .call("terminal.keys", json!({ "terminal": address, "keys": ["shift+tab"] }))
+                            .is_err()
+                        {
+                            return None;
+                        }
+                        std::thread::sleep(Duration::from_millis(crate::lead::MODE_WAIT_MS));
+                        read()
+                    })
                 })
                 .await;
             let _ = this.update_in(cx, |this, window, cx| {
-                let Err(error) = pressed else {
+                let Some(session) = this.lead_sessions.get_mut(&terminal) else {
                     return;
                 };
-                if let Some(session) = this.lead_sessions.get_mut(&terminal) {
-                    session.permission_mode = old;
+                // A start read off the screen that was already the target counts as a read.
+                if switch.read_any || switch.reached {
+                    session.permission_mode = switch.mode.clone();
                     session.mode_guessed = false;
                 }
+                let current = session.permission_mode.clone();
                 this.publish_lead(cx);
-                let notification = json!({
-                    "title": strings::text_with("app.lead-mode-failed", &[("error", &error.to_string())]),
-                    "body": strings::text("app.lead-mode-stays"),
-                    "level": "error",
-                });
-                this.open_overlay(
-                    mods::new_overlay_id(),
-                    json!({ "kind": "toast", "notification": notification }),
-                    window,
-                    cx,
-                );
+                if !switch.reached {
+                    let notification = crate::lead::mode_not_taken(&target, current.as_deref());
+                    this.open_overlay(
+                        mods::new_overlay_id(),
+                        json!({ "kind": "toast", "notification": notification }),
+                        window,
+                        cx,
+                    );
+                }
             });
         })
         .detach();
@@ -7378,6 +7495,38 @@ impl AppWindow {
                 self.publish_lead(cx);
                 self.press_lead_mode_key(terminal, old, window, cx);
                 self.reply = Some(json!({ "mode": next }));
+            }
+            "lead.set_mode" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let mode = Self::arg(a, "mode").unwrap_or_default().to_owned();
+                if mode.is_empty() {
+                    return self.fail("lead.set_mode needs mode");
+                }
+                let program = self.lead_program();
+                if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
+                    return self.fail(format!("{terminal:?} isn't the lead's terminal"));
+                }
+                if self
+                    .lead_sessions
+                    .get(&terminal)
+                    .is_some_and(|session| {
+                        !session.mode_guessed && session.permission_mode.as_deref() == Some(mode.as_str())
+                    })
+                {
+                    self.reply = Some(json!({ "mode": mode }));
+                    return;
+                }
+                if crate::lead::mode_refusal(self.lead_sessions.get(&terminal)).is_some() {
+                    self.lead_sessions
+                        .entry(terminal)
+                        .or_default()
+                        .set_mode_held = Some(mode.clone());
+                    self.publish_lead(cx);
+                    self.reply = Some(json!({ "held": true }));
+                    return;
+                }
+                self.set_lead_mode_now(terminal, mode.clone(), window, cx);
+                self.reply = Some(json!({ "switching": mode }));
             }
             "lead.fit" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
@@ -9052,7 +9201,7 @@ impl AppWindow {
                 .rounded(z(7.0))
                 .bg(c("solid"))
                 .text_color(c("solid_foreground"))
-                .text_size(z(12.5))
+                .text_size(z(13.5))
                 .font_weight(FontWeight::MEDIUM)
                 .cursor_pointer()
                 .hover(|s| s.opacity(0.88))
@@ -9080,7 +9229,7 @@ impl AppWindow {
                 .items_center()
                 .rounded(z(7.0))
                 .text_color(c("muted"))
-                .text_size(z(12.5))
+                .text_size(z(13.5))
                 .cursor_pointer()
                 .hover(|s| s.text_color(c("foreground")).bg(c("hover")))
                 .on_click(cx.listener(|this, _, window, cx| {
@@ -9114,14 +9263,14 @@ impl AppWindow {
                     .border_color(c("border"))
                     .child(
                         div()
-                            .text_size(z(15.0))
+                            .text_size(z(16.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(c("foreground"))
                             .child(strings::text("app.empty-start-with-lead")),
                     )
                     .child(
                         div()
-                            .text_size(z(12.5))
+                            .text_size(z(13.5))
                             .text_color(c("muted"))
                             .child(strings::text_with("app.lead-model", &[("lead", &lead), ("model", &model)])),
                     )
@@ -9138,7 +9287,7 @@ impl AppWindow {
                         el.child(
                             div()
                                 .pt(z(2.0))
-                                .text_size(z(11.0))
+                                .text_size(z(12.0))
                                 .text_color(c("dim"))
                                 .child(strings::text_with("app.empty-keys-hint", &[("keys", &keys)])),
                         )
@@ -9737,7 +9886,7 @@ impl AppWindow {
                     .bg(c("popover"))
                     .border_1()
                     .border_color(c("border"))
-                    .text_size(settings::z(12.0))
+                    .text_size(settings::z(13.0))
                     .text_color(c("muted"))
                     .cursor_pointer()
                     .hover(|s| s.text_color(c("foreground")))
@@ -9762,7 +9911,7 @@ impl AppWindow {
                     .bg(c("popover"))
                     .border_1()
                     .border_color(c("border"))
-                    .text_size(settings::z(13.0))
+                    .text_size(settings::z(14.0))
                     .text_color(c("foreground"))
                     .id("core-update-error")
                     .cursor_pointer()
@@ -9800,7 +9949,7 @@ impl AppWindow {
             .rounded_full()
             .shadow_lg()
             .occlude()
-            .text_size(settings::z(13.0))
+            .text_size(settings::z(14.0))
             .child(div().text_color(c("foreground")).child(words))
             .when(refused, |pill| {
                 pill.child(with_keyboard_ring(
@@ -9888,7 +10037,7 @@ impl AppWindow {
             .rounded_full()
             .shadow_lg()
             .occlude()
-            .text_size(settings::z(13.0))
+            .text_size(settings::z(14.0))
             .child(div().text_color(c("foreground")).child(label.clone()))
             .when(app_ready, |pill| {
                 let restart = strings::text("app.restart");

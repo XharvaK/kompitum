@@ -356,7 +356,7 @@ fn sent_bodies(calls: &Rc<RefCell<Calls>>) -> Vec<String> {    calls
         .collect()
 }
 
-/// With the composer box focused, Send, the mode word and a top bar button all
+/// With the composer box focused, Send, Attach and a top bar button all
 /// leave the keyboard in the box: the next typing still reaches it.
 #[gpui::test]
 fn chrome_buttons_leave_the_composer_box_focused(cx: &mut TestAppContext) {
@@ -365,7 +365,7 @@ fn chrome_buttons_leave_the_composer_box_focused(cx: &mut TestAppContext) {
     click_composer_box(&mut visual);
     for (button, text) in [
         ("composer-send", "after send"),
-        ("composer-mode", "after mode"),
+        ("composer-attach", "after attach"),
         ("panel-toggle", "after top bar"),
     ] {
         visual.simulate_input("x");
@@ -383,7 +383,7 @@ fn chrome_buttons_leave_the_composer_box_focused(cx: &mut TestAppContext) {
         visual.run_until_parked();
     }
     let bodies = sent_bodies(&calls);
-    for text in ["x", "after send", "after mode", "after top bar"] {
+    for text in ["x", "after send", "after attach", "after top bar"] {
         assert!(
             bodies.iter().any(|body| body.contains(text)),
             "{text:?} reached the box after the buttons: {bodies:?}"
@@ -411,7 +411,7 @@ fn chrome_and_composer_buttons_keep_focus(cx: &mut TestAppContext) {
         ),
         (
             "mods/composer",
-            vec!["composer-send", "composer-attach", "composer-mode", "composer-model"],
+            vec!["composer-send", "composer-attach", "composer-model"],
         ),
         ("mods/spaces", vec!["space-new"]),
         ("mods/agents", vec!["ag-sort"]),

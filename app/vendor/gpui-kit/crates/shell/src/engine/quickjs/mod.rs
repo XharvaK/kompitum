@@ -6612,6 +6612,10 @@ globalThis.__gpui = (() => {
     },
     scroll_to_bottom: () => __virtual_scroll_to_bottom(handle),
     scroll_to_end: () => __virtual_scroll_to_end(handle),
+    position: () => {
+      const [y, max] = __virtual_scroll_position(handle);
+      return { y, max };
+    },
     release: () => __virtual_scroll_release(handle),
   });
 

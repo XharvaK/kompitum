@@ -3057,6 +3057,12 @@ const BASE: &str = r#"  /** A row. */
      * virtual list, use `scroll_to_bottom`.
      */
     scroll_to_end(): void;
+    /**
+     * Where the plain area this handle drives is: `y` px scrolled from the
+     * top, and `max`, the most it can scroll. Both are 0 before its first
+     * layout, and `max` is 0 when its content fits.
+     */
+    position(): { y: number; max: number };
     /** Releases the handle. Using it afterwards throws. */
     release(): boolean;
   }

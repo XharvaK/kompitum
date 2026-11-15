@@ -174,6 +174,26 @@ fn the_argv_puts_the_session_right_after_the_program() {
 }
 
 #[test]
+fn the_lead_starts_with_its_permission_mode_and_ask_first_is_manual() {
+    let plain = vec!["claude".to_owned(), "--settings".to_owned(), "s.json".to_owned()];
+    assert_eq!(
+        with_permission_mode(plain.clone(), None),
+        ["claude", "--settings", "s.json", "--permission-mode", "auto"]
+    );
+    assert_eq!(
+        with_permission_mode(plain.clone(), Some("default")),
+        ["claude", "--settings", "s.json", "--permission-mode", "manual"]
+    );
+    for mode in ["acceptEdits", "plan", "auto"] {
+        assert_eq!(
+            with_permission_mode(plain.clone(), Some(mode)),
+            ["claude", "--settings", "s.json", "--permission-mode", mode]
+        );
+    }
+    assert_eq!(with_permission_mode(plain, Some("")), ["claude", "--settings", "s.json", "--permission-mode", "auto"]);
+}
+
+#[test]
 fn the_choice_follows_the_record_and_the_folder() {
     let entry = catalog(
         json!({

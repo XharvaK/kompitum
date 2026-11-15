@@ -425,6 +425,78 @@ fn mode_refusal_says_why_the_mode_cannot_switch_now() {
 }
 
 #[test]
+fn the_screen_names_the_newest_permission_mode() {
+    for (line, mode) in [
+        ("  ⏸ manual mode on", Some("default")),
+        ("  ⏵⏵ accept edits on (shift+tab to cycle)", Some("acceptEdits")),
+        ("  ⏸ plan mode on (shift+tab to cycle)", Some("plan")),
+        ("  ⏵⏵ auto mode on (shift+tab to cycle)", Some("auto")),
+        ("  ⏵⏵ bypass permissions on (shift+tab to cycle)", Some("bypassPermissions")),
+        ("Welcome to Claude Code\n> \n", None),
+        ("  ⏸ plan mode on\n  ⏵⏵ auto mode on (shift+tab to cycle)", Some("auto")),
+    ] {
+        assert_eq!(mode_from_screen(line), mode, "{line:?}");
+    }
+}
+
+#[test]
+fn switching_to_auto_walks_the_cycle_in_three_presses() {
+    let mut screen = "default";
+    let mut presses = 0;
+    let switch = switch_mode("auto", Some("default".into()), || {
+        presses += 1;
+        screen = match screen {
+            "default" => "acceptEdits",
+            "acceptEdits" => "plan",
+            "plan" => "auto",
+            _ => "default",
+        };
+        Some(screen.to_owned())
+    });
+    assert_eq!(switch.mode.as_deref(), Some("auto"));
+    assert!(switch.reached);
+    assert_eq!(presses, 3);
+}
+
+#[test]
+fn a_mode_that_never_shows_stops_after_six_presses() {
+    let mut screen = "default";
+    let mut presses = 0;
+    let switch = switch_mode("bypassPermissions", Some("default".into()), || {
+        presses += 1;
+        screen = match screen {
+            "default" => "acceptEdits",
+            "acceptEdits" => "plan",
+            "plan" => "auto",
+            _ => "default",
+        };
+        Some(screen.to_owned())
+    });
+    assert_eq!(presses, MODE_PRESSES);
+    assert!(!switch.reached);
+    assert_eq!(switch.mode.as_deref(), Some("plan"), "the last read stays");
+}
+
+#[test]
+fn the_mode_already_shown_takes_no_press() {
+    let mut presses = 0;
+    let switch = switch_mode("plan", Some("plan".into()), || {
+        presses += 1;
+        Some("auto".into())
+    });
+    assert!(switch.reached);
+    assert_eq!(presses, 0);
+}
+
+#[test]
+fn the_mode_not_taken_toast_names_both_modes() {
+    let toast = mode_not_taken("auto", Some("plan"));
+    assert_eq!(toast["title"], json!("Claude didn't switch to Auto."));
+    assert_eq!(toast["body"], json!("It stays in Plan first."));
+    assert_eq!(toast["level"], json!("error"));
+}
+
+#[test]
 fn a_hook_sets_the_mode_marks_it_seen_and_clears_a_guess() {
     let mut session = Session::default();
     assert!(apply_permission_mode(&mut session, &json!({ "permission_mode": "plan" })));

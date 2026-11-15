@@ -558,12 +558,30 @@ pub struct Lead {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// Claude Code's permission mode for the lead, as its hooks' id (`default`, `acceptEdits`,
+    /// `plan`, `auto`); absent means `auto`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission_mode: Option<String>,
     /// Start new lead sessions with Claude Code's experimental Code Mode.
     #[serde(default, skip_serializing_if = "is_false")]
     pub code_mode: bool,
     /// Claude workers that run inside the lead as its own subagents: sonnet, haiku.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<String>,
+}
+
+/// The permission modes the lead's setting may name: Claude Code's hook ids.
+pub const PERMISSION_MODES: &[&str] = &["default", "acceptEdits", "plan", "auto"];
+
+/// Why a lead's `permission_mode` can't be used, or None when it can (absent means `auto`).
+fn permission_mode_problem(mode: Option<&str>) -> Option<String> {
+    let mode = mode?;
+    (!PERMISSION_MODES.contains(&mode)).then(|| {
+        format!(
+            "lead.permission_mode: {mode:?} is not one of {}",
+            PERMISSION_MODES.join(", ")
+        )
+    })
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -894,6 +912,13 @@ impl Settings {
         if !(6.0..=72.0).contains(&self.font_size) {
             out.push(format!("font_size {} is outside 6..72", self.font_size));
         }
+        if let Some(problem) = permission_mode_problem(
+            self.lead
+                .as_ref()
+                .and_then(|lead| lead.permission_mode.as_deref()),
+        ) {
+            out.push(problem);
+        }
         out
     }
 }
@@ -1070,6 +1095,14 @@ pub fn load_person() -> Result<Person, String> {
             "zoom {} is outside {ZOOM_MIN}..{ZOOM_MAX}",
             person.zoom
         ));
+    }
+    if let Some(problem) = permission_mode_problem(
+        person
+            .lead
+            .as_ref()
+            .and_then(|lead| lead.permission_mode.as_deref()),
+    ) {
+        return Err(problem);
     }
     Ok(person)
 }
@@ -1614,6 +1647,7 @@ mod tests {
                 folder: Some(String::new()),
                 model: Some(String::new()),
                 effort: Some(String::new()),
+                permission_mode: Some(String::new()),
                 code_mode: true,
                 subagents: vec![String::new()],
             }),
@@ -1689,6 +1723,30 @@ mod tests {
         assert!(!person.lead.unwrap().code_mode);
         let person: Person = serde_json::from_str(r#"{"lead":{"code_mode":true}}"#).unwrap();
         assert!(person.lead.unwrap().code_mode);
+    }
+
+    #[test]
+    fn permission_mode_defaults_to_auto_and_refuses_other_words() {
+        let person: Person = serde_json::from_str(r#"{"lead":{"program":"claude"}}"#).unwrap();
+        assert_eq!(person.lead.unwrap().permission_mode, None);
+        for mode in PERMISSION_MODES {
+            assert_eq!(permission_mode_problem(Some(mode)), None, "{mode}");
+            let text = format!(r#"{{"lead":{{"permission_mode":"{mode}"}}}}"#);
+            assert_eq!(
+                serde_json::from_str::<Person>(&text)
+                    .unwrap()
+                    .lead
+                    .unwrap()
+                    .permission_mode
+                    .as_deref(),
+                Some(*mode)
+            );
+        }
+        let problem = permission_mode_problem(Some("manual")).unwrap();
+        assert!(problem.contains("lead.permission_mode"), "{problem}");
+        assert!(problem.contains("manual"), "{problem}");
+        let saved = serde_json::to_string(&Person::default()).unwrap();
+        assert!(!saved.contains("permission_mode"), "{saved}");
     }
 
     #[test]

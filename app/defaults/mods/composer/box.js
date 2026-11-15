@@ -42,38 +42,6 @@ function statusColor(t, state) {
   return state === "asking" ? t.working : t.accent;
 }
 
-// The share of the context the lead holds, from 0 up to 1 (capped); null when the count or the limit is unknown.
-function contextFraction(usage) {
-  const tokens = usage?.context_tokens;
-  const max = usage?.compact_at;
-  if (typeof tokens !== "number" || !Number.isFinite(tokens) || typeof max !== "number" || !(max > 0)) return null;
-  return Math.min(1, Math.max(0, tokens / max));
-}
-
-// The two windows that count: a window is absent when its reset is in the past or its percentage is not a number.
-function usageWindows(usage) {
-  const now = Date.now() / 1000;
-  return [
-    { short: text("composer.window-5h"), window: usage?.five_hour },
-    { short: text("composer.window-week"), window: usage?.seven_day },
-  ]
-    .map(({ short, window }) => ({ short, pct: window?.used_percentage, resets: window?.resets_at }))
-    .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
-    .filter((w) => !(typeof w.resets === "number" && w.resets < now));
-}
-
-// Claude Code's permission modes (its hooks' `permission_mode`): the word the box shows, and what the mode does.
-// An unknown mode shows its id as it is (text in an event handler, never at module scope).
-function modeWords(mode) {
-  if (mode === "default") return { word: text("composer.mode-ask-first"), line: text("composer.mode-ask-first-line") };
-  if (mode === "acceptEdits") return { word: text("composer.mode-accept-edits"), line: text("composer.mode-accept-edits-line") };
-  if (mode === "plan") return { word: text("composer.mode-plan-first"), line: text("composer.mode-plan-first-line") };
-  if (mode === "auto") return { word: text("composer.mode-auto"), line: text("composer.mode-auto-line") };
-  if (mode === "bypassPermissions") return { word: text("composer.mode-full-access"), line: text("composer.mode-full-access-line") };
-  if (mode === "dontAsk") return { word: text("composer.mode-dont-ask"), line: text("composer.mode-dont-ask-line") };
-  return { word: mode };
-}
-
 export default {
   addChip(path) {
     const pathText = String(path ?? "");
@@ -122,7 +90,7 @@ export default {
       .rounded(7)
       .bg(t.accent_fill)
       .text_color(t.accent_foreground)
-      .text_size(12)
+      .text_size(13)
       .font_medium()
       .cursor_pointer()
       .relative()
@@ -138,7 +106,7 @@ export default {
     // A working lead that has sent no hook or status line for ten minutes may have lost its closing hook.
     if (this.state === "working" && leadQuiet(leadOf()?.heard_ms)) {
       return div()
-        .text_size(12)
+        .text_size(13)
         .text_color(t.muted)
         .tooltip(text("composer.quiet-tooltip"))
         .child(text("composer.working-question"));
@@ -148,7 +116,7 @@ export default {
     // Working pulses for its first seconds, then the word says it alone; asking is the amber that wants the
     // Owner; waiting is still.
     return div()
-      .text_size(12)
+      .text_size(13)
       .text_color(statusColor(t, this.state))
       .child(word)
       .when(this.pulsing(), (el) => el.loop("opacity", { from: 0.45, to: 1, period: 1200 }));
@@ -173,7 +141,7 @@ export default {
       .border_color(t.border)
       .bg(t.raised)
       .when(isImage(chip.path), (el) => el.child(image(chip.path).w(16).h(16).rounded(3).flex_none()))
-      .child(div().text_size(12).text_color(t.muted).child(baseName(chip.path)))
+      .child(div().text_size(13).text_color(t.muted).child(baseName(chip.path)))
       .child(
         h_flex()
           .id(`composer-chip-remove-${index}`)
@@ -197,7 +165,7 @@ export default {
               .items_center()
               .justify_center()
               .rounded(4)
-              .text_size(11)
+              .text_size(12)
               .text_color(t.dim)
               .hover((style) => style.bg(t.hover).text_color(t.foreground)).active((style) => style.bg(t.selected))
               .child("×"),
@@ -228,9 +196,9 @@ export default {
       ?? tasks.find((row) => row?.status !== "completed");
     const label = current?.active || current?.subject || "";
     const mark = (row) => {
-      if (row?.status === "completed") return div().text_size(12).text_color(t.dim).child("✓");
-      if (row?.status === "in_progress") return div().text_size(12).text_color(t.working).child("●");
-      return div().text_size(12).text_color(t.dim).child("○");
+      if (row?.status === "completed") return div().text_size(13).text_color(t.dim).child("✓");
+      if (row?.status === "in_progress") return div().text_size(13).text_color(t.working).child("●");
+      return div().text_size(13).text_color(t.dim).child("○");
     };
     return v_flex()
       .id("composer-tasks")
@@ -253,7 +221,7 @@ export default {
               div()
                 .min_w(0)
                 .truncate()
-                .text_size(12)
+                .text_size(13)
                 .text_color(row?.status === "completed" ? t.dim : t.foreground)
                 .child(row?.subject ?? ""),
             ))))
@@ -270,9 +238,9 @@ export default {
             this.tasksOpen = !open;
             cx.notify();
           })
-          .child(div().text_size(12).text_color(t.muted).child(text("composer.tasks-count", { done, total: tasks.length })))
-          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(label))
-          .child(div().text_size(12).text_color(t.dim).child("›")),
+          .child(div().text_size(13).text_color(t.muted).child(text("composer.tasks-count", { done, total: tasks.length })))
+          .child(div().flex_1().min_w(0).truncate().text_size(14).text_color(t.foreground).child(label))
+          .child(div().text_size(13).text_color(t.dim).child("›")),
       );
   },
 
@@ -284,7 +252,6 @@ export default {
   bar(t, cx, panel = false) {
     const first = this.needsFirstPick();
     const compacting = leadOf()?.compacting === true;
-    const mode = first ? null : this.modeControl(t);
     const pill = first ? null : this.compactFirstPill(t);
     const canSend = this.leadReady() && !this.sending && !compacting && !this.compactThenSend
       && (Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0);
@@ -348,18 +315,12 @@ export default {
         .child(svg("mods/composer/mic.svg").size(16))
       : null;
     const note = this.error
-      ? div().id("composer-error").min_w(0).truncate().text_size(12).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)
+      ? div().id("composer-error").min_w(0).truncate().text_size(13).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)
       : this.compactThenSend
-        ? div().text_size(12).text_color(t.dim).child(text("composer.tidying-then-sending"))
+        ? div().text_size(13).text_color(t.dim).child(text("composer.tidying-then-sending"))
         : compacting
-          ? div().text_size(12).text_color(t.dim).child(text("composer.tidying"))
+          ? div().text_size(13).text_color(t.dim).child(text("composer.tidying"))
           : this.state ? this.statusWord(t) : null;
-    // The limit and the ring read the lead's usage; neither is drawn on the first-start card.
-    const usage = first ? null : leadUsage();
-    const fraction = contextFraction(usage);
-    const windows = usage ? usageWindows(usage) : [];
-    const limit = usage ? this.usageLimit(t, windows) : null;
-    const ring = fraction == null ? null : this.usageRing(t, fraction);
     const frame = div()
       .when(panel, (el) => el.w_full().flex_none().px(20).py(10))
       .when(!panel, (el) => el.size_full().p(10))
@@ -386,27 +347,24 @@ export default {
               .when(!panel, (asks) => asks.flex_1().min_h(0))
               .overflow_y_scrollbar().child(this.card(t, cx))))
           .when(!first && !this.ask, (el) =>
-            el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full().text_size(13))))
+            el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full().text_size(14))))
           .child(
             h_flex()
               .w_full()
               .gap(6)
               .items_center()
-              // What goes into the message on the left (files, the mode); who answers and sending on the right:
-              // the context ring, the model and its reasoning, dictation and Send.
+              // What goes into the message on the left (files); who answers and sending on the right:
+              // the model and its reasoning, dictation and Send.
               .child(
                 h_flex()
                   .gap(8)
                   .items_center()
                   .min_w(0)
-                  .child(plus)
-                  .when(Boolean(mode), (el) => el.child(mode)),
+                  .child(plus),
               )
               .child(div().flex_1())
               .when(Boolean(note), (el) => el.child(div().min_w(0).child(note)))
-              .when(Boolean(limit), (el) => el.child(limit))
               .when(Boolean(pill), (el) => el.child(pill))
-              .when(Boolean(ring), (el) => el.child(ring))
               .when(!first, (el) => el.child(this.modelChip(t)))
               .when(Boolean(voice), (el) => el.child(voice))
               .when(!first && !this.ask, (el) => el.child(send)),
@@ -463,7 +421,7 @@ export default {
             div()
               .id("composer-start-where")
               .mt(6)
-              .text_size(13)
+              .text_size(14)
               .text_color(t.muted)
               .child(text("composer.start-where", { lead: leadName(entry, entry.key), place })),
           ),
@@ -471,44 +429,17 @@ export default {
       .child(this.bar(t, cx, true));
   },
 
-  // Whether the mode word (and Shift+Tab) may press the key: the lead waits with no card and no tidy-up.
+  // Whether Shift+Tab may press the key: the lead has named a mode, waits, with no card and no tidy-up.
   modeLive() {
     const mode = leadOf()?.permission_mode;
     return typeof mode === "string" && Boolean(mode) && this.leadReady() && !this.ask && leadOf()?.compacting !== true;
   },
 
-  // A click on the mode word or Shift+Tab in the box: the one key Claude Code takes for the next mode.
+  // Shift+Tab in the box: the one key Claude Code takes for the next mode.
   pressMode(cx) {
     if (!this.modeLive()) return;
     run("lead.mode", { terminal: this.terminal });
     cx.notify();
-  },
-
-  // The mode word after the model: live while the lead waits (a click presses Shift+Tab in its terminal), dim while
-  // it works, asks or tidies up, and dim while a guessed mode waits for the next hook.
-  modeControl(t) {
-    const mode = leadOf()?.permission_mode;
-    if (typeof mode !== "string" || !mode) return null;
-    const { word, line = "" } = modeWords(mode);
-    const guessed = leadOf()?.mode_guessed === true;
-    const live = this.modeLive();
-    const tip = !live ? line
-      : line ? text("composer.mode-tooltip", { line }) : text("composer.mode-next-click");
-    return h_flex()
-      .id("composer-mode")
-      .h(28)
-      .px(6)
-      .items_center()
-      .rounded(7)
-      .text_size(12)
-      .text_color(live && !guessed ? t.muted : t.dim)
-      .when(live, (el) => el
-        .cursor_pointer()
-        .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-        .keep_focus(true)
-        .on_click((_e, cx) => this.pressMode(cx)))
-      .when(Boolean(tip), (el) => el.tooltip(tip))
-      .child(word);
   },
 
   // "Compact first" beside Send, from COMPACT_FIRST_TOKENS of context, while a draft waits and the lead waits.
@@ -528,7 +459,7 @@ export default {
       .rounded(12)
       .border_1()
       .border_color(on ? t.accent : t.border)
-      .text_size(12)
+      .text_size(13)
       .text_color(on ? t.accent : t.muted)
       .cursor_pointer()
       .keep_focus(true)
@@ -563,7 +494,7 @@ export default {
       .items_center()
       .rounded(8)
       .relative()
-      .text_size(13)
+      .text_size(14)
       .font_medium();
     // No model picked yet: the fill goes and an outline keeps the shape (UD's disabled state).
     const button = picked
@@ -575,8 +506,8 @@ export default {
       .flex_1()
       .min_h(0)
       .gap(6)
-      .child(div().text_size(15).font_semibold().text_color(t.foreground).child(text("composer.which-model")))
-      .child(div().text_size(12).text_color(t.dim).child(text("composer.model-change-hint")))
+      .child(div().text_size(16).font_semibold().text_color(t.foreground).child(text("composer.which-model")))
+      .child(div().text_size(13).text_color(t.dim).child(text("composer.model-change-hint")))
       .children(models.map((model) =>
         v_flex()
           .id(`composer-first-${model.id}`)
@@ -594,9 +525,9 @@ export default {
             this.firstModel = model.id;
             cx.notify();
           })
-          .child(div().text_size(13).font_medium().text_color(t.foreground).child(model.label ?? model.id))
+          .child(div().text_size(14).font_medium().text_color(t.foreground).child(model.label ?? model.id))
           .when(Boolean(model.hint), (el) =>
-            el.child(div().text_size(12).text_color(t.dim).child(model.hint)))))
+            el.child(div().text_size(13).text_color(t.dim).child(model.hint)))))
       .when(effortIds(entry).length > 0, (el) => el.child(this.effortBody(t, entry, this.person?.lead ?? {})))
       .child(button);
   },
@@ -610,7 +541,7 @@ export default {
       .h(44)
       .items_center()
       .justify_center()
-      .text_size(12)
+      .text_size(13)
       .text_color(t.muted)
       .child(text("composer.starting", { lead: leadName(entry, entry.key) }));
   },
@@ -627,7 +558,7 @@ export default {
       .border_t(1)
       .border_color(t.border)
       .bg(t.chrome)
-      .child(div().text_size(12).text_color(t.muted).child(text("composer.lead-not-running")))
+      .child(div().text_size(13).text_color(t.muted).child(text("composer.lead-not-running")))
       .child(this.filledButton("composer-open", this.startLabel(), () => run("lead.open"), t));
   },
 };
