@@ -1,7 +1,7 @@
 // A lazy file browser for the focused pane's folder, with bounded read-only previews.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Editor, EditorState } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window } from "kompitum";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, window, nextCommand } from "kompitum";
 
 function location() {
   const space = spaces().find(s => s.active), f = focused();
@@ -43,6 +43,13 @@ export default class Files extends View {
   init(_props, cx) {
     this.saved = new Map();
     this.entries = new Map(); this.folders = new Set(); this.pending = new Set(); this.marks = {};
+    this.handle = cx.focus_handle();
+    cx.spawn(async cx => {
+      for (;;) {
+        const command = await nextCommand();
+        if (command === "focus") { this.handle.focus(); cx.notify(); }
+      }
+    });
     this.refresh(cx);
     cx.timer.every(10000, cx => this.refresh(cx));
   }
@@ -154,6 +161,7 @@ export default class Files extends View {
       if (out.length >= TOTAL) break;
       const path = prefix ? `${prefix}/${entry.name}` : entry.name, open = this.folders.has(path), mark = this.marks[`${this.root}/${path}`];
       out.push(h_flex().id(`file-${path}`).h(28).flex_none().pl(8 + depth * 18).pr(8).gap(7).items_center().rounded(7).cursor_pointer().hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+        .tab_stop(true).focus_ring(t.focus, 7)
         .on_click((_e, cx) => entry.dir ? this.toggle(path, cx) : this.show(path, cx))
         .child(entry.dir ? svg(`mods/files/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none().text_color(t.dim) : div().w(12).flex_none())
         .child(svg(`mods/files/${entry.dir ? "folder" : "file"}.svg`).size(14).flex_none().text_color(t.muted))
@@ -167,9 +175,9 @@ export default class Files extends View {
   render(cx) {
     if (key() !== this.context?.key) this.refresh(cx);
     const t = theme();
-    return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13)
+    return v_flex().id("files").size_full().min_h(0).rounded(10).overflow_hidden().bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13).track_focus(this.handle)
       .child(h_flex().h(42).flex_none().px(14).gap(8).items_center().border_b(1).border_color(t.border)
-        .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
+        .when(Boolean(this.file), el => el.child(div().id("files-back").w(20).cursor_pointer().text_color(t.muted).tab_stop(true).focus_ring(t.focus, 4).on_click((_e, cx) => { this.show(null); cx.notify(); }).child("←")))
         .child(div().font_semibold().child("Files"))
         .child(div().flex_1().min_w(0).truncate().text_right().text_size(12).text_color(t.dim).child(this.file ?? this.root?.split(/[\\/]/).pop() ?? "")))
       .when(!this.file, el => el.child(v_flex().id("files-tree").flex_1().min_h(0).overflow_y_scrollbar().p(6).children(this.rows("", 0, [], t))

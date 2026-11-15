@@ -1,6 +1,6 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
-import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings } from "kompitum";
+import { spaces, panes, focused, exec, readTextFile, watchFolder, theme, settings, nextCommand } from "kompitum";
 
 function location() {
   const space = spaces().find((s) => s.active), f = focused();
@@ -41,6 +41,12 @@ export default class Changes extends View {
     this.input.on("submit", (_e, cx) => this.commit(cx));
     this.input.on("focus", (_e, cx) => { this.typing = true; cx.notify(); });
     this.input.on("blur", (_e, cx) => { this.typing = false; cx.notify(); });
+    cx.spawn(async cx => {
+      for (;;) {
+        const command = await nextCommand();
+        if (command === "focus") { this.handle.focus(); cx.notify(); }
+      }
+    });
     this.refresh(cx);
     cx.timer.every(10000, (cx) => this.refresh(cx));
   }
@@ -189,7 +195,7 @@ export default class Changes extends View {
       .child(div().flex_1().min_h(44).max_h(this.files.length * 28 + 12).relative().border_b(1).border_color(t.border)
         .child(v_flex().id("changes-list").absolute().inset_0().overflow_y_scroll().p(6).children(this.files.map((f) => {
         const parts = f.path.split("/"), name = parts.pop();
-        return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).on_click((_e, cx) => this.pick(f.path, cx))
+        return h_flex().id(`change-${f.path}`).h(28).flex_none().px(8).gap(8).items_center().rounded(7).cursor_pointer().when(this.open === f.path, (e) => e.bg(t.selected)).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tab_stop(true).focus_ring(t.focus, 7).on_click((_e, cx) => this.pick(f.path, cx))
           .child(div().w(14).text_size(11).text_color(f.status === "A" ? t.ansi2 : f.status === "D" ? t.ansi1 : f.status === "U" ? t.ansi1 : t.blocked).child(f.status))
           .child(h_flex().flex_1().min_w(0).child(div().text_color(t.dim).truncate().child(parts.length ? parts.join("/") + "/" : "")).child(div().max_w(260).min_w(0).truncate().child(name)))
           .when(f.add > 0, (e) => e.child(div().text_size(11).text_color(t.ansi2).child(`+${f.add}`))).when(f.del > 0, (e) => e.child(div().text_size(11).text_color(t.ansi1).child(`−${f.del}`)));
@@ -205,6 +211,6 @@ export default class Changes extends View {
       .when(Boolean(this.note), (e) => e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).tooltip(this.note).child(firstLine(this.note) || this.note)))
       .child(h_flex().flex_none().p(10).gap(8).border_t(1).border_color(t.border)
         .child(div().id("commit-message").flex_1().min_w(0).h(32).px(10).flex().items_center().rounded(8).border_1().border_color(this.typing ? t.accent : t.border).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Input.new(this.input).h_full().text_size(12).text_color(t.foreground)))
-        .child(div().id("commit").h(32).px(14).flex().items_center().rounded(8).bg(enabled ? t.solid : t.raised).text_color(enabled ? t.solid_foreground : t.dim).text_size(12).when(enabled, (e) => e.cursor_pointer()).on_click((_e, cx) => this.commit(cx)).child(this.busy ? "Committing…" : "Commit")));
+        .child(div().id("commit").h(32).px(14).flex().items_center().rounded(8).bg(enabled ? t.solid : t.raised).text_color(enabled ? t.solid_foreground : t.dim).text_size(12).when(enabled, (e) => e.cursor_pointer()).tab_stop(true).focus_ring(t.focus, 8).on_click((_e, cx) => this.commit(cx)).child(this.busy ? "Committing…" : "Commit")));
   }
 }

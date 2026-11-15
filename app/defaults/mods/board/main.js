@@ -147,6 +147,11 @@ export default class Board extends View {
         } catch {
           return;
         }
+        if (command === "focus") {
+          this.handle.focus();
+          cx.notify();
+          continue;
+        }
         if (typeof command !== "string" || !command.startsWith("openReview:")) continue;
         let name = command.slice("openReview:".length);
         try {
@@ -317,6 +322,8 @@ export default class Board extends View {
         .rounded(5)
         .text_color(t.muted)
         .cursor_pointer()
+        .tab_stop(true)
+        .focus_ring(t.focus, 5)
         .tooltip("Close")
         .accessibility_label("Close")
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
@@ -367,6 +374,8 @@ export default class Board extends View {
       .font_medium()
       .cursor_pointer()
       .relative()
+      .tab_stop(true)
+      .focus_ring(t.focus, 5)
       .on_click(onClick)
       .child(div().absolute().inset_0().rounded(5).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
       .child(label);

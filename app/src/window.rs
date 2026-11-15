@@ -7312,19 +7312,99 @@ impl AppWindow {
             .filter(|id| self.copies.contains_key(id))
     }
 
-    /// `region.go`: the keyboard moves between the regions that have a focus
-    /// handle — the lead's composer and the focused pane's terminal, wrapping.
-    /// The sidebar and the side panel have no focus handle in this window, so
-    /// they are skipped (the plan's other two regions).
+    /// A layout node while it is shown: a hidden node, or a stack child that
+    /// isn't the active one, isn't there.
+    fn shown_region_node(&self, id: &str) -> Option<&Node> {
+        shown_node(&self.chrome, id).or_else(|| {
+            self.model
+                .active_tab()
+                .and_then(|tab| shown_node(tab.shown(), id))
+        })
+    }
+
+    /// The sidebar's keyboard target: the `agents` block inside the shown `sidebar`.
+    fn sidebar_region(&self) -> Option<String> {
+        self.shown_region_node("sidebar")?
+            .visible_blocks()
+            .into_iter()
+            .find_map(|node| match node.content() {
+                Some(Content::Mod { name, .. }) if name == "agents" => Some(node.id.clone()),
+                _ => None,
+            })
+    }
+
+    /// The side panel's keyboard target: the shown mod block of its `panel-body`.
+    fn panel_region(&self) -> Option<String> {
+        let panel = self.shown_region_node("panel")?;
+        let body = shown_node(panel, "panel-body")?;
+        body.visible_blocks().into_iter().find_map(|node| {
+            matches!(node.content(), Some(Content::Mod { .. })).then(|| node.id.clone())
+        })
+    }
+
+    /// The focused pane's terminal takes the keyboard.
+    fn focus_terminal(&mut self, pane: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.focused_block = None;
+        self.model.focus_pane(pane);
+        self.focused_pane = None;
+        self.synced_model_pane = self.model.focused_pane();
+        self.sync(window, cx);
+        if let Some(focus) = self.pane_focus(pane, cx) {
+            focus.focus(window, cx);
+        }
+    }
+
+    /// Esc in the sidebar or the panel: the composer is home, else the terminal.
+    fn region_escape(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.overlays.iter().any(|overlay| overlay.kind.modal_keys()) {
+            return false;
+        }
+        let Some(id) = self.focused_block.clone() else {
+            return false;
+        };
+        let in_region = |this: &Self, region: &str| {
+            this.shown_region_node(region)
+                .is_some_and(|node| node.path_to(&id).is_some())
+        };
+        if !in_region(self, "sidebar") && !in_region(self, "panel") {
+            return false;
+        }
+        if let Some(composer) = self.shown_composer() {
+            self.focus_block(&composer, window, cx);
+            return true;
+        }
+        let Some(pane) = self
+            .model
+            .focused_pane()
+            .filter(|pane| self.pane_focus(pane, cx).is_some())
+        else {
+            return false;
+        };
+        self.focus_terminal(&pane, window, cx);
+        true
+    }
+
+    /// `region.go`: the keyboard moves between the sidebar, the lead's composer,
+    /// the focused pane's terminal and the side panel, in that order, wrapping.
     fn region_go(&mut self, direction: &str, window: &mut Window, cx: &mut Context<Self>) {
         if self.overlays.iter().any(|overlay| overlay.kind.modal_keys()) {
             return;
         }
+        let sidebar = self.sidebar_region();
+        let panel = self.panel_region();
         let composer = self.shown_composer();
         let terminal = self
             .model
             .focused_pane()
             .filter(|pane| self.pane_focus(pane, cx).is_some());
+        let at_sidebar = self.focused_block.as_deref().is_some_and(|id| {
+            self.shown_region_node("sidebar")
+                .is_some_and(|node| node.path_to(id).is_some())
+        });
+        let at_panel = self.focused_block.as_deref().is_some_and(|id| {
+            self.shown_region_node("panel")
+                .is_some_and(|node| node.path_to(id).is_some())
+        });
         let at_composer = composer
             .as_deref()
             .is_some_and(|id| self.focused_block.as_deref() == Some(id));
@@ -7333,19 +7413,29 @@ impl AppWindow {
             .values()
             .any(|term| term.view.read(cx).owns_keyboard_focus(window, cx));
         let mut regions: Vec<&str> = Vec::new();
+        if sidebar.is_some() {
+            regions.push("sidebar");
+        }
         if composer.is_some() {
             regions.push("composer");
         }
         if terminal.is_some() {
             regions.push("terminal");
         }
+        if panel.is_some() {
+            regions.push("panel");
+        }
         if regions.is_empty() {
             return;
         }
-        let current = if at_composer {
+        let current = if at_sidebar {
+            regions.iter().position(|region| *region == "sidebar")
+        } else if at_composer {
             regions.iter().position(|region| *region == "composer")
         } else if at_terminal || self.focused_block.is_none() {
             regions.iter().position(|region| *region == "terminal")
+        } else if at_panel {
+            regions.iter().position(|region| *region == "panel")
         } else {
             None
         };
@@ -7357,6 +7447,11 @@ impl AppWindow {
             (None, _) => 0,
         };
         match regions[next] {
+            "sidebar" => {
+                if let Some(id) = sidebar {
+                    self.focus_block(&id, window, cx);
+                }
+            }
             "composer" => {
                 if let Some(id) = composer {
                     self.focus_block(&id, window, cx);
@@ -7364,14 +7459,12 @@ impl AppWindow {
             }
             "terminal" => {
                 if let Some(pane) = terminal {
-                    self.focused_block = None;
-                    self.model.focus_pane(&pane);
-                    self.focused_pane = None;
-                    self.synced_model_pane = self.model.focused_pane();
-                    self.sync(window, cx);
-                    if let Some(focus) = self.pane_focus(&pane, cx) {
-                        focus.focus(window, cx);
-                    }
+                    self.focus_terminal(&pane, window, cx);
+                }
+            }
+            "panel" => {
+                if let Some(id) = panel {
+                    self.focus_block(&id, window, cx);
                 }
             }
             _ => {}
@@ -9470,6 +9563,29 @@ fn folder_info(cwd: &str, home: &str, on: Option<&str>) -> (model::FolderInfo, b
     )
 }
 
+/// The node `id` while it is shown: a hidden node, or a stack child that isn't
+/// the active one, isn't there.
+fn shown_node<'a>(root: &'a Node, id: &str) -> Option<&'a Node> {
+    if root.hidden {
+        return None;
+    }
+    if root.id == id {
+        return Some(root);
+    }
+    for child in root.children() {
+        if root
+            .active_child()
+            .is_some_and(|active| active.id != child.id)
+        {
+            continue;
+        }
+        if let Some(found) = shown_node(child, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn terminal_block<'a>(chrome: &'a Node, focused: Option<&str>) -> Option<&'a Node> {
     let id = focused?;
     chrome
@@ -10205,9 +10321,14 @@ impl Render for AppWindow {
                     }
                 }
             }))
-            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
-                if ev.keystroke.key == "escape" && this.pane_drag.is_some() {
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                if ev.keystroke.key != "escape" {
+                    return;
+                }
+                if this.pane_drag.is_some() {
                     this.cancel_pane_drag(cx);
+                    cx.stop_propagation();
+                } else if this.region_escape(window, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -11140,13 +11261,28 @@ mod tests {
         gpui::Entity<super::AppWindow>,
         &'a mut gpui::VisualTestContext,
     ) {
+        open_window_mods(cx, &[(mod_name, main_js)], layout)
+    }
+
+    /// The same window with several mods of the test's own: the shipped ones
+    /// are installed first, then each folder in `mods` is written over its own.
+    fn open_window_mods<'a>(
+        cx: &'a mut gpui::TestAppContext,
+        mods: &[(&str, &str)],
+        layout: serde_json::Value,
+    ) -> (
+        gpui::Entity<super::AppWindow>,
+        &'a mut gpui::VisualTestContext,
+    ) {
         use serde_json::json;
         let home = crate::mods::app_dir();
         crate::mods::write_workspace().unwrap();
-        let folder = home.join("mods").join(mod_name);
-        std::fs::create_dir_all(&folder).unwrap();
-        std::fs::write(folder.join("mod.json"), r#"{ "place": "none" }"#).unwrap();
-        std::fs::write(folder.join("main.js"), main_js).unwrap();
+        for (mod_name, main_js) in mods {
+            let folder = home.join("mods").join(mod_name);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("mod.json"), r#"{ "place": "none" }"#).unwrap();
+            std::fs::write(folder.join("main.js"), main_js).unwrap();
+        }
         std::fs::create_dir_all(home.join("layouts")).unwrap();
         std::fs::write(home.join("layouts/test.json"), layout.to_string()).unwrap();
         cx.update(crate::mods::init);
@@ -11249,6 +11385,242 @@ export default class Composer extends View {
                 this.focused_block.is_none() && this.model.focused_pane().as_deref() == Some("p1")
             }),
             "previous wraps to the terminal"
+        );
+    }
+
+    /// A mod of the test's own that takes the keyboard when it hears `focus`.
+    const FOCUS_PROBE: &str = r#"
+import { View, div } from 'gpui-kit';
+import { nextCommand } from 'kompitum';
+export default class FocusProbe extends View {
+  init(_props, cx) {
+    this.h = cx.focus_handle();
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const command = await nextCommand();
+        if (command === 'focus') this.h.focus();
+      }
+    });
+  }
+  render() { return div().size_full().track_focus(this.h).child('probe'); }
+}
+"#;
+
+    fn four_region_layout() -> serde_json::Value {
+        use serde_json::json;
+        json!({
+            "id": "root", "type": "row", "children": [
+                { "id": "sidebar", "type": "column", "children": [
+                    { "id": "agents", "type": "block", "content": { "mod": "agents" } }
+                ] },
+                { "id": "work", "type": "column", "children": [
+                    { "id": "term", "type": "block", "content": { "terminal": "t1" } },
+                    { "id": "comp", "type": "block", "content": { "mod": "composer" } },
+                    { "id": "panel", "type": "column", "children": [
+                        { "id": "panel-body", "type": "stack", "active": "files", "children": [
+                            { "id": "files", "type": "block", "content": { "mod": "files" } }
+                        ] }
+                    ] }
+                ] }
+            ]
+        })
+    }
+
+    #[test]
+    fn f6_walks_all_four_regions() {
+        in_own_process("f6_four_regions");
+    }
+
+    /// The plan's order, wrapping: sidebar, composer, terminal, panel.
+    #[gpui::test]
+    fn f6_four_regions(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("f6_four_regions") {
+            return;
+        }
+        let (view, cx) = open_window_mods(
+            cx,
+            &[
+                ("agents", FOCUS_PROBE),
+                ("composer", FOCUS_PROBE),
+                ("files", FOCUS_PROBE),
+            ],
+            four_region_layout(),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.model.add_space(
+                "sp1",
+                "test",
+                "/tmp",
+                crate::model::Tab::new("tb1", "", "p1", "t1"),
+            );
+            this.model.focus_pane("p1");
+            this.focused_pane = None;
+            this.sync(window, cx);
+            if let Some(focus) = this.pane_focus("p1", cx) {
+                focus.focus(window, cx);
+            }
+        });
+        cx.run_until_parked();
+        let go = |direction: &str, cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                view.update(cx, |this, cx| {
+                    this.run("region.go", json!({ "direction": direction }), window, cx)
+                })
+            });
+            cx.run_until_parked();
+        };
+        let at = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, app| view.read(app).focused_block.clone())
+        };
+        go("next", cx);
+        assert_eq!(at(cx), Some("files".into()), "the terminal's next region is the panel");
+        go("next", cx);
+        assert_eq!(at(cx), Some("agents".into()), "the panel wraps to the sidebar");
+        go("next", cx);
+        assert_eq!(at(cx), Some("comp".into()), "the sidebar goes to the composer");
+        go("next", cx);
+        assert_eq!(at(cx), None, "the composer goes to the terminal");
+        go("next", cx);
+        assert_eq!(at(cx), Some("files".into()), "the terminal goes to the panel");
+        go("previous", cx);
+        assert_eq!(at(cx), None, "the panel's previous region is the terminal");
+        go("previous", cx);
+        assert_eq!(at(cx), Some("comp".into()), "the terminal's previous region is the composer");
+        go("previous", cx);
+        assert_eq!(at(cx), Some("agents".into()), "the composer's previous region is the sidebar");
+        go("previous", cx);
+        assert_eq!(at(cx), Some("files".into()), "the sidebar wraps back to the panel");
+    }
+
+    #[test]
+    fn f6_skips_a_hidden_sidebar_and_a_closed_panel() {
+        in_own_process("f6_skipped_regions");
+    }
+
+    /// A hidden layout node gives its region up: the keyboard goes on to the next one.
+    #[gpui::test]
+    fn f6_skipped_regions(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("f6_skipped_regions") {
+            return;
+        }
+        let (view, cx) = open_window_mods(
+            cx,
+            &[
+                ("agents", FOCUS_PROBE),
+                ("composer", FOCUS_PROBE),
+                ("files", FOCUS_PROBE),
+            ],
+            four_region_layout(),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.model.add_space(
+                "sp1",
+                "test",
+                "/tmp",
+                crate::model::Tab::new("tb1", "", "p1", "t1"),
+            );
+            this.sync(window, cx);
+        });
+        let focus_terminal = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                view.update(cx, |this, cx| {
+                    this.focused_block = None;
+                    this.model.focus_pane("p1");
+                    this.focused_pane = None;
+                    this.sync(window, cx);
+                    if let Some(focus) = this.pane_focus("p1", cx) {
+                        focus.focus(window, cx);
+                    }
+                })
+            });
+            cx.run_until_parked();
+        };
+        focus_terminal(cx);
+        let run = |name: &str, args: serde_json::Value, cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                view.update(cx, |this, cx| this.run(name, args, window, cx))
+            });
+            cx.run_until_parked();
+        };
+        let go = |direction: &str, cx: &mut gpui::VisualTestContext| {
+            run("region.go", json!({ "direction": direction }), cx)
+        };
+        let at = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, app| view.read(app).focused_block.clone())
+        };
+        run("layout.hide", json!({ "id": "sidebar" }), cx);
+        go("next", cx);
+        assert_eq!(at(cx), Some("files".into()), "the terminal goes past the hidden sidebar to the panel");
+        go("next", cx);
+        assert_eq!(at(cx), Some("comp".into()), "the panel wraps to the composer, not the hidden sidebar");
+        go("previous", cx);
+        assert_eq!(at(cx), Some("files".into()), "the composer's previous region is the panel");
+        run("layout.show", json!({ "id": "sidebar" }), cx);
+        run("layout.hide", json!({ "id": "panel" }), cx);
+        focus_terminal(cx);
+        go("next", cx);
+        assert_eq!(at(cx), Some("agents".into()), "the terminal goes past the closed panel to the sidebar");
+        go("next", cx);
+        assert_eq!(at(cx), Some("comp".into()), "the sidebar goes to the composer");
+        go("next", cx);
+        assert_eq!(at(cx), None, "the composer goes to the terminal, not the closed panel");
+    }
+
+    #[test]
+    fn escape_in_the_sidebar_returns_to_the_composer() {
+        in_own_process("sidebar_escape");
+    }
+
+    /// Esc gives the keyboard back to the composer, which is home.
+    #[gpui::test]
+    fn sidebar_escape(cx: &mut gpui::TestAppContext) {
+        if !running_alone("sidebar_escape") {
+            return;
+        }
+        let (view, cx) = open_window_mods(
+            cx,
+            &[
+                ("agents", FOCUS_PROBE),
+                ("composer", FOCUS_PROBE),
+                ("files", FOCUS_PROBE),
+            ],
+            four_region_layout(),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.model.add_space(
+                "sp1",
+                "test",
+                "/tmp",
+                crate::model::Tab::new("tb1", "", "p1", "t1"),
+            );
+            this.model.focus_pane("p1");
+            this.focused_pane = None;
+            this.sync(window, cx);
+            this.focus_block("agents", window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, app| view.read(app).focused_block.clone()),
+            Some("agents".into()),
+            "the sidebar has the keyboard"
+        );
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, app| view.read(app).focused_block.clone()),
+            Some("comp".into()),
+            "Esc gives the keyboard to the composer"
+        );
+        view.update_in(cx, |this, window, cx| this.focus_block("files", window, cx));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, app| view.read(app).focused_block.clone()),
+            Some("comp".into()),
+            "Esc in the panel gives the keyboard to the composer too"
         );
     }
 
