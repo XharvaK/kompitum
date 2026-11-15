@@ -22,23 +22,23 @@ export default class Pasture extends View {
     return v_flex().id(`sheep-${a.address}`).absolute().left(x).top(y).w(168).items_center().cursor_pointer()
       .transition("left", { duration: 4200, easing: "ease-in-out" })
       .on_click(() => run("agent.focus", { terminal: a.address }))
-      .when(blocked, (el) => el.child(div().absolute().top(-35).left(-5).px(12).py(5).rounded(12).bg("#fff8e1").border(2).border_color("#d47b3e").text_size(13).font_weight(700).text_color("#a44d25").child(`! ${a.program.name}`)))
+      .when(blocked, (el) => el.child(div().absolute().top(-35).left(-5).px(12).py(5).rounded(12).bg("#fff8e1").border(2).border_color("#d47b3e").text_size(14).font_weight(700).text_color("#a44d25").child(`! ${a.program.name}`)))
       .when(done, (el) => el.child(div().absolute().top(4).right(4).text_size(18).font_weight(700).text_color("#436b5c").child("zzz")))
       .child(body)
-      .child(div().text_size(12).font_weight(600).text_color(ink).child(a.tab_name));
+      .child(div().text_size(13).font_weight(600).text_color(ink).child(a.tab_name));
   }
   render() {
     const p = props() ?? {};
     if (p.role === "pane") {
       const pane = panes().find((x) => x.pane === p.pane);
-      return h_flex().size_full().px(12).gap(9).items_center().bg("#ceab78").text_color("#493724").text_size(12).font_weight(600)
+      return h_flex().size_full().px(12).gap(9).items_center().bg("#ceab78").text_color("#493724").text_size(13).font_weight(600)
         .child(icon(pane?.program)).child(div().child(pane?.program.name ?? text("pasture.terminal")))
         .child(div().flex_1()).child(div().child(pane?.status === "blocked" ? text("pasture.needs-you") : pane?.status ?? ""));
     }
     if (p.role === "rail") {
       const s = spaces().find((s) => s.active), tab = s?.tabs.find((t) => t.active);
-      return h_flex().size_full().bg(wood).px(20).items_center().justify_between().text_color("#fff4d9").text_size(13).font_weight(600)
-        .child(div().child(`${s?.name ?? ""}  /  ${tab?.name ?? ""}`)).child(div().text_size(11).child(text("pasture.workshed")));
+      return h_flex().size_full().bg(wood).px(20).items_center().justify_between().text_color("#fff4d9").text_size(14).font_weight(600)
+        .child(div().child(`${s?.name ?? ""}  /  ${tab?.name ?? ""}`)).child(div().text_size(12).child(text("pasture.workshed")));
     }
     const list = agents();
     setAgentOrder(list.map((a) => a.address));
@@ -47,13 +47,13 @@ export default class Pasture extends View {
       .child(image("mods/pasture/meadow.svg").absolute().size_full())
       .child(v_flex().absolute().left(28).top(23).gap(3).text_color(ink)
         .child(div().text_size(30).font_weight(800).child(text("pasture.title")))
-        .child(div().text_size(13).child(text("pasture.herd", { count: list.length }))))
+        .child(div().text_size(14).child(text("pasture.herd", { count: list.length }))))
       .child(div().absolute().left(75).top(160).w(14).h(150).bg("#8d623d"))
       .child(v_flex().absolute().left(30).top(139).w(177).py(12).px(16).gap(3).rounded(6).bg("#d2a673").border(3).border_color("#9b6b40").text_color("#573c27")
-        .child(div().text_size(11).font_weight(600).child(text("pasture.welcome-to")))
+        .child(div().text_size(12).font_weight(600).child(text("pasture.welcome-to")))
         .child(div().text_size(21).font_weight(800).child(active?.name ?? text("pasture.your-space"))))
       .children(list.map((a, i) => this.sheep(a, i)))
-      .child(h_flex().absolute().right(30).top(25).gap(18).text_size(12).text_color(ink)
+      .child(h_flex().absolute().right(30).top(25).gap(18).text_size(13).text_color(ink)
         .children([["working", text("pasture.wandering")], ["blocked", text("pasture.need-you")], ["done", text("pasture.resting")]].map(([state, name]) => div().child(text("pasture.count", { count: list.filter((a) => a.status === state).length, name })))));
   }
 }

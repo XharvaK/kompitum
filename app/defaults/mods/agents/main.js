@@ -195,6 +195,11 @@ export default class Agents extends View {
       const row = this.rows.find((row) => row.key === this.highlight);
       if (row) row.action();
       cx.stop_propagation();
+    } else if ((e.key === "f10" && e.modifiers?.shift) || e.keystroke === "shift-f10"
+      || e.key === "menu" || e.key === "contextmenu" || e.key === "apps") {
+      const row = this.rows.find((row) => row.key === this.highlight);
+      if (row?.menu) openOverlay({ mod: "menu", kind: "popup", width: 220, props: row.menu });
+      cx.stop_propagation();
     }
   }
 
@@ -204,8 +209,8 @@ export default class Agents extends View {
       .w_full()
       .p(5)
       .bg(t.popover)
-      .text_size(13)
-      .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child(text("agents.sort-agents")))
+      .text_size(14)
+      .child(div().px(8).pt(4).pb(6).text_size(12).text_color(t.dim).child(text("agents.sort-agents")))
       .children(SORTS.map((s) => h_flex()
         .id(`sort-${s.id}`)
         .h(31)
@@ -246,6 +251,8 @@ export default class Agents extends View {
     const st = kidStatus(k, this.listed);
     const pic = icon(k.program, 14, t.foreground);
     const on = k.address === shown;
+    const name = k.name || k.template || k.program?.name || k.address;
+    const menu = this.subMenu(k);
     return h_flex()
       .id(`sub-${k.address}`)
       .pl(39)
@@ -255,26 +262,48 @@ export default class Agents extends View {
       .flex_none()
       .gap(0)
       .items_center()
-      .text_size(13)
+      .text_size(14)
       .when(this.highlight === `sub-${k.address}`, (el) => el.track_focus(this.handle).focus_ring(t.focus, 8))
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .keep_focus(true)
       .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
+      .on_mouse_down("right", (_e, cx) => {
+        cx.stop_propagation();
+        openOverlay({ mod: "menu", kind: "popup", width: 220, props: menu });
+      })
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
         .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
       .when(Boolean(pic), el => el.child(div().mr(8).child(pic)))
-      .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
+      .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(name))
       .child(this.status(t, { status: st }, compact));
+  }
+
+  // A sub-agent's menu: open, pin, copy its folder, close (killing its terminal).
+  subMenu(k) {
+    return {
+      tab: "agent",
+      target: {
+        lead: false,
+        terminal: k.address,
+        pane: null,
+        pinned: Boolean(k.labels?.["kompitum.pinned"]),
+        name: k.name || k.template || k.program?.name || k.address,
+        folder: k.cwd ?? null,
+        open: this.listed.has(k.address) ? { name: "pane.focus", args: { terminal: k.address } } : { name: "terminal.peek", args: { terminal: k.address } },
+        close: { name: "terminal.kill", args: { terminal: k.address } },
+        shell: k.program?.shell === true,
+      },
+    };
   }
 
   // compact: a ! for blocked where a header already says "Needs you".
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
-    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(11).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
-    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(11).font_semibold().text_color(t.blocked).flex().items_center().child(text("agents.needs-you"));
+    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(4).bg(t.blocked + "26").text_size(12).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
+    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(12).font_semibold().text_color(t.blocked).flex().items_center().child(text("agents.needs-you"));
     // Idle: a ring; done: a dot.
     if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
     return div().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
@@ -293,7 +322,8 @@ export default class Agents extends View {
     // A working lead that has sent no hook or status line for ten minutes may have lost its closing hook.
     const leadHeard = lead()?.heard_ms;
     const leadQuiet = leadState === "working" && typeof leadHeard === "number" && Date.now() - leadHeard > 600000;
-    const leadListed = leadTerminal && list.some((agent) => agent.address === leadTerminal.address);
+    // The lead has its own row above every group, even when it reports a status itself.
+    if (leadTerminal) list = list.filter((agent) => agent.address !== leadTerminal.address);
     this.migratePins(all);
     const shown = focused()?.agent;
     const now = Date.now();
@@ -334,7 +364,7 @@ export default class Agents extends View {
         .flex()
         .items_center()
         .rounded(4)
-        .text_size(11)
+        .text_size(12)
         .text_color(open ? t.dim : (t[top] ?? t.dim))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
@@ -355,6 +385,26 @@ export default class Agents extends View {
     const paneList = panes();
     const spaceList = spaces();
     const leads = leadPanes(paneList);
+    const folderOf = (terminal) => paneList.find((p) => p.terminal === terminal)?.cwd ?? null;
+    const agentMenu = (a, name) => ({
+      tab: "agent",
+      target: {
+        lead: false,
+        terminal: a.address,
+        pane: a.pane,
+        pinned: Boolean(a.pinned),
+        name: name || a.title || a.program?.name || a.address,
+        folder: folderOf(a.address),
+        open: { name: "pane.focus", args: { pane: a.pane } },
+        close: { name: "pane.close", args: { pane: a.pane } },
+        shell: a.program?.shell === true,
+      },
+    });
+    const openMenu = (menu) => openOverlay({ mod: "menu", kind: "popup", width: 220, props: menu });
+    const onRightClick = (menu) => (_e, cx) => {
+      cx.stop_propagation();
+      openMenu(menu);
+    };
     const tabs = new Map(spaceList.flatMap(s => s.tabs).map(tab => [tab.id, tab]));
     const labels = new Map(list.map(a => {
       const tab = tabs.get(a.tab);
@@ -374,6 +424,7 @@ export default class Agents extends View {
       const more = detail.get(a.address);
       // An agent on another machine (`vps/t7`) says which.
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
+      const menu = agentMenu(a, a.title || a.program?.name || a.address);
       if (collapsed) {
         return h_flex()
           .id(`ag-${a.address}`)
@@ -386,6 +437,7 @@ export default class Agents extends View {
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .keep_focus(true)
           .on_click(() => run("pane.focus", { pane: a.pane }))
+          .on_mouse_down("right", onRightClick(menu))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
           .child(h_flex().w(14).flex_none().items_center().justify_center().child(this.status(t, a, true)));
       }
@@ -433,6 +485,7 @@ export default class Agents extends View {
           cx.notify();
         })
         .on_click(() => run("pane.focus", { pane: a.pane }))
+        .on_mouse_down("right", onRightClick(menu))
         .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
           .keep_focus(true)
           .when(subs.length > 0, el => el.on_click((_e, cx) => {
@@ -443,10 +496,10 @@ export default class Agents extends View {
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
           .child(div().min_w(0).max_w(full && more ? 120 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
           .when(full && Boolean(more), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(text("agents.detail", { detail: more })))))
-        .when(Boolean(machine), el => el.child(div().text_size(11).text_color(t.dim).child(machine)))
+        .when(Boolean(machine), el => el.child(div().text_size(12).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
         .when(this.hovered === a.address, el => el.child(pin))
-        .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(12).text_color(t.dim).child(duration(now - when))))
+        .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(13).text_color(t.dim).child(duration(now - when))))
         .child(this.status(t, a, byPriority && !isPinned));
     };
 
@@ -472,7 +525,7 @@ export default class Agents extends View {
         .flex_none()
         .gap(6)
         .items_center()
-        .text_size(12)
+        .text_size(13)
         .font_medium()
         .cursor_pointer()
         .hover((s) => s.text_color(t.foreground))
@@ -488,8 +541,21 @@ export default class Agents extends View {
           .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
           .child(svg("mods/workspace-chrome/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
     };
-    // The live lead comes first: it reports no OSC 7501 status, so agents()
-    // leaves it out; a lead that does report one keeps its own row.
+    // The live lead always comes first, above every group, even when it reports a status itself.
+    const leadMenu = () => {
+      const key = leadTerminal.labels?.lead ?? leadTerminal.program?.key ?? "claude";
+      const entry = this.known?.find((known) => known.key === key);
+      return {
+        tab: "lead",
+        target: {
+          lead: true,
+          terminal: leadTerminal.address,
+          pane: paneList.find((p) => p.terminal === leadTerminal.address)?.pane ?? null,
+          name: leadName(key, entry),
+          folder: leadTerminal.cwd ?? folderOf(leadTerminal.address),
+        },
+      };
+    };
     const leadRow = () => {
       const key = leadTerminal.labels?.lead ?? leadTerminal.program?.key ?? "claude";
       const entry = this.known?.find((known) => known.key === key);
@@ -511,6 +577,7 @@ export default class Agents extends View {
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .keep_focus(true)
           .on_click(() => run("lead.open"))
+          .on_mouse_down("right", onRightClick(leadMenu()))
           .when(Boolean(icon(program, 14, t.foreground)), (el) => el.child(icon(program, 14, t.foreground)));
       }
       return h_flex()
@@ -526,9 +593,10 @@ export default class Agents extends View {
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_click(() => run("lead.open"))
+        .on_mouse_down("right", onRightClick(leadMenu()))
         .when(Boolean(icon(program, 16, t.foreground)), (el) => el.child(icon(program, 16, t.foreground)))
         .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
-        .when(Boolean(word), (el) => el.child(div().flex_none().text_size(12)
+        .when(Boolean(word), (el) => el.child(div().flex_none().text_size(13)
           .text_color(leadQuiet ? t.muted : leadColor(t, leadState))
           .when(leadQuiet, (w) => w.tooltip(text("agents.quiet-tooltip")))
           .child(word)));
@@ -541,11 +609,31 @@ export default class Agents extends View {
       const terms = paneList.filter((p) => p.tab === tab.id && p.terminal);
       return terms.length > 0 && !terms.some((p) => this.listed.has(p.terminal));
     });
+    const terminalMenu = (tab) => {
+      const terms = paneList.filter((p) => p.tab === tab.id && p.terminal);
+      const program = terms[0]?.program;
+      const first = terms[0];
+      return {
+        tab: "agent",
+        target: {
+          lead: false,
+          terminal: first?.terminal ?? null,
+          pane: first?.pane ?? null,
+          pinned: false,
+          name: /^tb\d+$/.test(tab.name) ? program?.name ?? text("agents.terminal") : tab.name,
+          folder: first?.cwd ?? null,
+          open: { name: "tab.select", args: { id: tab.id } },
+          close: { name: "tab.close", args: { id: tab.id } },
+          shell: terms.every((p) => p.program?.shell === true),
+        },
+      };
+    };
     const terminalRow = (tab) => {
       const terms = paneList.filter((p) => p.tab === tab.id && p.terminal);
       const program = terms[0]?.program;
       const name = /^tb\d+$/.test(tab.name) ? program?.name ?? text("agents.terminal") : tab.name;
       const key = `term-${tab.id}`;
+      const menu = terminalMenu(tab);
       if (collapsed) {
         return h_flex()
           .id(key)
@@ -559,6 +647,7 @@ export default class Agents extends View {
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .keep_focus(true)
           .on_click(() => run("tab.select", { id: tab.id }))
+          .on_mouse_down("right", onRightClick(menu))
           .when(Boolean(icon(program, 14, t.foreground)), (el) => el.child(icon(program, 14, t.foreground)));
       }
       return h_flex()
@@ -579,6 +668,7 @@ export default class Agents extends View {
           cx.notify();
         })
         .on_click(() => run("tab.select", { id: tab.id }))
+        .on_mouse_down("right", onRightClick(menu))
         .when(Boolean(icon(program, 16, t.foreground)), (el) => el.child(icon(program, 16, t.foreground)))
         .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
         .when(this.hovered === key, (el) => el.child(div()
@@ -607,40 +697,42 @@ export default class Agents extends View {
     // The rows Up and Down move through, in drawing order, and the row the
     // highlight starts on: the selected one, else the first.
     const order = [];
-    const pushRow = (key, selected, action) => order.push({ key, selected, action });
-    if (leadTerminal && !leadListed) {
-      pushRow("ag-lead", focused()?.terminal === leadTerminal.address, () => run("lead.open"));
+    const pushRow = (key, selected, action, menu) => order.push({ key, selected, action, menu });
+    if (leadTerminal) {
+      pushRow("ag-lead", focused()?.terminal === leadTerminal.address, () => run("lead.open"), leadMenu());
     }
     if (collapsed) {
       for (const a of list) {
-        pushRow(`ag-${a.address}`, Boolean(a.focused), () => run("pane.focus", { pane: a.pane }));
+        pushRow(`ag-${a.address}`, Boolean(a.focused), () => run("pane.focus", { pane: a.pane }),
+          agentMenu(a, a.title || a.program?.name || a.address));
       }
     } else {
       for (const g of groups) {
         if (this.folded.has(g.id)) continue;
         for (const a of g.members) {
-          pushRow(`ag-${a.address}`, Boolean(a.focused), () => run("pane.focus", { pane: a.pane }));
+          pushRow(`ag-${a.address}`, Boolean(a.focused), () => run("pane.focus", { pane: a.pane }),
+            agentMenu(a, a.title || a.program?.name || a.address));
           if (this.folded.has(a.address)) continue;
           for (const s of this.tree(all, a.address)) {
             const k = s.t;
-            pushRow(`sub-${k.address}`, false, () => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)));
+            pushRow(`sub-${k.address}`, false, () => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)), this.subMenu(k));
           }
         }
       }
     }
     for (const tab of plainTabs) {
-      pushRow(`term-${tab.id}`, Boolean(tab.active), () => run("tab.select", { id: tab.id }));
+      pushRow(`term-${tab.id}`, Boolean(tab.active), () => run("tab.select", { id: tab.id }), terminalMenu(tab));
     }
     if (this.highlight == null || !order.some((row) => row.key === this.highlight)) {
       this.highlight = (order.find((row) => row.selected) ?? order[0])?.key ?? null;
     }
     const highlight = this.highlight;
     this.rows = order;
-    const leadRows = leadTerminal && !leadListed ? [leadRow()] : [];
+    const leadRows = leadTerminal ? [leadRow()] : [];
     const terminalSection = plainTabs.length
       ? [
         ...(collapsed ? [] : [h_flex().id("ag-terminals").px(8).h(36).pt(10).pb(5).flex_none().items_center()
-          .child(div().text_size(12).font_medium().text_color(t.dim).child(text("agents.terminals")))]),
+          .child(div().text_size(13).font_medium().text_color(t.dim).child(text("agents.terminals")))]),
         ...plainTabs.map(terminalRow),
       ]
       : [];
@@ -655,7 +747,7 @@ export default class Agents extends View {
     return v_flex()
       .size_full()
       .min_h(0)
-      .text_size(13)
+      .text_size(14)
       .track_focus(this.handle)
       .on_key_down((e, cx) => this.key(e, cx))
       .when(!collapsed, (el) =>
@@ -668,11 +760,11 @@ export default class Agents extends View {
             .flex_none()
             .items_center()
             .justify_between()
-            .child(div().text_size(12).font_medium().text_color(t.dim).child(text("agents.title")))
+            .child(div().text_size(13).font_medium().text_color(t.dim).child(text("agents.title")))
             .child(
               div()
                 .id("ag-sort")
-                .text_size(11)
+                .text_size(12)
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
                 .keep_focus(true)
@@ -684,7 +776,7 @@ export default class Agents extends View {
         ),
       )
       .when(list.length === 0 && leadRows.length === 0 && !collapsed, (el) =>
-        el.child(div().px(12).text_size(13).text_color(t.dim).child(text("agents.no-agents"))),
+        el.child(div().px(12).text_size(14).text_color(t.dim).child(text("agents.no-agents"))),
       )
       .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 8).overflow_y_scrollbar().mode("always").children(rows))
       .when(collapsed, (el) =>
@@ -697,7 +789,7 @@ export default class Agents extends View {
               div()
                 .id("collapse")
                 .accessibility_label(text("agents.show-hide-sidebar"))
-                .text_size(13)
+                .text_size(14)
                 .text_color(t.dim)
                 .hover((s) => s.text_color(t.foreground))
                 .keep_focus(true)

@@ -265,11 +265,11 @@ export default class Worktree extends View {
             .gap(8)
             .items_center()
             .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(c.branch ?? text("worktree.detached")))
-            .when(c.main, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(text("worktree.main-checkout"))))
-            .when(Boolean(there), (el) => el.child(div().flex_none().text_size(11).text_color(t.accent).child(text("worktree.open-word"))))
-            .when(!there && c.at > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(ago(c.at)))),
+            .when(c.main, (el) => el.child(div().flex_none().text_size(12).text_color(t.dim).child(text("worktree.main-checkout"))))
+            .when(Boolean(there), (el) => el.child(div().flex_none().text_size(12).text_color(t.accent).child(text("worktree.open-word"))))
+            .when(!there && c.at > 0, (el) => el.child(div().flex_none().text_size(12).text_color(t.dim).child(ago(c.at)))),
         )
-        .child(div().truncate().text_size(12).text_color(t.dim).child(tilde(c.path, this.userHome ?? "")));
+        .child(div().truncate().text_size(13).text_color(t.dim).child(tilde(c.path, this.userHome ?? "")));
     };
     const count = rows.length === all.length ? text("worktree.checkouts", { shown: all.length, total: all.length }) : text("worktree.checkouts-of", { shown: rows.length, total: all.length });
     return v_flex()
@@ -280,8 +280,8 @@ export default class Worktree extends View {
       .p(16)
       .gap(10)
       .bg(t.popover)
-      .text_size(13)
-      .child(h_flex().child(div().flex_1().font_semibold().text_color(t.foreground).child(r ? text("worktree.open-title-of", { name: r.name }) : text("worktree.open-title"))).child(div().text_size(11).text_color(t.dim).child(r ? count : "")))
+      .text_size(14)
+      .child(h_flex().child(div().flex_1().font_semibold().text_color(t.foreground).child(r ? text("worktree.open-title-of", { name: r.name }) : text("worktree.open-title"))).child(div().text_size(12).text_color(t.dim).child(r ? count : "")))
       .when(r === undefined || (r && this.list === undefined), (el) => el.child(div().text_color(t.muted).child("\u2026")))
       .when(r === null, (el) => el.child(div().text_color(t.muted).child(text("worktree.not-a-repo", { folder: this.folder ? tilde(this.folder, this.userHome ?? "") : text("worktree.this-folder") }))))
       .when(Boolean(r && this.list), (el) =>
@@ -303,7 +303,7 @@ export default class Worktree extends View {
               .child(Scrollbar.vertical("wt-list").absolute().inset_0()),
           ),
       )
-      .child(h_flex().justify_end().text_size(11).text_color(t.dim).child(text("worktree.open-keys")));
+      .child(h_flex().justify_end().text_size(12).text_color(t.dim).child(text("worktree.open-keys")));
   }
 
   render(cx) {
@@ -332,7 +332,7 @@ export default class Worktree extends View {
       .p(16)
       .gap(10)
       .bg(t.popover)
-      .text_size(13)
+      .text_size(14)
       .child(div().font_semibold().text_color(t.foreground).child(title))
       .child(div().text_color(t.muted).child(detail))
       .when(remove && this.dirty, (el) => el.child(div().text_color(t.blocked).child(text("worktree.dirty"))))
@@ -355,7 +355,7 @@ export default class Worktree extends View {
       .child(
         h_flex()
           .justify_end()
-          .text_size(11)
+          .text_size(12)
           .text_color(t.dim)
           .gap(6)
           .when(this.busy, (el) => el.child(div().frames(["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], 90)))

@@ -1,13 +1,11 @@
-// The Limits sheet, from the composer's ring and the sidebar's foot: the lead's context, Claude's two windows,
-// and each worker's state, its own meters (when its CLI reports any) and what it cost this week. Reading is
+// The Limits sheet, from the top bar's context ring: the lead's context, Claude's two windows, and each worker's
+// state, its own meters (when its CLI reports any) and what it cost this week. Reading is
 // kom status --json, and each worker CLI's own usage report, run as the Settings > Agents page runs it.
 
-import { View, div } from "gpui-kit";
+import { View, div, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { kom, exec, knownAgents, window, theme, run, props, closeOverlay, settings, lead, text } from "kompitum";
+import { kom, exec, knownAgents, window, theme, run, props, closeOverlay, settings, lead, terminals, text } from "kompitum";
 
-const BAR = 316;
-const INDENT = 20; // a worker row's number column and its gap
 const USAGE_EVERY_MS = 60000;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAY_WORDS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -98,45 +96,35 @@ function chainWorkers(status) {
 function claudeWindows(usage) {
   const now = Date.now() / 1000;
   return [
-    { key: "5h", label: text("limits.window-5h"), window: usage?.five_hour, seconds: 5 * 3600 },
-    { key: "week", label: text("limits.window-week"), window: usage?.seven_day, seconds: 7 * 86400 },
+    { key: "5h", label: text("limits.window-5-hours"), window: usage?.five_hour },
+    { key: "week", label: text("limits.window-week"), window: usage?.seven_day },
   ]
     .map((w) => ({ ...w, pct: w.window?.used_percentage, resets: w.window?.resets_at }))
     .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
     .filter((w) => !(typeof w.resets === "number" && w.resets < now));
 }
 
-// How far through its window the clock is, from the reset: 0 at its start, 1 at its reset; null when it can't say.
-function paceOf(resets, seconds) {
-  if (typeof resets !== "number" || !Number.isFinite(resets)) return null;
-  const pace = 1 - (resets - Date.now() / 1000) / seconds;
-  return pace >= 0 && pace <= 1 ? pace : null;
+// 100% and over is blocked, from 75% working, else the calm colour.
+const limitColor = (t, share) => (share >= 1 ? t.blocked : share >= 0.75 ? t.working : t.done);
+
+// A dial's path: `size` px across, a `stroke` on a circle inside it, drawn from the top, clockwise.
+function dialPath(fraction, size, stroke) {
+  const c = size / 2;
+  const r = c - stroke / 2;
+  const builder = PathBuilder.stroke(stroke).move_to(c, c - r);
+  if (fraction >= 1) return builder.arc_to(r, r, 0, false, true, c, c + r).arc_to(r, r, 0, false, true, c, c - r).build();
+  const angle = 2 * Math.PI * Math.min(fraction, 0.999);
+  const x = c + r * Math.sin(angle);
+  const y = c - r * Math.cos(angle);
+  return builder.arc_to(r, r, 0, fraction > 0.5, true, x, y).build();
 }
 
-function claudeWords(w) {
-  const when = resetWords(w.resets);
-  if (w.pct >= 100) return when ? text("limits.used-up-back", { when }) : text("limits.used-up");
-  const pct = Math.round(w.pct);
-  return when ? text("limits.resets", { percent: pct, when }) : `${pct}%`;
-}
-
-// 100% and over is blocked, from 75% working, else muted.
-const limitColor = (t, share) => (share >= 1 ? t.blocked : share >= 0.75 ? t.working : t.muted);
-
-// One bar: its label and words over a track `width` px wide, a fill, and a pace mark when the window has a clock.
-function meter(t, id, label, words, fraction, pace, color, wordsColor, width = BAR) {
-  const share = Math.min(1, Math.max(0, fraction));
-  const fill = Math.round(width * share);
-  const track = div().id(`${id}-bar`).relative().w(width).h(6).rounded(3).bg(t.hover)
-    .when(fill > 0, (el) => el.child(div().absolute().top(0).left(0).h(6).w(fill).rounded(3).bg(color)))
-    .when(pace != null, (el) => el
-      .child(div().id(`${id}-pace`).absolute().top(-2).left(Math.round(width * pace) - 1).w(2).h(10).rounded(1).bg(t.foreground).opacity(0.55))
-      .tooltip(text("limits.pace", { percent: Math.round(pace * 100) })));
-  return v_flex().id(id).gap(6).py(4)
-    .child(h_flex().justify_between().items_center()
-      .child(div().text_size(12).text_color(t.muted).child(label))
-      .child(div().text_size(12).text_color(wordsColor).child(words)))
-    .child(track);
+// One bar: its track, and a fill of `share` across it.
+function shareBar(t, id, share, color, height, radius) {
+  const fraction = Math.min(1, Math.max(0, share));
+  return h_flex().id(id).w_full().h(height).rounded(radius).bg(t.hover).overflow_hidden()
+    .when(fraction > 0, (el) => el.child(div().h_full().rounded(radius).bg(color).flex_grow(fraction)))
+    .when(fraction < 1, (el) => el.child(div().h_full().flex_grow(1 - fraction)));
 }
 
 export default class Limits extends View {
@@ -201,123 +189,166 @@ export default class Limits extends View {
     }
   }
 
-  // A section's name: the label size, in the secondary text color, so it reads as a heading over its rows.
-  sectionHeader(t, label) {
-    return div().pt(8).pb(2).text_size(12).font_medium().text_color(t.muted).child(label);
+  // A plain card: the raised surface, a hairline border, rounded corners and 12 px inside.
+  card(t, id, children) {
+    return v_flex().id(id).w_full().bg(t.raised).border_1().border_color(t.border).rounded(10).p(12).gap(10)
+      .children(children);
   }
 
-  contextParts(t, usage, terminal) {
+  // A card's title: the larger card type, in the foreground.
+  cardTitle(t, id, label) {
+    return div().id(id).text_size(15).font_medium().text_color(t.foreground).child(label);
+  }
+
+  // This conversation: the title and its tokens, one full-width bar, then Compact now centred under it.
+  conversationCard(t, usage, terminal) {
     const tokens = usage.context_tokens;
     const max = usage.compact_at;
-    const fraction = tokens / max;
-    const color = fraction >= 0.95 ? t.blocked : fraction >= 0.75 ? t.working : t.muted;
+    const fraction = Math.min(1, Math.max(0, tokens / max));
+    const color = limitColor(t, fraction);
     const parts = [
-      this.sectionHeader(t, text("limits.context")),
-      meter(t, "limits-context", text("limits.context"), text("limits.context-tokens", { used: kTokens(tokens), total: kTokens(max) }), fraction, null, color,
-        fraction >= 1 ? t.blocked : t.foreground),
-      div().text_size(12).text_color(t.dim).child(text("limits.tidies-itself")),
+      h_flex().w_full().items_center().justify_between().gap(8)
+        .child(this.cardTitle(t, "limits-this-conversation", text("limits.this-conversation")))
+        .child(div().id("limits-context-tokens").text_size(14).text_color(t.muted)
+          .child(text("limits.context-tokens", { used: kTokens(tokens), total: kTokens(max) }))),
+      shareBar(t, "limits-context", fraction, color, 10, 5),
     ];
-    if (terminal) parts.push(this.compactButton(t, terminal));
-    return parts;
+    if (terminal) parts.push(h_flex().id("limits-compact-row").w_full().justify_center().child(this.compactButton(t, terminal)));
+    return this.card(t, "limits-conversation", parts);
   }
 
   // Live only while the lead waits: no card open, not compacting.
   compactButton(t, terminal) {
     const current = lead();
     const live = current?.state === "waiting" && !current?.ask && current?.compacting !== true;
-    return h_flex().id("limits-compact").w_full().h(30).rounded(8).border_1().border_color(t.border)
+    return h_flex().id("limits-compact").h(30).px(16).rounded(8).border_1().border_color(t.border)
       .items_center().justify_center()
       .when(live, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).tab_stop(true).focus_ring(t.focus, 8).on_click(() => {
         run("lead.compact", { terminal });
         closeOverlay(props().overlay);
       }))
-      .child(div().text_size(12).text_color(live ? t.foreground : t.dim).child(text("limits.compact-now")));
+      .child(div().text_size(13).text_color(live ? t.foreground : t.dim).child(text("limits.compact-now")));
   }
 
-  claudeParts(t, usage) {
+  // One 64 px dial: the track, the arc, and the percent (or "Used up") in the middle.
+  dial(t, w) {
+    const share = Math.min(1, Math.max(0, w.pct / 100));
+    const used = w.pct >= 100;
+    return div().id(`limits-claude-${w.key}`).relative().w(64).h(64).flex_none()
+      .child(globalThis.window.paint_path(dialPath(1, 64, 7), Background.solid(t.hover)).absolute().top(0).left(0).size_full())
+      .when(share > 0, (el) => el.child(globalThis.window.paint_path(dialPath(share, 64, 7), Background.solid(limitColor(t, share)))
+        .absolute().top(0).left(0).size_full()))
+      .child(div().absolute().top(0).left(0).size_full().flex().items_center().justify_center()
+        .child(div().text_size(15).font_medium().text_color(used ? t.blocked : t.foreground)
+          .child(used ? text("limits.used-up") : `${Math.round(w.pct)}%`)));
+  }
+
+  // A dial and its name, with when it resets (or, used up, when it is back).
+  dialColumn(t, w) {
+    const used = w.pct >= 100;
+    const when = resetWords(w.resets);
+    return v_flex().flex_1().min_w(0).items_center().gap(3)
+      .child(this.dial(t, w))
+      .child(div().text_size(14).text_color(used ? t.muted : t.foreground).child(w.label))
+      .when(used && Boolean(when), (el) => el.child(div().text_size(13).text_color(t.blocked).child(text("limits.back-at", { when }))))
+      .when(!used && Boolean(when), (el) => el.child(div().text_size(13).text_color(t.dim).child(text("limits.resets-at", { when }))));
+  }
+
+  claudeCard(t, usage) {
     const windows = claudeWindows(usage);
-    const parts = [this.sectionHeader(t, "Claude")];
-    for (const w of windows) {
-      const share = w.pct / 100;
-      parts.push(meter(t, `limits-claude-${w.key}`, w.label, claudeWords(w), share, paceOf(w.resets, w.seconds),
-        limitColor(t, share), share >= 1 ? t.blocked : t.foreground));
-    }
-    if (windows.length === 0) {
-      parts.push(div().id("limits-claude-none").py(4).text_size(12).text_color(t.dim).child(text("limits.claude-none")));
-    }
-    return parts;
+    const body = windows.length
+      ? h_flex().id("limits-claude-dials").w_full().gap(10).children(windows.map((w) => this.dialColumn(t, w)))
+      : div().id("limits-claude-none").py(4).text_size(13).text_color(t.dim).child(text("limits.claude-none"));
+    return this.card(t, "limits-claude", [this.cardTitle(t, "limits-claude-plan", text("limits.claude-plan")), body]);
   }
 
-  // The chain, numbered in the order tasks try it, then the week's spend once, as a footer.
-  workerParts(t) {
-    const rows = chainWorkers(this.status);
-    const parts = [this.sectionHeader(t, text("limits.workers"))];
-    if (!this.status && !this.statusError) {
-      parts.push(div().id("limits-reading").py(4).text_size(12).text_color(t.dim).child(text("limits.reading-workers")));
-    }
-    if (this.statusError) {
-      parts.push(div().id("limits-error").py(4).text_size(12).text_color(t.dim).child(this.statusError));
-    }
-    parts.push(...rows.map((worker, i) => this.workerRow(t, worker, i + 1)));
-    if (this.status && rows.length) parts.push(this.weekTotal(t, rows));
-    return parts;
-  }
-
-  weekTotal(t, rows) {
+  // The week's spend on the Workers title: its dollars and runs, or that nothing ran.
+  weekWords(rows) {
     const sum = (pick) => rows.reduce((total, worker) => total + (Number(pick(worker.spend?.week)) || 0), 0);
     const cost = sum((week) => week?.cost_usd);
     const runs = sum((week) => week?.runs);
-    return h_flex().id("limits-spend-total").mt(4).pt(10).border_t_1().border_color(t.border).justify_between().items_center()
-      .child(div().text_size(12).text_color(t.muted).child(text("limits.this-week")))
-      .child(div().text_size(12).text_color(runs > 0 ? t.foreground : t.dim)
-        .child(runs > 0 ? `${dollars(cost)} · ${runWords(runs)}` : text("limits.no-runs")));
+    return runs > 0 ? `${dollars(cost)} · ${runWords(runs)}` : text("limits.no-runs");
   }
 
-  // Only a worker that is out gets a color; the next one is said in plain bright words, the rest are quiet.
-  workerRow(t, worker, index) {
-    const out = worker.state === "out";
-    const back = backWords(worker.until_ms);
-    const state = out
-      ? div().text_size(12).text_color(t.blocked).child(back ? text("limits.out-back", { when: back }) : text("limits.out"))
-      : worker.key === this.status?.workers?.next
-        ? div().text_size(12).font_medium().text_color(t.foreground).child(text("limits.next-up"))
-        : div().text_size(12).text_color(t.dim).child(text("limits.ready"));
-    const cost = Number(worker.spend?.week?.cost_usd) || 0;
-    const runs = Number(worker.spend?.week?.runs) || 0;
+  // A worker's highest reported window: one 40 × 6 bar, with every reported window in its tooltip.
+  workerBar(t, worker) {
     const entry = this.catalog.find((item) => item.worker === worker.cli);
     const meters = entry ? this.usage[entry.key] : null;
-    const bars = [];
-    for (const [key, label, reported] of [["5h", text("limits.window-5-hours"), meters?.rolling], ["week", text("limits.window-week"), meters?.weekly], ["month", text("limits.window-month"), meters?.monthly]]) {
-      if (!reported || (reported.percent == null && !reported.limited)) continue;
-      const pct = reported.percent == null ? null : Math.round(reported.percent);
-      const share = pct == null ? 1 : pct / 100;
-      const used = reported.limited || share >= 1;
-      const words = used ? text("limits.used-up") : `${pct}%`;
-      bars.push(meter(t, `limits-worker-${worker.key}-${key}`, label, words, share, null,
-        used ? t.blocked : limitColor(t, share), used ? t.blocked : t.foreground, BAR - INDENT));
+    const reports = [
+      ["5h", text("limits.window-5-hours"), meters?.rolling],
+      ["week", text("limits.window-week"), meters?.weekly],
+      ["month", text("limits.window-month"), meters?.monthly],
+    ].filter(([, , reported]) => reported && (reported.percent != null || reported.limited));
+    if (!reports.length) return null;
+    const shareOf = (reported) => (reported.limited ? 1 : Math.min(1, Math.max(0, Number(reported.percent) / 100)));
+    const share = Math.max(...reports.map(([, , reported]) => shareOf(reported)));
+    const tip = reports.map(([, label, reported]) => text("limits.window-share", {
+      window: label,
+      percent: reported.limited ? 100 : Math.round(Number(reported.percent)),
+    })).join(" · ");
+    return h_flex().id(`limits-worker-${worker.key}-bar`).w(40).h(6).flex_none().rounded(3).bg(t.hover).overflow_hidden().tooltip(tip)
+      .when(share > 0, (el) => el.child(div().h_full().rounded(3).bg(limitColor(t, share)).flex_grow(share)))
+      .when(share < 1, (el) => el.child(div().h_full().flex_grow(1 - share)));
+  }
+
+  // Next up is a calm badge; ready is quiet words; out is an alarm badge with when it is back.
+  workerState(t, worker) {
+    if (worker.state === "out") {
+      const when = backWords(worker.until_ms);
+      return div().id(`limits-worker-${worker.key}-state`).px(8).h(20).rounded(11).bg(t.blocked + "26")
+        .flex().items_center().text_size(13).font_medium().text_color(t.blocked)
+        .child(when ? text("limits.out-until", { when }) : text("limits.out"));
     }
-    return h_flex().id(`limits-worker-${worker.key}`).py(6).gap(8).items_start()
-      .child(div().w(INDENT - 8).flex_none().text_size(13).text_color(t.dim).child(String(index)))
-      .child(v_flex().flex_1().min_w(0).gap(2)
-        .child(h_flex().justify_between().items_center().gap(8)
-          .child(div().text_size(13).text_color(out ? t.muted : t.foreground).truncate().child(worker.label ?? worker.key))
-          .child(state))
-        .when(runs > 0, (el) => el.child(div().text_size(11).text_color(t.dim).child(`${dollars(cost)} · ${runWords(runs)}`)))
-        .children(bars));
+    if (worker.key === this.status?.workers?.next) {
+      return div().id(`limits-worker-${worker.key}-state`).px(8).h(20).rounded(11).bg(t.done + "26")
+        .flex().items_center().text_size(13).font_medium().text_color(t.done).child(text("limits.next-up"));
+    }
+    return div().id(`limits-worker-${worker.key}-state`).text_size(13).text_color(t.dim).child(text("limits.ready"));
+  }
+
+  // One worker in the chain's order: its name, its highest window, then its state.
+  workerRow(t, worker) {
+    const out = worker.state === "out";
+    const bar = this.workerBar(t, worker);
+    return h_flex().id(`limits-worker-${worker.key}`).w_full().py(4).gap(8).items_center()
+      .child(div().flex_1().min_w(0).truncate().text_size(14).text_color(out ? t.muted : t.foreground)
+        .child(worker.label ?? worker.key))
+      .when(Boolean(bar), (el) => el.child(bar))
+      .child(this.workerState(t, worker));
+  }
+
+  workersCard(t) {
+    const rows = chainWorkers(this.status);
+    const parts = [
+      h_flex().w_full().items_center().justify_between().gap(8)
+        .child(this.cardTitle(t, "limits-workers-title", text("limits.workers")))
+        .child(div().id("limits-spend-total").text_size(14).text_color(rows.length ? t.foreground : t.dim).child(this.weekWords(rows))),
+    ];
+    if (!this.status && !this.statusError) {
+      parts.push(div().id("limits-reading").py(4).text_size(13).text_color(t.dim).child(text("limits.reading-workers")));
+    }
+    if (this.statusError) {
+      parts.push(div().id("limits-error").py(4).text_size(13).text_color(t.dim).child(this.statusError));
+    }
+    parts.push(...rows.map((worker) => this.workerRow(t, worker)));
+    return this.card(t, "limits-workers", parts);
   }
 
   render() {
     const t = theme();
     const usage = lead()?.usage;
-    const terminal = typeof props()?.terminal === "string" ? props().terminal : null;
-    const parts = [];
-    if (typeof usage?.context_tokens === "number" && typeof usage?.compact_at === "number") {
-      parts.push(...this.contextParts(t, usage, terminal));
+    // Compact now runs in the terminal the popup was opened for, else the live lead's.
+    const terminal = typeof props()?.terminal === "string"
+      ? props().terminal
+      : terminals().find((each) => each.state === "live" && each.labels?.lead)?.address ?? null;
+    const cards = [];
+    if (typeof usage?.context_tokens === "number" && typeof usage?.compact_at === "number" && usage.compact_at > 0) {
+      cards.push(this.conversationCard(t, usage, terminal));
     }
-    if ((settings()?.lead?.program ?? "claude") === "claude") parts.push(...this.claudeParts(t, usage));
-    parts.push(...this.workerParts(t));
-    return v_flex().id("limits").size_full().min_h(0).bg(t.chrome).text_color(t.foreground).text_size(13)
-      .px(12).pt(4).pb(12).gap(4).overflow_y_scroll()
-      .children(parts);
+    if ((settings()?.lead?.program ?? "claude") === "claude") cards.push(this.claudeCard(t, usage));
+    cards.push(this.workersCard(t));
+    return v_flex().id("limits").size_full().min_h(0).bg(t.chrome).text_color(t.foreground).text_size(14)
+      .px(12).pt(4).pb(12).gap(10).overflow_y_scroll()
+      .children(cards);
   }
 }

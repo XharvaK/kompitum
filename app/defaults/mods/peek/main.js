@@ -58,7 +58,7 @@ export default class Peek extends View {
       .bg(t.surface)
       .border_b(1)
       .border_color(t.border)
-      .text_size(12)
+      .text_size(13)
       .child(div().w(12).flex_none().text_color(t[st] ?? t.dim).when(st === "working", (el) => el.frames(SPIN, 90)).child(glyph))
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().truncate().font_semibold().text_color(t.foreground).child(k?.name || k?.template || k?.program?.name || terminal || ""))

@@ -48,18 +48,18 @@ function weatherIn(kind, w, h) {
 
 export function poster(x, y, h, [text, bg]) {
   return div().absolute().left(x).top(y).w(70).h(Math.min(h, 92)).p(3).bg(PAPER).border_1().border_color(WOOD)
-    .child(div().size_full().bg(bg).flex().flex_col().items_center().justify_center().text_size(10).font_bold()
+    .child(div().size_full().bg(bg).flex().flex_col().items_center().justify_center().text_size(11).font_bold()
       .text_color("#fffaf0").children(text.split("\n").map((l) => div().child(l))));
 }
 
 export function clock(x, y, text) {
   return div().absolute().left(x).top(y).size(42).rounded_full().bg(PAPER).border_3().border_color(INK)
-    .flex().items_center().justify_center().text_size(10).font_bold().text_color(INK).child(text);
+    .flex().items_center().justify_center().text_size(11).font_bold().text_color(INK).child(text);
 }
 
 export function whiteboard(x, y, rows) {
   return div().absolute().left(x).top(y).w(150).p(6).bg("#fbfbf8").border_3().border_color("#a6adb8").rounded(2)
-    .flex().flex_col().text_size(10).font_bold()
+    .flex().flex_col().text_size(11).font_bold()
     .children(rows.filter(([, , show]) => show !== false).map(([color, text]) => div().text_color(color).child(text)));
 }
 
@@ -146,7 +146,7 @@ export function stringLights(W, y) {
 
 export function banner(W, y, text, bg) {
   return div().absolute().left(W / 2 - 110).top(y).w(220).h(22).rounded(3).bg(bg).flex().items_center().justify_center()
-    .text_size(12).font_bold().text_color("#fffaf0").child(text);
+    .text_size(13).font_bold().text_color("#fffaf0").child(text);
 }
 
 // A spinning red light over the desk, and the whole room washed red in time.

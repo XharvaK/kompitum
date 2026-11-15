@@ -57,7 +57,8 @@ fn sheet_draws(cx: &mut TestAppContext, values: BTreeMap<String, Value>) -> Stri
     describe_settled(cx, &staged, "mods/limits", values, None).unwrap()
 }
 
-/// The context bar, and Compact now only when the popup has a terminal to run it in.
+/// The conversation card: its title, the token counts, the bar, and Compact now only when the popup has a
+/// terminal to run it in.
 #[gpui::test]
 fn the_sheet_shows_the_context_and_compact_now(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -67,22 +68,23 @@ fn the_sheet_shows_the_context_and_compact_now(cx: &mut TestAppContext) {
         sheet_values(usage.clone(), no_workers(), json!({"overlay": "o1", "terminal": "t1"})),
     );
     for shown in [
+        "This conversation",
         "limits-context",
         "271K of 444K",
         "limits-compact",
         "Compact now",
-        "Kompitum tidies up by itself while you're away.",
     ] {
         assert!(tree.contains(shown), "missing {shown}: {tree}");
     }
+    assert!(!tree.contains("Kompitum tidies up by itself"), "{tree}");
     let bare = sheet_draws(cx, sheet_values(usage, no_workers(), json!({"overlay": "o1"})));
     assert!(bare.contains("limits-context"), "{bare}");
     assert!(!bare.contains("limits-compact"), "{bare}");
 }
 
-/// Claude's two windows are bars, each with a pace mark from its reset; with no usage the sheet says when they show.
+/// Claude's two windows are dials with their percents and resets; with no usage the sheet says when they show.
 #[gpui::test]
-fn claudes_windows_have_bars_and_a_pace_mark(cx: &mut TestAppContext) {
+fn claudes_windows_have_dials_with_resets(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let now = now_seconds();
     let usage = lead_usage(
@@ -94,21 +96,20 @@ fn claudes_windows_have_bars_and_a_pace_mark(cx: &mut TestAppContext) {
     for shown in [
         "limits-claude-5h",
         "limits-claude-week",
-        "5-hour limit",
+        "5 hours",
         "Week",
         "41%",
-        "limits-claude-5h-pace",
-        "limits-claude-week-pace",
+        "resets ",
     ] {
         assert!(tree.contains(shown), "missing {shown}: {tree}");
     }
+    assert!(!tree.contains("limits-claude-5h-pace"), "the pace mark is gone: {tree}");
     let none = sheet_draws(cx, sheet_values(Value::Null, no_workers(), json!({"overlay": "o1"})));
     assert!(none.contains("limits-claude-none"), "{none}");
     assert!(!none.contains("limits-claude-5h"), "{none}");
 }
 
-/// The workers are numbered in the chain's order with their state; only one that ran shows its cost, and a
-/// footer sums the week once.
+/// The workers follow the chain's order with their state; the week's spend sits on the Workers title.
 #[gpui::test]
 fn the_workers_show_state_and_cost_in_chain_order(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
@@ -123,26 +124,25 @@ fn the_workers_show_state_and_cost_in_chain_order(cx: &mut TestAppContext) {
     let tree = sheet_draws(cx, sheet_values(Value::Null, status, json!({"overlay": "o1"})));
     for shown in [
         "limits-worker-cc",
-        "Out · back",
+        "Out until",
         "limits-worker-go",
         "Next up",
         "limits-worker-haiku",
         "$8.88 · 22 runs",
         "limits-spend-total",
-        "This week",
     ] {
         assert!(tree.contains(shown), "missing {shown}: {tree}");
     }
-    assert!(!tree.contains("Nothing this week"), "a worker that didn't run says nothing: {tree}");
+    assert!(!tree.contains("This week"), "the footer row is gone: {tree}");
     let cc = tree.find("limits-worker-cc").unwrap();
     let go = tree.find("limits-worker-go").unwrap();
     assert!(cc < go, "cc's row comes before go's: {tree}");
 }
 
-/// A worker whose CLI reports meters draws a bar for each present meter. The fake exec answers `opencode`
-/// with its nested report: rolling 0%, weekly 19%, monthly 96%.
+/// A worker whose CLI reports meters draws one bar for its highest window, every window in the tooltip. The
+/// fake exec answers `opencode` with its nested report: rolling 0%, weekly 19%, monthly 96%.
 #[gpui::test]
-fn a_worker_cli_report_draws_its_meters(cx: &mut TestAppContext) {
+fn a_worker_cli_report_draws_its_highest_meter(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let status = json!({"workers": {"chain": ["go"], "next": "go", "workers": [
         {"key": "go", "label": "opencode Go", "cli": "opencode", "state": "ready", "until_ms": 0,
@@ -154,7 +154,10 @@ fn a_worker_cli_report_draws_its_meters(cx: &mut TestAppContext) {
     let mut values = sheet_values(Value::Null, status, json!({"overlay": "o1"}));
     values.insert("knownAgents".into(), catalog);
     let tree = sheet_draws(cx, values);
-    for shown in ["limits-worker-go-5h", "limits-worker-go-week", "limits-worker-go-month", "19%", "96%"] {
+    for shown in [
+        "limits-worker-go-bar",
+        "5 hours 0% · Week 19% · Month 96%",
+    ] {
         assert!(tree.contains(shown), "missing {shown}: {tree}");
     }
 }

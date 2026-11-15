@@ -56,7 +56,7 @@ export default class TerminalsPane extends View {
       .pr(8)
       .gap(8)
       .items_center()
-      .text_size(14)
+      .text_size(15)
       .on_click(() => run("pane.focus", { pane }))
       .when(Boolean(g?.icon), (el) =>
         el.child(g.tint ? svg(g.icon).size(16).flex_none().text_color("#d6d8db") : image(g.icon).w(15).h(15).flex_none()),

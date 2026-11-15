@@ -333,7 +333,7 @@ export default class Welcome extends View {
   // Pieces ---------------------------------------------------------------
 
   para(t, text) {
-    return div().w_full().text_size(13).line_height("20px").text_color(t.muted).child(text);
+    return div().w_full().text_size(14).line_height("20px").text_color(t.muted).child(text);
   }
 
   // A step's heading: the title, then the sub-text when it has one.
@@ -352,7 +352,7 @@ export default class Welcome extends View {
       .px(16)
       .rounded(8)
       .items_center()
-      .text_size(13)
+      .text_size(14)
       .font_medium()
       .when(enabled, (el) =>
         el.relative().cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).on_click(onClick).child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))),
@@ -371,7 +371,7 @@ export default class Welcome extends View {
       .py(3)
       .rounded(6)
       .cursor_pointer()
-      .text_size(12)
+      .text_size(13)
       .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -415,7 +415,7 @@ export default class Welcome extends View {
   }
 
   errorLine(t, text) {
-    return div().text_size(12).line_height("18px").text_color(t.blocked).tooltip(text).child(firstLine(text) || text);
+    return div().text_size(13).line_height("18px").text_color(t.blocked).tooltip(text).child(firstLine(text) || text);
   }
 
   agentIcon(t, agent) {
@@ -428,7 +428,7 @@ export default class Welcome extends View {
   // What the app has observed about a program, and nothing more.
   stateOf(t, agent, cx) {
     if (this.runs[agent.key]) {
-      return div().text_size(12).text_color(t.dim).child(text("welcome.running-behind"));
+      return div().text_size(13).text_color(t.dim).child(text("welcome.running-behind"));
     }
     if (!agent.installed) {
       const argv = this.installArgv(agent);
@@ -442,27 +442,27 @@ export default class Welcome extends View {
       });
     }
     if (!agent.signed_in?.length) {
-      return div().text_size(12).text_color(t.dim).child(text("welcome.installed"));
+      return div().text_size(13).text_color(t.dim).child(text("welcome.installed"));
     }
     if (this.signedIn[agent.key] === true) {
       return h_flex()
         .gap(6)
         .items_center()
         .child(svg(W("check")).size(13).text_color(t.ansi2))
-        .child(div().text_size(12).text_color(t.muted).child(text("welcome.signed-in")));
+        .child(div().text_size(13).text_color(t.muted).child(text("welcome.signed-in")));
     }
     if (this.signedIn[agent.key] === false) {
       return h_flex()
         .gap(8)
         .items_center()
-        .child(div().text_size(12).text_color(t.muted).child(text("welcome.not-signed-in")))
+        .child(div().text_size(13).text_color(t.muted).child(text("welcome.not-signed-in")))
         .child(
           this.rowButton(t, `w-signin-${agent.key}`, text("welcome.sign-in"), (_e, cx) =>
             this.startRun("Sign in", agent, agent.login, cx),
           ),
         );
     }
-    return div().text_size(12).text_color(t.dim).child(text("welcome.checking"));
+    return div().text_size(13).text_color(t.dim).child(text("welcome.checking"));
   }
 
   agentRow(t, agent, cx) {
@@ -497,7 +497,7 @@ export default class Welcome extends View {
           })
           .child(this.radio(t, chosen))
           .child(this.agentIcon(t, agent))
-          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(agent.name))
+          .child(div().flex_1().min_w(0).truncate().text_size(14).text_color(t.foreground).child(agent.name))
           .child(this.stateOf(t, agent, cx)),
       )
       .when(chosen && !agent.installed && !running && Boolean(argv), (el) =>
@@ -505,13 +505,13 @@ export default class Welcome extends View {
           div()
             .pl(38)
             .font_family(mono())
-            .text_size(12)
+            .text_size(13)
             .text_color(t.dim)
             .child(argv.join(" ")),
         ),
       )
       .when(Boolean(this.notes[agent.key]), (el) =>
-        el.child(div().pl(38).text_size(12).line_height("18px").text_color(t.blocked).child(this.notes[agent.key])),
+        el.child(div().pl(38).text_size(13).line_height("18px").text_color(t.blocked).child(this.notes[agent.key])),
       );
   }
 
@@ -534,7 +534,7 @@ export default class Welcome extends View {
           .w_full()
           .gap(8)
           .when(rows.length === 0, (el) =>
-            el.child(div().py(12).text_size(12).text_color(t.dim).child(text("welcome.reading-agents"))),
+            el.child(div().py(12).text_size(13).text_color(t.dim).child(text("welcome.reading-agents"))),
           )
           .children(rows.map((agent) => this.agentRow(t, agent, cx))),
       );
@@ -568,8 +568,8 @@ export default class Welcome extends View {
         v_flex()
           .flex_1()
           .min_w(0)
-          .child(div().truncate().text_size(13).text_color(t.foreground).child(row.label))
-          .when(Boolean(row.path), (el) => el.child(div().truncate().text_size(12).text_color(t.dim).child(row.path))),
+          .child(div().truncate().text_size(14).text_color(t.foreground).child(row.label))
+          .when(Boolean(row.path), (el) => el.child(div().truncate().text_size(13).text_color(t.dim).child(row.path))),
       );
   }
 
@@ -602,7 +602,7 @@ export default class Welcome extends View {
                 ),
               ),
           )
-          .child(div().text_size(12).text_color(t.dim).child(text("welcome.change-in-settings"))),
+          .child(div().text_size(13).text_color(t.dim).child(text("welcome.change-in-settings"))),
       );
   }
 
@@ -633,10 +633,10 @@ export default class Welcome extends View {
                   .flex_1()
                   .min_w(0)
                   .gap(2)
-                  .child(div().text_size(13).text_color(t.foreground).child(text("welcome.use-kompitum")))
+                  .child(div().text_size(14).text_color(t.foreground).child(text("welcome.use-kompitum")))
                   .child(
                     div()
-                      .text_size(13)
+                      .text_size(14)
                       .line_height("18px")
                       .text_color(t.muted)
                       .child(text("welcome.use-kompitum-about")),
