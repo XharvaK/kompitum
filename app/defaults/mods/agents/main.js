@@ -3,7 +3,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, lead, knownAgents } from "kompitum";
+import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, lead, knownAgents, nextCommand } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -87,6 +87,19 @@ export default class Agents extends View {
     this.pendingPins = JSON.parse(localStorage.getItem("pins") ?? "[]");
     if (!this.pendingPins.length) localStorage.removeItem("pins");
     this.migratingPins = new Set();
+    this.handle = cx.focus_handle();
+    this.highlight = null;
+    this.rows = [];
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const command = await nextCommand();
+        if (command === "focus") {
+          this.highlight = null;
+          this.handle.focus();
+          cx.notify();
+        }
+      }
+    });
     // The CLIs by key, for the lead's name: its terminal's program is the shell that wraps it.
     this.known = [];
     cx.spawn(async (cx) => {
@@ -153,6 +166,23 @@ export default class Agents extends View {
     return sawDone ? RANK.done : RANK[a.status] ?? 0;
   }
 
+  // Up and Down move the highlight without wrapping; Enter presses its row.
+  key(e, cx) {
+    if (e.key === "up" || e.key === "down") {
+      if (this.rows.length) {
+        const at = Math.max(0, this.rows.findIndex((row) => row.key === this.highlight));
+        const next = Math.max(0, Math.min(this.rows.length - 1, at + (e.key === "down" ? 1 : -1)));
+        this.highlight = this.rows[next].key;
+        cx.notify();
+      }
+      cx.stop_propagation();
+    } else if (e.key === "enter") {
+      const row = this.rows.find((row) => row.key === this.highlight);
+      if (row) row.action();
+      cx.stop_propagation();
+    }
+  }
+
   sortMenu(t) {
     const on = sortOf().id;
     return v_flex()
@@ -211,6 +241,7 @@ export default class Agents extends View {
       .gap(0)
       .items_center()
       .text_size(13)
+      .when(highlight === `sub-${k.address}`, (el) => el.track_focus(this.handle).focus_ring(t.focus, 8))
       .when(on, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .keep_focus(true)
@@ -336,6 +367,7 @@ export default class Agents extends View {
           .flex_none()
           .items_center()
           .gap(4)
+          .when(highlight === `ag-${a.address}`, (el) => el.track_focus(this.handle).focus_ring(t.focus, 0))
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .keep_focus(true)
           .on_click(() => run("pane.focus", { pane: a.pane }))
@@ -376,6 +408,7 @@ export default class Agents extends View {
         .rounded(8)
         .items_center()
         .gap(9)
+        .when(highlight === `ag-${a.address}`, (el) => el.track_focus(this.handle).focus_ring(t.focus, 8))
         .when(a.focused, (el) => el.bg(t.selected))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
@@ -458,6 +491,7 @@ export default class Agents extends View {
           .flex_none()
           .items_center()
           .justify_center()
+          .when(highlight === "ag-lead", (el) => el.track_focus(this.handle).focus_ring(t.focus, 0))
           .when(on, (el) => el.bg(t.raised))
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .keep_focus(true)
@@ -472,6 +506,7 @@ export default class Agents extends View {
         .rounded(8)
         .items_center()
         .gap(9)
+        .when(highlight === "ag-lead", (el) => el.track_focus(this.handle).focus_ring(t.focus, 8))
         .when(on, (el) => el.bg(t.selected))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
@@ -483,7 +518,6 @@ export default class Agents extends View {
           .when(leadQuiet, (w) => w.tooltip("No word from the lead for 10 minutes."))
           .child(word)));
     };
-    const leadRows = leadTerminal && !leadListed ? [leadRow()] : [];
     // The plain terminals no other row lists: tabs of the active space with a terminal, but not the
     // lead's tab and not an agent's, in the space's tab order.
     const leadTab = leadTerminal ? paneList.find((p) => p.terminal === leadTerminal.address)?.tab : null;
@@ -505,6 +539,7 @@ export default class Agents extends View {
           .flex_none()
           .items_center()
           .gap(4)
+          .when(highlight === key, (el) => el.track_focus(this.handle).focus_ring(t.focus, 0))
           .when(tab.active, (el) => el.bg(t.raised))
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .keep_focus(true)
@@ -519,6 +554,7 @@ export default class Agents extends View {
         .rounded(8)
         .items_center()
         .gap(9)
+        .when(highlight === key, (el) => el.track_focus(this.handle).focus_ring(t.focus, 8))
         .when(tab.active, (el) => el.bg(t.selected))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
@@ -553,6 +589,39 @@ export default class Agents extends View {
           })
           .child(svg("mods/pane/close.svg").size(13))));
     };
+    // The rows Up and Down move through, in drawing order, and the row the
+    // highlight starts on: the selected one, else the first.
+    const order = [];
+    const pushRow = (key, selected, action) => order.push({ key, selected, action });
+    if (leadTerminal && !leadListed) {
+      pushRow("ag-lead", focused()?.terminal === leadTerminal.address, () => run("lead.open"));
+    }
+    if (collapsed) {
+      for (const a of list) {
+        pushRow(`ag-${a.address}`, Boolean(a.focused), () => run("pane.focus", { pane: a.pane }));
+      }
+    } else {
+      for (const g of groups) {
+        if (this.folded.has(g.id)) continue;
+        for (const a of g.members) {
+          pushRow(`ag-${a.address}`, Boolean(a.focused), () => run("pane.focus", { pane: a.pane }));
+          if (this.folded.has(a.address)) continue;
+          for (const s of this.tree(all, a.address)) {
+            const k = s.t;
+            pushRow(`sub-${k.address}`, false, () => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)));
+          }
+        }
+      }
+    }
+    for (const tab of plainTabs) {
+      pushRow(`term-${tab.id}`, Boolean(tab.active), () => run("tab.select", { id: tab.id }));
+    }
+    if (this.highlight == null || !order.some((row) => row.key === this.highlight)) {
+      this.highlight = (order.find((row) => row.selected) ?? order[0])?.key ?? null;
+    }
+    const highlight = this.highlight;
+    this.rows = order;
+    const leadRows = leadTerminal && !leadListed ? [leadRow()] : [];
     const terminalSection = plainTabs.length
       ? [
         ...(collapsed ? [] : [h_flex().id("ag-terminals").px(8).h(36).pt(10).pb(5).flex_none().items_center()
@@ -572,6 +641,8 @@ export default class Agents extends View {
       .size_full()
       .min_h(0)
       .text_size(13)
+      .track_focus(this.handle)
+      .on_key_down((e, cx) => this.key(e, cx))
       .when(!collapsed, (el) =>
         el.child(
           h_flex()

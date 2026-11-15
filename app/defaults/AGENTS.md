@@ -555,6 +555,7 @@ shortcuts must then be added by hand.
 - F6 and Shift+F6 move the keyboard between regions: the sidebar, the lead's composer,
   the focused pane's terminal and the side panel when it is open, in that order,
   skipping a region that isn't shown.
+- In the sidebar, Up and Down move between agents and Enter opens one; in the side panel, Tab moves between controls; Esc goes back to the composer.
 
 A mod makes a control keyboard-friendly with `tab_stop(true)` and
 `focus_ring(t.focus, radius)` (its own corner radius), `keep_focus(true)` on a chrome

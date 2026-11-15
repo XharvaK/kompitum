@@ -810,6 +810,118 @@ fn the_command_list_announces_its_highlighted_option(cx: &mut TestAppContext) {
     );
 }
 
+/// Three agents in one space: the focused one sits between the other two, so
+/// starting on the selected row and moving from it are both visible.
+fn agents_for_keys() -> BTreeMap<String, Value> {
+    let mut values = fixture(true, props(), updates("current", "current"));
+    let program = values["agents"][0]["program"].clone();
+    let agent = |address: &str, pane: &str, status: &str, focused: bool, seq: i64| {
+        json!({
+            "address": address, "pane": pane, "space": "s1", "space_name": "Local",
+            "tab": "tab1", "tab_index": 1, "tab_name": "Build", "status": status,
+            "app": "pi", "program": program.clone(), "title": address, "seq": seq, "focused": focused
+        })
+    };
+    values.insert(
+        "agents".into(),
+        json!([
+            agent("t2", "p2", "idle", false, 3),
+            agent("t1", "p1", "working", true, 2),
+            agent("t3", "p3", "idle", false, 1)
+        ]),
+    );
+    values.insert(
+        "focused".into(),
+        json!({
+            "space": "s1", "tab": "tab1", "pane": "p1", "terminal": "t1",
+            "agent": "t1", "shown": null, "cwd": "/fixture/project"
+        }),
+    );
+    values.insert("sharedValues".into(), json!({"agents.sort": "grouped"}));
+    values
+}
+
+/// The agents list is a list of rows for the keyboard: the ring starts on the
+/// selected agent, Up and Down move it without wrapping, and Enter opens the
+/// row the way its click does.
+#[gpui::test]
+fn arrows_move_the_agents_highlight_and_enter_opens_the_row(cx: &mut TestAppContext) {
+    let _guard = RING_LOG.lock().unwrap_or_else(|poison| poison.into_inner());
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let (window, mut visual, calls) = mount_mod(
+        cx,
+        &staged,
+        "mods/agents",
+        agents_for_keys(),
+        "this.handle.focus();",
+    );
+    draw(&mut visual);
+    press_key(&mut visual, "left");
+    draw(&mut visual);
+    assert_eq!(
+        rings_named("ag-t1"),
+        1,
+        "the highlight starts on the selected row: {:?}",
+        focus_ring_test_support::painted()
+    );
+    press_key(&mut visual, "up");
+    draw(&mut visual);
+    assert_eq!(rings_named("ag-t2"), 1, "Up moves to the row above");
+    press_key(&mut visual, "up");
+    draw(&mut visual);
+    assert_eq!(rings_named("ag-t2"), 1, "Up stops at the first row");
+    press_key(&mut visual, "down");
+    press_key(&mut visual, "down");
+    press_key(&mut visual, "down");
+    draw(&mut visual);
+    assert_eq!(rings_named("ag-t3"), 1, "Down stops at the last row");
+    press_key(&mut visual, "enter");
+    let calls = calls.borrow();
+    assert!(
+        calls.effects.iter().any(|(name, args)| {
+            name == "run" && args.first() == Some(&json!("pane.focus")) && args.get(1) == Some(&json!({"pane": "p3"}))
+        }),
+        "Enter opened the highlighted row: {:?}",
+        calls.effects
+    );
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    drop(calls);
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+}
+
+/// A panel mod's controls are Tab stops: Tab reaches the first file row and
+/// the ring follows it.
+#[gpui::test]
+fn tab_reaches_a_panel_mods_first_control(cx: &mut TestAppContext) {
+    let _guard = RING_LOG.lock().unwrap_or_else(|poison| poison.into_inner());
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let (window, mut visual, calls) = mount_mod(
+        cx,
+        &staged,
+        "mods/files",
+        fixture(true, props(), updates("current", "current")),
+        "this.handle.focus();",
+    );
+    assert!(
+        tab_to(&mut visual, "file-src", 8),
+        "Tab reaches the first file row: {:?}",
+        focus_ring_test_support::painted()
+    );
+    assert_eq!(rings_named("file-src"), 1, "the first control shows the ring");
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    drop(calls);
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+}
+
 /// A one-choice question is a radio_group of radios; a multi-choice one is a
 /// group of checkboxes.
 #[gpui::test]
