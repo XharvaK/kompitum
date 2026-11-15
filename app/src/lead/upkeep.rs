@@ -7,6 +7,10 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
+use std::time::Duration;
+
+/// A core that doesn't answer its status is wedged; the lead's next look may try again.
+const STATUS_LIMIT: Duration = Duration::from_secs(30);
 
 /// The model and usage a status line JSON says, as `Session` keeps them; `seen_ms` is when it arrived.
 /// Each field is read defensively: a missing one is null, never an error.
@@ -72,14 +76,14 @@ fn word(text: String) -> &'static str {
     word
 }
 
-/// Why the lead can't be told to compact now, or None when it can: it has to be waiting for the
-/// Owner, with no card open and no compaction running.
-pub fn compact_refusal(session: Option<&Session>) -> Option<&'static str> {
+/// Why the lead can't take a change now, or None when it can: it has to be waiting for the
+/// Owner, with no card open and no compaction running. `compacting` is the text that differs.
+fn refusal(session: Option<&Session>, compacting: &str) -> Option<&'static str> {
     let Some(session) = session else {
         return Some(word(strings::text("lead.not-started")));
     };
     if session.compacting {
-        return Some(word(strings::text("lead.compacting")));
+        return Some(word(compacting.to_owned()));
     }
     if session.conversation.reveal == Some(Reveal::Auto) {
         return Some(word(strings::text("lead.menu-shown")));
@@ -95,27 +99,16 @@ pub fn compact_refusal(session: Option<&Session>) -> Option<&'static str> {
     }
 }
 
+/// Why the lead can't be told to compact now, or None when it can: it has to be waiting for the
+/// Owner, with no card open and no compaction running.
+pub fn compact_refusal(session: Option<&Session>) -> Option<&'static str> {
+    refusal(session, &strings::text("lead.compacting"))
+}
+
 /// Why the lead can't take a model or reasoning change now, or None when it can: the same
 /// conditions as a compaction, but a tidy-up only delays the change.
 pub fn apply_refusal(session: Option<&Session>) -> Option<&'static str> {
-    let Some(session) = session else {
-        return Some(word(strings::text("lead.not-started")));
-    };
-    if session.compacting {
-        return Some(word(strings::text("lead.tidying-change")));
-    }
-    if session.conversation.reveal == Some(Reveal::Auto) {
-        return Some(word(strings::text("lead.menu-shown")));
-    }
-    if session.ask.is_some() {
-        return Some(word(strings::text("lead.asking")));
-    }
-    match session.state {
-        Some(State::Waiting) => None,
-        Some(State::Asking) => Some(word(strings::text("lead.asking"))),
-        Some(State::Working) => Some(word(strings::text("lead.working-compact"))),
-        None => Some(word(strings::text("lead.not-started"))),
-    }
+    refusal(session, &strings::text("lead.tidying-change"))
 }
 
 /// The commands a picked model and reasoning need: Claude Code's `/model` and `/effort`, each only
@@ -349,13 +342,16 @@ pub fn send_status_to_core(input: &Value) {
 
 /// `kom status --json`, run headless: its stdout, or None when the core could not run or failed.
 pub fn core_status_text(core: &Path) -> Option<String> {
-    let output = crate::spawn::command(core)
-        .args(["status", "--json"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let mut command = crate::spawn::command(core);
+    command.args(["status", "--json"]);
+    let (output, timed_out) = crate::spawn::output_within(command, STATUS_LIMIT).ok()?;
+    if timed_out {
+        tracing::warn!(
+            "kom status --json took longer than {} s and was stopped",
+            STATUS_LIMIT.as_secs()
+        );
+        return None;
+    }
     output.status.success().then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 

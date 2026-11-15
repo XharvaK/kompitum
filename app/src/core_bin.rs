@@ -16,6 +16,8 @@ use std::time::Duration;
 mod cli_link;
 
 static BIN: OnceLock<PathBuf> = OnceLock::new();
+/// A binary that doesn't answer `--version` isn't one the app can wait for.
+const VERSION_LIMIT: Duration = Duration::from_secs(20);
 
 #[cfg(target_os = "macos")]
 pub fn install_cli_link() {
@@ -89,12 +91,12 @@ fn merged_path(
 
 /// `kom X.Y.Z` if this binary is kompitum-core and runs.
 pub fn version(bin: &Path) -> Option<String> {
-    let out = crate::spawn::command(bin)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+    let mut command = crate::spawn::command(bin);
+    command.arg("--version");
+    let (out, timed_out) = crate::spawn::output_within(command, VERSION_LIMIT).ok()?;
+    if timed_out {
+        return None;
+    }
     let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
     (out.status.success() && text.starts_with("kom ")).then_some(text)
 }

@@ -7,13 +7,16 @@
 
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashSet;
-use std::process::Stdio;
+use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 const CHECK_EVERY: Duration = Duration::from_secs(60);
+/// A wedged core must not keep the watcher from trying again next minute.
+const CHECK_LIMIT: Duration = Duration::from_secs(30);
 const FADE_MS: f64 = 5000.0;
+/// Passing notes held for a later pass: the newest ones, oldest first when raised.
+const WAITING_LIMIT: usize = 50;
 
 /// A note from `kom vault changes --json`, as much as a pop-up needs.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -85,16 +88,14 @@ pub fn start() {
 
 fn watch() {
     let mut failed: HashSet<String> = HashSet::new();
+    let mut waiting = Waiting::default();
     loop {
         match check() {
             Ok(notes) => {
                 failed.clear();
-                for pop in pops(&notes) {
-                    // Passing notes wait out a fullscreen game; the ones that
-                    // need the person stay put and show.
-                    if !pop.stays && crate::quiet::quiet() {
-                        continue;
-                    }
+                // Passing notes wait out a fullscreen game; the ones that need
+                // the person stay put and show.
+                for pop in waiting.take(pops(&notes), crate::quiet::quiet()) {
                     raise(&pop);
                 }
             }
@@ -109,12 +110,47 @@ fn watch() {
     }
 }
 
+/// Passing notes seen while another app fills the screen, newest last.
+#[derive(Default)]
+struct Waiting {
+    notes: VecDeque<Pop>,
+}
+
+impl Waiting {
+    /// The notes to raise now, oldest first: what waited, then this pass's.
+    /// Passing notes wait while `quiet`; notes that need the person always show.
+    fn take(&mut self, pops: Vec<Pop>, quiet: bool) -> Vec<Pop> {
+        let mut now = Vec::new();
+        for pop in pops {
+            if quiet && !pop.stays {
+                self.notes.push_back(pop);
+                if self.notes.len() > WAITING_LIMIT {
+                    self.notes.pop_front();
+                }
+            } else {
+                now.push(pop);
+            }
+        }
+        if !quiet && !self.notes.is_empty() {
+            let mut all: Vec<Pop> = self.notes.drain(..).collect();
+            all.append(&mut now);
+            now = all;
+        }
+        now
+    }
+}
+
 fn check() -> Result<Vec<Note>, String> {
-    let out = crate::spawn::command(crate::core_bin::path())
-        .args(["vault", "changes", "--json", "--as", "owner"])
-        .stdin(Stdio::null())
-        .output()
+    let mut command = crate::spawn::command(crate::core_bin::path());
+    command.args(["vault", "changes", "--json", "--as", "owner"]);
+    let (out, timed_out) = crate::spawn::output_within(command, CHECK_LIMIT)
         .map_err(|e| format!("cannot run kom: {e}"))?;
+    if timed_out {
+        return Err(format!(
+            "kom vault changes took longer than {} s and was stopped",
+            CHECK_LIMIT.as_secs()
+        ));
+    }
     if !out.status.success() {
         return Err(failure_words(&out));
     }
@@ -189,6 +225,57 @@ mod tests {
         assert_eq!(pops[1].body, "b title");
         assert_eq!(pops[1].path, "b");
         assert!(pops.iter().all(|p| !p.title.is_empty()));
+    }
+
+    #[test]
+    fn passing_notes_wait_out_a_fullscreen_app_and_raise_oldest_first() {
+        let mut waiting = Waiting::default();
+        let notes = [
+            note("a", "worker", "owner", Some("report")),
+            note("b", "worker", "owner", Some("request")),
+            note("c", "worker", "owner", Some("report")),
+        ];
+        let quiet = waiting.take(pops_with(&notes, true), true);
+        assert_eq!(
+            quiet.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
+            ["b"],
+            "a note that needs the person shows even while quiet"
+        );
+        let later = waiting.take(
+            pops_with(&[note("d", "worker", "owner", Some("decision"))], true),
+            false,
+        );
+        assert_eq!(
+            later.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
+            ["a", "c", "d"],
+            "the ones that waited come first, oldest first"
+        );
+        assert!(waiting.notes.is_empty(), "the wait is over once raised");
+        let now = waiting.take(
+            pops_with(&[note("e", "worker", "owner", Some("report"))], true),
+            false,
+        );
+        assert_eq!(
+            now.iter().map(|p| p.path.as_str()).collect::<Vec<_>>(),
+            ["e"]
+        );
+    }
+
+    #[test]
+    fn waiting_notes_keep_the_fifty_newest() {
+        let mut waiting = Waiting::default();
+        let notes: Vec<Note> = (0..55)
+            .map(|i| note(&format!("{i}"), "worker", "owner", Some("report")))
+            .collect();
+        assert!(waiting.take(pops_with(&notes, true), true).is_empty());
+        assert_eq!(waiting.notes.len(), WAITING_LIMIT);
+        let raised: Vec<String> = waiting
+            .take(Vec::new(), false)
+            .into_iter()
+            .map(|p| p.path)
+            .collect();
+        assert_eq!(raised.first().map(String::as_str), Some("5"));
+        assert_eq!(raised.last().map(String::as_str), Some("54"));
     }
 
     #[test]

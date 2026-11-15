@@ -28,7 +28,10 @@ pub fn press_win_h() -> Result<(), String> {
     // SAFETY: `inputs` holds four initialised INPUT values, and the size passed is the size of one of them.
     let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
     if sent < 4 {
-        return Err(format!("Windows took {sent} of the 4 key presses for Win+H"));
+        return Err(crate::strings::text_with(
+            "dictation.win-h-failed",
+            &[("sent", &sent.to_string())],
+        ));
     }
     Ok(())
 }

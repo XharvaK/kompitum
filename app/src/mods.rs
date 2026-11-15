@@ -1160,13 +1160,15 @@ pub(crate) fn run_blocking(
         .map_err(|e| format!("cannot run {command}: {e}"))?;
     // Bounded: a chatty command can't fill memory; the rest is drained and dropped.
     let drain = |r: Box<dyn Read + Send>| {
+        let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut buf = Vec::new();
             let mut r = r;
             let _ = (&mut r).take(EXEC_OUTPUT).read_to_end(&mut buf);
             let _ = std::io::copy(&mut r, &mut std::io::sink());
-            String::from_utf8_lossy(&buf).into_owned()
-        })
+            let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
+        });
+        rx
     };
     let out = drain(Box::new(child.stdout.take().unwrap()));
     let err = drain(Box::new(child.stderr.take().unwrap()));
@@ -1175,12 +1177,22 @@ pub(crate) fn run_blocking(
         match child.try_wait() {
             Ok(Some(s)) => break s,
             Ok(None) if start.elapsed() > limit => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(format!(
+                let reason = format!(
                     "{command} took longer than {} s and was stopped",
                     limit.as_secs_f64()
-                ));
+                );
+                tracing::warn!("{reason}");
+                crate::spawn::kill_tree(&mut child);
+                let _ = child.wait();
+                // A grandchild can hold the pipes: wait for the drains only so long.
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                let join = |rx: std::sync::mpsc::Receiver<String>| {
+                    rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                        .unwrap_or_default()
+                };
+                let _ = join(out);
+                let _ = join(err);
+                return Err(reason);
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(10)),
             Err(e) => return Err(e.to_string()),
@@ -1188,8 +1200,8 @@ pub(crate) fn run_blocking(
     };
     Ok((
         status.code().unwrap_or(-1),
-        out.join().unwrap_or_default(),
-        err.join().unwrap_or_default(),
+        out.recv().unwrap_or_default(),
+        err.recv().unwrap_or_default(),
     ))
 }
 
@@ -2116,6 +2128,55 @@ mod tests {
         assert!(error.contains("0.03 s"), "{error}");
         let (code, stdout, _) = run_blocking("sh", &args, None, Duration::from_secs(2)).unwrap();
         assert_eq!((code, stdout.as_str()), (0, "done"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_timed_out_command_takes_its_process_tree_with_it() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("kompitum-tree-{stamp}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("pid.txt");
+        let script = dir.join("spawn.ps1");
+        let marker = marker.display().to_string().replace('\'', "''");
+        std::fs::write(
+            &script,
+            format!(
+                "$child = Start-Process -PassThru -NoNewWindow -FilePath cmd.exe \
+                 -ArgumentList '/d','/c','ping -n 30 127.0.0.1 >nul'\n\
+                 $child.Id | Out-File -Encoding ascii -FilePath '{marker}'\n\
+                 Start-Sleep -Seconds 30\n"
+            ),
+        )
+        .unwrap();
+        let args = [
+            "-NoProfile".into(),
+            "-NonInteractive".into(),
+            "-ExecutionPolicy".into(),
+            "Bypass".into(),
+            "-File".into(),
+            script.to_string_lossy().into_owned(),
+        ];
+        let error = run_blocking("powershell", &args, None, Duration::from_secs(8)).unwrap_err();
+        assert!(error.contains("took longer"), "{error}");
+        let pid = std::fs::read_to_string(dir.join("pid.txt"))
+            .expect("the grandchild started before the timeout")
+            .trim()
+            .to_owned();
+        std::thread::sleep(Duration::from_millis(300));
+        let listing = crate::spawn::command("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .output()
+            .unwrap();
+        let listing = String::from_utf8_lossy(&listing.stdout);
+        assert!(
+            !listing.contains(&pid),
+            "the grandchild {pid} is still running: {listing}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]

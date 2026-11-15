@@ -199,12 +199,34 @@ fn folders() -> std::sync::MutexGuard<'static, std::collections::HashMap<PathBuf
     })
 }
 
+/// Releases a folder when nobody waits on it and no change waits for the next waiter.
+fn release_if_idle(root: &Path) {
+    let mut all = folders();
+    let Some(folder) = all.get_mut(root) else {
+        return;
+    };
+    folder.waiters.retain(|waiter| !waiter.is_closed());
+    if folder.waiters.is_empty() && folder.pending.is_empty() {
+        all.remove(root);
+    }
+}
+
+/// Releases the folder when this wait ends or is dropped.
+struct Watched(PathBuf);
+
+impl Drop for Watched {
+    fn drop(&mut self) {
+        release_if_idle(&self.0);
+    }
+}
+
 /// The next changes under `path` (recursive), as absolute paths: at once if
 /// some came since the last call, else when the next batch lands.
 pub async fn next_change(path: String) -> Result<Vec<String>, String> {
     let root = Path::new(&path)
         .canonicalize()
         .map_err(|e| format!("{path}: {e}"))?;
+    let _watched = Watched(root.clone());
     let rx = {
         let mut all = folders();
         if !all.contains_key(&root) {
@@ -722,12 +744,13 @@ mod tests {
     }
 
     fn install_watch(root: &Path) {
-        let mut wait = Box::pin(next_change(root.to_string_lossy().into_owned()));
-        assert!(
-            wait.as_mut()
-                .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
-                .is_pending()
-        );
+        let root = root.canonicalize().unwrap();
+        let mut all = folders();
+        all.entry(root.clone()).or_insert_with(|| Folder {
+            _watcher: start_folder(&root).unwrap(),
+            waiters: Vec::new(),
+            pending: HashSet::new(),
+        });
     }
 
     fn wait_for_change(root: &Path, path: &Path) {
@@ -736,6 +759,8 @@ mod tests {
             let changes =
                 block_on_until(next_change(root.to_string_lossy().into_owned()), deadline).unwrap();
             if invalidates(&changes, path) {
+                // Keep collecting between waits, as the app's next wait would.
+                install_watch(root);
                 return;
             }
         }
@@ -1034,11 +1059,39 @@ mod tests {
         if !invalidates(&changes, &dir.join("a.md")) {
             wait_for_change(&dir, &dir.join("a.md"));
         }
-        // No waiter exists during this write. Wait for its actual delivery,
-        // not a fixed sleep or an unrelated leftover batch from the first save.
+        // The app starts its next wait at once; a folder with no waiter is released.
+        let mut second = Box::pin(next_change(dir.to_string_lossy().into_owned()));
+        assert!(
+            second
+                .as_mut()
+                .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+                .is_pending()
+        );
         std::fs::write(dir.join("b.md"), "two").unwrap();
-        wait_for_change(&dir, &dir.join("b.md"));
+        let changes = block_on(second).unwrap();
+        if !invalidates(&changes, &dir.join("b.md")) {
+            wait_for_change(&dir, &dir.join("b.md"));
+        }
         folders().remove(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_folder_is_released_when_its_last_waiter_goes() {
+        let dir = test_repo("release");
+        let root = dir.canonicalize().unwrap();
+        let mut wait = Box::pin(next_change(dir.to_string_lossy().into_owned()));
+        assert!(
+            wait.as_mut()
+                .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+                .is_pending()
+        );
+        assert!(folders().contains_key(&root));
+        drop(wait);
+        assert!(
+            !folders().contains_key(&root),
+            "a folder nobody waits on is dropped, and its thread with it"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

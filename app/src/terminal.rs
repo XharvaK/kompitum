@@ -78,11 +78,11 @@ impl Ending {
         }
     }
 
-    fn word(self) -> &'static str {
+    fn word(self) -> String {
         match self {
-            Ending::Exited => "exited",
-            Ending::Killed => "killed",
-            Ending::Finished => "finished",
+            Ending::Exited => crate::strings::text("terminal.exited"),
+            Ending::Killed => crate::strings::text("terminal.killed"),
+            Ending::Finished => crate::strings::text("terminal.finished"),
         }
     }
 }
@@ -127,8 +127,8 @@ impl Life {
 fn status_text(life: &Life) -> Option<String> {
     match life {
         Life::Attaching | Life::Live => None,
-        Life::Lost => Some("reconnecting to core…".into()),
-        Life::Ended(ending) => Some(ending.word().into()),
+        Life::Lost => Some(crate::strings::text("terminal.reconnecting")),
+        Life::Ended(ending) => Some(ending.word()),
         Life::Failed(error) => Some(error.clone()),
     }
 }
@@ -333,6 +333,48 @@ fn track_mouse_button(
         }
     }
     true
+}
+
+/// Removes a local copy only after it reached the other machine.
+fn copy_there(
+    path: &std::path::Path,
+    copies: bool,
+    put: impl FnOnce(&std::path::Path) -> Result<String, String>,
+) -> Result<String, String> {
+    let there = put(path)?;
+    if copies {
+        let _ = std::fs::remove_file(path);
+    }
+    Ok(there)
+}
+
+/// What a failed `kom put` said: its JSON message, else the first line it wrote.
+fn put_failure(out: &std::process::Output) -> String {
+    for bytes in [&out.stderr, &out.stdout] {
+        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes)
+            && let Some(message) = value.pointer("/error/message").and_then(Value::as_str)
+        {
+            return message.to_owned();
+        }
+        let text = String::from_utf8_lossy(bytes);
+        if let Some(line) = text.lines().find(|line| !line.trim().is_empty()) {
+            return line.trim().to_owned();
+        }
+    }
+    format!("kom put exited with {}", out.status)
+}
+
+/// What the person sees when a file didn't reach another machine.
+fn send_failed(path: &std::path::Path, machine: &str, reason: &str) -> String {
+    let file = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned());
+    let reason = reason.lines().next().unwrap_or(reason).trim();
+    crate::strings::text_with(
+        "terminal.send-failed",
+        &[("file", &file), ("machine", machine), ("reason", reason)],
+    )
 }
 
 impl TerminalView {
@@ -772,26 +814,50 @@ impl TerminalView {
     fn put_there(&self, paths: Vec<std::path::PathBuf>, copies: bool, cx: &mut Context<Self>) {
         let addr = self.address.clone();
         cx.spawn(async move |this, cx| {
-            let there = cx
+            let (there, failed) = cx
                 .background_executor()
                 .spawn(async move {
-                    paths
-                        .iter()
-                        .filter_map(|p| {
+                    let machine = addr.split('/').next().unwrap_or(&addr).to_owned();
+                    let mut there = Vec::new();
+                    let mut failed = Vec::new();
+                    for path in &paths {
+                        let result = copy_there(path, copies, |p| {
                             let out = crate::spawn::command(crate::core_bin::path())
                                 .args(["put", "--json", &addr])
                                 .arg(p)
                                 .output();
-                            if copies {
-                                let _ = std::fs::remove_file(p);
+                            match out {
+                                Ok(out) if out.status.success() => {
+                                    let value: serde_json::Value =
+                                        serde_json::from_slice(&out.stdout)
+                                            .map_err(|e| format!("did not answer JSON: {e}"))?;
+                                    value
+                                        .get("path")
+                                        .and_then(|p| p.as_str())
+                                        .map(str::to_owned)
+                                        .ok_or_else(|| format!("returned no path: {value}"))
+                                }
+                                Ok(out) => Err(put_failure(&out)),
+                                Err(e) => Err(format!("cannot run kom put: {e}")),
                             }
-                            let out = out.ok()?;
-                            let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-                            v.get("path").and_then(|p| p.as_str()).map(str::to_owned)
-                        })
-                        .collect::<Vec<_>>()
+                        });
+                        match result {
+                            Ok(path) => there.push(path),
+                            Err(reason) => failed.push(send_failed(path, &machine, &reason)),
+                        }
+                    }
+                    (there, failed)
                 })
                 .await;
+            for message in failed {
+                crate::mods::request(crate::mods::Request::OpenOverlay {
+                    id: crate::mods::new_overlay_id(),
+                    spec: json!({
+                        "kind": "toast",
+                        "notification": {"title": message, "level": "info", "timeout": 8000},
+                    }),
+                });
+            }
             if !there.is_empty() {
                 let _ = this.update(cx, |this, _| {
                     let bytes = this.grid.borrow().vt.paste_bytes(&quote_paths(there));
@@ -877,7 +943,9 @@ impl TerminalView {
         let input = if let Some(input) = self.search_input.clone() {
             input
         } else {
-            let input = cx.new(|cx| InputState::new(window, cx).placeholder("Find in terminal"));
+            let input = cx.new(|cx| {
+                InputState::new(window, cx).placeholder(crate::strings::text("terminal.find"))
+            });
             cx.subscribe(&input, |this, input, event: &InputEvent, cx| match event {
                 InputEvent::Change => {
                     this.search_query = input.read(cx).value().to_string();
@@ -2577,16 +2645,28 @@ impl Render for TerminalView {
             String::new()
         } else if !search_progress.complete {
             if search_progress.total == 0 {
-                "Searching…".to_owned()
+                crate::strings::text("terminal.searching")
             } else {
-                format!("{}+", search_progress.total)
+                crate::strings::text_with(
+                    "terminal.matches-more",
+                    &[("n", &search_progress.total.to_string())],
+                )
             }
         } else if search_progress.total == 0 {
-            "No matches".to_owned()
+            crate::strings::text("terminal.no-matches")
         } else if let Some(selected) = search_progress.selected {
-            format!("{} / {}", selected + 1, search_progress.total)
+            crate::strings::text_with(
+                "terminal.match-position",
+                &[
+                    ("selected", &(selected + 1).to_string()),
+                    ("total", &search_progress.total.to_string()),
+                ],
+            )
         } else {
-            format!("{} matches", search_progress.total)
+            crate::strings::text_with(
+                "terminal.matches",
+                &[("n", &search_progress.total.to_string())],
+            )
         };
         let address = self.address.clone();
 
@@ -2943,7 +3023,7 @@ impl Focusable for TerminalView {
 
 #[cfg(test)]
 mod tests {
-    use super::{Ending, Life, ScrollTarget, pages_to_lines, scroll_target, status_text};
+    use super::{Ending, Life, ScrollTarget, copy_there, pages_to_lines, scroll_target, send_failed, status_text};
     use serde_json::{Value, json};
 
     #[test]
@@ -3001,6 +3081,39 @@ mod tests {
         );
         assert_eq!(status_text(&Life::Ended(Ending::Killed)).as_deref(), Some("killed"));
         assert_eq!(status_text(&Life::Live), None);
+    }
+
+    #[test]
+    fn a_local_copy_goes_only_after_the_other_machine_has_it() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("kompitum-put-{stamp}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shot.png");
+        std::fs::write(&path, "png").unwrap();
+        assert_eq!(
+            copy_there(&path, true, |_| Err("no route".into())),
+            Err("no route".into())
+        );
+        assert!(path.exists(), "a failed send keeps the local copy");
+        assert_eq!(
+            copy_there(&path, true, |_| Ok("/tmp/shot.png".into())),
+            Ok("/tmp/shot.png".into())
+        );
+        assert!(!path.exists(), "a sent copy is cleaned up");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_send_names_the_file_the_machine_and_the_first_line() {
+        let message = send_failed(
+            std::path::Path::new("/home/me/shot.png"),
+            "vps",
+            "no route to host\nsecond line",
+        );
+        assert_eq!(message, "Couldn't send shot.png to vps: no route to host");
     }
 
     #[gpui::test]

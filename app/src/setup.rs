@@ -10,6 +10,7 @@
 use crate::kom::{Core, Mismatch};
 use crate::mods::Request;
 use crate::settings::{self, color as c};
+use crate::strings;
 use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use std::path::PathBuf;
@@ -41,7 +42,7 @@ pub enum Need {
 
 enum State {
     Ready,
-    Busy(&'static str),
+    Busy(String),
     Failed(String),
 }
 
@@ -66,27 +67,29 @@ impl Need {
     /// What's wrong, in words (`detail`), and the need as a command would say it.
     fn detail(&self) -> String {
         match self {
-            Need::Install => "kompitum-core isn't installed on this computer.".into(),
+            Need::Install => strings::text("setup.needs-install"),
             Need::Connect(error) => error.clone(),
-            Need::Fix(Mismatch::TooOld { have, need }) => {
-                format!("kompitum-core is {have}; this app needs {need} or newer.")
-            }
-            Need::Fix(Mismatch::Missing(methods)) => format!(
-                "kompitum-core can't do everything this app needs ({}).",
-                methods.join(", ")
+            Need::Fix(Mismatch::TooOld { have, need }) => strings::text_with(
+                "setup.too-old",
+                &[("have", have), ("need", need)],
             ),
-            Need::Fix(Mismatch::Newer { generation }) => format!(
-                "kompitum-core speaks a newer protocol (generation {generation}) than this app understands."
+            Need::Fix(Mismatch::Missing(methods)) => strings::text_with(
+                "setup.missing",
+                &[("methods", &methods.join(", "))],
+            ),
+            Need::Fix(Mismatch::Newer { generation }) => strings::text_with(
+                "setup.newer-protocol",
+                &[("generation", &generation.to_string())],
             ),
         }
     }
 
     fn words(&self) -> String {
         match self {
-            Need::Install => "kompitum-core isn't installed".into(),
-            Need::Connect(_) => "it can't connect to kompitum-core".into(),
-            Need::Fix(Mismatch::Newer { .. }) => "this Kompitum is older than kompitum-core".into(),
-            Need::Fix(_) => "kompitum-core needs an update".into(),
+            Need::Install => strings::text("setup.need-install"),
+            Need::Connect(_) => strings::text("setup.need-connect"),
+            Need::Fix(Mismatch::Newer { .. }) => strings::text("setup.need-newer"),
+            Need::Fix(_) => strings::text("setup.need-update"),
         }
     }
 }
@@ -121,7 +124,7 @@ fn control_answer(need: &Need, state: &State, cmd: &serde_json::Value) -> serde_
         });
     }
     serde_json::json!({
-        "error": format!("Kompitum is on its setup screen: {}", need.words()),
+        "error": strings::text_with("setup.on-screen", &[("need", &need.words())]),
     })
 }
 
@@ -159,7 +162,7 @@ pub fn open(need: Need, requests: async_channel::Receiver<Request>, cx: &mut App
                             })
                             .unwrap_or_else(|_| {
                                 serde_json::json!({
-                                    "error": "Kompitum's setup screen is closing",
+                                    "error": strings::text("setup.closing"),
                                 })
                             });
                         let _ = reply.send(answer);
@@ -174,10 +177,25 @@ pub fn open(need: Need, requests: async_channel::Receiver<Request>, cx: &mut App
 }
 
 impl Setup {
-    /// Connects to the core; if it serves this app, closes this window and
-    /// opens the main one, else says what's still needed.
+    /// Connects to the core off the UI thread; if it serves this app, closes
+    /// this window and opens the main one, else says what's still needed.
     fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match Core::connect() {
+        self.state = State::Busy(strings::text("setup.connecting"));
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let connected = cx.background_executor().spawn(async { Core::connect() }).await;
+            let _ = this.update_in(cx, |this, window, cx| this.connected(connected, window, cx));
+        })
+        .detach();
+    }
+
+    fn connected(
+        &mut self,
+        connected: Result<Arc<Core>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match connected {
             Ok(core) => match crate::kom::check(&core.hello) {
                 Ok(()) => {
                     let Some(requests) = self.requests.take() else {
@@ -205,7 +223,7 @@ impl Setup {
     /// Runs `work` off the UI thread, then `start` again (or shows the error).
     fn run(
         &mut self,
-        label: &'static str,
+        label: String,
         work: fn() -> Result<Option<PathBuf>, String>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -232,7 +250,7 @@ impl Setup {
 
     fn install(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(
-            "Installing kompitum-core…",
+            strings::text("setup.installing"),
             || crate::core_bin::install().map(Some),
             window,
             cx,
@@ -241,7 +259,7 @@ impl Setup {
 
     fn update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.run(
-            "Updating kompitum-core… your terminals keep running.",
+            strings::text("setup.updating"),
             || crate::core_bin::update().map(|_| None),
             window,
             cx,
@@ -253,7 +271,7 @@ impl Setup {
             files: true,
             directories: false,
             multiple: false,
-            prompt: Some("Use this kompitum-core".into()),
+            prompt: Some(strings::text("setup.use-this").into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else {
@@ -262,11 +280,20 @@ impl Setup {
             let Some(bin) = paths.into_iter().next() else {
                 return;
             };
+            let _ = this.update_in(cx, |this, _, cx| {
+                this.state = State::Busy(strings::text("setup.checking"));
+                cx.notify();
+            });
+            let probe = bin.clone();
+            let version = cx
+                .background_executor()
+                .spawn(async move { crate::core_bin::version(&probe) })
+                .await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if crate::core_bin::version(&bin).is_none() {
-                    this.state = State::Failed(format!(
-                        "{} isn't kompitum-core (it should answer `--version` with `kom …`)",
-                        bin.display()
+                if version.is_none() {
+                    this.state = State::Failed(strings::text_with(
+                        "setup.not-core",
+                        &[("bin", &bin.display().to_string())],
                     ));
                     cx.notify();
                     return;
@@ -286,35 +313,44 @@ impl Setup {
     fn words(&self) -> (String, String, String) {
         match &self.need {
             Need::Install => (
-                "Kompitum needs kompitum-core".into(),
-                "kompitum-core runs your terminals and agents, and keeps them alive when this window closes. Kompitum couldn't find it on this computer.".into(),
-                format!("Install it for me puts it in {CORE_PLACE} (with kom), like its own installer: {CORE_INSTALL}"),
+                strings::text("setup.install-title"),
+                strings::text("setup.install-body"),
+                strings::text_with(
+                    "setup.install-foot",
+                    &[("place", CORE_PLACE), ("installer", CORE_INSTALL)],
+                ),
             ),
             Need::Connect(error) => (
-                "Kompitum can't connect to kompitum-core".into(),
+                strings::text("setup.connect-title"),
                 error.clone(),
-                "Once you've resolved this, try again.".into(),
+                strings::text("setup.connect-foot"),
             ),
             Need::Fix(Mismatch::TooOld { have, need }) => (
-                "Kompitum needs a newer kompitum-core".into(),
-                format!("Yours is {have}; this Kompitum needs {need} or newer. Updating keeps your terminals running."),
-                "Or update it yourself: kom update".into(),
+                strings::text("setup.old-title"),
+                strings::text_with("setup.old-body", &[("have", have), ("need", need)]),
+                strings::text("setup.update-yourself"),
             ),
             Need::Fix(Mismatch::Missing(methods)) => (
-                "Kompitum needs a newer kompitum-core".into(),
-                format!("Your kompitum-core can't do everything this Kompitum needs ({}). Updating keeps your terminals running.", methods.join(", ")),
-                "Or update it yourself: kom update".into(),
+                strings::text("setup.old-title"),
+                strings::text_with(
+                    "setup.missing-body",
+                    &[("methods", &methods.join(", "))],
+                ),
+                strings::text("setup.update-yourself"),
             ),
             Need::Fix(Mismatch::Newer { generation }) => (
-                "This Kompitum is older than your kompitum-core".into(),
-                format!("Your kompitum-core speaks a newer protocol (generation {generation}) than this Kompitum understands. Update Kompitum; your terminals keep running."),
-                format!("Update Kompitum: {APP_INSTALL}"),
+                strings::text("setup.newer-title"),
+                strings::text_with(
+                    "setup.newer-body",
+                    &[("generation", &generation.to_string())],
+                ),
+                strings::text_with("setup.newer-foot", &[("installer", APP_INSTALL)]),
             ),
         }
     }
 }
 
-fn button(id: &'static str, label: &'static str, primary: bool) -> Stateful<Div> {
+fn button(id: &'static str, label: String, primary: bool) -> Stateful<Div> {
     div()
         .id(id)
         .h(px(38.0))
@@ -404,24 +440,25 @@ impl Render for Setup {
                 .flex()
                 .gap(px(10.0))
                 .child(
-                    button("install", "Install it for me", true).when(!busy, |d| {
+                    button("install", strings::text("setup.install-button"), true).when(!busy, |d| {
                         d.on_click(cx.listener(|this, _, w, cx| this.install(w, cx)))
                     }),
                 )
                 .child(
-                    button("choose", "I have it somewhere…", false).when(!busy, |d| {
+                    button("choose", strings::text("setup.choose-button"), false).when(!busy, |d| {
                         d.on_click(cx.listener(|this, _, w, cx| this.choose(w, cx)))
                     }),
                 ),
             Need::Connect(_) => div().child(
-                button("retry", "Retry", true)
+                button("retry", strings::text("setup.retry-button"), true)
                     .on_click(cx.listener(|this, _, w, cx| this.start(w, cx))),
             ),
             Need::Fix(Mismatch::Newer { .. }) => div().flex().gap(px(10.0)).child(
-                button("quit", "Quit", false).on_click(cx.listener(|_, _, _, cx| cx.quit())),
+                button("quit", strings::text("setup.quit-button"), false)
+                    .on_click(cx.listener(|_, _, _, cx| cx.quit())),
             ),
             Need::Fix(_) => div().flex().gap(px(10.0)).child(
-                button("update", "Update kompitum-core", true).when(!busy, |d| {
+                button("update", strings::text("setup.update-button"), true).when(!busy, |d| {
                     d.on_click(cx.listener(|this, _, w, cx| this.update(w, cx)))
                 }),
             ),
@@ -473,7 +510,7 @@ impl Render for Setup {
                         State::Busy(what) => div()
                             .text_size(px(13.0))
                             .text_color(c("accent"))
-                            .child(*what),
+                            .child(what.clone()),
                         State::Failed(e) => div()
                             .text_size(px(13.0))
                             .text_color(c("blocked"))

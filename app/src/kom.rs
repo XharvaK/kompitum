@@ -12,6 +12,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const HEADER: usize = 9;
+/// A core that never answers the hello is no core at all.
+const HELLO_LIMIT: Duration = Duration::from_secs(20);
 pub const DATA: u8 = 0;
 pub const CREDIT: u8 = 1;
 pub const CLOSE: u8 = 2;
@@ -365,11 +367,29 @@ fn connect_error(stderr: &str) -> Option<String> {
     )
 }
 
+/// Writes the hello and reads its reply, handing the pipe back for the reader thread.
+fn exchange_hello(
+    mut stdin: std::process::ChildStdin,
+    mut reader: BufReader<std::process::ChildStdout>,
+) -> Result<(std::process::ChildStdin, BufReader<std::process::ChildStdout>, Value)> {
+    stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"hello\",\"params\":{\"framed\":true}}\n")?;
+    let mut line = String::new();
+    reader.read_line(&mut line)?;
+    let hello = serde_json::from_str(&line).context("bad hello reply from core")?;
+    Ok((stdin, reader, hello))
+}
+
 impl Core {
     /// Connects to the user's core (starting it if needed) and switches to framed mode.
     pub fn connect() -> Result<Arc<Core>> {
-        let mut child = crate::spawn::command(crate::core_bin::path())
-            .arg("connect")
+        let mut command = crate::spawn::command(crate::core_bin::path());
+        command.arg("connect");
+        Self::connect_within(command, HELLO_LIMIT)
+    }
+
+    /// The same, giving the core `limit` to answer the hello.
+    fn connect_within(mut command: std::process::Command, limit: Duration) -> Result<Arc<Core>> {
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -391,17 +411,17 @@ impl Core {
                 }
                 let _ = error_tx.send(String::from_utf8_lossy(&captured).into_owned());
             })?;
-        let mut stdin = child.stdin.take().unwrap();
-        let mut reader = BufReader::new(child.stdout.take().unwrap());
-        let hello = (|| -> Result<Value> {
-            stdin.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"hello\",\"params\":{\"framed\":true}}\n")?;
-            let mut line = String::new();
-            reader.read_line(&mut line)?;
-            serde_json::from_str(&line).context("bad hello reply from core")
-        })();
-        let hello = match hello {
-            Ok(hello) => hello,
-            Err(error) => {
+        let stdin = child.stdin.take().unwrap();
+        let reader = BufReader::new(child.stdout.take().unwrap());
+        let (hello_tx, hello_rx) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("kom-hello".into())
+            .spawn(move || {
+                let _ = hello_tx.send(exchange_hello(stdin, reader));
+            })?;
+        let (mut stdin, mut reader, hello) = match hello_rx.recv_timeout(limit) {
+            Ok(Ok((stdin, reader, hello))) => (stdin, reader, hello),
+            Ok(Err(error)) => {
                 let _ = child.kill();
                 let _ = child.wait();
                 if let Some(message) = connect_error(
@@ -413,8 +433,25 @@ impl Core {
                 }
                 return Err(error);
             }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let said = errors
+                    .recv_timeout(Duration::from_secs(1))
+                    .unwrap_or_default();
+                let said = said.trim();
+                if said.is_empty() {
+                    bail!("kom connect did not answer within {} seconds", limit.as_secs());
+                }
+                bail!(
+                    "kom connect did not answer within {} seconds: {said}",
+                    limit.as_secs()
+                );
+            }
         };
         if let Some(err) = hello.get("error") {
+            let _ = child.kill();
+            let _ = child.wait();
             bail!("core refused hello: {err}");
         }
 
@@ -727,6 +764,37 @@ mod tests {
             )
         );
         assert_eq!(connect_error("not JSON"), None);
+    }
+
+    #[test]
+    fn a_core_that_never_answers_is_stopped_and_its_words_kept() {
+        #[cfg(windows)]
+        let command = {
+            let mut command = crate::spawn::command("powershell");
+            command.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "[Console]::Error.WriteLine('core said no'); Start-Sleep -Seconds 30",
+            ]);
+            command
+        };
+        #[cfg(unix)]
+        let command = {
+            let mut command = crate::spawn::command("sh");
+            command.args(["-c", "echo core said no >&2; exec sleep 30"]);
+            command
+        };
+        let start = std::time::Instant::now();
+        // PowerShell can take a few seconds to start on a loaded machine, and the
+        // wait is what this test checks, not how short it can be.
+        let error = Core::connect_within(command, Duration::from_secs(10))
+            .err()
+            .expect("a core that never answers must not connect");
+        assert!(start.elapsed() < Duration::from_secs(20));
+        let words = format!("{error:#}");
+        assert!(words.contains("core said no"), "{words}");
+        assert!(words.contains("did not answer"), "{words}");
     }
 
     #[test]

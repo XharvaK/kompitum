@@ -275,7 +275,6 @@ impl Model {
             .find(|c| c.root.find(node).is_some())
     }
 
-    /// Adds a space at the end and selects it.
     /// What a space is called: its name, else its first terminal's checkout
     /// (a worktree's own folder; outside git its folder), as Kompitum names workspaces.
     pub fn space_name(&self, p: &Space, home: &str) -> String {
@@ -311,6 +310,7 @@ impl Model {
         (p.tabs.iter().position(|x| x.id == c.id).unwrap_or(0) + 1).to_string()
     }
 
+    /// Adds a space at the end and selects it.
     pub fn add_space(&mut self, id: &str, name: &str, folder: &str, ctx: Tab) {
         let active = Some(ctx.id.clone());
         self.spaces.push(Space {
@@ -592,9 +592,18 @@ impl Model {
                 seen: true,
                 ..Default::default()
             });
+        let app_changed = app
+            .as_ref()
+            .is_some_and(|app| a.app.as_deref() != Some(app.as_str()));
         a.app = app.or(a.app.take());
         if a.word == word {
-            return false;
+            if !app_changed {
+                return false;
+            }
+            self.seq += 1;
+            a.seq = self.seq;
+            a.since = now_ms();
+            return true;
         }
         let was_busy = matches!(a.word.as_deref(), Some("working" | "blocked" | "error"));
         match word.as_deref() {
@@ -890,6 +899,21 @@ mod tests {
             Some("done"),
             "an error is work the person hasn't seen finish"
         );
+    }
+
+    #[test]
+    fn a_name_change_is_a_change_even_when_the_word_stays() {
+        let mut m = model_with_one();
+        assert!(m.set_word("t1", Some("idle".into()), Some("claude".into()), false));
+        assert!(
+            !m.set_word("t1", Some("idle".into()), Some("claude".into()), false),
+            "nothing changed"
+        );
+        assert!(
+            m.set_word("t1", Some("idle".into()), Some("codex".into()), false),
+            "the agent's name changed"
+        );
+        assert_eq!(m.agents["t1"].app.as_deref(), Some("codex"));
     }
 
     #[test]
