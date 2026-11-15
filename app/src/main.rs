@@ -39,6 +39,7 @@ mod setup;
 mod sound;
 mod spawn;
 mod sprites;
+mod strings;
 mod telemetry;
 mod terminal;
 mod tray;

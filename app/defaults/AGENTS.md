@@ -700,6 +700,7 @@ What's about the user, never a look:
 
 - `zoom` scales the whole app: terminals, mods, the layout's px sizes
   (0.5 to 3; the zoom keys change it). Write sizes as designed at zoom 1.
+- `language`: the interface's language, `"en"` by default. Only English ships today.
 - `sounds`: `{ "enabled": true, "done": "<file>", "blocked": "<file>" }`.
   When an agent needs the person, or finishes while they aren't looking at
   it, Kompitum plays a sound and (unless they're looking) posts a toast that
@@ -1123,6 +1124,19 @@ including a small kompitum-core skill you can install with the user's permission
 - Other machines: `kom machine ls`; `kom run --on <machine> ...` starts a
   terminal there (`vps/t7`), `kom exec --on <machine> git status` runs one
   command there and prints exactly its output.
+
+## Strings
+
+The interface's words come from a table per language: `strings/<language>.json` in this folder,
+written by Kompitum or added by the person. A table is one flat JSON object of `<area>.<name>`
+keys, lowercase with `-` (`composer.send-tooltip`, `settings.memory-empty`), sorted by key; each
+value is the exact text, and a variable is written `{name}`. A sentence built from pieces is one
+key with `{variables}`, never several pieces.
+
+An area is the mod's folder (`bell.clear`), or `settings`, `welcome`, `whatsnew`, `palette` and
+`mailbox` for the frame, and `app`, `lead` and `tray` for Rust. Draw a word with
+`text("bell.clear")`, or fill its variables with `text("bell.count", { n })`. The person's
+`language` picks the table; keys it lacks fall back to English. Only English ships today.
 
 ## Keep in mind
 

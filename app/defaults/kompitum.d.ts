@@ -470,6 +470,11 @@ export function themes(): { name: string; light: boolean; colors: Record<string,
 /** The font families on this machine, by name. */
 export function fonts(): string[];
 
+/** The interface's text for a key (`<area>.<name>`, lowercase with `-`), in the person's
+ *  language. `vars` fills the `{name}` places with strings or numbers; a place with no value
+ *  stays as written, and a key the table lacks comes back as itself. */
+export function text(key: string, vars?: Record<string, string | number>): string;
+
 /** Kompitum's and kompitum-core's versions and what's waiting. `app.updates`: false for a build from
  *  source (it never updates). `core.managed`: the package manager that owns the core (homebrew,
  *  nix, mise), which the app never updates. `checked`: unix seconds of the last successful

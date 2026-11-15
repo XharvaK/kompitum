@@ -4,7 +4,8 @@
 use crate::layout::Node;
 use gpui::App;
 use gpui_shell::{
-    Capabilities, ExecuteGrant, HostError, HostModule, HostObject, HostValue, NetworkGrant,
+    Capabilities, ExecuteGrant, HostArguments, HostError, HostModule, HostObject, HostValue,
+    NetworkGrant,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1396,6 +1397,46 @@ fn module_pair(inst: Instance, copy: u64) -> [HostModule; 2] {
     ]
 }
 
+/// The `kompitum` module's `text(key, vars?)`: the interface's words for this
+/// person's language. `vars` is an object of strings or numbers.
+fn text_call(a: &HostArguments) -> Result<HostValue, HostError> {
+    let key = a.string(0)?.to_owned();
+    let mut vars = Vec::new();
+    match a.get(1) {
+        None | Some(HostValue::Null) => {}
+        Some(HostValue::Object(fields)) => {
+            for (name, value) in fields {
+                let value = match value {
+                    HostValue::Str(value) => value.clone(),
+                    HostValue::Number(value) => value.to_string(),
+                    other => {
+                        return Err(HostError::new(format!(
+                            "text: vars.{name} is {}, not a string or number",
+                            other.describe()
+                        )));
+                    }
+                };
+                vars.push((name.clone(), value));
+            }
+        }
+        Some(other) => {
+            return Err(HostError::new(format!(
+                "text: vars must be an object, got {}",
+                other.describe()
+            )));
+        }
+    }
+    let vars: Vec<(&str, &str)> = vars
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+    Ok(HostValue::Str(if vars.is_empty() {
+        crate::strings::text(&key)
+    } else {
+        crate::strings::text_with(&key, &vars)
+    }))
+}
+
 fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
     let ModuleState { reads, commands } = state;
     let props = inst.props.clone();
@@ -1421,6 +1462,7 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
         .async_function("kom", |a| Ok(exec_future(core_program(), strings(a.get(0)), None, None, EXEC_LIMIT)))
         .function("home", |_| Ok(home().to_string_lossy().into_owned().into()))
         .function("appHome", |_| Ok(app_dir().to_string_lossy().into_owned().into()))
+        .function("text", text_call)
         .function("fonts", |_| Ok(to_host(&json!(*FONTS.lock().unwrap()))))
         .function("updates", |_| Ok(to_host(&crate::update::status())))
         .function("presentUpdateNotes", |a| {

@@ -458,6 +458,8 @@ fn resolve(p: &Palette, overrides: &BTreeMap<String, String>) -> Theme {
 pub struct Person {
     /// How big the whole app is drawn (1 = as designed). The zoom keys change it.
     pub zoom: f32,
+    /// The interface's language: `strings/<language>.json`; English by default.
+    pub language: String,
     pub sounds: Sounds,
     /// The kompitum-core to use, when it isn't where Kompitum looks (core_bin.rs).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -646,6 +648,7 @@ impl Default for Person {
     fn default() -> Self {
         Person {
             zoom: 1.0,
+            language: "en".into(),
             sounds: Sounds::default(),
             core: None,
             font: None,
@@ -1303,6 +1306,17 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn language_defaults_to_english_and_round_trips() {
+        let default: Person = serde_json::from_str("{}").unwrap();
+        assert_eq!(default.language, "en");
+        assert_eq!(Person::default().language, "en");
+        let translated: Person = serde_json::from_str(r#"{"language":"tr"}"#).unwrap();
+        assert_eq!(translated.language, "tr");
+        let saved = serde_json::to_string(&Person::default()).unwrap();
+        assert!(saved.contains("\"language\":\"en\""), "{saved}");
+    }
 
     #[test]
     fn layout_look_wins_and_settings_fill_what_it_leaves_unset() {

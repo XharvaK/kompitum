@@ -22,6 +22,7 @@ mod mailbox;
 mod memory;
 mod palette_keys;
 mod settings_pages;
+mod strings;
 mod welcome;
 mod window_bar;
 
@@ -301,6 +302,7 @@ fn module_with_lead(
     });
     let system = system_info.unwrap_or_else(|| json!({"name": "Test", "version": "1"}));
     module = module.function("system", move |_| Ok(to_host(&system)));
+    module = module.function("text", text_call);
     module = module.async_function("leadSetup", |_| {
         Ok(async { Ok(to_host(&json!({"mcp": "present", "skill": "present"}))) })
     });
