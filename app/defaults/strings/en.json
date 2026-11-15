@@ -23,6 +23,7 @@
   "app.core-update-error": "kompitum-core update failed: {error} · Open About",
   "app.did-not-load": "{mod} did not load: {error}",
   "app.didnt-reload": "{mod} didn't reload: {error}",
+  "app.dismiss": "Dismiss",
   "app.empty-agents": "no agents yet. start claude, codex or pi in a terminal",
   "app.empty-keys-hint": "{keys} for every command",
   "app.empty-open-terminal": "Open a terminal",

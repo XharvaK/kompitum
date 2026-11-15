@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// The built-ins table shipped with the app (`app/defaults/claude-commands.json`).
 pub const BUILTINS: &str = include_str!("../../defaults/claude-commands.json");
@@ -47,10 +49,69 @@ struct Builtin {
     description: String,
 }
 
+/// One cached `/` list and the modification times that produced it.
+struct CachedCommands {
+    home: PathBuf,
+    folder: PathBuf,
+    builtins: String,
+    stamps: Vec<(PathBuf, Option<SystemTime>)>,
+    commands: Vec<Command>,
+}
+
+static COMMANDS_CACHE: Mutex<Vec<CachedCommands>> = Mutex::new(Vec::new());
+const CACHE_ENTRIES: usize = 8;
+
 /// Every command the lead's `/` list can offer, in name order: the lead
 /// folder's skills and commands, the user's, the installed plugins', then the
 /// built-ins table. A name already taken by an earlier source is skipped.
+/// The result is cached per lead folder until a mtime under one of its roots changes.
 pub fn lead_commands(home: &Path, folder: &Path, builtins: &str) -> Vec<Command> {
+    let plugins = installed_plugins(home);
+    let mut roots = vec![
+        folder.join(".claude/skills"),
+        folder.join(".claude/commands"),
+        home.join(".claude/skills"),
+        home.join(".claude/commands"),
+        home.join(".claude/plugins/installed_plugins.json"),
+    ];
+    for (_, install) in &plugins {
+        roots.push(install.join("skills"));
+        roots.push(install.join("commands"));
+    }
+    let stamps = root_stamps(&roots);
+    if let Ok(cache) = COMMANDS_CACHE.lock()
+        && let Some(hit) = cache.iter().find(|entry| {
+            entry.home == home
+                && entry.folder == folder
+                && entry.builtins == builtins
+                && entry.stamps == stamps
+        })
+    {
+        return hit.commands.clone();
+    }
+    let commands = scan_commands(home, folder, builtins, &plugins);
+    if let Ok(mut cache) = COMMANDS_CACHE.lock() {
+        cache.retain(|entry| entry.home != home || entry.folder != folder);
+        cache.push(CachedCommands {
+            home: home.to_path_buf(),
+            folder: folder.to_path_buf(),
+            builtins: builtins.to_owned(),
+            stamps,
+            commands: commands.clone(),
+        });
+        if cache.len() > CACHE_ENTRIES {
+            cache.remove(0);
+        }
+    }
+    commands
+}
+
+fn scan_commands(
+    home: &Path,
+    folder: &Path,
+    builtins: &str,
+    plugins: &[(String, PathBuf)],
+) -> Vec<Command> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
 
@@ -62,7 +123,7 @@ pub fn lead_commands(home: &Path, folder: &Path, builtins: &str) -> Vec<Command>
         &mut out,
     );
     read_claude_dir(&home.join(".claude"), "user", None, &mut seen, &mut out);
-    for (plugin, install) in installed_plugins(home) {
+    for (plugin, install) in plugins {
         let prefix = plugin.as_str();
         read_skills(
             &install.join("skills"),
@@ -107,6 +168,60 @@ pub fn lead_commands(home: &Path, folder: &Path, builtins: &str) -> Vec<Command>
     out
 }
 
+fn root_stamps(roots: &[PathBuf]) -> Vec<(PathBuf, Option<SystemTime>)> {
+    let mut out = Vec::new();
+    for root in roots {
+        stamp_tree(root, 0, &mut out);
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out.dedup_by(|a, b| a.0 == b.0);
+    out
+}
+
+fn stamp_tree(path: &Path, depth: usize, out: &mut Vec<(PathBuf, Option<SystemTime>)>) {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        out.push((path.to_path_buf(), None));
+        return;
+    };
+    out.push((path.to_path_buf(), meta.modified().ok()));
+    if depth >= 8 || !meta.is_dir() || is_link(path, &meta.file_type()) {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let child = entry.path();
+        if is_link(&child, &kind) {
+            continue;
+        }
+        stamp_tree(&child, depth + 1, out);
+    }
+}
+
+/// Whether `path` is a symbolic link or a Windows junction/reparse point.
+fn is_link(path: &Path, kind: &std::fs::FileType) -> bool {
+    if kind.is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if let Ok(meta) = std::fs::symlink_metadata(path) {
+            return meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+        }
+    }
+    false
+}
+
+fn linked(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| is_link(path, &meta.file_type()))
+}
+
 fn read_claude_dir(
     root: &Path,
     source: &str,
@@ -125,12 +240,23 @@ fn read_skills(
     seen: &mut BTreeSet<String>,
     out: &mut Vec<Command>,
 ) {
+    if linked(dir) {
+        return;
+    }
     let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
         .flatten()
-        .map(|entry| entry.path().join("SKILL.md"))
-        .filter(|path| path.is_file())
+        .filter_map(|entry| {
+            let path = entry.path();
+            let kind = entry.file_type().ok()?;
+            (!is_link(&path, &kind) && kind.is_dir()).then(|| path.join("SKILL.md"))
+        })
+        .filter(|path| {
+            std::fs::symlink_metadata(path).is_ok_and(|meta| {
+                !is_link(path, &meta.file_type()) && meta.file_type().is_file()
+            })
+        })
         .collect();
     entries.sort();
     for path in entries {
@@ -177,8 +303,11 @@ fn read_command_files(
     seen: &mut BTreeSet<String>,
     out: &mut Vec<Command>,
 ) {
+    if linked(dir) {
+        return;
+    }
     let mut files = Vec::new();
-    command_files(dir, &mut files);
+    command_files(dir, 0, &mut files);
     for path in files {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
@@ -213,16 +342,24 @@ fn read_command_files(
     }
 }
 
-fn command_files(dir: &Path, out: &mut Vec<PathBuf>) {
+fn command_files(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    let mut entries: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
-    entries.sort();
-    for path in entries {
-        if path.is_dir() {
-            command_files(&path, out);
-        } else if path.extension().is_some_and(|extension| extension == "md") {
+    let mut entries: Vec<(PathBuf, std::fs::FileType)> = entries
+        .flatten()
+        .filter_map(|entry| Some((entry.path(), entry.file_type().ok()?)))
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (path, kind) in entries {
+        if is_link(&path, &kind) {
+            continue;
+        }
+        if kind.is_dir() {
+            if depth < 8 {
+                command_files(&path, depth + 1, out);
+            }
+        } else if kind.is_file() && path.extension().is_some_and(|extension| extension == "md") {
             out.push(path);
         }
     }
@@ -610,5 +747,78 @@ mod tests {
         let description = &find(&list, "long").description;
         assert_eq!(description.chars().count(), 120);
         assert!(description.ends_with('…'), "{description}");
+    }
+
+    #[test]
+    fn an_unchanged_tree_is_answered_from_the_cache_and_a_new_root_mtime_rescans() {
+        let home = Temp::new("cache-home");
+        let folder = Temp::new("cache-folder");
+        folder.write(".claude/commands/hello.md", "First.\n");
+        let list = lead_commands(&home.0, &folder.0, "[]");
+        assert_eq!(find(&list, "hello").description, "First.");
+
+        let path = folder.0.join(".claude/commands/hello.md");
+        let stamp = std::fs::metadata(&path).unwrap().modified().unwrap();
+        std::fs::write(&path, "Second.\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(stamp)
+            .unwrap();
+        let cached = lead_commands(&home.0, &folder.0, "[]");
+        assert_eq!(
+            find(&cached, "hello").description,
+            "First.",
+            "with every mtime unchanged the cached list answers"
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        folder.write(".claude/commands/another.md", "Another.\n");
+        let fresh = lead_commands(&home.0, &folder.0, "[]");
+        assert_eq!(find(&fresh, "hello").description, "Second.");
+        assert_eq!(find(&fresh, "another").description, "Another.");
+    }
+
+    #[test]
+    fn command_files_stop_at_depth_eight() {
+        let home = Temp::new("depth-home");
+        let folder = Temp::new("depth-folder");
+        for level in 0..=9 {
+            let mut dir = folder.0.join(".claude/commands");
+            for depth in 0..=level {
+                dir.push(format!("d{depth}"));
+            }
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("at{level}.md")), format!("Depth {level}.\n")).unwrap();
+        }
+        let list = lead_commands(&home.0, &folder.0, "[]");
+        assert!(
+            list.iter().any(|command| command.name.ends_with(":at7")),
+            "a file in the eighth directory is read: {list:?}"
+        );
+        assert!(
+            list.iter().all(|command| !command.name.ends_with(":at8")),
+            "nothing below depth 8 is read: {list:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_links_are_not_followed() {
+        use std::os::unix::fs::symlink;
+        let home = Temp::new("link-home");
+        let folder = Temp::new("link-folder");
+        let outside = Temp::new("link-outside");
+        outside.write("escape.md", "Outside.\n");
+        let commands = folder.0.join(".claude/commands");
+        std::fs::create_dir_all(&commands).unwrap();
+        symlink(outside.0.join("escape.md"), commands.join("escape.md")).unwrap();
+        symlink(&outside.0, commands.join("outside")).unwrap();
+        let list = lead_commands(&home.0, &folder.0, "[]");
+        assert!(
+            list.iter().all(|command| command.name != "escape" && command.name != "outside:escape"),
+            "a link is not walked: {list:?}"
+        );
     }
 }

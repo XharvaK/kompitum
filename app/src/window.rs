@@ -37,6 +37,33 @@ use std::time::{Duration, Instant, SystemTime};
 const HEADER_HEIGHT: f32 = 30.0;
 const HANDLE: f32 = 6.0;
 
+#[cfg(test)]
+static LEAD_ITEMS_SERIALIZED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+fn lead_items_serialized() -> usize {
+    LEAD_ITEMS_SERIALIZED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(test)]
+static VISIBLE_SCANS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+fn visible_scans() -> usize {
+    VISIBLE_SCANS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(test)]
+static ASSET_INVALIDATIONS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+fn asset_invalidations() -> usize {
+    ASSET_INVALIDATIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The layout a window starts on when none is chosen, or when the chosen one's mods are gone.
 const DEFAULT_LAYOUT: &str = "desk";
 
@@ -89,6 +116,98 @@ fn separator_line(row: bool, width: f32, color: Hsla, top: f32) -> Div {
 
 fn c(name: &str) -> Hsla {
     settings::color_or_literal(name)
+}
+
+/// The keyboard focus ring the mods use: 2 px in the theme's focus colour, 1 px outside the control.
+fn with_keyboard_ring(
+    element: AnyElement,
+    handle: &FocusHandle,
+    radius: Pixels,
+    identity: &'static str,
+) -> AnyElement {
+    KeyboardRing {
+        element,
+        handle: handle.clone(),
+        radius,
+        identity: ElementId::Name(identity.into()),
+    }
+    .into_any_element()
+}
+
+struct KeyboardRing {
+    element: AnyElement,
+    handle: FocusHandle,
+    radius: Pixels,
+    identity: ElementId,
+}
+
+impl IntoElement for KeyboardRing {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for KeyboardRing {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        (self.element.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.element.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.element.paint(window, cx);
+        if !self.handle.is_focused(window) || !window.last_input_was_keyboard() {
+            return;
+        }
+        let ring = bounds.inset(px(-3.0));
+        window.paint_quad(quad(
+            ring,
+            Corners::all(self.radius + px(3.0)),
+            transparent_black(),
+            Edges::all(px(2.0)),
+            c("focus"),
+            BorderStyle::Solid,
+        ));
+        let _ = &self.identity;
+    }
 }
 
 /// The material a word names: `blur`, `mica` or `mica-alt`; anything else is opaque.
@@ -330,7 +449,7 @@ fn layout_path(name: &str) -> PathBuf {
 /// Layout names on disk, in order: main first, then the rest alphabetically.
 /// A layout whose mods are gone (Zen after the update) isn't offered;
 /// `layout.switch {name}` still reaches it.
-pub(crate) fn layout_names() -> Vec<String> {
+fn scan_layout_names() -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(file("layouts"))
         .into_iter()
         .flatten()
@@ -857,6 +976,8 @@ pub struct AppWindow {
     chrome: Node,
     /// Which layout `chrome` is (`layouts/<name>.json`).
     layout_name: String,
+    /// The names `layouts()` offers, worked out from disk until a file event drops them.
+    layout_names: Option<Vec<String>>,
     /// The agent an `{ "agent": "focused" }` block shows (by address); any core
     /// terminal, so sub-agents outside workspaces work too.
     agent: Option<String>,
@@ -914,6 +1035,8 @@ pub struct AppWindow {
     live: HashMap<String, Value>,
     /// The lead's state per terminal: working, asking or waiting, and its ask.
     lead_sessions: HashMap<String, crate::lead::Session>,
+    /// Conversation items last published per lead terminal, with the conversation version they came from.
+    published_lead_items: HashMap<String, (u64, Value)>,
     /// When the lead's status line last reached the core (`kom status --line`): at most once a minute.
     status_core_at: Option<Instant>,
     /// When `lead_upkeep` may next do its work: five seconds after its last pass.
@@ -945,8 +1068,8 @@ pub struct AppWindow {
     lead_asks: HashMap<String, PendingAsk>,
     /// Ask ids whose taskbar flash was already asked for: one flash per ask.
     flashed_asks: HashSet<String>,
-    /// Hook connections that closed before their request reached the app.
-    closed_hooks: HashSet<String>,
+    /// Hook connections that closed before their request reached the app, oldest first.
+    closed_hooks: Vec<String>,
     listed_once: bool,
     /// The lead starts on launch, once, when nothing runs it yet (off in tests).
     start_lead: bool,
@@ -1001,6 +1124,13 @@ pub struct AppWindow {
     update_success: bool,
     update_status: String,
     focus: FocusHandle,
+    focus_start_lead: FocusHandle,
+    focus_start_terminal: FocusHandle,
+    focus_toasts_more: FocusHandle,
+    focus_link_restart: FocusHandle,
+    focus_update_restart: FocusHandle,
+    focus_update_notes: FocusHandle,
+    focus_update_dismiss: FocusHandle,
     _tasks: Vec<Task<()>>,
     /// Gives the keyboard back when what had it leaves the screen (`restore_focus`).
     _focus_lost: Option<Subscription>,
@@ -1037,6 +1167,7 @@ impl AppWindow {
             runtime,
             chrome: default_layout(DEFAULT_LAYOUT),
             layout_name: DEFAULT_LAYOUT.into(),
+            layout_names: None,
             agent: None,
             agent_focused: None,
             swapped: HashMap::new(),
@@ -1075,6 +1206,7 @@ impl AppWindow {
             watched: Watched::default(),
             live: HashMap::new(),
             lead_sessions: HashMap::new(),
+            published_lead_items: HashMap::new(),
             status_core_at: None,
             lead_upkeep_next: None,
             lead_compact_after: None,
@@ -1091,7 +1223,7 @@ impl AppWindow {
             system_needs: HashSet::new(),
             lead_asks: HashMap::new(),
             flashed_asks: HashSet::new(),
-            closed_hooks: HashSet::new(),
+            closed_hooks: Vec::new(),
             listed_once: false,
             start_lead: !cfg!(test),
             cwds: HashMap::new(),
@@ -1132,6 +1264,13 @@ impl AppWindow {
             update_success: false,
             update_status: String::new(),
             focus: cx.focus_handle(),
+            focus_start_lead: cx.focus_handle(),
+            focus_start_terminal: cx.focus_handle(),
+            focus_toasts_more: cx.focus_handle(),
+            focus_link_restart: cx.focus_handle(),
+            focus_update_restart: cx.focus_handle(),
+            focus_update_notes: cx.focus_handle(),
+            focus_update_dismiss: cx.focus_handle(),
             _tasks: Vec::new(),
             _focus_lost: None,
             _place: None,
@@ -1177,6 +1316,7 @@ impl AppWindow {
         crate::programs::install_icons();
         w.reload_config(window, cx);
         install_layouts();
+        w.layout_names();
         let name = mods::shared("layout")
             .and_then(|v| v.as_str().map(str::to_owned))
             .filter(|n| layout_path(n).exists());
@@ -1742,9 +1882,20 @@ impl AppWindow {
         );
     }
 
+    /// The layout names on disk, worked out once and kept until a file under layouts/ or mods/ changes.
+    fn layout_names(&mut self) -> Vec<String> {
+        if let Some(names) = &self.layout_names {
+            return names.clone();
+        }
+        let names = scan_layout_names();
+        mods::publish_layouts(json!(names.clone()));
+        self.layout_names = Some(names.clone());
+        names
+    }
+
     /// Shows the layout `name`, or the next one after the current.
     fn switch_layout(&mut self, name: Option<&str>, window: &mut Window, cx: &mut Context<Self>) {
-        let names = layout_names();
+        let names = self.layout_names();
         let next = match name {
             Some(n) if mods::valid_name(n) && layout_path(n).exists() => n.to_owned(),
             Some(n) => {
@@ -1965,6 +2116,8 @@ impl AppWindow {
 
     /// Visible slots: terminal blocks (id → address) and mod slots (key → instance).
     fn visible(&self) -> (Vec<(String, String)>, Vec<(String, Instance)>) {
+        #[cfg(test)]
+        VISIBLE_SCANS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut terms = Vec::new();
         let mut mods = Vec::new();
         let visit = |n: &Node,
@@ -2131,7 +2284,11 @@ impl AppWindow {
             .copies
             .keys()
             .filter(|s| {
-                self.model.tab_of(s).is_none()
+                let base = s
+                    .strip_suffix("#frame")
+                    .or_else(|| s.strip_suffix("#header"))
+                    .unwrap_or(s);
+                self.model.tab_of(base).is_none()
                     && !self.overlays.iter().any(|o| {
                         o.slot == **s || o.layout.as_ref().is_some_and(|l| l.find(s).is_some())
                     })
@@ -2224,9 +2381,12 @@ impl AppWindow {
             .or_else(|| self.terms.get(block).filter(|t| t.address == addr))
     }
 
-    /// What's on screen now, for done-vs-seen.
-    fn visible_addresses(&self) -> Vec<String> {
-        let (terms, mods) = self.visible();
+    /// What's on screen now, for done-vs-seen, from slots already worked out.
+    fn addresses_in(
+        &self,
+        terms: &[(String, String)],
+        mods: &[(String, Instance)],
+    ) -> Vec<String> {
         // A swapped-in terminal is drawn instead of its pane's own.
         let covered: HashSet<&str> = terms
             .iter()
@@ -2240,7 +2400,7 @@ impl AppWindow {
         if self.shows_agent() {
             out.extend(self.shown_agent());
         }
-        out.extend(composed_terminals(&mods));
+        out.extend(composed_terminals(mods));
         out
     }
 
@@ -2272,11 +2432,28 @@ impl AppWindow {
 
     /// Creates what's visible, drops what isn't, publishes state, saves, focuses.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (terms, mods) = self.visible();
+        self.sync_visible(terms, mods, window, cx);
+    }
+
+    /// The same with the screen's slots already worked out for this tick.
+    fn sync_visible(
+        &mut self,
+        mut terms: Vec<(String, String)>,
+        mods_visible: Vec<(String, Instance)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.model.order_spaces();
         let (model, live) = (&self.model, &self.live);
         self.swapped
             .retain(|p, a| model.address_of(p).is_some() && live.contains_key(a));
-        let (mut terms, mods_visible) = self.visible();
+        // A swapped-in terminal dropped above is no longer drawn.
+        terms.retain(|(slot, _)| {
+            slot.strip_suffix(SWAP)
+                .is_none_or(|pane| self.swapped.contains_key(pane))
+        });
+        let visible = self.addresses_in(&terms, &mods_visible);
         // Every tab's terminals stay attached (only visible ones are drawn): tab
         // switches are instant and kitty images survive, which a repaint can't bring back.
         for c in self.model.tabs() {
@@ -2356,19 +2533,18 @@ impl AppWindow {
         for slot in gone {
             self.remove_copy(&slot, window, cx);
         }
-        let want: HashMap<String, Instance> = mods_visible.into_iter().collect();
-        for (slot, inst) in want {
-            if !self.copies.contains_key(&slot) {
-                let copy = self.load(inst, window, cx);
+        for (slot, inst) in &mods_visible {
+            if !self.copies.contains_key(slot) {
+                let copy = self.load(inst.clone(), window, cx);
                 if slot.starts_with("float:")
                     && let Some(root) = copy.state.root()
                 {
                     root.update(cx, |r, cx| r.set_fit_content(true, cx));
                 }
-                self.copies.insert(slot, copy);
+                self.copies.insert(slot.clone(), copy);
             }
         }
-        self.publish_shown_copies();
+        self.publish_shown_copies_from(&mods_visible);
 
         // Keyboard to the focused pane when it changes (never steal it from an open dialog).
         let model_pane = self.model.focused_pane();
@@ -2437,11 +2613,11 @@ impl AppWindow {
         } else if revealed {
             self.refocus_pane(window, cx);
         }
+        let looking: HashSet<String> = visible.iter().cloned().collect();
         if self.window_active {
-            let visible = self.visible_addresses();
             self.model.mark_seen(&visible);
         }
-        self.share_seen(cx);
+        self.share_seen(&looking, cx);
         self.publish(cx);
         self.save();
         cx.notify();
@@ -2451,9 +2627,9 @@ impl AppWindow {
     /// agent on screen in the active window, once per turn while it stays
     /// there, so a phone marking it unread isn't undone by a screen nobody
     /// watches. Only ever raises it. True when a status changed.
-    fn share_seen(&mut self, cx: &mut Context<Self>) -> bool {
+    fn share_seen(&mut self, visible: &HashSet<String>, cx: &mut Context<Self>) -> bool {
         let looking: HashSet<String> = if self.window_active {
-            self.visible_addresses().into_iter().collect()
+            visible.clone()
         } else {
             HashSet::new()
         };
@@ -3311,8 +3487,10 @@ impl AppWindow {
     fn tend_terminals(&mut self, listed: bool, window: &mut Window, cx: &mut Context<Self>) {
         // Place newly labeled terminals first: one that is blocked on its first
         // listing is ours, and must ring.
-        let mut changed = self.reconcile(window, cx);
-        let visible: HashSet<String> = self.visible_addresses().into_iter().collect();
+        let mut changed = false;
+        self.reconcile(window, cx);
+        let (terms, mods) = self.visible();
+        let visible: HashSet<String> = self.addresses_in(&terms, &mods).into_iter().collect();
         let mut alerts = Vec::new();
         for (addr, rec) in &self.live {
             let word = rec.get("status").and_then(Value::as_str).map(str::to_owned);
@@ -3345,7 +3523,7 @@ impl AppWindow {
                     .set_turn(addr, turn, label.max(self.written_seen.get(addr).copied()));
         }
         self.written_seen.retain(|a, _| self.live.contains_key(a));
-        changed |= self.share_seen(cx);
+        changed |= self.share_seen(&visible, cx);
         // Changes already made before Kompitum started aren't news.
         if self.listed_once {
             for (addr, alert, looking) in alerts {
@@ -3369,19 +3547,14 @@ impl AppWindow {
         // first listing shows it isn't running already.
         if self.start_lead && self.documents.get("").is_some_and(|slot| slot.available) {
             self.start_lead = false;
-            let program = settings::load_person()
-                .ok()
-                .and_then(|person| person.lead)
-                .and_then(|lead| lead.program)
-                .filter(|program| !program.is_empty())
-                .unwrap_or_else(|| "claude".into());
+            let program = self.lead_program();
             if self.lead_terminal(&program).is_none() {
                 // lead.open holds when the CLI has models and none is saved.
                 self.run("lead.open", json!({}), window, cx);
             }
         }
         if changed {
-            self.sync(window, cx);
+            self.sync_visible(terms, mods, window, cx);
         } else if listed {
             self.publish(cx);
         }
@@ -3579,10 +3752,10 @@ impl AppWindow {
     /// is gone (ended while hidden, or while the app was closed) and places
     /// terminals labeled `kompitum.space` that aren't shown (started by an
     /// agent, a script, or before a restart). Returns whether anything changed.
-    fn reconcile(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    fn reconcile(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // No fresh shells while quitting: the next start brings them back.
         if QUITTING.load(std::sync::atomic::Ordering::SeqCst) {
-            return false;
+            return;
         }
         let missing = self
             .model
@@ -3632,7 +3805,6 @@ impl AppWindow {
         for (addr, space, tab) in orphans {
             self.start_adoption(addr, space, tab, window, cx);
         }
-        false
     }
 
     fn start_adoption(
@@ -3789,6 +3961,12 @@ impl AppWindow {
             }
         }
         self.folders_checked
+            .retain(|a, _| self.live.contains_key(a));
+        self.model
+            .agents
+            .retain(|a, _| self.live.contains_key(a));
+        self.model
+            .folder_info
             .retain(|a, _| self.live.contains_key(a));
         // Refresh unnamed spaces when a terminal moves.
         if moved {
@@ -4085,15 +4263,21 @@ impl AppWindow {
         )))
     }
 
+    /// The lead program the person saved, or Claude.
+    fn lead_program(&self) -> String {
+        self.person
+            .lead
+            .as_ref()
+            .and_then(|lead| lead.program.as_deref())
+            .filter(|program| !program.is_empty())
+            .unwrap_or("claude")
+            .to_owned()
+    }
+
     /// The lead is running again: a live lead terminal whose program the core didn't replace with a plain
     /// shell (a core restart starts one until `lead_upkeep` starts the lead again).
     fn lead_is_running(&self) -> bool {
-        let program = settings::load_person()
-            .ok()
-            .and_then(|person| person.lead)
-            .and_then(|lead| lead.program)
-            .filter(|program| !program.is_empty())
-            .unwrap_or_else(|| "claude".to_owned());
+        let program = self.lead_program();
         let Some(terminal) = self.lead_terminal(&program) else {
             return false;
         };
@@ -4317,14 +4501,8 @@ impl AppWindow {
     /// `lead.open`: find the kept lead by its label, or start it in its home
     /// folder with the conversation the record says it should go on with.
     fn lead_open(&mut self, window: &Window, cx: &mut Context<Self>) -> Result<Value, String> {
-        let person = settings::load_person().map_err(|error| format!("settings.json: {error}"))?;
-        let lead = person.lead.clone().unwrap_or_default();
-        let program = lead
-            .program
-            .as_deref()
-            .filter(|program| !program.is_empty())
-            .unwrap_or("claude")
-            .to_owned();
+        let lead = self.person.lead.clone().unwrap_or_default();
+        let program = self.lead_program();
         let folder = lead
             .folder
             .clone()
@@ -4588,9 +4766,10 @@ impl AppWindow {
                     model.as_deref(),
                     effort.as_deref(),
                 );
-                let code_mode = settings::load_person()
-                    .ok()
-                    .and_then(|person| person.lead)
+                let code_mode = this
+                    .person
+                    .lead
+                    .as_ref()
                     .is_some_and(|lead| lead.code_mode);
                 if program == "claude" {
                     let app = match std::env::current_exe() {
@@ -4668,12 +4847,45 @@ impl AppWindow {
         );
     }
 
-    /// Reads a lead's transcript into its conversation and marks it read in this window.
-    /// Returns how many unknown line types were skipped.
-    fn read_lead_history(&mut self, terminal: &str, transcript: Option<&str>) -> u32 {
+    /// Starts reading a lead's transcript off the UI thread and marks it read in this window.
+    /// The newest read for a terminal wins; an older one or one whose terminal is gone is dropped.
+    fn start_lead_history(&mut self, terminal: &str, transcript: Option<&str>, cx: &mut Context<Self>) {
         let session = self.lead_sessions.entry(terminal.to_owned()).or_default();
         session.history_read = true;
-        crate::lead::apply_transcript_path(session, transcript)
+        session.history_generation += 1;
+        let generation = session.history_generation;
+        let terminal = terminal.to_owned();
+        let transcript = transcript.map(str::to_owned);
+        cx.spawn(async move |this, cx| {
+            let read = cx
+                .background_executor()
+                .spawn(async move { crate::lead::read_transcript(transcript.as_deref()) })
+                .await;
+            let _ = this.update(cx, |this, cx| this.fold_lead_history(&terminal, generation, read, cx));
+        })
+        .detach();
+    }
+
+    /// Folds a transcript read that is still the newest for its live terminal.
+    fn fold_lead_history(
+        &mut self,
+        terminal: &str,
+        generation: u64,
+        read: crate::lead::TranscriptRead,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.lead_sessions.get_mut(terminal) else {
+            return;
+        };
+        if session.history_generation != generation {
+            return;
+        }
+        let skipped = crate::lead::apply_history(session, read);
+        if skipped > 0 {
+            tracing::debug!(skipped, "skipped unknown transcript line types");
+        }
+        self.apply_lead_terminal_layout(terminal);
+        self.publish_lead(cx);
     }
 
     /// Reads the lead terminal's start line with `terminal.read`, the app's way of reading a
@@ -4712,15 +4924,7 @@ impl AppWindow {
     /// the transcript its record names becomes the panel's items. Read once per lead, never over a
     /// conversation that is already open.
     fn load_lead_history(&mut self, cx: &mut Context<Self>) {
-        if !self.live.values().any(|record| record.pointer("/labels/lead").is_some()) {
-            return;
-        }
-        let person = settings::load_person().ok();
-        let program = person
-            .and_then(|person| person.lead)
-            .and_then(|lead| lead.program)
-            .filter(|program| !program.is_empty())
-            .unwrap_or_else(|| "claude".into());
+        let program = self.lead_program();
         let Some(terminal) = self.lead_terminal(&program) else {
             return;
         };
@@ -4749,10 +4953,7 @@ impl AppWindow {
         }
         let streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
         let transcript = crate::lead::stream_of(&streams, &program).and_then(|stream| stream.transcript);
-        let skipped = self.read_lead_history(&terminal, transcript.as_deref());
-        if skipped > 0 {
-            tracing::debug!(skipped, "skipped unknown transcript line types");
-        }
+        self.start_lead_history(&terminal, transcript.as_deref(), cx);
         self.read_code_mode_status(terminal.clone(), cx);
         self.apply_lead_terminal_layout(&terminal);
         self.publish_lead(cx);
@@ -4771,9 +4972,8 @@ impl AppWindow {
         let event = args.get("event").and_then(Value::as_str).unwrap_or_default();
         let terminal = args.get("terminal").and_then(Value::as_str).unwrap_or_default().to_owned();
         let input = args.get("input").cloned().unwrap_or(Value::Null);
-        let person = settings::load_person().ok();
-        let lead = person.as_ref().and_then(|person| person.lead.clone()).unwrap_or_default();
-        let program = lead.program.as_deref().filter(|program| !program.is_empty()).unwrap_or("claude").to_owned();
+        let lead = self.person.lead.clone().unwrap_or_default();
+        let program = self.lead_program();
         let folder = lead
             .folder
             .clone()
@@ -4809,10 +5009,7 @@ impl AppWindow {
                 session.set_compacting(false, model::now_ms());
                 mods::set_shared("lead.started".into(), json!(terminal));
                 crate::lead::hide_startup(&mut session.conversation);
-                let skipped = self.read_lead_history(&terminal, transcript);
-                if skipped > 0 {
-                    tracing::debug!(skipped, "skipped unknown transcript line types");
-                }
+                self.start_lead_history(&terminal, transcript, cx);
                 self.read_code_mode_status(terminal.clone(), cx);
                 self.apply_lead_terminal_layout(&terminal);
                 self.publish_lead(cx);
@@ -4853,10 +5050,7 @@ impl AppWindow {
                     session.set_state(Some(state), model::now_ms());
                 }
                 let transcript = input.get("transcript_path").and_then(Value::as_str);
-                let skipped = self.read_lead_history(&terminal, transcript);
-                if skipped > 0 {
-                    tracing::debug!(skipped, "skipped unknown transcript line types");
-                }
+                self.start_lead_history(&terminal, transcript, cx);
                 self.apply_lead_terminal_layout(&terminal);
                 self.publish_lead(cx);
             }
@@ -4973,12 +5167,7 @@ impl AppWindow {
             let ended_by = if event == "Stop" { "stop" } else { "failure" };
             let ended_ms = model::now_ms();
             let stream = {
-                let program = settings::load_person()
-                    .ok()
-                    .and_then(|person| person.lead)
-                    .and_then(|lead| lead.program)
-                    .filter(|program| !program.is_empty())
-                    .unwrap_or_else(|| "claude".to_owned());
+                let program = self.lead_program();
                 let streams = mods::shared("lead.streams").unwrap_or_else(|| json!({}));
                 crate::lead::stream_of(&streams, &program)
             };
@@ -5047,7 +5236,7 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.closed_hooks.remove(&ask.id) {
+        if self.take_closed_hook(&ask.id) {
             // Its socket closed before this request arrived: no one wants the answer.
             let _ = reply.send(json!({ "output": null }));
             return;
@@ -5077,8 +5266,10 @@ impl AppWindow {
         for id in older {
             if let Some(pending) = self.lead_asks.remove(&id) {
                 let _ = pending.reply.send(json!({ "output": null }));
+                cx.dismiss_system_notification(&format!("needs-{id}"));
+                self.flashed_asks.remove(&id);
                 // Its watcher will report the close later; expect it.
-                self.closed_hooks.insert(id);
+                self.remember_closed_hook(&id);
             }
         }
         let terminal = ask.terminal.clone();
@@ -5095,12 +5286,29 @@ impl AppWindow {
         let Some(pending) = self.lead_asks.remove(id) else {
             // A close for an answered/replaced ask just consumes its mark; one
             // that beat its request is remembered until the ask arrives.
-            if !self.closed_hooks.remove(id) {
-                self.closed_hooks.insert(id.to_owned());
+            if !self.take_closed_hook(id) {
+                self.remember_closed_hook(id);
             }
             return;
         };
         self.finish_ask(&pending.ask, cx);
+    }
+
+    /// Keeps at most the 64 most recent closed hook ids.
+    fn remember_closed_hook(&mut self, id: &str) {
+        self.closed_hooks.retain(|closed| closed != id);
+        self.closed_hooks.push(id.to_owned());
+        if self.closed_hooks.len() > 64 {
+            self.closed_hooks.remove(0);
+        }
+    }
+
+    fn take_closed_hook(&mut self, id: &str) -> bool {
+        if let Some(index) = self.closed_hooks.iter().position(|closed| closed == id) {
+            self.closed_hooks.remove(index);
+            return true;
+        }
+        false
     }
 
     /// The Owner answered an ask: hand the hook its output (or nothing).
@@ -5111,7 +5319,7 @@ impl AppWindow {
         let output =
             crate::lead::Answer::from_json(answer).and_then(|answer| crate::lead::hook_output(&pending.ask, &answer));
         let _ = pending.reply.send(json!({ "output": output }));
-        self.closed_hooks.insert(id.to_owned());
+        self.remember_closed_hook(id);
         self.finish_ask(&pending.ask, cx);
         true
     }
@@ -5124,6 +5332,7 @@ impl AppWindow {
             session.ask = None;
             session.set_state(Some(crate::lead::State::Working), model::now_ms());
         }
+        self.flashed_asks.remove(&ask.id);
         cx.dismiss_system_notification(&format!("needs-{}", ask.id));
         self.publish_lead(cx);
     }
@@ -5138,16 +5347,39 @@ impl AppWindow {
         self.publish_lead(cx);
     }
 
-    /// Tells the composer about every lead terminal's state and ask.
+    /// Tells the composer about every lead terminal's state and ask. A session's items are
+    /// serialized only when its conversation version changed since it was last published.
     fn publish_lead(&mut self, cx: &mut Context<Self>) {
         let mut all = serde_json::Map::new();
-        let mut items = serde_json::Map::new();
+        let mut versions = Vec::new();
         for (terminal, session) in &self.lead_sessions {
             all.insert(terminal.clone(), crate::lead::published_session(session));
-            items.insert(
-                terminal.clone(),
-                serde_json::to_value(&session.conversation.items).unwrap_or(json!([])),
-            );
+            versions.push((terminal.clone(), session.conversation.version));
+        }
+        let mut items = serde_json::Map::new();
+        self.published_lead_items
+            .retain(|terminal, _| self.lead_sessions.contains_key(terminal));
+        for (terminal, version) in versions {
+            if self
+                .published_lead_items
+                .get(&terminal)
+                .is_none_or(|(published, _)| *published != version)
+            {
+                let value = self
+                    .lead_sessions
+                    .get(&terminal)
+                    .map(|session| {
+                        serde_json::to_value(&session.conversation.items).unwrap_or(json!([]))
+                    })
+                    .unwrap_or_else(|| json!([]));
+                #[cfg(test)]
+                LEAD_ITEMS_SERIALIZED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.published_lead_items
+                    .insert(terminal.clone(), (version, value));
+            }
+            if let Some((_, value)) = self.published_lead_items.get(&terminal) {
+                items.insert(terminal, value.clone());
+            }
         }
         self.fit_composers();
         cx.notify();
@@ -5177,11 +5409,11 @@ impl AppWindow {
             .detach();
     }
 
-    /// The lead's saved model and reasoning, from settings.json.
-    fn saved_lead_change() -> (Option<String>, Option<String>) {
-        settings::load_person()
-            .ok()
-            .and_then(|person| person.lead)
+    /// The lead's saved model and reasoning, from the settings this window holds.
+    fn saved_lead_change(&self) -> (Option<String>, Option<String>) {
+        self.person
+            .lead
+            .clone()
             .map(|lead| (lead.model, lead.effort))
             .unwrap_or((None, None))
     }
@@ -5193,7 +5425,7 @@ impl AppWindow {
         if crate::lead::apply_refusal(self.lead_sessions.get(terminal)).is_some() {
             return None;
         }
-        let (saved_model, saved_effort) = Self::saved_lead_change();
+        let (saved_model, saved_effort) = self.saved_lead_change();
         let running = mods::shared("lead.running").unwrap_or(Value::Null);
         let mine = running.get("terminal").and_then(Value::as_str) == Some(terminal);
         let running_model = mine
@@ -5256,12 +5488,7 @@ impl AppWindow {
             return;
         }
         self.lead_upkeep_next = Some(started + Duration::from_secs(5));
-        let program = settings::load_person()
-            .ok()
-            .and_then(|person| person.lead)
-            .and_then(|lead| lead.program)
-            .filter(|program| !program.is_empty())
-            .unwrap_or_else(|| "claude".to_owned());
+        let program = self.lead_program();
         let spec = crate::programs::lead_spec(&program).unwrap_or(Value::Null);
         let name = spec["name"].as_str().unwrap_or(&program).to_owned();
         let Some(terminal) = self.lead_terminal(&program) else {
@@ -6736,6 +6963,11 @@ impl AppWindow {
                 let argv = local_core(Self::argv(a), machine, &crate::core_bin::path());
                 let stay = a.get("stay").and_then(Value::as_bool).unwrap_or(true);
                 let place = Self::arg(a, "place").unwrap_or("tab");
+                if !matches!(place, "tab" | "right" | "down") {
+                    return self.fail(format!(
+                        "terminal.open place is \"tab\", \"right\" or \"down\", not {place:?}"
+                    ));
+                }
                 let r = match place {
                     "right" | "down" => {
                         if machine.is_some() {
@@ -6935,7 +7167,7 @@ impl AppWindow {
                 self.answer(r);
             }
             "lead.setup" => {
-                if let Err(error) = lead_setup_check(settings::load_person()) {
+                if let Err(error) = lead_setup_check(Ok(self.person.clone())) {
                     return self.fail(error);
                 }
                 let (tx, rx) = async_channel::bounded(1);
@@ -6988,12 +7220,7 @@ impl AppWindow {
             }
             "lead.compact" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
-                let person = settings::load_person().ok();
-                let program = person
-                    .and_then(|person| person.lead)
-                    .and_then(|lead| lead.program)
-                    .filter(|program| !program.is_empty())
-                    .unwrap_or_else(|| "claude".to_owned());
+                let program = self.lead_program();
                 if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
                     return self.fail(format!("{terminal:?} isn't the lead's terminal"));
                 }
@@ -7005,12 +7232,7 @@ impl AppWindow {
             }
             "lead.restart" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
-                let person = settings::load_person().ok();
-                let program = person
-                    .and_then(|person| person.lead)
-                    .and_then(|lead| lead.program)
-                    .filter(|program| !program.is_empty())
-                    .unwrap_or_else(|| "claude".to_owned());
+                let program = self.lead_program();
                 if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
                     return self.fail(format!("{terminal:?} isn't the lead's terminal"));
                 }
@@ -7024,12 +7246,7 @@ impl AppWindow {
             }
             "lead.apply" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
-                let person = settings::load_person().ok();
-                let program = person
-                    .and_then(|person| person.lead)
-                    .and_then(|lead| lead.program)
-                    .filter(|program| !program.is_empty())
-                    .unwrap_or_else(|| "claude".to_owned());
+                let program = self.lead_program();
                 if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
                     return self.fail(format!("{terminal:?} isn't the lead's terminal"));
                 }
@@ -7047,12 +7264,7 @@ impl AppWindow {
             }
             "lead.mode" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
-                let person = settings::load_person().ok();
-                let program = person
-                    .and_then(|person| person.lead)
-                    .and_then(|lead| lead.program)
-                    .filter(|program| !program.is_empty())
-                    .unwrap_or_else(|| "claude".to_owned());
+                let program = self.lead_program();
                 if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
                     return self.fail(format!("{terminal:?} isn't the lead's terminal"));
                 }
@@ -7088,12 +7300,7 @@ impl AppWindow {
             "lead.steer" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
                 let text = Self::arg(a, "text").unwrap_or_default().to_owned();
-                let person = settings::load_person().ok();
-                let program = person
-                    .and_then(|person| person.lead)
-                    .and_then(|lead| lead.program)
-                    .filter(|program| !program.is_empty())
-                    .unwrap_or_else(|| "claude".to_owned());
+                let program = self.lead_program();
                 if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
                     return self.fail(format!("{terminal:?} isn't the lead's terminal"));
                 }
@@ -7955,6 +8162,11 @@ impl AppWindow {
     /// Which copies are on screen, for `<mod>.<command>` (`mods::send_command`).
     fn publish_shown_copies(&self) {
         let (_, shown) = self.visible();
+        self.publish_shown_copies_from(&shown);
+    }
+
+    /// The same from mod slots already worked out.
+    fn publish_shown_copies_from(&self, shown: &[(String, Instance)]) {
         mods::set_shown_copies(
             shown
                 .iter()
@@ -8058,7 +8270,7 @@ impl AppWindow {
                     let args = cmd.get("args").cloned().unwrap_or(Value::Null);
                     self.lead_hook(&args, Some(reply), window, cx);
                 } else if cmd.get("do").and_then(Value::as_str) == Some("lead.setup") {
-                    match lead_setup_check(settings::load_person()) {
+                    match lead_setup_check(Ok(self.person.clone())) {
                         Ok(()) => start_lead_setup(move |result| {
                             let _ = reply.send(result);
                         }),
@@ -8085,12 +8297,7 @@ impl AppWindow {
     /// composer take the keyboard. A lead that isn't running is not started.
     fn summon(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_from_tray(window, cx);
-        let program = settings::load_person()
-            .ok()
-            .and_then(|person| person.lead)
-            .and_then(|lead| lead.program)
-            .filter(|program| !program.is_empty())
-            .unwrap_or_else(|| "claude".into());
+        let program = self.lead_program();
         let Some(terminal) = self.lead_terminal(&program) else {
             return;
         };
@@ -8349,15 +8556,34 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        for path in changed_asset_paths(&mods::app_dir(), &changed) {
-            invalidate_asset(&path, window, cx);
-        }
+        let home = mods::app_dir();
+        let walked = changed.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let paths = cx
+                .background_executor()
+                .spawn(async move { changed_asset_paths(&home, &walked) })
+                .await;
+            let _ = this.update_in(cx, |_this, window, cx| {
+                for path in paths {
+                    invalidate_asset(&path, window, cx);
+                }
+            });
+        })
+        .detach();
         let top = |p: &std::path::PathBuf| {
             p.components()
                 .next()
                 .and_then(|c| c.as_os_str().to_str().map(str::to_owned))
                 .unwrap_or_default()
         };
+        // A layout or a mod appearing changes which layouts are offered (`missing_mods`).
+        if changed
+            .iter()
+            .any(|p| matches!(top(p).as_str(), "layouts" | "mods"))
+        {
+            self.layout_names = None;
+            self.layout_names();
+        }
         if changed.iter().any(|p| {
             matches!(
                 top(p).as_str(),
@@ -8711,42 +8937,62 @@ impl AppWindow {
     fn empty_main(&self, cx: &mut Context<Self>) -> AnyElement {
         let (lead, model) = lead_display();
         let z = settings::z;
-        let primary = div()
-            .id("start-lead")
-            .debug_selector(|| "start-lead".into())
-            .h(z(30.0))
-            .px(z(14.0))
-            .flex()
-            .flex_none()
-            .items_center()
-            .rounded(z(7.0))
-            .bg(c("solid"))
-            .text_color(c("solid_foreground"))
-            .text_size(z(12.5))
-            .font_weight(FontWeight::MEDIUM)
-            .cursor_pointer()
-            .hover(|s| s.opacity(0.88))
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.run("lead.open", json!({}), window, cx);
-            }))
-            .child(strings::text("app.empty-start-lead"));
-        let secondary = div()
-            .id("start-terminal")
-            .debug_selector(|| "start-terminal".into())
-            .h(z(30.0))
-            .px(z(10.0))
-            .flex()
-            .flex_none()
-            .items_center()
-            .rounded(z(7.0))
-            .text_color(c("muted"))
-            .text_size(z(12.5))
-            .cursor_pointer()
-            .hover(|s| s.text_color(c("foreground")).bg(c("hover")))
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.run("tab.new", json!({}), window, cx);
-            }))
-            .child(strings::text("app.empty-open-terminal"));
+        let start_lead = strings::text("app.empty-start-lead");
+        let primary = with_keyboard_ring(
+            div()
+                .id("start-lead")
+                .debug_selector(|| "start-lead".into())
+                .track_focus(&self.focus_start_lead)
+                .tab_stop(true)
+                .aria_label(start_lead.clone())
+                .h(z(30.0))
+                .px(z(14.0))
+                .flex()
+                .flex_none()
+                .items_center()
+                .rounded(z(7.0))
+                .bg(c("solid"))
+                .text_color(c("solid_foreground"))
+                .text_size(z(12.5))
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.88))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.run("lead.open", json!({}), window, cx);
+                }))
+                .child(start_lead)
+                .into_any_element(),
+            &self.focus_start_lead,
+            z(7.0),
+            "focus-start-lead",
+        );
+        let open_terminal = strings::text("app.empty-open-terminal");
+        let secondary = with_keyboard_ring(
+            div()
+                .id("start-terminal")
+                .debug_selector(|| "start-terminal".into())
+                .track_focus(&self.focus_start_terminal)
+                .tab_stop(true)
+                .aria_label(open_terminal.clone())
+                .h(z(30.0))
+                .px(z(10.0))
+                .flex()
+                .flex_none()
+                .items_center()
+                .rounded(z(7.0))
+                .text_color(c("muted"))
+                .text_size(z(12.5))
+                .cursor_pointer()
+                .hover(|s| s.text_color(c("foreground")).bg(c("hover")))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.run("tab.new", json!({}), window, cx);
+                }))
+                .child(open_terminal)
+                .into_any_element(),
+            &self.focus_start_terminal,
+            z(7.0),
+            "focus-start-terminal",
+        );
         div()
             .id("empty-main")
             .debug_selector(|| "empty-main".into())
@@ -9371,9 +9617,13 @@ impl AppWindow {
             }
         }
         if more > 0 {
-            out.push(
+            let more_text = strings::text_with("app.bell-more", &[("more", &more.to_string())]);
+            out.push(with_keyboard_ring(
                 div()
                     .id("toasts-more")
+                    .track_focus(&self.focus_toasts_more)
+                    .tab_stop(true)
+                    .aria_label(more_text.clone())
                     .absolute()
                     .right(right)
                     .top(top + settings::z(below))
@@ -9390,9 +9640,12 @@ impl AppWindow {
                     .cursor_pointer()
                     .hover(|s| s.text_color(c("foreground")))
                     .on_click(cx.listener(|this, _, w, cx| this.open_bell(w, cx)))
-                    .child(strings::text_with("app.bell-more", &[("more", &more.to_string())]))
+                    .child(more_text)
                     .into_any_element(),
-            );
+                &self.focus_toasts_more,
+                settings::z(14.0),
+                "focus-toasts-more",
+            ));
             below += 28.0 + TOAST_GAP;
         }
         if let Some(error) = crate::update::core().error {
@@ -9448,9 +9701,12 @@ impl AppWindow {
             .text_size(settings::z(13.0))
             .child(div().text_color(c("foreground")).child(words))
             .when(refused, |pill| {
-                pill.child(
+                pill.child(with_keyboard_ring(
                     div()
                         .id("core-link-restart")
+                        .track_focus(&self.focus_link_restart)
+                        .tab_stop(true)
+                        .aria_label(strings::text("app.restart"))
                         .h(settings::z(24.0))
                         .px(settings::z(10.0))
                         .flex()
@@ -9466,8 +9722,12 @@ impl AppWindow {
                             this.drain_documents(window, cx);
                             crate::update::relaunch();
                             cx.quit();
-                        })),
-                )
+                        }))
+                        .into_any_element(),
+                    &self.focus_link_restart,
+                    settings::z(12.0),
+                    "focus-link-restart",
+                ))
             });
         Some(pill.into_any_element())
     }
@@ -9529,9 +9789,13 @@ impl AppWindow {
             .text_size(settings::z(13.0))
             .child(div().text_color(c("foreground")).child(label.clone()))
             .when(app_ready, |pill| {
-                pill.child(
+                let restart = strings::text("app.restart");
+                pill.child(with_keyboard_ring(
                     div()
                         .id("update-restart")
+                        .track_focus(&self.focus_update_restart)
+                        .tab_stop(true)
+                        .aria_label(restart.clone())
                         .h(settings::z(24.0))
                         .px(settings::z(10.0))
                         .flex()
@@ -9542,33 +9806,50 @@ impl AppWindow {
                         .text_color(c("accent_foreground"))
                         .font_weight(FontWeight::SEMIBOLD)
                         .hover(|s| s.opacity(0.9))
-                        .child(strings::text("app.restart"))
+                        .child(restart)
                         .on_click(
                             cx.listener(|this, _, w, cx| this.run("app.update", json!({}), w, cx)),
-                        ),
+                        )
+                        .into_any_element(),
+                    &self.focus_update_restart,
+                    settings::z(12.0),
+                    "focus-update-restart",
+                ))
+            })
+            .child({
+                let notes = if app_ready || success {
+                    strings::text("app.what-changed")
+                } else {
+                    strings::text("app.open-about")
+                };
+                with_keyboard_ring(
+                    div()
+                        .id("update-notes")
+                        .track_focus(&self.focus_update_notes)
+                        .tab_stop(true)
+                        .aria_label(notes.clone())
+                        .px(settings::z(6.0))
+                        .cursor_pointer()
+                        .text_color(c("accent"))
+                        .child(notes)
+                        .on_click(cx.listener(move |this, _, w, cx| {
+                            if success {
+                                this.update_success = false;
+                            }
+                            this.run("app.settings", json!({ "section": "about" }), w, cx);
+                        }))
+                        .into_any_element(),
+                    &self.focus_update_notes,
+                    settings::z(0.0),
+                    "focus-update-notes",
                 )
             })
-            .child(
-                div()
-                    .id("update-notes")
-                    .px(settings::z(6.0))
-                    .cursor_pointer()
-                    .text_color(c("accent"))
-                    .child(if app_ready || success {
-                        strings::text("app.what-changed")
-                    } else {
-                        strings::text("app.open-about")
-                    })
-                    .on_click(cx.listener(move |this, _, w, cx| {
-                        if success {
-                            this.update_success = false;
-                        }
-                        this.run("app.settings", json!({ "section": "about" }), w, cx);
-                    })),
-            )
-            .child(
+            .child(with_keyboard_ring(
                 div()
                     .id("update-dismiss")
+                    .track_focus(&self.focus_update_dismiss)
+                    .tab_stop(true)
+                    .aria_label(strings::text("app.dismiss"))
                     .size(settings::z(24.0))
                     .flex()
                     .items_center()
@@ -9581,8 +9862,12 @@ impl AppWindow {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.update_dismissed = Some(dismissal.clone());
                         cx.notify();
-                    })),
-            );
+                    }))
+                    .into_any_element(),
+                &self.focus_update_dismiss,
+                settings::z(12.0),
+                "focus-update-dismiss",
+            ));
         Some(pill.into_any_element())
     }
 }
@@ -10595,6 +10880,8 @@ impl Render for AppWindow {
 }
 
 fn invalidate_asset(path: &std::path::Path, window: &mut Window, cx: &mut gpui::App) {
+    #[cfg(test)]
+    ASSET_INVALIDATIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let key = gpui_shell::AppAssets::cache_key(&path.to_string_lossy());
     invalidate_image(&gpui::Resource::Embedded(key.clone()), window, cx);
     window.invalidate_svg(&key);
@@ -11924,6 +12211,45 @@ export default class FocusProbe extends View {
     }
 
     #[test]
+    fn the_update_pill_buttons_take_the_keyboard() {
+        in_own_process("update_pill_keyboard");
+    }
+
+    /// The update pill's × has a tab stop and presses with Enter, dismissing the pill.
+    #[gpui::test]
+    fn update_pill_keyboard(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("update_pill_keyboard") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.update_ready = Some("Kompitum 9.9 is ready".into());
+            this.update_success = false;
+            this.update_dismissed = None;
+            this.focus_update_dismiss.focus(window, cx);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let keystroke = gpui::Keystroke::parse("enter").unwrap();
+        cx.simulate_event(gpui::KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(gpui::KeyUpEvent { keystroke });
+        cx.run_until_parked();
+        view.update(cx, |this, _| {
+            assert!(this.update_dismissed.is_some(), "Enter presses the focused dismiss button");
+        });
+    }
+
+    #[test]
     fn a_space_with_no_terminal_shows_the_lead_card() {
         in_own_process("empty_card");
     }
@@ -12863,18 +13189,419 @@ export default class Probe extends View {
         view.update_in(cx, |this, window, cx| {
             assert!(this.lead_sessions.is_empty());
             this.terminals_listed(listing.clone(), window, cx);
+        });
+        cx.run_until_parked();
+        view.update(cx, |this, _| {
             let items = &this.lead_sessions["t1"].conversation.items;
             assert_eq!(items.len(), 1, "{items:?}");
             assert!(
                 matches!(&items[0], crate::lead::Item::Owner { text, .. } if text == "Hello"),
                 "{items:?}"
             );
-            // Read once: a later listing does not read the transcript again.
-            std::fs::write(&transcript, "").unwrap();
+        });
+        // Read once: a later listing does not read the transcript again.
+        std::fs::write(&transcript, "").unwrap();
+        view.update_in(cx, |this, window, cx| {
             this.terminals_listed(listing, window, cx);
+        });
+        cx.run_until_parked();
+        view.update(cx, |this, _| {
             assert_eq!(this.lead_sessions["t1"].conversation.items.len(), 1);
         });
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_lead_hook_replies_before_its_history_is_read() {
+        in_own_process("lead_history_async");
+    }
+
+    /// SessionStart's reply goes back at once; the transcript read and fold happen on the
+    /// background executor and reach the conversation when they arrive.
+    #[gpui::test]
+    fn lead_history_async(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_history_async") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        let dir = crate::mods::app_dir().join("async-history");
+        std::fs::create_dir_all(&dir).unwrap();
+        let transcript = dir.join("session.jsonl");
+        std::fs::write(
+            &transcript,
+            "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Hello\"}}\n",
+        )
+        .unwrap();
+        let (early_items, reply) = view.update_in(cx, |this, window, cx| {
+            this.live.insert(
+                "t1".into(),
+                json!({"state": "live", "labels": {"lead": "claude"}}),
+            );
+            let (reply, reply_rx) = std::sync::mpsc::channel();
+            this.lead_hook(
+                &json!({
+                    "event": "SessionStart", "terminal": "t1",
+                    "input": {
+                        "session_id": "s1",
+                        "transcript_path": transcript.to_str().unwrap()
+                    }
+                }),
+                Some(reply),
+                window,
+                cx,
+            );
+            let early = this.lead_sessions["t1"].conversation.items.len();
+            let reply = reply_rx
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .expect("the hook's reply waits for no read");
+            (early, reply)
+        });
+        assert_eq!(early_items, 0, "the transcript is still being read off the UI thread");
+        assert_eq!(reply, json!({}));
+        cx.run_until_parked();
+        view.update(cx, |this, _| {
+            let items = &this.lead_sessions["t1"].conversation.items;
+            assert_eq!(items.len(), 1, "{items:?}");
+            assert!(
+                matches!(&items[0], crate::lead::Item::Owner { text, .. } if text == "Hello"),
+                "{items:?}"
+            );
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_a_changed_conversation_is_serialized_again() {
+        in_own_process("lead_publish_items");
+    }
+
+    /// Publishing the lead again keeps an unchanged session's items; only its new version is serialized.
+    #[gpui::test]
+    fn lead_publish_items(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_publish_items") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, _window, cx| {
+            for terminal in ["t1", "t2"] {
+                let session = this.lead_sessions.entry(terminal.into()).or_default();
+                session.conversation.items.push(crate::lead::Item::Owner {
+                    id: format!("{terminal}-owner"),
+                    text: terminal.into(),
+                    steering: false,
+                });
+                session.conversation.version = 1;
+            }
+            this.publish_lead(cx);
+            let before = super::lead_items_serialized();
+            this.publish_lead(cx);
+            assert_eq!(
+                super::lead_items_serialized(),
+                before,
+                "publishing again without a changed version serializes nothing"
+            );
+            let session = this.lead_sessions.get_mut("t1").unwrap();
+            session.conversation.items.push(crate::lead::Item::Owner {
+                id: "t1-second".into(),
+                text: "again".into(),
+                steering: false,
+            });
+            session.conversation.version = 2;
+            this.publish_lead(cx);
+            assert_eq!(
+                super::lead_items_serialized(),
+                before + 1,
+                "one changed session, one serialization"
+            );
+            let published = this.published_lead_items.get("t1").unwrap();
+            assert_eq!(published.0, 2);
+            assert_eq!(published.1.as_array().map(Vec::len), Some(2));
+        });
+    }
+
+    #[test]
+    fn the_layout_list_is_cached_until_a_layout_or_mod_changes() {
+        in_own_process("layout_names_cache");
+    }
+
+    /// The list is read once; a new layout or the mod it needs shows after the file event that drops it.
+    #[gpui::test]
+    fn layout_names_cache(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("layout_names_cache") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        let home = crate::mods::app_dir();
+        std::fs::write(
+            home.join("layouts/cached.json"),
+            r#"{"id":"root","type":"block","content":{"tab":"active"}}"#,
+        )
+        .unwrap();
+        let names = view.update(cx, |this, _| this.layout_names());
+        assert!(!names.iter().any(|n| n == "cached"), "{names:?}");
+        view.update_in(cx, |this, window, cx| {
+            this.files_changed(vec!["layouts/cached.json".into()], window, cx);
+        });
+        let names = view.update(cx, |this, _| this.layout_names());
+        assert!(names.iter().any(|n| n == "cached"), "{names:?}");
+
+        std::fs::write(
+            home.join("layouts/needs-late.json"),
+            r#"{"id":"root","type":"block","content":{"mod":"late"}}"#,
+        )
+        .unwrap();
+        let names = view.update(cx, |this, _| this.layout_names());
+        assert!(!names.iter().any(|n| n == "needs-late"), "{names:?}");
+        let folder = home.join("mods/late");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("mod.json"), r#"{ "place": "none" }"#).unwrap();
+        std::fs::write(folder.join("main.js"), "").unwrap();
+        view.update_in(cx, |this, window, cx| {
+            this.files_changed(vec!["mods/late/main.js".into()], window, cx);
+        });
+        let names = view.update(cx, |this, _| this.layout_names());
+        assert!(names.iter().any(|n| n == "needs-late"), "{names:?}");
+    }
+
+    #[test]
+    fn the_lead_program_comes_from_the_windows_settings() {
+        in_own_process("lead_program_memory");
+    }
+
+    /// The window's loaded copy decides, not a settings.json that changed on disk without a reload.
+    #[gpui::test]
+    fn lead_program_memory(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_program_memory") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update(cx, |this, _| {
+            this.person.lead = Some(crate::settings::Lead {
+                program: Some("pi".into()),
+                ..Default::default()
+            });
+            std::fs::write(
+                crate::settings::path(),
+                r#"{"lead":{"program":"claude"}}"#,
+            )
+            .unwrap();
+            assert_eq!(this.lead_program(), "pi", "the window's copy wins over the disk");
+            this.live.insert(
+                "t1".into(),
+                json!({"state": "live", "labels": {"lead": "pi"}}),
+            );
+            assert_eq!(this.lead_terminal(&this.lead_program()).as_deref(), Some("t1"));
+        });
+    }
+
+    #[test]
+    fn the_small_window_fixes_hold() {
+        in_own_process("small_fixes");
+    }
+
+    /// A bad terminal place is refused, a superseded ask forgets its flash and close mark, the
+    /// close list stays at 64, pane headers survive a layout switch, and dead model entries go.
+    #[gpui::test]
+    fn small_fixes(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("small_fixes") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            let bad = this.run_as("terminal.open", json!({ "place": "middle" }), false, window, cx);
+            assert!(
+                bad["error"].as_str().is_some_and(|e| e.contains("terminal.open place")),
+                "{bad}"
+            );
+
+            this.live.insert("t1".into(), json!({"state": "live", "labels": {"lead": "claude"}}));
+            let ask = |id: &str| json!({
+                "event": "PermissionRequest", "terminal": "t1", "hook_id": id,
+                "input": {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+            });
+            let (first, _first_reply) = std::sync::mpsc::channel();
+            this.lead_hook(&ask("a1"), Some(first), window, cx);
+            assert!(this.flashed_asks.contains("a1"));
+            let (second, _second_reply) = std::sync::mpsc::channel();
+            this.lead_hook(&ask("a2"), Some(second), window, cx);
+            assert!(!this.flashed_asks.contains("a1"), "the replaced ask's flash is cleared");
+            assert!(this.closed_hooks.iter().any(|id| id == "a1"));
+            for i in 0..70 {
+                this.lead_hook_closed(&format!("c{i}"), cx);
+            }
+            assert_eq!(this.closed_hooks.len(), 64);
+            assert!(!this.closed_hooks.iter().any(|id| id == "c0"), "the oldest close mark goes");
+
+            this.model = crate::model::Model::default();
+            this.model.add_space(
+                "sp",
+                "",
+                "/tmp",
+                crate::model::Tab::new("tb", "", "p1", "t1"),
+            );
+            for slot in ["p1#frame", "p1#header"] {
+                let inst = crate::mods::Instance {
+                    name: "unused".into(),
+                    props: serde_json::Value::Null,
+                };
+                let copy = this.load(inst, window, cx);
+                this.copies.insert(slot.into(), copy);
+            }
+            this.drop_layout_copies(window, cx);
+            assert!(this.copies.contains_key("p1#frame"), "a pane header stays");
+            assert!(this.copies.contains_key("p1#header"), "a stack header stays");
+
+            this.live.clear();
+            this.live.insert("t9".into(), json!({"state": "live"}));
+            this.model.agents.insert("t9".into(), Default::default());
+            this.model.agents.insert("gone".into(), Default::default());
+            this.model.folder_info.insert("t9".into(), Default::default());
+            this.model.folder_info.insert("gone".into(), Default::default());
+            this.track_folders(cx);
+            assert!(this.model.agents.contains_key("t9"));
+            assert!(!this.model.agents.contains_key("gone"));
+            assert!(!this.model.folder_info.contains_key("gone"));
+        });
+    }
+
+    #[test]
+    fn a_terminal_tick_scans_the_screen_once() {
+        in_own_process("visible_once");
+    }
+
+    /// Sync and a tick each work out what is visible once, however many parts ask for it.
+    #[gpui::test]
+    fn visible_once(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("visible_once") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            super::VISIBLE_SCANS.store(0, std::sync::atomic::Ordering::Relaxed);
+            this.sync(window, cx);
+            assert_eq!(super::visible_scans(), 1, "sync scans the screen once");
+            super::VISIBLE_SCANS.store(0, std::sync::atomic::Ordering::Relaxed);
+            this.tend_terminals(false, window, cx);
+            assert_eq!(super::visible_scans(), 1, "a tick scans the screen once");
+        });
+    }
+
+    #[test]
+    fn a_changed_mod_folder_is_walked_off_the_ui_thread() {
+        in_own_process("changed_assets_async");
+    }
+
+    /// A file event under mods/ returns at once; its folder walk and asset invalidations arrive later.
+    #[gpui::test]
+    fn changed_assets_async(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("changed_assets_async") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        let path = std::path::PathBuf::from("mods/unused/asset.svg");
+        let full = crate::mods::app_dir().join(&path);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(&full, "<svg/>").unwrap();
+        super::ASSET_INVALIDATIONS.store(0, std::sync::atomic::Ordering::Relaxed);
+        view.update_in(cx, |this, window, cx| {
+            this.files_changed(vec![path], window, cx);
+            assert_eq!(
+                super::asset_invalidations(),
+                0,
+                "the walk does not run before files_changed returns"
+            );
+        });
+        cx.run_until_parked();
+        assert!(
+            super::asset_invalidations() > 0,
+            "the invalidations arrive after the background walk"
+        );
+    }
+
+    #[test]
+    fn a_late_history_read_is_dropped() {
+        in_own_process("lead_history_stale");
+    }
+
+    /// A read that finishes after a newer one started, or after its terminal went, changes nothing.
+    #[gpui::test]
+    fn lead_history_stale(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("lead_history_stale") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        let loaded = |text: &str| {
+            crate::lead::TranscriptRead::Loaded(crate::lead::TranscriptLoad {
+                items: vec![crate::lead::Item::Owner {
+                    id: "owner-1".into(),
+                    text: text.into(),
+                    steering: false,
+                }],
+                tasks: Vec::new(),
+                skipped: 0,
+            })
+        };
+        view.update_in(cx, |this, _window, cx| {
+            this.lead_sessions.entry("t1".into()).or_default().history_generation = 2;
+            this.fold_lead_history("t1", 1, loaded("old"), cx);
+            assert!(this.lead_sessions["t1"].conversation.items.is_empty(), "a late read is dropped");
+            this.fold_lead_history("gone", 1, loaded("gone"), cx);
+            assert!(!this.lead_sessions.contains_key("gone"), "a read for a gone terminal is dropped");
+            this.fold_lead_history("t1", 2, loaded("new"), cx);
+            let items = &this.lead_sessions["t1"].conversation.items;
+            assert!(
+                matches!(&items[0], crate::lead::Item::Owner { text, .. } if text == "new"),
+                "{items:?}"
+            );
+        });
     }
 
     #[test]
@@ -13208,6 +13935,7 @@ export default class Probe extends View {
                 serde_json::to_string(&json!({"lead": {"program": "claude", "folder": "/tmp"}})).unwrap(),
             )
             .unwrap();
+            this.reload_config(window, cx);
             let before = this.live.len();
             let result = this.lead_open(window, cx);
             assert!(result.is_ok(), "lead.open: {result:?}");
@@ -13259,6 +13987,7 @@ export default class Probe extends View {
                 serde_json::to_string(&json!({"lead": {"program": "claude", "model": "sonnet"}})).unwrap(),
             )
             .unwrap();
+            this.reload_config(window, cx);
             let before = this.live.len();
             let result = this.lead_open(window, cx);
             assert!(result.is_ok(), "lead.open: {result:?}");
