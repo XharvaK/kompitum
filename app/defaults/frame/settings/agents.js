@@ -8,7 +8,7 @@ import { kom, exec, knownAgents, pickFolder, window } from "kompitum";
 import { dropdown } from "./ui.js";
 
 // The core's built-in workers (`builtin()` in crates/kompitum-core/src/task/worker.rs): none of them can be removed.
-const BUILTIN = new Set(["cc", "go", "free", "codex", "haiku"]);
+export const BUILTIN = new Set(["cc", "go", "free", "codex", "haiku"]);
 const USAGE_EVERY_MS = 60000;
 const DETAIL_LIMIT = 32;
 

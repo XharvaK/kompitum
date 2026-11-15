@@ -419,6 +419,57 @@ fn written_settings(writes: &[Value]) -> Value {
     serde_json::from_str(text).unwrap()
 }
 
+/// Mounts Settings, clicks each id, and returns every host effect and whether each of `want` is
+/// laid out afterwards.
+fn settings_effects_after_clicks(
+    cx: &mut TestAppContext,
+    values: BTreeMap<String, Value>,
+    setup: &str,
+    clicks: &[&'static str],
+    want: &[&'static str],
+) -> (Vec<(String, Vec<Value>)>, Vec<(String, bool)>) {
+    use gpui::{Modifiers, MouseButton};
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-settings-effects.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("frame/settings", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    for id in clicks {
+        let at = visual
+            .debug_bounds(id)
+            .unwrap_or_else(|| panic!("{id} is laid out"))
+            .center();
+        visual.simulate_mouse_move(at, None, Modifiers::default());
+        visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
+        visual.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    }
+    let found = want
+        .iter()
+        .map(|id| ((*id).to_string(), visual.debug_bounds(id).is_some()))
+        .collect();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    let calls = calls.borrow();
+    assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
+    (calls.effects.clone(), found)
+}
+
 /// Down moves the highlight to the next CLI, and Enter picks it.
 #[gpui::test]
 fn lead_dropdown_down_and_enter_pick_the_next_cli(cx: &mut TestAppContext) {
@@ -1492,3 +1543,245 @@ fn a_taken_summon_key_says_another_app_has_it(cx: &mut TestAppContext) {
     );
 }
 
+
+fn about_values(person: Value, workers: Value) -> BTreeMap<String, Value> {
+    let mut p = props();
+    p["section"] = json!("about");
+    let mut values = fixture(true, p, updates("current", "current"));
+    values.insert("person".into(), person);
+    values.insert("workersJson".into(), workers);
+    values
+}
+
+fn export_person() -> Value {
+    json!({
+        "zoom": 1.5,
+        "summon_key": "ctrl+alt+space",
+        "theme": "moss",
+        "lead": {"model": "opus", "api_key": "keep-me"},
+        "connect": {"grokbot": {"name": "Grok", "token": "secret-token", "nested": {"secret": "x"}}},
+        "nested": {"keep": true, "password": "hidden"},
+        "colors": {"accent": "#ff8800"}
+    })
+}
+
+fn export_workers() -> Value {
+    agent_workers(
+        json!(["cc", "go", "mine"]),
+        json!([
+            agent_worker("cc", "Command Code", "command_code", "cc-route", "ready", "", 0),
+            agent_worker("go", "opencode Go", "opencode", "go-route", "ready", "", 0),
+            json!({
+                "key": "mine", "label": "My Worker", "cli": "opencode", "route": "mine-route",
+                "state": "ready", "until_ms": 0, "source": null, "window": "", "message": "",
+                "sentence": "", "refusals": 0,
+                "spend": {"five_hours": {"runs": 3, "cost_usd": 0.5}, "week": {"runs": 3, "cost_usd": 0.5}, "month": {"runs": 3, "cost_usd": 0.5}}
+            })
+        ]),
+    )
+}
+
+/// Export writes one JSON file: the settings without their secrets, and only the workers someone
+/// added, with their order and the mode.
+#[gpui::test]
+fn export_writes_the_person_without_secrets_and_the_added_workers(cx: &mut TestAppContext) {
+    let mut values = about_values(export_person(), export_workers());
+    values.insert("pickSavePath".into(), json!("/fixture/kompitum-settings.json"));
+    let (writes, _) = settings_after_keys(cx, values, "", &["st-export"], None, "", &[]);
+    let text = writes.last().and_then(Value::as_str).unwrap_or_else(|| panic!("nothing was written: {writes:?}"));
+    let doc: Value = serde_json::from_str(text).unwrap();
+    assert_eq!(doc["kompitum_settings"], json!(1));
+    assert!(doc["exported"].as_str().is_some_and(|time| time.contains('T')), "{doc}");
+    assert_eq!(doc["person"]["zoom"], json!(1.5));
+    assert_eq!(doc["person"]["summon_key"], json!("ctrl+alt+space"), "a setting, not a secret");
+    assert_eq!(doc["person"]["nested"]["keep"], json!(true));
+    assert_eq!(doc["person"]["colors"]["accent"], json!("#ff8800"));
+    let exported = text.to_lowercase();
+    for secret in ["api_key", "keep-me", "secret-token", "password", "\"secret\"", "hidden"] {
+        assert!(!exported.contains(secret), "{secret:?} stayed in: {text}");
+    }
+    assert_eq!(doc["workers"]["order"], json!(["cc", "go", "mine"]));
+    assert_eq!(doc["workers"]["mode"], json!("auto"));
+    assert_eq!(
+        doc["workers"]["added"],
+        json!([{"key": "mine", "cli": "opencode", "label": "My Worker", "route": "mine-route"}])
+    );
+}
+
+fn import_document() -> Value {
+    json!({
+        "kompitum_settings": 1,
+        "exported": "2026-11-15T00:00:00Z",
+        "person": {
+            "zoom": 2,
+            "theme": "paper",
+            "lead": {"model": "opus"},
+            "connect": {"grokbot": {"name": "New name", "token": "from-file"}}
+        },
+        "workers": {
+            "order": ["go", "mine", "cc"],
+            "mode": "auto",
+            "added": [{"key": "mine", "cli": "opencode", "label": "Mine", "route": "mine-route"}]
+        }
+    })
+}
+
+fn import_values(document: Value) -> BTreeMap<String, Value> {
+    let person = json!({
+        "zoom": 1,
+        "theme": "ink",
+        "lead": {"model": "sonnet", "api_key": "keep-me"},
+        "connect": {"grokbot": {"name": "Old name", "token": "keep-token"}}
+    });
+    let workers = agent_workers(
+        json!(["cc", "go"]),
+        json!([
+            agent_worker("cc", "Command Code", "command_code", "cc-route", "ready", "", 0),
+            agent_worker("go", "opencode Go", "opencode", "go-route", "ready", "", 0)
+        ]),
+    );
+    let mut values = about_values(person, workers);
+    values.insert("importFile".into(), json!(document.to_string()));
+    values.insert("pickedFiles".into(), json!(["/fixture/import.json"]));
+    values
+}
+
+/// The import sheet lists the person settings that differ and the workers to add or move.
+#[gpui::test]
+fn the_import_sheet_lists_what_will_change(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        import_values(import_document()),
+        Some("this.openImport(cx);"),
+    )
+    .unwrap();
+    for line in [
+        "zoom: 1 → 2",
+        "Add worker Mine",
+        "Move worker opencode Go: 2 → 1",
+    ] {
+        assert!(tree.contains(line), "missing {line:?}: {tree}");
+    }
+    assert!(tree.contains("Import"), "{tree}");
+    assert!(tree.contains("Cancel"), "{tree}");
+    assert!(!tree.contains("keep-token"), "a secret is not in the sheet: {tree}");
+    assert!(!tree.contains("from-file"), "an exported secret is ignored: {tree}");
+}
+
+/// A file that isn't a Kompitum settings file says so, and shows no sheet.
+#[gpui::test]
+fn a_file_that_is_not_settings_says_so(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = import_values(json!({"kompitum_settings": 2}));
+    values.insert("importFile".into(), json!("not json at all"));
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        values,
+        Some("this.openImport(cx);"),
+    )
+    .unwrap();
+    assert!(tree.contains("This isn't a Kompitum settings file."), "{tree}");
+    assert!(!tree.contains("st-import-sheet"), "{tree}");
+}
+
+/// Import writes the merged person settings through the page's change, keeping the current secret
+/// fields, then adds the new worker, the order and the mode.
+#[gpui::test]
+fn import_writes_the_person_then_the_worker_commands(cx: &mut TestAppContext) {
+    let (effects, found) = settings_effects_after_clicks(
+        cx,
+        import_values(import_document()),
+        "",
+        &["st-import", "st-import-confirm"],
+        &["st-import-sheet"],
+    );
+    assert_eq!(found, vec![("st-import-sheet".into(), false)]);
+    let writes: Vec<Value> = effects
+        .iter()
+        .filter(|(name, _)| name == "writeTextFile")
+        .filter_map(|(_, args)| args.get(1).cloned())
+        .collect();
+    let person = written_settings(&writes);
+    assert_eq!(person["zoom"], json!(2));
+    assert_eq!(person["theme"], json!("paper"));
+    assert_eq!(person["lead"]["model"], json!("opus"));
+    assert_eq!(person["lead"]["api_key"], json!("keep-me"), "the current secret stays");
+    assert_eq!(person["connect"]["grokbot"]["name"], json!("New name"));
+    assert_eq!(person["connect"]["grokbot"]["token"], json!("keep-token"));
+    let commands: Vec<Vec<Value>> = effects
+        .iter()
+        .filter(|(name, _)| name == "kom")
+        .filter_map(|(_, args)| args.first()?.as_array().cloned())
+        .collect();
+    for want in [
+        json!(["workers", "--add", "mine", "--cli", "opencode", "--label", "Mine", "--route", "mine-route"]),
+        json!(["workers", "--order", "go,mine,cc"]),
+        json!(["workers", "--mode", "auto"]),
+    ] {
+        assert!(commands.contains(&want.as_array().cloned().unwrap_or_default()), "missing {want}: {commands:?}");
+    }
+}
+
+/// Copy diagnostics puts the lines on the clipboard, with the home folder and tokens taken out, and
+/// says "Copied." beside the button.
+#[gpui::test]
+fn copy_diagnostics_puts_the_block_on_the_clipboard(cx: &mut TestAppContext) {
+    let token = "abcdefghijklmnopqrstuvwxyz012345";
+    let workers = agent_workers(
+        json!(["cc", "go"]),
+        json!([
+            agent_worker("/fixture/repo", "/fixture/repo", "command_code", "cc-route", "ready", "", 0),
+            agent_worker(token, token, "opencode", "go-route", "out", "5-hour", 4102444800000),
+            agent_worker("notes", "\\Fixture\\notes", "command_code", "notes-route", "ready", "", 0),
+            agent_worker("near", "/fixtures/near", "command_code", "near-route", "ready", "", 0)
+        ]),
+    );
+    let mut values = about_values(json!({"lead": {"model": "opus"}}), workers);
+    values.insert("sharedValues".into(), json!({"claude.version": "2.0.14"}));
+    values.insert("system".into(), json!({"name": "Windows", "version": "10.0.22631"}));
+    values.insert(
+        "lead".into(),
+        json!({"state": "waiting", "permission_mode": "default", "started": true, "terminal": "hidden"}),
+    );
+    let (effects, found) = settings_effects_after_clicks(
+        cx,
+        values,
+        "",
+        &["st-copy-diagnostics"],
+        &["st-copied"],
+    );
+    assert_eq!(found, vec![("st-copied".into(), true)]);
+    let text = effects
+        .iter()
+        .find(|(name, _)| name == "copyText")
+        .and_then(|(_, args)| args.first())
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("nothing was copied: {effects:?}"));
+    for line in [
+        "kompitum-app: 0.1.0",
+        "kompitum-core: 0.1.5",
+        "os: Windows 10.0.22631",
+        "claude: 2.0.14",
+        "lead: waiting · default",
+        "workers:",
+        "~/repo: ready",
+        "~\\notes: ready",
+        "/fixtures/near: ready",
+        "<hidden>: out until 2100-01-01",
+        "theme: ",
+        "reduce_motion: false",
+        "quiet_while_fullscreen: true",
+    ] {
+        assert!(text.contains(line), "missing {line:?}: {text}");
+    }
+    assert!(!text.contains("/fixture/"), "the home path is ~: {text}");
+    assert!(!text.contains("\\Fixture"), "the home path is ~ with either slash and any case: {text}");
+    assert!(!text.contains(token), "the token is hidden: {text}");
+}

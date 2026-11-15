@@ -115,10 +115,10 @@ fn main() {
         // Already open on this home: that window comes to the front.
         None if control::raise_running() => return,
         None => {}
-        Some("-h" | "--help" | "help") => return print!("{HELP}"),
-        Some("--skill") => return print!("{}", include_str!("SKILL.md")),
+        Some("-h" | "--help" | "help") => return control::say(HELP.trim_end_matches('\n')),
+        Some("--skill") => return control::say(include_str!("SKILL.md").trim_end_matches('\n')),
         Some("-V" | "--version" | "version") => {
-            return println!("kompitum-app {}", env!("CARGO_PKG_VERSION"));
+            return control::say(&format!("kompitum-app {}", env!("CARGO_PKG_VERSION")));
         }
         Some(other) => {
             eprint!("kompitum-app: unknown argument {other:?}\n\n{HELP}");

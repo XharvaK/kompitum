@@ -54,7 +54,8 @@ export default class Toast extends View {
           .gap(2)
           .child(div().truncate().font_semibold().text_size(13).line_height("18px").text_color(t.foreground).child(p.title ?? ""))
           // Two lines at most; the bell's Earlier list keeps the toast once it leaves.
-          .when(Boolean(body), (el) => el.child(div().id("toast-body").max_h(32).overflow_hidden().text_size(12).line_height("16px").text_color(t.muted).child(body))),
+          .when(Boolean(body), (el) => el.child(div().id("toast-body").max_h(32).overflow_hidden().text_size(12).line_height("16px").text_color(t.muted).child(body)))
+          .when(Boolean(p.action?.label), (el) => el.child(div().text_size(12).line_height("16px").text_color(t.accent).child(p.action.label))),
       )
       .child(close);
   }

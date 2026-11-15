@@ -371,7 +371,7 @@ export default {
               .when(!panel, (asks) => asks.flex_1().min_h(0))
               .overflow_y_scrollbar().child(this.card(t, cx))))
           .when(!first && !this.ask, (el) =>
-            el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full().text_size(13).line_height("20px"))))
+            el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full().text_size(13))))
           .child(
             h_flex()
               .w_full()

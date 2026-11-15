@@ -159,7 +159,17 @@ fn vault_notes(notes: Vec<Value>) -> Value {
     json!({"vault": "/fixture/vault", "agent": "owner", "unpushed": 0, "problems": [], "notes": notes})
 }
 
-fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostModule {
+fn module(values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> HostModule {
+    module_with_lead(values, calls, None)
+}
+
+/// The same module with `lead` read from `lead` on every call, so a test can change what the app sees
+/// between draws (a card arriving, and going).
+fn module_with_lead(
+    mut values: BTreeMap<String, Value>,
+    calls: Rc<RefCell<Calls>>,
+    lead: Option<Rc<RefCell<Value>>>,
+) -> HostModule {
     // `sharedValues`: the keys the mod reads with `shared(...)` (the app sets them at run time).
     if let Some(Value::Object(shared)) = values.remove("sharedValues") {
         calls.borrow_mut().shared.extend(shared);
@@ -182,13 +192,20 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let machine_add_fail = values.remove("machineAddFail");
     let lead_commands = values.remove("leadCommands");
     let list_dirs = values.remove("listDirs");
+    let picked_files = values.remove("pickedFiles");
+    let picked_save = values.remove("pickSavePath");
+    let import_file = values.remove("importFile");
+    let system_info = values.remove("system");
     let conversation_items = values.remove("conversation").unwrap_or(json!([]));
     let mut module = HostModule::new("kompitum");
     for (name, value) in values {
-        if name == "person" {
+        if name == "person" || (name == "lead" && lead.is_some()) {
             continue;
         }
         module = module.function(name, move |_| Ok(to_host(&value)));
+    }
+    if let Some(lead) = lead {
+        module = module.function("lead", move |_| Ok(to_host(&lead.borrow())));
     }
     module = module.function("conversation", move |a| {
         let from = a
@@ -265,8 +282,25 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
     let picked = calls.clone();
     module = module.async_function("pickFiles", move |_| {
         picked.borrow_mut().effects.push(("pickFiles".into(), vec![json!("pickFiles")]));
-        Ok(async { Ok(HostValue::Array(Vec::new())) })
+        let files = picked_files.clone().unwrap_or_else(|| Value::Array(Vec::new()));
+        Ok(async move { Ok(to_host(&files)) })
     });
+    // The system's save dialog: the path a test picked, or null when cancelled.
+    let saved = picked_save.clone();
+    module = module.async_function("pickSavePath", move |_| {
+        let path = saved.clone().map_or(HostValue::Null, |path| to_host(&path));
+        Ok(async move { Ok(path) })
+    });
+    let copied = calls.clone();
+    module = module.function("copyText", move |a| {
+        copied.borrow_mut().effects.push((
+            "copyText".into(),
+            (0..1).filter_map(|i| a.get(i).map(from_host)).collect(),
+        ));
+        Ok(HostValue::Null)
+    });
+    let system = system_info.unwrap_or_else(|| json!({"name": "Test", "version": "1"}));
+    module = module.function("system", move |_| Ok(to_host(&system)));
     module = module.async_function("leadSetup", |_| {
         Ok(async { Ok(to_host(&json!({"mcp": "present", "skill": "present"}))) })
     });
@@ -310,6 +344,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
         let thread_fail = thread_fail.clone();
         let send_fail = send_fail.clone();
         let machine_add_fail = machine_add_fail.clone();
+        let import_file = import_file.clone();
         module = module.async_function(name, move |a| {
             let first = a.get(0).map(from_host).unwrap_or(Value::Null);
             let reply = match name {
@@ -318,7 +353,7 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                         .clone()
                         .map_or(Value::Null, |person| Value::String(person.to_string())),
                 ),
-                "writeTextFile" if first == "/fixture/app/settings.json" => {
+                "writeTextFile" => {
                     calls.borrow_mut().effects.push((
                         "writeTextFile".into(),
                         (0..2).filter_map(|i| a.get(i).map(from_host)).collect(),
@@ -326,6 +361,9 @@ fn module(mut values: BTreeMap<String, Value>, calls: Rc<RefCell<Calls>>) -> Hos
                     Some(Value::Null)
                 }
                 "readTextFile" if first == "/fixture/.ssh/config" => Some(Value::Null),
+                "readTextFile" if import_file.is_some() && first.as_str() != Some("/fixture/app/settings.json") => {
+                    import_file.clone()
+                }
                 "readTextFile" if first.as_str().is_some_and(|p| p.starts_with("/fixture/vault/")) => {
                     Some(json!("# Fixture note\n\nA body from the vault.\n"))
                 }

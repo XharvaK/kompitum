@@ -9,6 +9,8 @@ import { connectPage, initConnect, loadConnect } from "./connect.js";
 import { agentsPage, loadAgents, ensureAgents } from "./agents.js";
 import { appearancePage } from "./appearance.js";
 import { dropdown } from "./ui.js";
+import { exportSettings, importSettings, importSheet } from "./backup.js";
+import { copyDiagnostics } from "./diagnostics.js";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
@@ -137,6 +139,15 @@ export default class Settings extends View {
     this.memoryForget = (cx) => forgetMemory(this, cx);
     this.summonKeyMenu = {};
     this.summonKeyPick = (value, cx) => this.change((p) => { p.summon_key = value; }, cx);
+    this.exportNote = null;
+    this.importNote = null;
+    this.importError = null;
+    this.importSheet = null;
+    this.copiedAt = null;
+    this.diagnosticError = null;
+    this.openExport = (cx) => exportSettings(this, cx);
+    this.openImport = (cx) => importSettings(this, cx);
+    this.copyReport = (cx) => copyDiagnostics(this, cx);
     this.handle = cx.focus_handle();
     this.handle.focus();
     cx.spawn(async (cx) => {
@@ -158,6 +169,7 @@ export default class Settings extends View {
       if (!this.asked) return;
       if (updates().checking) this.asked = Date.now();
       else if (Date.now() - this.asked >= 3000) this.asked = null;
+      if (this.copiedAt && Date.now() - this.copiedAt >= 2000) this.copiedAt = null;
       cx.notify();
     });
     cx.timer.every(3000, (cx) => {
@@ -189,8 +201,9 @@ export default class Settings extends View {
 
   // Changes settings.json the way an agent would: read, change, write back
   // only if nobody changed it meanwhile (else read again and redo).
-  change(edit, cx) {
+  change(edit, cx, after = null) {
     cx.spawn(async (cx) => {
+      let saved = false;
       for (let attempt = 0; attempt < 3; attempt++) {
         await this.load();
         const next = JSON.parse(JSON.stringify(this.person));
@@ -198,9 +211,11 @@ export default class Settings extends View {
         try {
           await writeTextFile(this.file(), JSON.stringify(next, null, 2) + "\n", this.raw);
           this.person = next;
+          saved = true;
           break;
         } catch {}
       }
+      if (saved && after) after(cx);
       cx.notify();
     });
   }
@@ -610,7 +625,8 @@ export default class Settings extends View {
 
   // About ----------------------------------------------------------------
 
-  about(t) {
+  about(t, cx) {
+    if (this.importSheet) return importSheet(this, t, cx);
     const u = updates();
     const at = (secs) => {
       const d = new Date(secs * 1000);
@@ -705,6 +721,42 @@ export default class Settings extends View {
           "welcome",
         ),
       )
+      .child(
+        this.row(
+          t,
+          "Export settings…",
+          "One file with your settings and the workers you added.",
+          this.button(t, "st-export", "Export settings…", (_e, cx) => exportSettings(this, cx)),
+        ),
+      )
+      .child(
+        this.row(
+          t,
+          "Import settings…",
+          "Restore settings and workers from an exported file.",
+          this.button(t, "st-import", "Import settings…", (_e, cx) => importSettings(this, cx)),
+        ),
+      )
+      .when(Boolean(this.exportNote), (el) =>
+        el.child(div().id("st-export-note").py(6).text_size(12).text_color(t.dim).child(this.exportNote)))
+      .when(Boolean(this.importError), (el) =>
+        el.child(div().id("st-import-error").py(6).text_size(12).text_color(t.blocked).child(this.importError)))
+      .when(Boolean(this.importNote), (el) =>
+        el.child(div().id("st-import-note").py(6).text_size(12).text_color(t.dim).child(this.importNote)))
+      .child(
+        this.row(
+          t,
+          "Copy diagnostics",
+          "Versions, the lead, the workers and the look, for a report.",
+          h_flex()
+            .gap(8)
+            .items_center()
+            .child(this.button(t, "st-copy-diagnostics", "Copy diagnostics", (_e, cx) => copyDiagnostics(this, cx)))
+            .when(Boolean(this.copiedAt), (el) => el.child(div().id("st-copied").text_size(12).text_color(t.ansi2).child("Copied."))),
+        ),
+      )
+      .when(Boolean(this.diagnosticError), (el) =>
+        el.child(div().id("st-diagnostic-error").py(6).text_size(12).text_color(t.blocked).child(this.diagnosticError)))
       .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child("Kompitum sends nothing: no usage data, no crash reports. Send feedback opens an issue on GitHub."))
       .child(div().text_size(12).line_height("18px").text_color(t.dim).child("Built on herdr (Apache 2.0)."));
   }
@@ -916,7 +968,7 @@ export default class Settings extends View {
                             ? connectPage(this, t, cx)
                           : section === "notifications"
                             ? this.alerts(t)
-                            : this.about(t),
+                            : this.about(t, cx),
                       ),
                   ),
               )

@@ -143,13 +143,40 @@ fn raise_running_at(path: &std::path::Path) -> bool {
     true
 }
 
+/// One line to stdout. A reader that stopped early (`kompitum-app status | Select-String …`) closes
+/// the pipe; that is a normal end, not a panic, so the command ends quietly and successfully.
+#[derive(Debug, PartialEq)]
+enum Line {
+    Written,
+    Closed,
+    Failed,
+}
+
+fn write_line(out: &mut impl Write, text: &str) -> Line {
+    match writeln!(out, "{text}") {
+        Ok(()) => Line::Written,
+        // Windows says "The pipe is being closed" (232) rather than BrokenPipe.
+        Err(error)
+            if error.kind() == std::io::ErrorKind::BrokenPipe
+                || error.raw_os_error() == Some(232) =>
+        {
+            Line::Closed
+        }
+        Err(_) => Line::Failed,
+    }
+}
+
+pub fn say(text: &str) {
+    let stdout = std::io::stdout();
+    if write_line(&mut stdout.lock(), text) == Line::Closed {
+        std::process::exit(0);
+    }
+}
+
 /// The client side; returns the process exit code.
 pub fn client(args: &[String]) -> i32 {
     if args == ["commands"] {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&crate::commands::listing()).unwrap()
-        );
+        say(&serde_json::to_string_pretty(&crate::commands::listing()).unwrap());
         return 0;
     }
     if let [verb, event, home @ ..] = args
@@ -196,7 +223,7 @@ pub fn client(args: &[String]) -> i32 {
         Ok(s) => s,
         Err(_) if args.first().is_some_and(|v| v == "feedback") => {
             let url = crate::feedback::issue_url(args.get(1).map(String::as_str).unwrap_or(""), "agent");
-            println!("{url}");
+            say(&url);
             eprintln!(
                 "Kompitum isn't open, so no browser was opened. The link above is the filled-in issue: open it to read and submit. Nothing was sent."
             );
@@ -230,12 +257,9 @@ pub fn client(args: &[String]) -> i32 {
         let Some(path) = reply.get("path").and_then(Value::as_str) else {
             return fail("the window returned no screenshot path");
         };
-        println!("{path}");
+        say(path);
     } else {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&reply).unwrap_or_default()
-        );
+        say(&serde_json::to_string_pretty(&reply).unwrap_or_default());
     }
     if reply.get("error").is_some() { 1 } else { 0 }
 }
@@ -282,8 +306,8 @@ fn hook(event: &str, home: Option<PathBuf>) -> i32 {
     {
         // A string is plain text (a status line, a PreCompact instruction); anything else is JSON.
         match output {
-            Value::String(text) => println!("{text}"),
-            other => println!("{}", serde_json::to_string(other).unwrap_or_default()),
+            Value::String(text) => say(text),
+            other => say(&serde_json::to_string(other).unwrap_or_default()),
         }
     }
     0
@@ -352,7 +376,7 @@ fn fail(message: &str) -> i32 {
 
 #[cfg(test)]
 mod hook_tests {
-    use std::io::Write as _;
+    use super::*;
     use std::process::{Command, Stdio};
 
     /// The app's ordinary binary: Cargo sets CARGO_BIN_EXE only for integration
@@ -370,6 +394,28 @@ mod hook_tests {
             .into_iter()
             .map(|name| debug.join(name))
             .find(|path| path.is_file())
+    }
+
+    #[test]
+    fn a_closed_pipe_ends_a_line_quietly() {
+        struct Closed(Option<i32>);
+        impl std::io::Write for Closed {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(match self.0 {
+                    Some(code) => std::io::Error::from_raw_os_error(code),
+                    None => std::io::Error::new(std::io::ErrorKind::BrokenPipe, "closed"),
+                })
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut open = Vec::new();
+        assert_eq!(write_line(&mut open, "one"), Line::Written);
+        assert_eq!(open, b"one\n");
+        assert_eq!(write_line(&mut Closed(None), "two"), Line::Closed);
+        // Windows' "The pipe is being closed" is not BrokenPipe.
+        assert_eq!(write_line(&mut Closed(Some(232)), "three"), Line::Closed);
     }
 
     #[test]

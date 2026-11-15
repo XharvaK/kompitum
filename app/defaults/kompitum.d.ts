@@ -105,6 +105,10 @@ export function pickFolder(options?: { prompt?: string }): Promise<string | null
  *  empty list when the person cancels. */
 export function pickFiles(): Promise<string[]>;
 
+/** Opens the system's save dialog (this machine) for a new file, with `suggestedName`. Resolves with
+ *  the chosen path, or null when the person cancels. */
+export function pickSavePath(suggestedName: string): Promise<string | null>;
+
 /** Adds Kompitum's tools and skill to Claude Code, for the `claude` lead: `claude mcp get/add`
  *  through kompitum-core's exec, and the kom skill in the person's `~/.claude/skills/` when it
  *  isn't there yet. Rejects with the step and the first line of what failed. Never touches
@@ -128,6 +132,12 @@ export function playSound(sound: string): null;
 /** Saves the clipboard's image as a PNG under <app folder>/images/ and returns its path, or
  *  null when the clipboard has no image (or one this build can't decode). */
 export function pasteImage(): string | null;
+
+/** Writes text to the clipboard. */
+export function copyText(text: string): null;
+
+/** This computer's system name and version, for diagnostics. */
+export function system(): { name: string; version: string };
 
 /** The app that opens `<scheme>://` links on this computer, or null when nothing handles it.
  *  `icon` is a PNG in the app's cache (its path under the app home), or null; pass it to image(). Throws when the question fails. */

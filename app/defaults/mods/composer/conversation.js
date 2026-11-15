@@ -353,13 +353,20 @@ export default {
       .child(h_flex().w_full().justify_center().child(column))
       .overflow_y_scroll()
       .track_scroll(this.scroll)
+      // A card (or a chip, or a line of text) changes the box's height, so this list's viewport changes a
+      // moment later. Stuck to the bottom, follow the last item through that change too.
+      .on_size_change((_size, cx) => {
+        if (!this.stickToBottom) return;
+        this.scroll.scroll_to_end();
+        cx.notify();
+      })
       .on_scroll_wheel((event, cx) => {
         if (event.delta.y < 0 && this.stickToBottom) {
           this.stickToBottom = false;
           cx.notify();
         }
       });
-    return div()
+    return v_flex()
       .id("composer-panel")
       .flex_1()
       .min_h(0)

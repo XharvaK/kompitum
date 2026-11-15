@@ -36,6 +36,59 @@ pub fn home() -> PathBuf {
     std::env::home_dir().unwrap_or_else(|| "/".into())
 }
 
+/// The system's name and version for diagnostics (`system()`).
+fn system_info() -> Value {
+    let name = match std::env::consts::OS {
+        "windows" => "Windows",
+        "macos" => "macOS",
+        other => other,
+    };
+    json!({ "name": name, "version": system_version() })
+}
+
+#[cfg(target_os = "windows")]
+fn system_version() -> String {
+    let output = crate::spawn::command("cmd.exe").args(["/d", "/c", "ver"]).output();
+    let text = output
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .unwrap_or_default();
+    text.split("[Version ")
+        .nth(1)
+        .and_then(|rest| rest.split(']').next())
+        .unwrap_or_default()
+        .trim()
+        .to_owned()
+}
+
+#[cfg(target_os = "macos")]
+fn system_version() -> String {
+    crate::spawn::command("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        .unwrap_or_default()
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn system_version() -> String {
+    std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                line.strip_prefix("PRETTY_NAME=")
+                    .map(|value| value.trim_matches('"').to_owned())
+            })
+        })
+        .unwrap_or_default()
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
+fn system_version() -> String {
+    String::new()
+}
+
 /// The fonts on this machine (`fonts()`): read when the window opens and
 /// again when the home brings new ones.
 static FONTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
@@ -1444,6 +1497,26 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 }
             })
         })
+        // The system's save dialog, for one file (an export): its path, or null when cancelled.
+        .async_function("pickSavePath", |a| {
+            let suggested = a.string(0)?.to_owned();
+            let directory = home();
+            let picked = gpui_shell::with_current_app(|cx| {
+                cx.prompt_for_new_path(&directory, Some(&suggested))
+            })
+            .ok_or_else(|| HostError::new("no window to pick from"))?;
+            Ok(async move {
+                match picked
+                    .await
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| result.map_err(|error| error.to_string()))
+                {
+                    Ok(None) => Ok(HostValue::Null),
+                    Ok(Some(path)) => Ok(HostValue::Str(path.to_string_lossy().into_owned())),
+                    Err(error) => Err(HostError::new(error)),
+                }
+            })
+        })
         // The lead's slash commands, scanned off the window's thread: the
         // project's and the user's skills and commands, plugins, then built-ins.
         .async_function("leadCommands", |_| {
@@ -1509,6 +1582,15 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 .map(|path| HostValue::Str(path.to_string_lossy().into_owned()))
                 .unwrap_or(HostValue::Null))
         })
+        .function("copyText", |a| {
+            let text = a.string(0)?.to_owned();
+            gpui_shell::with_current_app(|cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text))
+            })
+            .ok_or_else(|| HostError::new("no window for the clipboard"))?;
+            Ok(HostValue::Null)
+        })
+        .function("system", |_| Ok(to_host(&system_info())))
         .function("appLink", |a| {
             let scheme = a.string(0)?.to_owned();
             match crate::schemes::handler(&scheme) {

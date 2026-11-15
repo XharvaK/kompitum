@@ -906,6 +906,9 @@ pub struct AppWindow {
     lead_restart_quiet: bool,
     /// The height each lead's composer asked for (`lead.fit`), by the lead's terminal.
     composer_px: HashMap<String, f32>,
+    /// When the core came back after it went away: a layout conflict just after its restart is its doing,
+    /// not another screen's.
+    core_back_at: Option<Instant>,
     /// Each worker's last state (`kom workers --json`), and when it was last read.
     worker_states: Option<HashMap<String, String>>,
     workers_at: Option<Instant>,
@@ -1054,6 +1057,7 @@ impl AppWindow {
             lead_restart_pending: false,
             lead_restart_quiet: false,
             composer_px: HashMap::new(),
+            core_back_at: None,
             worker_states: None,
             workers_at: None,
             workers_busy: false,
@@ -1511,6 +1515,7 @@ impl AppWindow {
     fn reconnected(&mut self, core: Arc<Core>, cx: &mut Context<Self>) {
         tracing::info!("reconnected to the core");
         self.link = CoreLink::Connected;
+        self.core_back_at = Some(Instant::now());
         self.core_generation += 1;
         self.documents_watching = false;
         // What the old core was told, or checked, is told and checked again.
@@ -2940,8 +2945,23 @@ impl AppWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let spec =
-            json!({"kind":"toast", "notification":{"title":title,"body":body,"level":"info"}});
+        self.layout_notice_action(title, body, None, window, cx);
+    }
+
+    /// The same, with what a click on the toast runs (`action`) when it has one.
+    fn layout_notice_action(
+        &mut self,
+        title: &str,
+        body: &str,
+        action: Option<Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut notification = json!({"title":title,"body":body,"level":"info"});
+        if let Some(action) = action {
+            notification["action"] = action;
+        }
+        let spec = json!({"kind":"toast", "notification":notification});
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 
@@ -3118,12 +3138,10 @@ impl AppWindow {
                 changed = true;
             }
             if conflict {
-                self.layout_notice(
-                    "Layout changed elsewhere",
-                    "The other screen's layout is shown.",
-                    window,
-                    cx,
-                );
+                let since = self.core_back_at.map(|at| at.elapsed());
+                let lead_running = self.lead_is_running();
+                let (title, body, action) = layout_conflict_notice(since, lead_running);
+                self.layout_notice_action(title, &body, action, window, cx);
             }
         }
         if let Some(machines) = machines {
@@ -4029,6 +4047,32 @@ impl AppWindow {
         Ok(Some(crate::lead::with_claude_settings(
             argv, on, &file,
         )))
+    }
+
+    /// The lead is running again: a live lead terminal whose program the core didn't replace with a plain
+    /// shell (a core restart starts one until `lead_upkeep` starts the lead again).
+    fn lead_is_running(&self) -> bool {
+        let program = settings::load_person()
+            .ok()
+            .and_then(|person| person.lead)
+            .and_then(|lead| lead.program)
+            .filter(|program| !program.is_empty())
+            .unwrap_or_else(|| "claude".to_owned());
+        let Some(terminal) = self.lead_terminal(&program) else {
+            return false;
+        };
+        let run_word = crate::programs::lead_spec(&program)
+            .unwrap_or(Value::Null)
+            .get("run")
+            .and_then(Value::as_array)
+            .and_then(|run| run.first())
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        !self
+            .live
+            .get(&terminal)
+            .is_some_and(|record| crate::lead::lead_program_lost(record, &program, &run_word))
     }
 
     /// The live terminal labelled `lead` that still runs `program`, if the core
@@ -9705,6 +9749,39 @@ fn composed_terminals(mods: &[(String, Instance)]) -> Vec<String> {
         .collect()
 }
 
+/// A layout conflict within this long after the core came back is the restart's doing: the first read
+/// after it replaces the layout the old core had.
+const CORE_RESTART_GRACE: Duration = Duration::from_secs(30);
+
+/// What to say when a layout conflict arrives: another screen's change, or the core's restart when it
+/// came back within 30 seconds. A lead already running again needs no sentence or action about starting.
+fn layout_conflict_notice(
+    since_core_back: Option<Duration>,
+    lead_running: bool,
+) -> (&'static str, String, Option<Value>) {
+    if since_core_back.is_some_and(|elapsed| elapsed < CORE_RESTART_GRACE) {
+        if lead_running {
+            (
+                "Kompitum's core restarted",
+                "Your terminals were restarted as plain shells.".into(),
+                None,
+            )
+        } else {
+            (
+                "Kompitum's core restarted",
+                "Your terminals were restarted as plain shells. The lead needs starting again.".into(),
+                Some(json!({ "name": "lead.open", "label": "Start the lead", "args": {} })),
+            )
+        }
+    } else {
+        (
+            "Layout changed elsewhere",
+            "The other screen's layout is shown.".into(),
+            None,
+        )
+    }
+}
+
 /// The composer's height: what its text needs (`lead.fit`, one line until it says), or room for the card its
 /// lead's ask needs (a plan's text and a question's options take more than a permission).
 fn composer_height(asking: Option<crate::lead::AskKind>, wanted: Option<f32>) -> f32 {
@@ -10132,6 +10209,38 @@ mod tests {
         for kind in [AskKind::Plan, AskKind::Question] {
             assert!(super::composer_height(Some(kind), None) > permission, "{kind:?} holds text or options");
         }
+    }
+
+    #[test]
+    fn a_layout_conflict_just_after_the_core_came_back_says_the_core_restarted() {
+        use std::time::Duration;
+        let layout = super::layout_conflict_notice(None, false);
+        assert_eq!(layout.0, "Layout changed elsewhere");
+        assert_eq!(layout.1, "The other screen's layout is shown.");
+        assert_eq!(layout.2, None);
+
+        let old = super::layout_conflict_notice(Some(Duration::from_secs(31)), false);
+        assert_eq!(old.0, "Layout changed elsewhere", "past the 30 s it is another screen's");
+        assert_eq!(old.2, None);
+
+        let (title, body, action) =
+            super::layout_conflict_notice(Some(Duration::from_secs(5)), false);
+        assert_eq!(title, "Kompitum's core restarted");
+        assert_eq!(
+            body,
+            "Your terminals were restarted as plain shells. The lead needs starting again."
+        );
+        assert_eq!(
+            action,
+            Some(json!({ "name": "lead.open", "label": "Start the lead", "args": {} }))
+        );
+
+        let (title, body, action) =
+            super::layout_conflict_notice(Some(Duration::from_secs(5)), true);
+        assert_eq!(title, "Kompitum's core restarted");
+        assert_eq!(body, "Your terminals were restarted as plain shells.");
+        assert!(!body.contains("needs starting again"));
+        assert_eq!(action, None, "a lead already running needs no action");
     }
 
     #[test]

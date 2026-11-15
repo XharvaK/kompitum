@@ -3,6 +3,7 @@
 #![allow(unused_imports)]
 
 use super::*;
+use gpui::{ParentElement as _, Styled as _};
 
 /// One box: no placeholder, "+" to attach, the lead's model, round Send;
 /// no keyboard button, no plan ring and no mail button.
@@ -1072,6 +1073,175 @@ fn a_long_conversation_stays_on_its_newest_item(cx: &mut TestAppContext) {
     );
 }
 
+/// A fixed-height window for the composer: its pane in the app has a height, so a list longer than it
+/// scrolls, and a card that grows the box takes room from the list.
+struct Framed(Entity<ShellRoot>, Rc<Cell<f32>>);
+impl Render for Framed {
+    fn render(&mut self, _: &mut gpui::Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::div()
+            .w_full()
+            .h(gpui::px(self.1.get()))
+            .relative()
+            .child(gpui::div().absolute().inset_0().child(self.0.clone()))
+    }
+}
+
+/// A question card takes the box's room: the stuck conversation shrinks but keeps its newest item in
+/// view, and when the card goes it is still at the end.
+#[gpui::test]
+fn a_question_card_leaves_a_stuck_conversation_at_its_end(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let items: Vec<Value> = (0..80)
+        .map(|n| json!({"kind": "notice", "id": format!("n{n}"), "text": format!("Line {n}")}))
+        .collect();
+    let values = conversation_values(Value::Array(items), "hidden", Value::Null, None);
+    let lead = Rc::new(RefCell::new(values["lead"].clone()));
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-card-scroll.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module_with_lead(values, calls.clone(), Some(lead.clone())))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", "");
+    let frame = Rc::new(Cell::new(600.0));
+    let window = cx.add_window(|window, cx| Framed(runtime.try_load(&root, window, cx).unwrap(), frame));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    let draw = |visual: &mut VisualTestContext| {
+        visual.run_until_parked();
+        visual.update(|window, cx| window.draw(cx).clear(cx));
+        visual.run_until_parked();
+    };
+    draw(&mut visual);
+    draw(&mut visual);
+    let at_end = |visual: &mut VisualTestContext| {
+        let list = visual
+            .debug_bounds("composer-conversation")
+            .expect("the conversation list is laid out");
+        let newest = visual
+            .debug_bounds("composer-item-n79")
+            .expect("the newest item is laid out");
+        (list, newest)
+    };
+    let (list, newest) = at_end(&mut visual);
+    assert!(
+        newest.bottom() <= list.bottom() + gpui::px(1.0) && newest.bottom() > list.top(),
+        "the newest item starts in view: item {newest:?}, list {list:?}"
+    );
+    let end_gap = list.bottom() - newest.bottom();
+
+    // A question card arrives: the box grows, so the list above it shrinks.
+    {
+        let mut lead = lead.borrow_mut();
+        lead["state"] = json!("asking");
+        lead["ask"] = json!({
+            "id": "a1", "terminal": "t1", "kind": "question",
+            "input": {"tool_name": "AskUserQuestion", "tool_input": {"questions": [
+                {"question": "Which?", "options": [{"label": "One"}, {"label": "Two"}]}
+            ]}}
+        });
+    }
+    draw(&mut visual);
+    visual.executor().advance_clock(std::time::Duration::from_millis(300));
+    draw(&mut visual);
+    let (list, newest) = at_end(&mut visual);
+    assert!(
+        newest.bottom() <= list.bottom() + gpui::px(1.0)
+            && newest.bottom() >= list.bottom() - end_gap - gpui::px(1.0)
+            && newest.bottom() > list.top(),
+        "the card keeps the newest item in view: item {newest:?}, list {list:?}"
+    );
+
+    // The card goes: the list grows again, still at its end.
+    {
+        let mut lead = lead.borrow_mut();
+        lead["state"] = json!("waiting");
+        lead["ask"] = Value::Null;
+    }
+    draw(&mut visual);
+    visual.executor().advance_clock(std::time::Duration::from_millis(300));
+    draw(&mut visual);
+    let (list, newest) = at_end(&mut visual);
+    assert!(
+        newest.bottom() <= list.bottom() + gpui::px(1.0)
+            && newest.bottom() >= list.bottom() - end_gap - gpui::px(1.0)
+            && newest.bottom() > list.top(),
+        "the conversation is still at its end: item {newest:?}, list {list:?}"
+    );
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    assert!(calls.borrow().unexpected.is_empty(), "{:?}", calls.borrow().unexpected);
+}
+
+/// Anything that makes the box taller makes the conversation shorter: a stuck list follows its height
+/// change instead of keeping the old scroll offset, which would leave its newest item below the fold.
+#[gpui::test]
+fn a_shorter_conversation_keeps_a_stuck_list_at_its_end(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let items: Vec<Value> = (0..80)
+        .map(|n| json!({"kind": "notice", "id": format!("n{n}"), "text": format!("Line {n}")}))
+        .collect();
+    let values = conversation_values(Value::Array(items), "hidden", Value::Null, None);
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-resize-scroll.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", "");
+    let frame = Rc::new(Cell::new(700.0));
+    let window = cx.add_window(|window, cx| Framed(runtime.try_load(&root, window, cx).unwrap(), frame.clone()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let before = visual
+        .debug_bounds("composer-conversation")
+        .expect("the conversation list is laid out");
+    let before_newest = visual
+        .debug_bounds("composer-item-n79")
+        .expect("the newest item is laid out");
+    let end_gap = before.bottom() - before_newest.bottom();
+    let (width, height) = visual.update(|window, _| {
+        let size = window.viewport_size();
+        (f32::from(size.width), f32::from(size.height))
+    });
+    assert!(height > 400.0, "the test window has room to shrink: {height}");
+    let _ = width;
+    // The box grows by 300 px: the list above it is 300 px shorter.
+    frame.set(400.0);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let list = visual
+        .debug_bounds("composer-conversation")
+        .expect("the shorter conversation list is laid out");
+    let newest = visual
+        .debug_bounds("composer-item-n79")
+        .expect("the newest item is laid out");
+    assert!(
+        list.size.height < before.size.height,
+        "the list shrank (window {width}x{height}): {before:?} {list:?}"
+    );
+    assert!(
+        newest.bottom() <= list.bottom() + gpui::px(1.0)
+            && newest.bottom() >= list.bottom() - end_gap - gpui::px(1.0),
+        "the shorter list stays at its end: item {newest:?}, list {list:?}"
+    );
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    assert!(calls.borrow().unexpected.is_empty(), "{:?}", calls.borrow().unexpected);
+}
+
 /// The box shares the conversation's column: at most 760 px, centred, and never closer than the 20 px gutter.
 #[gpui::test]
 fn the_box_and_the_conversation_share_one_centred_column(cx: &mut TestAppContext) {
@@ -1507,6 +1677,34 @@ fn composer_layout(
     let calls = calls.borrow();
     assert!(calls.unexpected.is_empty(), "{:?}", calls.unexpected);
     (width, height, found)
+}
+
+/// The draft is drawn as the conversation's own words are: the same size and line height as an
+/// assistant message.
+#[gpui::test]
+fn the_draft_uses_the_conversations_text_size_and_line_height(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let items = json!([{"kind": "assistant", "id": "a1", "text": "One line of words", "done": true}]);
+    let values = conversation_values(items, "hidden", Value::Null, None);
+    let tree = composer_draws(cx, values, Some("this.text.set_value('One line of words'); this.syncDraft();"));
+    let draft = tree
+        .lines()
+        .find(|line| line.contains("Textarea"))
+        .unwrap_or_else(|| panic!("no draft: {tree}"));
+    let message = tree
+        .lines()
+        .find(|line| line.contains("composer-md-a1"))
+        .unwrap_or_else(|| panic!("no message: {tree}"));
+    for (what, line) in [("draft", draft), ("message", message)] {
+        assert!(
+            line.contains(".text_size[Number(13.0)]"),
+            "the {what} is 13 px: {line}"
+        );
+        assert!(
+            !line.contains(".line_height"),
+            "the {what} takes the conversation's line height: {line}"
+        );
+    }
 }
 
 /// A new conversation keeps the box at the bottom, where the conversation keeps it, so the first message doesn't
