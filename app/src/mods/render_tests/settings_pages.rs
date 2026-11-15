@@ -555,6 +555,92 @@ fn agents_page_has_a_lead_folder_row(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_code_mode_switch_writes_the_lead_setting(cx: &mut TestAppContext) {
+    let (writes, found) = settings_after_keys(
+        cx,
+        lead_values("claude"),
+        "",
+        &["st-code-mode"],
+        None,
+        "",
+        &["st-code-mode"],
+    );
+    assert_eq!(found, vec![("st-code-mode".into(), true)]);
+    assert_eq!(written_settings(&writes)["lead"]["code_mode"], json!(true));
+}
+
+fn code_mode_values(code_mode: bool, running: Value) -> BTreeMap<String, Value> {
+    let mut values = lead_values("claude");
+    values.insert(
+        "person".into(),
+        json!({"lead": {"program": "claude", "code_mode": code_mode}}),
+    );
+    values.insert("lead".into(), running);
+    values
+}
+
+#[gpui::test]
+fn the_code_mode_row_says_the_running_sessions_status(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let cases = [
+        (json!("on"), Some("On in this session.")),
+        (json!("off"), Some("Off in this session.")),
+        (
+            json!({"unavailable": "needs an interactive terminal"}),
+            Some("Not available: needs an interactive terminal"),
+        ),
+    ];
+    for (status, want) in cases {
+        let tree = describe_settled(
+            cx,
+            &staged,
+            "frame/settings",
+            code_mode_values(true, json!({ "code_mode_status": status })),
+            None,
+        )
+        .unwrap();
+        assert!(tree.contains("Code Mode (experimental)"), "{tree}");
+        assert!(tree.contains("st-code-mode"), "{tree}");
+        assert!(tree.contains("The first time, Claude Code asks in the lead's terminal"), "{tree}");
+        let want = want.expect("a status line");
+        assert!(tree.contains(want), "missing {want}: {tree}");
+    }
+    let none = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        code_mode_values(true, Value::Null),
+        None,
+    )
+    .unwrap();
+    for gone in ["On in this session.", "Off in this session.", "Not available:"] {
+        assert!(!none.contains(gone), "no lead runs: {gone}: {none}");
+    }
+    let off = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        code_mode_values(false, json!({ "code_mode_status": "off" })),
+        None,
+    )
+    .unwrap();
+    assert!(!off.contains("Off in this session."), "the switch is off: {off}");
+    assert!(!off.contains("The first time, Claude Code asks"), "{off}");
+    // Turned off while a Code Mode session runs: that session keeps it, and says so.
+    let kept = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        code_mode_values(false, json!({ "code_mode_status": "on" })),
+        None,
+    )
+    .unwrap();
+    assert!(kept.contains("On in this session."), "the session keeps its mode: {kept}");
+    assert!(!kept.contains("The first time, Claude Code asks"), "{kept}");
+}
+
+#[gpui::test]
 fn font_dropdown_search_narrows_the_list(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);
     let staged = Staged::new();

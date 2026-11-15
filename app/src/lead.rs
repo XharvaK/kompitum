@@ -264,6 +264,79 @@ pub fn model_settings() -> Value {
     models.into()
 }
 
+/// The variable that turns Claude Code's experimental Code Mode on or off for a lead.
+pub const CODE_MODE_VAR: &str = "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE";
+
+/// The lead's process environment for Code Mode: on is `1`, off is `0`, so a `1` in the
+/// person's own Claude settings can't turn it on behind Kompitum's back.
+pub fn code_mode_env(code_mode: bool) -> Value {
+    json!({ CODE_MODE_VAR: if code_mode { "1" } else { "0" } })
+}
+
+/// Whether a lead start uses Code Mode: a new conversation takes the setting; a resume or
+/// restart takes the session's own mode, so it resumes in the mode it started with.
+pub fn start_code_mode(setting: bool, choice: &Choice, session: Option<bool>) -> bool {
+    if choice.is_resume_or_continue() {
+        session.unwrap_or(setting)
+    } else {
+        setting
+    }
+}
+
+/// What the lead terminal's start line said about Code Mode.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum CodeModeStatus {
+    #[default]
+    Off,
+    On,
+    Unavailable(String),
+}
+
+impl Serialize for CodeModeStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Off => serializer.serialize_str("off"),
+            Self::On => serializer.serialize_str("on"),
+            Self::Unavailable(reason) => {
+                let mut map = Map::new();
+                map.insert("unavailable".into(), Value::String(reason.clone()));
+                map.serialize(serializer)
+            }
+        }
+    }
+}
+
+/// The two words Claude Code's start line carries.
+pub const CODE_MODE_ON_LINE: &str = "Code Mode (experimental) is on";
+pub const CODE_MODE_UNAVAILABLE_LINE: &str = "Code Mode (experimental) isn't available";
+
+/// Reads the lead terminal's start line: "is on" is on; "isn't available" keeps the reason as
+/// shown; neither is off.
+pub fn code_mode_status_from_screen(text: &str) -> CodeModeStatus {
+    let lines: Vec<&str> = text.lines().collect();
+    for (index, line) in lines.iter().enumerate() {
+        if line.contains(CODE_MODE_ON_LINE) {
+            return CodeModeStatus::On;
+        }
+        if let Some(at) = line.find(CODE_MODE_UNAVAILABLE_LINE) {
+            let rest = line[at + CODE_MODE_UNAVAILABLE_LINE.len()..].trim();
+            let rest = rest.trim_start_matches([':', '·', '-', '—', '–']).trim();
+            let reason = if rest.is_empty() {
+                lines
+                    .iter()
+                    .skip(index + 1)
+                    .map(|line| line.trim())
+                    .find(|line| !line.is_empty())
+                    .unwrap_or("")
+            } else {
+                rest
+            };
+            return CodeModeStatus::Unavailable(reason.to_owned());
+        }
+    }
+    CodeModeStatus::Off
+}
+
 /// The settings file a Claude lead starts with: one memory (the vault's), the
 /// compaction window for each model, and the hooks that bring Claude's prompts
 /// into the composer. Each hook names the app's home: the lead's terminal is the
@@ -287,6 +360,7 @@ pub fn claude_settings(app: &Path, core: &Path, home: &Path) -> Value {
     let async_hook = |event: &str| {
         let mut hook = command(event);
         hook["async"] = json!(true);
+        hook["onFailure"] = json!("continue");
         hook
     };
     let mut hooks = Map::new();
@@ -294,12 +368,19 @@ pub fn claude_settings(app: &Path, core: &Path, home: &Path) -> Value {
         "SessionStart".into(),
         json!([{
             "hooks": [
-                blocking("SessionStart", 10),
+                {
+                    "type": "command",
+                    "command": &*app,
+                    "args": ["hook", "SessionStart", &*home],
+                    "timeout": 10,
+                    "onFailure": "continue",
+                },
                 {
                     "type": "command",
                     "command": &*core,
                     "args": ["vault", "memory", "--hook"],
                     "timeout": 30,
+                    "onFailure": "continue",
                 },
             ],
         }]),
@@ -575,6 +656,16 @@ pub struct Session {
     pub state: Option<State>,
     #[serde(default)]
     pub ask: Option<Ask>,
+    /// Whether this session started with Claude Code's experimental Code Mode. Saved, so a
+    /// restart or resume keeps the mode the conversation started with; an old record is off.
+    #[serde(default)]
+    pub code_mode: bool,
+    /// What the lead terminal's start line said about Code Mode. Not saved.
+    #[serde(skip)]
+    pub code_mode_status: CodeModeStatus,
+    /// The turn this session is measuring, from its Owner item to its Stop. Not saved.
+    #[serde(skip)]
+    pub turn: Option<Turn>,
     /// The conversation the panel draws, and whether the terminal is shown.
     #[serde(default)]
     pub conversation: Conversation,
@@ -661,6 +752,7 @@ pub fn published_session(session: &Session) -> Value {
     json!({
         "state": session.state,
         "ask": session.ask,
+        "code_mode_status": session.code_mode_status,
         "terminal": session.conversation.terminal,
         "reveal": session.conversation.reveal,
         "reveal_why": session.conversation.reveal_why,

@@ -760,9 +760,16 @@ What's about the user, never a look:
   prompt was copied and the system hasn't joined yet.
 - `lead`: the lead the next conversation starts with: `program` (a program key
   such as `claude`), `folder` (its home folder; the user's home folder when
-  absent), `model` (what that CLI takes) and `effort` (one of its reasoning
-  levels). `lead.subagents` names Claude Code subagents that run inside the
-  lead, `sonnet` and/or `haiku`.
+  absent), `model` (what that CLI takes), `effort` (one of its reasoning
+  levels), and `code_mode` in the same object. `lead.code_mode`: start new lead
+  sessions with Claude Code's experimental Code Mode. Off by default.
+  `lead.subagents` names Claude Code subagents that run inside the lead,
+  `sonnet` and/or `haiku`.
+  Every finished lead turn appends one line to `lead-turns.jsonl` in this home
+  folder: `ended` (RFC 3339), `session`, `code_mode`, `model`, `seconds`,
+  `tool_calls` (not counting `REPL`), `code_runs` (`REPL` calls), `input_tokens`,
+  `output_tokens`, `cache_read_tokens`, `cache_write_tokens` and `ended_by`
+  (`stop` or `failure`). Nothing the Owner wrote is kept.
 - `plans`: the subscription picked for each worker CLI, by program key
   (`{"opencode": "go"}`), so the Agents page knows which limits to count against.
 - Updates: an installed app downloads them by itself and offers Restart and

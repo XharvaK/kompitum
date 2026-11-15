@@ -343,6 +343,8 @@ export type ConversationItem =
       state: "running" | "done" | "failed";
       result?: string;
       edit?: { path: string; added: number; removed: number };
+      /** A REPL call's code (`tool_input.code`), shown in the mono font when the row is open. */
+      code?: string;
     }
   | { kind: "notice"; id: string; text: string };
 
@@ -392,6 +394,8 @@ export function lead(): {
   } | null;
   /** Whether Claude is compacting the conversation right now. */
   compacting: boolean;
+  /** What the lead terminal's start line said about Code Mode: on, off, or why it isn't available. */
+  code_mode_status: "on" | "off" | { unavailable: string };
   /** Claude Code's permission mode (default, acceptEdits, plan, auto, dontAsk, bypassPermissions); null until a hook names it. */
   permission_mode?: string | null;
   /** True from a click on the mode word until the next hook says the mode. */

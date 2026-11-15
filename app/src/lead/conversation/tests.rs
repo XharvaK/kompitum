@@ -65,6 +65,102 @@ fn the_apps_own_model_command_is_not_drawn_as_the_owners_words() {
 }
 
 #[test]
+fn poll_events_make_no_owner_item_and_no_new_turn() {
+    let poll = event_from_hook(
+        "UserPromptSubmit",
+        &json!({"prompt": "the code printed this", "source": "poll_event"}),
+    );
+    assert!(poll.is_none(), "a poll event is the code's output, not the Owner's words");
+    let mut c = fold(
+        Conversation::default(),
+        &Event::UserPromptSubmit {
+            prompt: "the real question".into(),
+        },
+    );
+    if let Some(event) = poll {
+        c = fold(c, &event);
+    }
+    assert_eq!(c.items.len(), 1, "{:?}", c.items);
+    assert_eq!(owner_text(&c.items[0]), "the real question");
+}
+
+#[test]
+fn a_repl_call_draws_a_code_row_and_keeps_its_code() {
+    let c = fold(
+        Conversation::default(),
+        &Event::PreToolUse {
+            id: "r1".into(),
+            name: "REPL".into(),
+            input: json!({"code": "const x = 1;\nreturn x;"}),
+        },
+    );
+    match &c.items[0] {
+        Item::Tool {
+            name,
+            summary,
+            state,
+            code,
+            ..
+        } => {
+            assert_eq!(name, "REPL");
+            assert_eq!(summary, "Code");
+            assert_eq!(*state, ToolState::Running);
+            assert_eq!(code.as_deref(), Some("const x = 1;\nreturn x;"));
+        }
+        other => panic!("expected a tool, got {other:?}"),
+    }
+    let c = fold(
+        c,
+        &Event::PostToolUse {
+            id: "r1".into(),
+            name: "REPL".into(),
+            input: json!({"code": "const x = 1;\nreturn x;"}),
+            result: "1".into(),
+            response: Value::Null,
+        },
+    );
+    match &c.items[0] {
+        Item::Tool {
+            summary,
+            state,
+            result,
+            code,
+            ..
+        } => {
+            assert_eq!(summary, "Code");
+            assert_eq!(*state, ToolState::Done);
+            assert_eq!(result.as_deref(), Some("1"));
+            assert_eq!(code.as_deref(), Some("const x = 1;\nreturn x;"));
+        }
+        other => panic!("expected a tool, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_transcript_with_only_a_repl_call_draws_the_code_row_alone() {
+    let text = r#"{"type":"user","message":{"role":"user","content":"Run it"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"r1","name":"REPL","input":{"code":"return 42"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"r1","content":"42"}]}}
+"#;
+    let loaded = items_from_transcript(text);
+    assert_eq!(loaded.items.len(), 2, "{:?}", loaded.items);
+    assert_eq!(owner_text(&loaded.items[0]), "Run it");
+    match &loaded.items[1] {
+        Item::Tool {
+            summary,
+            code,
+            result,
+            ..
+        } => {
+            assert_eq!(summary, "Code");
+            assert_eq!(code.as_deref(), Some("return 42"));
+            assert_eq!(result.as_deref(), Some("42"));
+        }
+        other => panic!("expected the code row, got {other:?}"),
+    }
+}
+
+#[test]
 fn a_btw_question_is_drawn_and_shows_the_terminal() {
     let c = fold(
         Conversation::default(),

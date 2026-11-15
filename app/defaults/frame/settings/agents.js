@@ -4,7 +4,7 @@
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { kom, exec, knownAgents, pickFolder, window, text } from "kompitum";
+import { kom, exec, knownAgents, pickFolder, window, text, lead as leadOf } from "kompitum";
 import { dropdown } from "./ui.js";
 
 // The core's built-in workers (`builtin()` in crates/kompitum-core/src/task/worker.rs): none of them can be removed.
@@ -400,6 +400,20 @@ function leadSection(view, t, cx, s) {
     : null;
   // Claude reports its own limits; they belong under the lead only while Claude is the lead.
   const usage = entry.key === "claude" ? claudeMeters(t, s.status?.claude) : null;
+  const codeMode = lead.code_mode === true;
+  const running = leadOf();
+  const codeModeStatus = running?.code_mode_status;
+  const statusLine = !running
+    ? null
+    : codeModeStatus === "on"
+      ? text("settings.code-mode-on")
+      : !codeMode
+        ? null
+        : codeModeStatus === "off"
+          ? text("settings.code-mode-off")
+          : codeModeStatus && typeof codeModeStatus === "object" && typeof codeModeStatus.unavailable === "string"
+            ? text("settings.code-mode-unavailable", { reason: codeModeStatus.unavailable })
+            : null;
   return v_flex().w_full()
     .child(view.heading(t, text("settings.heading-lead")))
     .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim)
@@ -409,6 +423,17 @@ function leadSection(view, t, cx, s) {
     .child(view.row(t, text("settings.model"), null, modelMenu, "lead_model"))
     .when(Boolean(modelNote), (el) => el.child(modelNote))
     .when(Boolean(effortMenu), (el) => el.child(view.row(t, text("settings.reasoning"), null, effortMenu, "lead_model")))
+    .child(view.row(
+      t,
+      text("settings.code-mode"),
+      text("settings.code-mode-about"),
+      view.toggle(t, "st-code-mode", codeMode, (_e, cx) => saveLead(view, { code_mode: !codeMode }, cx)),
+      "lead_code_mode",
+    ))
+    .when(codeMode, (el) => el.child(div().pt(6).text_size(12).line_height("18px").text_color(t.dim)
+      .child(text("settings.code-mode-first"))))
+    .when(Boolean(statusLine), (el) => el.child(div().pt(4).text_size(12).line_height("18px").text_color(t.muted)
+      .child(statusLine)))
     .child(view.row(
       t,
       text("settings.folder"),

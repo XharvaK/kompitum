@@ -116,6 +116,9 @@ pub enum Item {
         result: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         edit: Option<EditStat>,
+        /// A `REPL` call's code, shown in the mono font when the row is open.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<String>,
     },
     Notice {
         id: String,
@@ -319,9 +322,14 @@ pub fn fold(mut conversation: Conversation, event: &Event) -> Conversation {
 /// (a permission, plan or question card, or an event we do not draw).
 pub fn event_from_hook(event: &str, input: &Value) -> Option<Event> {
     match event {
-        "UserPromptSubmit" => Some(Event::UserPromptSubmit {
-            prompt: string_field(input, "prompt"),
-        }),
+        "UserPromptSubmit" => {
+            if input.get("source").and_then(Value::as_str) == Some("poll_event") {
+                return None;
+            }
+            Some(Event::UserPromptSubmit {
+                prompt: string_field(input, "prompt"),
+            })
+        }
         "MessageDisplay" => Some(Event::MessageDisplay {
             message_id: string_field(input, "message_id"),
             index: input.get("index").and_then(Value::as_u64).unwrap_or(0),
@@ -564,6 +572,7 @@ fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Va
         name: have,
         summary: have_summary,
         state,
+        code: have_code,
         ..
     }) = tool_mut(conversation, id)
     {
@@ -571,6 +580,7 @@ fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Va
         if *state == ToolState::Running {
             *have = name.to_owned();
             *have_summary = tool_summary(name, input, ToolState::Running);
+            *have_code = tool_code(name, input);
             conversation.touched();
         }
         return;
@@ -587,6 +597,7 @@ fn on_pre_tool(conversation: &mut Conversation, id: &str, name: &str, input: &Va
         state: ToolState::Running,
         result: None,
         edit: None,
+        code: tool_code(name, input),
     });
     conversation.touched();
 }
@@ -626,6 +637,7 @@ fn on_tool_end(
         state: have,
         result: have_result,
         edit: have_edit,
+        code: have_code,
         ..
     }) = tool_mut(conversation, id)
     {
@@ -633,6 +645,9 @@ fn on_tool_end(
         *have = state;
         *have_result = result;
         *have_edit = edit;
+        if let Some(code) = tool_code(name, input) {
+            *have_code = Some(code);
+        }
         conversation.touched();
         return;
     }
@@ -643,6 +658,7 @@ fn on_tool_end(
             state: have,
             result: have_result,
             edit: have_edit,
+            code: have_code,
             ..
         }) = conversation.items.iter_mut().rev().find(|item| {
             matches!(
@@ -658,6 +674,9 @@ fn on_tool_end(
             *have = state;
             *have_result = result;
             *have_edit = edit;
+            if let Some(code) = tool_code(name, input) {
+                *have_code = Some(code);
+            }
             conversation.touched();
             return;
         }
@@ -674,6 +693,7 @@ fn on_tool_end(
         state,
         result,
         edit,
+        code: tool_code(name, input),
     });
     conversation.touched();
 }
@@ -809,6 +829,9 @@ fn tool_mut<'a>(conversation: &'a mut Conversation, id: &str) -> Option<&'a mut 
 
 /// A one-line summary from a tool's name and input.
 pub fn tool_summary(name: &str, input: &Value, state: ToolState) -> String {
+    if name == "REPL" {
+        return strings::text("composer.code-row");
+    }
     let path = |keys: &[&str]| {
         keys.iter()
             .find_map(|key| input.get(*key).and_then(Value::as_str))
@@ -868,6 +891,18 @@ pub fn tool_summary(name: &str, input: &Value, state: ToolState) -> String {
         }
         other => other.to_owned(),
     }
+}
+
+/// A `REPL` call's code from its input; None for every other tool.
+fn tool_code(name: &str, input: &Value) -> Option<String> {
+    if name != "REPL" {
+        return None;
+    }
+    input
+        .get("code")
+        .and_then(Value::as_str)
+        .filter(|code| !code.is_empty())
+        .map(str::to_owned)
 }
 
 /// What a done edit tool changed: the path it wrote, and the lines its response's patch, or its own
@@ -1193,6 +1228,7 @@ fn apply_assistant(
                         state: ToolState::Running,
                         result: None,
                         edit: edit_stat(name, &input, &Value::Null, ToolState::Done),
+                        code: tool_code(name, &input),
                     });
                 } else if kind == "thinking" {
                     continue;

@@ -5,6 +5,7 @@ use super::{AUTO_COMPACT_WINDOW, Reveal, Session, State, TerminalVis, is_compact
 use crate::strings;
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
+use std::io::Write;
 use std::path::Path;
 
 /// The model and usage a status line JSON says, as `Session` keeps them; `seen_ms` is when it arrived.
@@ -284,6 +285,8 @@ pub fn lead_program_lost(record: &Value, program: &str, run_word: &str) -> bool 
 /// a turn, and a compaction the Owner or the app asked for ends with Claude waiting again.
 pub fn state_after_hook(event: &str, input: &Value) -> Option<State> {
     match event {
+        // Code Mode's background output is not a turn the Owner started.
+        "UserPromptSubmit" if input["source"] == "poll_event" => None,
         "UserPromptSubmit" if input["prompt"].as_str().is_some_and(is_compact_command) => None,
         "UserPromptSubmit" => Some(State::Working),
         "Stop" | "Notification" => Some(State::Waiting),
@@ -354,6 +357,209 @@ pub fn core_status_text(core: &Path) -> Option<String> {
         .output()
         .ok()?;
     output.status.success().then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+// ---- measuring a lead turn ------------------------------------------------
+
+/// A lead turn from its Owner item to its `Stop` or `StopFailure`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Turn {
+    pub started_ms: u64,
+    /// Tool calls the turn made, not counting `REPL`.
+    pub tool_calls: u64,
+    /// `REPL` calls: each ran code that made its own tool calls.
+    pub code_runs: u64,
+    /// Tool ids already counted, so a repeated `PreToolUse` never counts twice.
+    seen: BTreeSet<String>,
+}
+
+impl Turn {
+    pub fn new(started_ms: u64) -> Self {
+        Self {
+            started_ms,
+            ..Self::default()
+        }
+    }
+
+    /// One tool call: `REPL` is a code run, everything else a tool call.
+    pub fn note_tool(&mut self, id: &str, name: &str) {
+        if !id.is_empty() && !self.seen.insert(id.to_owned()) {
+            return;
+        }
+        if name == "REPL" {
+            self.code_runs += 1;
+        } else {
+            self.tool_calls += 1;
+        }
+    }
+}
+
+/// The tokens one turn's assistant messages reported.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TurnTokens {
+    pub input: Option<u64>,
+    pub output: Option<u64>,
+    pub cache_read: Option<u64>,
+    pub cache_write: Option<u64>,
+}
+
+/// Sums the usage of the transcript's last turn: the assistant messages after its last
+/// Owner prompt. A transcript with no usage at all is `None` in every field.
+pub fn turn_tokens(text: &str) -> TurnTokens {
+    let mut total = TurnTokens::default();
+    let mut saw = false;
+    let mut seen = BTreeSet::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let kind = value
+            .get("type")
+            .and_then(Value::as_str)
+            .or_else(|| value.pointer("/message/role").and_then(Value::as_str));
+        match kind {
+            Some("user") if is_prompt(&value) => {
+                total = TurnTokens::default();
+                saw = false;
+                seen.clear();
+            }
+            Some("assistant") => {
+                let Some(message) = value.get("message") else {
+                    continue;
+                };
+                let Some(usage) = message.get("usage").and_then(Value::as_object) else {
+                    continue;
+                };
+                if let Some(id) = message.get("id").and_then(Value::as_str).filter(|id| !id.is_empty())
+                    && !seen.insert(id.to_owned())
+                {
+                    continue;
+                }
+                saw = true;
+                for (key, slot) in [
+                    ("input_tokens", &mut total.input),
+                    ("output_tokens", &mut total.output),
+                    ("cache_read_input_tokens", &mut total.cache_read),
+                    ("cache_creation_input_tokens", &mut total.cache_write),
+                ] {
+                    let n = token_count(usage.get(key)).unwrap_or(0);
+                    *slot = Some(slot.unwrap_or(0).saturating_add(n));
+                }
+            }
+            _ => {}
+        }
+    }
+    if !saw {
+        return TurnTokens::default();
+    }
+    total
+}
+
+fn is_prompt(value: &Value) -> bool {
+    if value.get("isCompactSummary") == Some(&json!(true)) || value.get("isMeta") == Some(&json!(true)) {
+        return false;
+    }
+    let content = value
+        .pointer("/message/content")
+        .or_else(|| value.get("content"))
+        .unwrap_or(&Value::Null);
+    match content {
+        Value::String(text) => !text.is_empty(),
+        Value::Array(parts) => parts.iter().any(|part| {
+            part.get("type").and_then(Value::as_str) == Some("text")
+                && part.get("text").and_then(Value::as_str).is_some_and(|text| !text.is_empty())
+        }),
+        _ => false,
+    }
+}
+
+fn token_count(value: Option<&Value>) -> Option<u64> {
+    match value? {
+        Value::Number(number) => number
+            .as_u64()
+            .or_else(|| number.as_i64().filter(|n| *n >= 0).map(|n| n as u64))
+            .or_else(|| number.as_f64().filter(|n| *n >= 0.0).map(|n| n.round() as u64)),
+        Value::String(text) => text.trim().parse::<u64>().ok().or_else(|| {
+            text.trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|n| *n >= 0.0)
+                .map(|n| n.round() as u64)
+        }),
+        _ => None,
+    }
+}
+
+/// The one line a finished lead turn appends.
+#[allow(clippy::too_many_arguments)]
+pub fn turn_record(
+    turn: &Turn,
+    ended_ms: u64,
+    session: &str,
+    code_mode: bool,
+    model: &str,
+    ended_by: &str,
+    tokens: TurnTokens,
+) -> Value {
+    json!({
+        "ended": rfc3339(ended_ms),
+        "session": session,
+        "code_mode": code_mode,
+        "model": model,
+        "seconds": ended_ms.saturating_sub(turn.started_ms) as f64 / 1000.0,
+        "tool_calls": turn.tool_calls,
+        "code_runs": turn.code_runs,
+        "input_tokens": tokens.input,
+        "output_tokens": tokens.output,
+        "cache_read_tokens": tokens.cache_read,
+        "cache_write_tokens": tokens.cache_write,
+        "ended_by": ended_by,
+    })
+}
+
+/// Appends one turn's line to `lead-turns.jsonl` in `dir` (the app's home folder).
+pub fn append_turn(dir: &Path, record: &Value) -> Result<(), String> {
+    std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
+    let path = dir.join("lead-turns.jsonl");
+    let text = serde_json::to_string(record).map_err(|error| error.to_string())?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    writeln!(file, "{text}").map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Milliseconds since the Unix epoch as RFC 3339 in UTC (`2026-11-15T12:34:56Z`).
+pub fn rfc3339(ms: u64) -> String {
+    let secs = ms / 1000;
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
+
+/// Howard Hinnant's `civil_from_days`: the date `days` after 1970-01-01.
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if month <= 2 { year + 1 } else { year }, month as u32, day as u32)
 }
 
 #[cfg(test)]

@@ -558,6 +558,9 @@ pub struct Lead {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// Start new lead sessions with Claude Code's experimental Code Mode.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub code_mode: bool,
     /// Claude workers that run inside the lead as its own subagents: sonnet, haiku.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub subagents: Vec<String>,
@@ -645,6 +648,10 @@ impl SummonKey {
 
 fn is_true(b: &bool) -> bool {
     *b
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 impl Default for Person {
@@ -1607,6 +1614,7 @@ mod tests {
                 folder: Some(String::new()),
                 model: Some(String::new()),
                 effort: Some(String::new()),
+                code_mode: true,
                 subagents: vec![String::new()],
             }),
             plans: [("opencode".into(), String::new())].into(),
@@ -1670,6 +1678,17 @@ mod tests {
         let t = resolve(&INK, &both);
         assert_eq!(t["accent_fill"], "#000001");
         assert_eq!(t["chrome"], "#000002");
+    }
+
+    #[test]
+    fn code_mode_is_off_until_the_person_turns_it_on() {
+        assert!(!Person::default().lead.unwrap_or_default().code_mode);
+        let text = serde_json::to_string(&Person::default()).unwrap();
+        assert!(!text.contains("code_mode"), "{text}");
+        let person: Person = serde_json::from_str(r#"{"lead":{"program":"claude"}}"#).unwrap();
+        assert!(!person.lead.unwrap().code_mode);
+        let person: Person = serde_json::from_str(r#"{"lead":{"code_mode":true}}"#).unwrap();
+        assert!(person.lead.unwrap().code_mode);
     }
 
     #[test]

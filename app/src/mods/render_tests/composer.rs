@@ -500,6 +500,59 @@ fn each_conversation_item_kind_draws(cx: &mut TestAppContext) {
     assert!(!tree.contains("Ask the lead anything."), "{tree}");
 }
 
+/// A REPL call draws as one Code row: folded it is only its title; open it shows the code in the
+/// mono font, then its result like any other tool.
+#[gpui::test]
+fn a_code_row_folds_and_opens_its_code(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let items = json!([
+        {"kind": "owner", "id": "o1", "text": "Run it"},
+        {"kind": "tool", "id": "r1", "name": "REPL", "summary": "Code", "state": "done",
+         "code": "return 42", "result": "42"}
+    ]);
+    let folded = composer_draws(
+        cx,
+        conversation_values(items.clone(), "hidden", Value::Null, None),
+        None,
+    );
+    assert!(folded.contains("composer-tool-r1"), "{folded}");
+    assert!(folded.contains("Code"), "{folded}");
+    assert!(!folded.contains("composer-tool-code-r1"), "{folded}");
+    assert!(!folded.contains("return 42"), "{folded}");
+    let open = composer_draws(
+        cx,
+        conversation_values(items, "hidden", Value::Null, None),
+        Some("this.openTools['r1'] = true;"),
+    );
+    assert!(open.contains("composer-tool-code-r1"), "{open}");
+    assert!(open.contains("return 42"), "{open}");
+    assert!(open.contains("composer-tool-result-r1"), "{open}");
+}
+
+/// A REPL call and an Edit the code made draw as two ordinary rows, and the turn counts the Edit.
+#[gpui::test]
+fn a_repl_call_and_its_edit_draw_their_own_rows(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let items = json!([
+        {"kind": "owner", "id": "o1", "text": "Change the code"},
+        {"kind": "tool", "id": "r1", "name": "REPL", "summary": "Code", "state": "done",
+         "code": "edit('a.rs')"},
+        {"kind": "tool", "id": "u1", "name": "Edit", "summary": "Edited a.rs", "state": "done",
+         "result": "ok", "edit": {"path": "a.rs", "added": 2, "removed": 1}}
+    ]);
+    let tree = composer_draws(
+        cx,
+        conversation_values(items, "hidden", Value::Null, None),
+        Some("this.openToolGroups[1] = true; this.openTools['r1'] = true;"),
+    );
+    assert!(tree.contains("composer-tool-r1"), "{tree}");
+    assert!(tree.contains("composer-tool-code-r1"), "{tree}");
+    assert!(tree.contains("composer-tool-u1"), "{tree}");
+    assert!(tree.contains("Edited a.rs"), "{tree}");
+    assert!(tree.contains("1 file changed"), "{tree}");
+    assert!(tree.contains("+2 −1"), "{tree}");
+}
+
 /// Consecutive finished tools collapse to one line until it is opened.
 #[gpui::test]
 fn finished_tools_fold_into_one_line(cx: &mut TestAppContext) {
