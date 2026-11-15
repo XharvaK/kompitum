@@ -3,7 +3,7 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } from "gpui-base";
-import { kom } from "kompitum";
+import { kom, text } from "kompitum";
 
 const firstLine = (v) => String(v ?? "").trim().split(/\r?\n/).find(Boolean) ?? "";
 
@@ -27,12 +27,12 @@ export function loadMemory(view, cx) {
       if (result.code !== 0) throw new Error(errorText(result));
       const data = JSON.parse(result.stdout || "{}");
       if (!data || typeof data !== "object" || !Array.isArray(data.memories)) {
-        throw new Error("The vault did not answer a list of memories.");
+        throw new Error(text("settings.vault-no-memory-list"));
       }
       view.memory = data;
       view.memoryError = null;
     } catch (e) {
-      view.memoryError = firstLine(e?.message ?? e) || "Your memory couldn't be read.";
+      view.memoryError = firstLine(e?.message ?? e) || text("settings.memory-read-failed");
     } finally {
       view.memoryLoading = false;
       cx.notify();
@@ -43,9 +43,9 @@ export function loadMemory(view, cx) {
 // A memory's parts, as the row says them under its title.
 export function memoryMeta(memory) {
   const parts = [];
-  if (memory.standing) parts.push("Standing");
-  if (memory.review_after) parts.push(`Review after ${memory.review_after}`);
-  if (memory.updated) parts.push(`Updated ${memory.updated}`);
+  if (memory.standing) parts.push(text("settings.standing"));
+  if (memory.review_after) parts.push(text("settings.review-after", { date: memory.review_after }));
+  if (memory.updated) parts.push(text("settings.updated-on", { date: memory.updated }));
   return parts.join(" \u00b7 ");
 }
 
@@ -54,7 +54,7 @@ export function memoryGroups(memories) {
   const open = memories.filter((memory) => memory.status === "open");
   const groups = [];
   const general = open.filter((memory) => !memory.project);
-  if (general.length) groups.push({ name: "General", memories: general });
+  if (general.length) groups.push({ name: text("settings.general"), memories: general });
   const projects = new Map();
   for (const memory of open) {
     if (!memory.project) continue;
@@ -198,8 +198,8 @@ export function memoryPage(view, t, cx) {
       body.child(
         h_flex()
           .gap(6)
-          .child(view.button(t, `st-memory-edit-${index}`, "Edit", (_e, cx) => openEdit(memory, cx)))
-          .child(view.button(t, `st-memory-forget-${index}`, "Forget", (_e, cx) => {
+          .child(view.button(t, `st-memory-edit-${index}`, text("settings.edit"), (_e, cx) => openEdit(memory, cx)))
+          .child(view.button(t, `st-memory-forget-${index}`, text("settings.forget"), (_e, cx) => {
             openForget(memory);
             cx.notify();
           })),
@@ -235,10 +235,10 @@ export function memoryPage(view, t, cx) {
           h_flex()
             .gap(6)
             .when(!saveDisabled(edit), (el) =>
-              el.child(view.primaryButton(t, "st-memory-save", "Save", (_e, cx) => view.memorySave(cx))),
+              el.child(view.primaryButton(t, "st-memory-save", text("settings.save"), (_e, cx) => view.memorySave(cx))),
             )
-            .when(saveDisabled(edit), (el) => el.child(disabled("st-memory-save", "Save")))
-            .child(view.button(t, "st-memory-cancel", "Cancel", (_e, cx) => {
+            .when(saveDisabled(edit), (el) => el.child(disabled("st-memory-save", text("settings.save"))))
+            .child(view.button(t, "st-memory-cancel", text("settings.cancel"), (_e, cx) => {
               view.memoryEdit = null;
               view.memoryRowError = null;
               cx.notify();
@@ -263,12 +263,12 @@ export function memoryPage(view, t, cx) {
           h_flex()
             .gap(6)
             .when(Boolean(String(view.memoryWhyText ?? "").trim()), (el) =>
-              el.child(view.button(t, "st-memory-forget-now", "Forget", (_e, cx) => view.memoryForget(cx))),
+              el.child(view.button(t, "st-memory-forget-now", text("settings.forget"), (_e, cx) => view.memoryForget(cx))),
             )
             .when(!String(view.memoryWhyText ?? "").trim(), (el) =>
-              el.child(disabled("st-memory-forget-now", "Forget")),
+              el.child(disabled("st-memory-forget-now", text("settings.forget"))),
             )
-            .child(view.button(t, "st-memory-cancel", "Cancel", (_e, cx) => {
+            .child(view.button(t, "st-memory-cancel", text("settings.cancel"), (_e, cx) => {
               view.memoryForgetPath = null;
               view.memoryRowError = null;
               cx.notify();
@@ -301,7 +301,7 @@ export function memoryPage(view, t, cx) {
           view.memoryForgottenOpen = !open;
           cx.notify();
         })
-        .child(div().text_size(12).font_semibold().text_color(t.dim).child(`Forgotten \u00b7 ${forgotten.length}`))
+        .child(div().text_size(12).font_semibold().text_color(t.dim).child(text("settings.forgotten", { count: forgotten.length })))
         .child(div().text_size(12).text_color(t.dim).child(open ? "\u2304" : "\u203a")),
     );
     if (open) forgotten.forEach((memory) => shown.push(row(memory, memories.indexOf(memory))));
@@ -309,9 +309,9 @@ export function memoryPage(view, t, cx) {
 
   let state = null;
   if (!data && !view.memoryError) {
-    state = div().py(12).text_size(12).text_color(t.muted).child("Loading\u2026");
+    state = div().py(12).text_size(12).text_color(t.muted).child(text("settings.loading"));
   } else if (view.memoryLoading) {
-    state = div().py(12).text_size(12).text_color(t.muted).child("Checking\u2026");
+    state = div().py(12).text_size(12).text_color(t.muted).child(text("settings.checking"));
   } else if (view.memoryError) {
     state = v_flex()
       .py(12)
@@ -320,15 +320,15 @@ export function memoryPage(view, t, cx) {
         h_flex()
           .gap(4)
           .items_center()
-          .child(div().text_size(12).text_color(t.muted).child("Couldn't read your memory"))
-          .child(view.textButton(t, "st-memory-retry", "Retry", (_e, cx) => loadMemory(view, cx))),
+          .child(div().text_size(12).text_color(t.muted).child(text("settings.couldnt-read-memory")))
+          .child(view.textButton(t, "st-memory-retry", text("settings.retry"), (_e, cx) => loadMemory(view, cx))),
       )
       .child(div().max_w(420).text_size(12).line_height("16px").text_color(t.blocked).child(view.memoryError));
   }
 
   return v_flex()
     .w_full()
-    .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Memory"))
+    .child(div().text_size(15).font_semibold().text_color(t.foreground).child(text("settings.memory")))
     .child(
       div()
         .pt(4)
@@ -336,10 +336,10 @@ export function memoryPage(view, t, cx) {
         .text_size(12)
         .line_height("18px")
         .text_color(t.muted)
-        .child("What Claude remembers between sessions. Standing ones are read in full at every start."),
+        .child(text("settings.memory-about")),
     )
     .when(Boolean(state), (el) => el.child(state))
-    .when(!state && memories.length === 0, (el) => el.child(div().py(12).text_size(12).text_color(t.muted).child("Claude hasn't remembered anything yet.")))
+    .when(!state && memories.length === 0, (el) => el.child(div().py(12).text_size(12).text_color(t.muted).child(text("settings.memory-empty"))))
     .when(Boolean(problems.length), (el) =>
       el.child(
         div()
@@ -347,7 +347,7 @@ export function memoryPage(view, t, cx) {
           .text_size(12)
           .text_color(t.blocked)
           .tooltip(problems.join("\n"))
-          .child(problems.length === 1 ? problems[0] : `${problems.length} memory notes couldn't be read.`),
+          .child(problems.length === 1 ? problems[0] : text("settings.memory-notes-failed", { count: problems.length })),
       ),
     )
     .children(shown);

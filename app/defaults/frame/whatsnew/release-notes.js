@@ -1,6 +1,6 @@
 import { div, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { settings } from "kompitum";
+import { settings, text } from "kompitum";
 
 // Text between backticks is drawn without them: `kom` shows as kom.
 const plain = (text) => text.replace(/`([^`]*)`/g, "$1");
@@ -33,7 +33,7 @@ export function releaseItems(t, note, { collapsed = false, width = 0, onSizeChan
   const fixes = note.items.filter(item => item.fixed);
   if (fixes.length && !collapsed) {
     const list = v_flex().gap(5)
-      .child(div().mb(3).text_size(11).font_medium().text_color(t.dim).child("Also fixed"));
+      .child(div().mb(3).text_size(11).font_medium().text_color(t.dim).child(text("whatsnew.also-fixed")));
     for (const item of fixes) {
       list.child(div().text_size(12).line_height("17px").text_color(t.muted).child(`• ${plain([item.headline, item.detail].filter(Boolean).join(" "))}`));
       for (const media of item.media) list.child(image(media.path).w_full().h(Math.max(1, mediaWidth) * media.height / media.width));

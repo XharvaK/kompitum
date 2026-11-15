@@ -2,36 +2,36 @@
 
 import { div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, Popover, Slider, SliderState, SliderTrack, SliderIndicator, SliderThumb } from "gpui-base";
-import { run, lead as leadOf, shared, openOverlay } from "kompitum";
+import { run, lead as leadOf, shared, openOverlay, text } from "kompitum";
 
 export function modelLabel(entry, id) {
   return entry?.models?.find((model) => model.id === id)?.label ?? id;
 }
 
-const EFFORT_WORDS = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" };
-
-const EFFORT_LINES = {
-  low: "Quick answers, least thinking.",
-  medium: "Balanced speed and depth.",
-  high: "Thinks it through.",
-  xhigh: "Thinks longer on hard problems.",
-  max: "Thinks as long as it needs.",
-};
-
-function cap(text) {
-  const value = String(text ?? "");
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+function cap(value) {
+  const word = String(value ?? "");
+  return word ? word.charAt(0).toUpperCase() + word.slice(1) : word;
 }
 
 function effortWord(effort) {
   if (!effort) return null;
-  return EFFORT_WORDS[effort] ?? cap(effort);
+  if (effort === "low") return text("composer.effort-low");
+  if (effort === "medium") return text("composer.effort-medium");
+  if (effort === "high") return text("composer.effort-high");
+  if (effort === "xhigh") return text("composer.effort-xhigh");
+  if (effort === "max") return text("composer.effort-max");
+  return cap(effort);
 }
 
 // The one line under the level's word: what the level does, or what having no saved level means.
 function effortLine(effort) {
-  if (!effort) return "Claude Code's own setting.";
-  return EFFORT_LINES[effort] ?? "";
+  if (!effort) return text("composer.default-setting");
+  if (effort === "low") return text("composer.effort-low-line");
+  if (effort === "medium") return text("composer.effort-medium-line");
+  if (effort === "high") return text("composer.effort-high-line");
+  if (effort === "xhigh") return text("composer.effort-xhigh-line");
+  if (effort === "max") return text("composer.effort-max-line");
+  return "";
 }
 
 export function effortIds(entry) {
@@ -69,9 +69,21 @@ function limitLine(windows) {
   const top = windows.reduce((best, w) => (!best || w.pct > best.pct ? w : best), null);
   if (!top || top.pct < 75) return null;
   const when = resetWords(top.resets);
-  if (top.pct >= 100) return { text: when ? `${top.short} used up · back ${when}` : `${top.short} used up`, blocked: true };
+  if (top.pct >= 100) {
+    return {
+      text: when
+        ? text("composer.limit-used-up-back", { window: top.short, when })
+        : text("composer.limit-used-up", { window: top.short }),
+      blocked: true,
+    };
+  }
   const pct = Math.round(top.pct);
-  return { text: when ? `${top.short} ${pct}% · resets ${when}` : `${top.short} ${pct}%`, blocked: false };
+  return {
+    text: when
+      ? text("composer.limit-resets", { window: top.short, percent: pct, when })
+      : text("composer.limit-percent", { window: top.short, percent: pct }),
+    blocked: false,
+  };
 }
 
 // The ring's paths, 16 px across: a 2 px stroke on a circle of radius 7, drawn from the top, clockwise.
@@ -162,7 +174,7 @@ export default {
         .items_center()
         .border_t_1()
         .border_color(t.border)
-        .child(div().flex_1().text_size(12).text_color(t.dim).child("Applies when Claude finishes this turn."));
+        .child(div().flex_1().text_size(12).text_color(t.dim).child(text("composer.applies-turn")));
     }
     const live = this.state !== "working" && !this.ask && leadOf()?.compacting !== true;
     let button = h_flex()
@@ -183,7 +195,7 @@ export default {
         .focus_ring(t.focus, 7)
         .on_click((_e, cx) => this.restartNow(cx));
     } else {
-      button = button.bg(t.hover).text_color(t.dim).tooltip("The lead is busy. Restart when it's done.");
+      button = button.bg(t.hover).text_color(t.dim).tooltip(text("composer.restart-busy"));
     }
     return h_flex()
       .id("composer-restart-strip")
@@ -196,8 +208,8 @@ export default {
       .items_center()
       .border_t_1()
       .border_color(t.border)
-      .child(div().flex_1().text_size(12).text_color(t.dim).child("Applies when the lead restarts."))
-      .child(button.child("Restart now"));
+      .child(div().flex_1().text_size(12).text_color(t.dim).child(text("composer.applies-restart")))
+      .child(button.child(text("composer.restart-now")));
   },
 
   // Dots sit on the track; those already on the fill use the accent at half strength.
@@ -294,7 +306,7 @@ export default {
           .tab_stop(true)
           .focus_ring(t.focus, 0)
           .on_click((_e, cx) => this.pickLevel(level, cx))
-          .child(EFFORT_WORDS[level] ?? cap(level))));
+          .child(effortWord(level) ?? cap(level))));
   },
 
   // The level's word, its one line, the slider and the levels' words. The model picker's card and the first pick share it.
@@ -304,7 +316,7 @@ export default {
     let body = v_flex()
       .w_full()
       .gap(2)
-      .child(div().text_size(18).font_semibold().text_color(t.foreground).child(effortWord(preview) ?? "Default"))
+      .child(div().text_size(18).font_semibold().text_color(t.foreground).child(effortWord(preview) ?? text("composer.default")))
       .child(div().text_size(12).text_color(t.dim).child(effortLine(preview)));
     const slider = this.effortSliderEl(t, entry);
     if (slider) body = body.child(slider).child(this.effortLevelWords(t, levels, preview));
@@ -316,7 +328,7 @@ export default {
     const models = entry?.models ?? [];
     return v_flex()
       .w(220)
-      .child(div().px(8).pt(4).pb(2).text_size(12).text_color(t.dim).child("Model"))
+      .child(div().px(8).pt(4).pb(2).text_size(12).text_color(t.dim).child(text("composer.model-heading")))
       .children(models.map((model) =>
         h_flex()
           .id(`composer-model-${model.id}`)
@@ -360,8 +372,8 @@ export default {
       .when(level === saved, (el) => el.child(svg("frame/settings/check.svg").size(14).text_color(t.accent)));
     return v_flex()
       .w(150)
-      .child(div().px(8).pt(4).pb(2).text_size(12).text_color(t.dim).child("Reasoning"))
-      .child(row("composer-level-default", "Default", null, "Claude Code's own setting"))
+      .child(div().px(8).pt(4).pb(2).text_size(12).text_color(t.dim).child(text("composer.reasoning-heading")))
+      .child(row("composer-level-default", text("composer.default"), null, text("composer.default-setting")))
       .children(effortIds(entry).map((level) => row(`composer-level-${level}`, effortWord(level), level, null)));
   },
 
@@ -402,8 +414,8 @@ export default {
       .tab_stop(true)
       .focus_ring(t.focus, 7)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-      .tooltip(pending ? "Changes wait for the lead's restart" : "The lead's model and reasoning")
-      .accessibility_label(pending ? "Changes wait for the lead's restart" : "The lead's model and reasoning");
+      .tooltip(pending ? text("composer.changes-wait") : text("composer.model-reasoning"))
+      .accessibility_label(pending ? text("composer.changes-wait") : text("composer.model-reasoning"));
     // The icon sits 6 px left of the name.
     let name = h_flex().gap(6).items_center();
     if (icon) name = name.child(icon);
@@ -412,7 +424,7 @@ export default {
       // The level follows the model after the row's gap, set apart by its color.
       if (level) trigger = trigger.child(div().text_size(12).text_color(t.muted).child(level));
     } else {
-      trigger = trigger.child(name.child(div().text_size(12).text_color(t.muted).child("Choose a model")));
+      trigger = trigger.child(name.child(div().text_size(12).text_color(t.muted).child(text("composer.choose-model"))));
     }
     if (pending) trigger = trigger.child(div().id("composer-model-pending").w(6).h(6).rounded(3).bg(t.working));
     // The models and the reasoning levels side by side; the strip under both while a saved change waits.
@@ -480,8 +492,8 @@ export default {
       .tab_stop(true)
       .focus_ring(t.focus, 6)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
-      .tooltip(`Context ${Math.round(fraction * 100)}% · Limits`)
-      .accessibility_label(`Context ${Math.round(fraction * 100)}% · Limits`)
+      .tooltip(text("composer.context-limits", { percent: Math.round(fraction * 100) }))
+      .accessibility_label(text("composer.context-limits", { percent: Math.round(fraction * 100) }))
       .on_click(() => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "pointer", props: { terminal: this.terminal } }))
       .child(drawing);
   },

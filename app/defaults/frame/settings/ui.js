@@ -3,6 +3,7 @@
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Input, InputState, Popover } from "gpui-base";
+import { text } from "kompitum";
 
 const CHEVRON = "mods/workspace-chrome/chevron-down.svg";
 // Popover and Input claim Enter and the arrows with bindings, which GPUI runs
@@ -38,7 +39,7 @@ function itemIcon(item, size, t) {
 // highlight on the trigger). `search`: a field over the list that filters it. `onOpen(cx)`: called when the list
 // opens, for lists that load on demand. `limit`: draw at most that many matching rows, then a dim line saying to
 // type to narrow it.
-export function dropdown(t, id, { items, value, onPick, state, search = false, width = 240, anchor = "top_right", empty = "Choose…", onOpen = null, limit = 0 }) {
+export function dropdown(t, id, { items, value, onPick, state, search = false, width = 240, anchor = "top_right", empty = text("settings.choose"), onOpen = null, limit = 0 }) {
   const picked = items.find((item) => item.value === value);
   const query = (state.query ?? "").trim().toLowerCase();
   const matching = query
@@ -112,9 +113,9 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
     .gap(1)
     .overflow_y_scrollbar()
     .children(shown.map(row))
-    .when(matching.length === 0, (el) => el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child("Nothing matches.")))
+    .when(matching.length === 0, (el) => el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child(text("settings.nothing-matches"))))
     .when(limit > 0 && matching.length > limit, (el) =>
-      el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child("Type to narrow the list.")));
+      el.child(div().px(8).py(6).text_size(12).text_color(t.dim).child(text("settings.type-to-narrow"))));
   // The list sits 4 px under the trigger: the Popover binding has no offset, so the gap is the list's own top margin.
   // Its right edge is the trigger's (`anchor`, top_right), and the trigger is never wider than `width`, so the list is at least as wide.
   const content = v_flex()
@@ -169,7 +170,7 @@ export function dropdown(t, id, { items, value, onPick, state, search = false, w
         // Retained state is created in an event handler, never in render.
         state.focus ??= cx.focus_handle();
         if (search && !state.input) {
-          state.input = InputState.new({ placeholder: "Search" });
+          state.input = InputState.new({ placeholder: text("settings.search-placeholder-dropdown") });
           state.input.on("change", (_e, cx) => { state.query = state.input.value(); state.hi = 0; cx.notify(); });
         }
         cx.notify();

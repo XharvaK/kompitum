@@ -284,7 +284,10 @@ impl Loader for HostModuleLoader {
                     ),
                 ));
             }
-            let _ = writeln!(source, "export const {script} = globalThis.__gpui.{script};");
+            let _ = match found.script_expression(script) {
+                Some(expression) => writeln!(source, "export const {script} = {expression};"),
+                None => writeln!(source, "export const {script} = globalThis.__gpui.{script};"),
+            };
         }
 
         Module::declare(ctx.clone(), name, source)
@@ -308,6 +311,10 @@ fn surface_key(module: &host_modules::HostModule) -> String {
         hash.update([3]);
         hash.update(name.as_bytes());
         hash.update([0]);
+        if let Some(expression) = module.script_expression(name) {
+            hash.update(expression.as_bytes());
+            hash.update([0]);
+        }
     }
     format!("{:x}", hash.finalize())
 }

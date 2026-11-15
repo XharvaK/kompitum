@@ -4,7 +4,7 @@
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { kom, exec, knownAgents, pickFolder, window } from "kompitum";
+import { kom, exec, knownAgents, pickFolder, window, text } from "kompitum";
 import { dropdown } from "./ui.js";
 
 // The core's built-in workers (`builtin()` in crates/kompitum-core/src/task/worker.rs): none of them can be removed.
@@ -13,7 +13,7 @@ const USAGE_EVERY_MS = 60000;
 const DETAIL_LIMIT = 32;
 
 function errorText(error) {
-  return String(error?.message ?? error ?? "It didn't work.").trim();
+  return String(error?.message ?? error ?? text("settings.it-didnt-work")).trim();
 }
 
 function firstLine(text) {
@@ -75,11 +75,11 @@ export function loadAgents(view, cx, forceUsage = false) {
     ]) {
       try {
         const r = await kom(args);
-        if (r.code !== 0) throw new Error(firstLine(r.stderr || r.stdout) || `${label} failed`);
+        if (r.code !== 0) throw new Error(firstLine(r.stderr || r.stdout) || text("settings.command-failed", { command: label }));
         s[name] = JSON.parse(r.stdout || "null");
       } catch (error) {
         s[name] = null;
-        s.errors.push(`${label}: ${errorText(error)}`);
+        s.errors.push(text("settings.command-error", { command: label, error: errorText(error) }));
       }
     }
     await loadUsage(view, cx, s, forceUsage);
@@ -116,13 +116,13 @@ async function loadUsage(view, cx, s, force) {
 // 80% and over is working; 100% (or the report's own limited flag) is blocked.
 function usageMeters(t, meters) {
   const parts = [];
-  for (const [label, meter] of [["5h", meters?.rolling], ["week", meters?.weekly], ["month", meters?.monthly]]) {
+  for (const [label, meter] of [[text("settings.usage-5h"), meters?.rolling], [text("settings.usage-week"), meters?.weekly], [text("settings.usage-month"), meters?.monthly]]) {
     const percent = meter?.percent;
     if (percent == null || !Number.isFinite(Number(percent))) continue;
     const used = Math.round(Number(percent));
     const color = meter.limited || used >= 100 ? t.blocked : used >= 80 ? t.working : t.dim;
     if (parts.length) parts.push(div().text_color(t.dim).child(" \u00b7 "));
-    parts.push(div().text_color(color).child(`${label} ${used}%`));
+    parts.push(div().text_color(color).child(text("settings.usage-meter", { window: label, percent: used })));
   }
   return parts.length ? h_flex().text_size(12).text_color(t.dim).children(parts) : null;
 }
@@ -184,9 +184,9 @@ function programFor(s, cli) {
 }
 
 const WINDOWS = [
-  { label: "5h", block: "5-hour", clock: true },
-  { label: "Week", block: "weekly", clock: false },
-  { label: "Month", block: "monthly", clock: false },
+  { label: () => text("settings.usage-5h"), block: "5-hour", clock: true },
+  { label: () => text("settings.window-week"), block: "weekly", clock: false },
+  { label: () => text("settings.window-month"), block: "monthly", clock: false },
 ];
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -265,7 +265,7 @@ function saveLead(view, patch, cx) {
 
 function chooseFolder(view, cx) {
   cx.spawn(async (cx) => {
-    const folder = await pickFolder({ prompt: "Choose" });
+    const folder = await pickFolder({ prompt: text("settings.choose-folder-prompt") });
     if (!folder) return; // a cancelled pick keeps the old choice
     view.change((person) => {
       person.lead = { ...(person.lead ?? {}), folder };
@@ -290,7 +290,7 @@ function loadModelList(view, cx, entry) {
   cx.spawn(async (cx) => {
     try {
       const r = await execCli(entry, entry.list_models);
-      if (r.code !== 0) throw new Error(firstLine(r.stderr || r.stdout) || `exit ${r.code}`);
+      if (r.code !== 0) throw new Error(firstLine(r.stderr || r.stdout) || text("settings.exit-code", { code: r.code }));
       s.listModels[entry.key] = { loading: false, lines: modelLines(r.stdout), error: null };
     } catch (error) {
       s.listModels[entry.key] = { loading: false, lines: [], error: firstLine(errorText(error)) };
@@ -322,11 +322,11 @@ function leadSection(view, t, cx, s) {
   const list = leadPrograms(s);
   if (!list.length) {
     return v_flex().w_full()
-      .child(view.heading(t, "Lead"))
-      .child(div().py(12).text_size(12).text_color(t.dim).child(s.known ? "No installed CLI can lead yet." : "Reading agents…"));
+      .child(view.heading(t, text("settings.heading-lead")))
+      .child(div().py(12).text_size(12).text_color(t.dim).child(s.known ? text("settings.no-cli-lead") : text("settings.reading-agents")));
   }
   const entry = leadProgram(view, s);
-  if (!entry) return v_flex().w_full().child(view.heading(t, "Lead"));
+  if (!entry) return v_flex().w_full().child(view.heading(t, text("settings.heading-lead")));
   const lead = view.person?.lead ?? {};
   const effort = lead.effort;
   const sState = ensureAgents(view);
@@ -367,17 +367,17 @@ function leadSection(view, t, cx, s) {
   }
   // A model the lists don't name yet: what's typed in the search can be used as its id.
   const typed = (sState.leadModel.query ?? "").trim();
-  if (typed && !seen.has(typed)) modelItems.push({ value: typed, label: typed, detail: "Use this model id" });
+  if (typed && !seen.has(typed)) modelItems.push({ value: typed, label: typed, detail: text("settings.use-model-id") });
   const modelNote = live?.loading
-    ? div().pt(4).text_size(12).text_color(t.dim).child(`Reading ${entry.name ?? entry.key}'s models…`)
+    ? div().pt(4).text_size(12).text_color(t.dim).child(text("settings.reading-models", { name: entry.name ?? entry.key }))
     : live?.error
       ? div().pt(4).text_size(12).line_height("17px").text_color(t.blocked)
-        .child(`Couldn't read ${entry.name ?? entry.key}'s models: ${live.error}`)
+        .child(text("settings.models-read-failed", { name: entry.name ?? entry.key, error: live.error }))
       : null;
   const modelMenu = dropdown(t, "st-lead-model", {
     items: modelItems,
     value: lead.model ?? "",
-    empty: "Default",
+    empty: text("settings.default"),
     onPick: (value, cx) => saveLead(view, { model: value }, cx),
     state: sState.leadModel,
     search: true,
@@ -387,10 +387,10 @@ function leadSection(view, t, cx, s) {
   const effortMenu = entry.efforts?.length
     ? dropdown(t, "st-lead-effort", {
         items: [
-          { value: "", label: "Default" },
-          ...(entry.efforts ?? []).map((level) => ({ value: level, label: cap(level) })),
+          { value: "", label: text("settings.default") },
+          ...(entry.efforts ?? []).map((level) => ({ value: level, label: effortWord(level) })),
           // A saved level this CLI no longer lists still shows as the pick.
-          ...(effort && !entry.efforts.includes(effort) ? [{ value: effort, label: cap(effort) }] : []),
+          ...(effort && !entry.efforts.includes(effort) ? [{ value: effort, label: effortWord(effort) }] : []),
         ],
         value: effort ?? "",
         onPick: (value, cx) => saveLead(view, { effort: value }, cx),
@@ -401,45 +401,47 @@ function leadSection(view, t, cx, s) {
   // Claude reports its own limits; they belong under the lead only while Claude is the lead.
   const usage = entry.key === "claude" ? claudeMeters(t, s.status?.claude) : null;
   return v_flex().w_full()
-    .child(view.heading(t, "Lead"))
+    .child(view.heading(t, text("settings.heading-lead")))
     .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim)
-      .child("The agent you talk to. It plans, asks you, and hands work to the workers below."))
-    .child(view.row(t, "Agent", null, cliMenu, "lead"))
+      .child(text("settings.lead-about")))
+    .child(view.row(t, text("settings.agent"), null, cliMenu, "lead"))
     .when(Boolean(usage), (el) => el.child(div().pt(6).child(usage)))
-    .child(view.row(t, "Model", null, modelMenu, "lead_model"))
+    .child(view.row(t, text("settings.model"), null, modelMenu, "lead_model"))
     .when(Boolean(modelNote), (el) => el.child(modelNote))
-    .when(Boolean(effortMenu), (el) => el.child(view.row(t, "Reasoning", null, effortMenu, "lead_model")))
+    .when(Boolean(effortMenu), (el) => el.child(view.row(t, text("settings.reasoning"), null, effortMenu, "lead_model")))
     .child(view.row(
       t,
-      "Folder",
-      "Where the lead works. A new folder starts a new conversation.",
+      text("settings.folder"),
+      text("settings.folder-about"),
       h_flex()
         .flex_none()
         .gap(8)
         .items_center()
-        .child(div().max_w(340).truncate().text_size(13).text_color(t.muted).child(lead.folder || "Not set"))
-        .child(view.button(t, "st-lead-folder", "Choose\u2026", (_e, cx) => chooseFolder(view, cx))),
+        .child(div().max_w(340).truncate().text_size(13).text_color(t.muted).child(lead.folder || text("settings.not-set")))
+        .child(view.button(t, "st-lead-folder", text("settings.choose"), (_e, cx) => chooseFolder(view, cx))),
       "folder",
     ))
-    .child(div().pt(8).text_size(12).text_color(t.dim).child("Applies when the lead restarts."));
+    .child(div().pt(8).text_size(12).text_color(t.dim).child(text("settings.applies-restart")));
 }
 
 // The worker's own line: what it is waiting for, in words the page builds (never the core's sentence, which is the tooltip).
 function workerState(t, worker) {
-  if (worker.state === "not_installed") return div().w_full().text_size(12).text_color(t.dim).truncate().child("Not installed");
+  if (worker.state === "not_installed") return div().w_full().text_size(12).text_color(t.dim).truncate().child(text("settings.not-installed"));
   if (worker.state !== "out") return null;
   const window = WINDOWS.find((w) => w.block === worker.window);
-  let text;
+  let line;
   if (window) {
     const back = resetWords(worker.until_ms, window.clock);
-    text = back ? `${window.label} used up · back ${back}` : `${window.label} used up`;
+    line = back
+      ? text("settings.worker-used-up-back", { window: window.label(), when: back })
+      : text("settings.worker-used-up", { window: window.label() });
   } else {
     const back = backWords(worker.until_ms);
-    text = back ? `Out · back ${back}` : "Out of quota";
+    line = back ? text("settings.worker-out-back", { when: back }) : text("settings.out-of-quota");
   }
   return div().w_full().text_size(12).text_color(t.working).truncate()
     .when(Boolean(worker.sentence), (el) => el.tooltip(worker.sentence))
-    .child(text);
+    .child(line);
 }
 
 const ICON_UP = "mods/lead/chevron-up.svg";
@@ -466,7 +468,7 @@ function workerRow(view, t, cx, s, worker, index) {
   const state = workerState(t, worker);
   const reported = entry.key ? usageMeters(t, s.usage[entry.key]) : null;
   const usage = reported ?? (entry.key && s.usageError[entry.key]
-    ? div().text_size(12).text_color(t.dim).child(`${entry.name ?? entry.key}'s usage report couldn't be read.`)
+    ? div().text_size(12).text_color(t.dim).child(text("settings.usage-report-failed", { name: entry.name ?? entry.key }))
     : null);
   const from = s.drag?.from;
   const row = v_flex()
@@ -642,8 +644,12 @@ function addRoute(entry, model, effort) {
 }
 
 function effortWord(id) {
-  return ({ low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max" })[id]
-    ?? (id ? id.charAt(0).toUpperCase() + id.slice(1) : "");
+  if (id === "low") return text("settings.effort-low");
+  if (id === "medium") return text("settings.effort-medium");
+  if (id === "high") return text("settings.effort-high");
+  if (id === "xhigh") return text("settings.effort-xhigh");
+  if (id === "max") return text("settings.effort-max");
+  return id ? id.charAt(0).toUpperCase() + id.slice(1) : "";
 }
 
 function workerClis(s) {
@@ -659,10 +665,10 @@ function firstAddPicks(entry) {
 }
 
 function readyDetail(key) {
-  if (key === "free") return "Free models through OpenCode.";
-  if (key === "codex") return "Codex with its own default model.";
-  if (key === "sonnet") return "A subagent inside the lead's Claude Code, on Sonnet.";
-  if (key === "haiku") return "A subagent inside the lead's Claude Code, on Haiku.";
+  if (key === "free") return text("settings.ready-free");
+  if (key === "codex") return text("settings.ready-codex");
+  if (key === "sonnet") return text("settings.ready-sonnet");
+  if (key === "haiku") return text("settings.ready-haiku");
   return null;
 }
 
@@ -722,7 +728,7 @@ function addReadyRow(t, s, { key, name, iconEntry, onAdd }) {
           if (s.addBusy) return;
           onAdd(cx);
         })
-        .child(busy ? "Adding…" : "Add"),
+        .child(busy ? text("settings.adding") : text("settings.add")),
     );
 }
 
@@ -732,7 +738,7 @@ function addPanel(view, t, cx, s) {
   const entries = workerClis(s);
   const subs = new Set(subagents(view));
   const subChoices = leadProgram(view, s)?.key === "claude"
-    ? [["sonnet", "Claude Code with Sonnet"], ["haiku", "Claude Code with Haiku"]].filter(([name]) => !subs.has(name))
+    ? [["sonnet", text("settings.subagent-sonnet")], ["haiku", text("settings.subagent-haiku")]].filter(([name]) => !subs.has(name))
     : [];
   const ready = [
     ...builtin.map((worker) => ({
@@ -793,8 +799,8 @@ function addPanel(view, t, cx, s) {
     .hover((el) => el.bg(t.hover).text_color(t.foreground)).active((el) => el.bg(t.selected))
     .tab_stop(true)
     .focus_ring(t.focus, 6)
-    .tooltip("Close")
-    .accessibility_label("Close")
+    .tooltip(text("settings.close"))
+    .accessibility_label(text("settings.close"))
     .on_click((_e, cx) => { s.addOpen = false; cx.notify(); })
     .child(svg("frame/settings/close.svg").size(14));
 
@@ -814,18 +820,18 @@ function addPanel(view, t, cx, s) {
         .w_full()
         .items_center()
         .gap(10)
-        .child(div().flex_1().min_w(0).child(header(ready.length ? "Ready to add" : "Choose your own")))
+        .child(div().flex_1().min_w(0).child(header(ready.length ? text("settings.ready-to-add") : text("settings.choose-own"))))
         .child(close),
     );
   if (ready.length) {
     card = card
       .child(v_flex().w_full().gap(4).children(ready.map((item) => addReadyRow(t, s, item))))
       .when(Boolean(s.addReadyError), (el) => el.child(failLine(t, s.addReadyError)))
-      .child(header("Choose your own"));
+      .child(header(text("settings.choose-own")));
   }
   if (!entries.length) {
     return card.child(
-      div().text_size(12).text_color(t.dim).child("No other worker CLI is installed. Install Codex or OpenCode to add one."),
+      div().text_size(12).text_color(t.dim).child(text("settings.no-other-cli")),
     );
   }
 
@@ -849,7 +855,7 @@ function addPanel(view, t, cx, s) {
       try {
         const r = await kom(args);
         if (r.code !== 0) throw new Error(parseKomError(r, args));
-        s.addNote = `Added ${label}.`;
+        s.addNote = text("settings.worker-added", { label });
         s.busy = false;
         loadAgents(view, cx);
       } catch (error) {
@@ -909,7 +915,7 @@ function addPanel(view, t, cx, s) {
           .focus_ring(t.focus, 8)
           .on_click(addOwn)
           .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
-          .child(s.addBusy === "own" ? "Adding…" : "Add"),
+          .child(s.addBusy === "own" ? text("settings.adding") : text("settings.add")),
       ),
   );
   card = card.when(Boolean(s.addNote), (el) => el.child(div().text_size(12).text_color(t.dim).child(s.addNote)));
@@ -923,7 +929,7 @@ function dayWords(ms) {
   const now = new Date();
   const midnight = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const days = Math.round((midnight(at) - midnight(now)) / 86400000);
-  if (days === 0) return "today";
+  if (days === 0) return text("settings.today");
   if (Math.abs(days) < 7) return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][at.getDay()];
   const month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][at.getMonth()];
   return `${at.getDate()} ${month}${at.getFullYear() !== now.getFullYear() ? ` ${at.getFullYear()}` : ""}`;
@@ -942,16 +948,16 @@ function cliLine(cli, now) {
   const from = versionOf(cli.before);
   const to = versionOf(cli.version);
   const name = cli.version ? `${cli.label} ${to ?? cli.version}` : cli.label;
-  if (cli.waiting) return `${name} · waiting: ${cli.waiting}`;
+  if (cli.waiting) return text("settings.cli-waiting", { name, waiting: cli.waiting });
   if (cli.updated_ms > 0) {
     const changed = from && to && from !== to
-      ? `${name} · updated ${dayWords(cli.updated_ms)} from ${from}`
-      : `${name} · checked ${dayWords(cli.tried_ms > 0 ? cli.tried_ms : cli.updated_ms)}`;
-    return cli.error ? `${changed}: ${cli.error}` : changed;
+      ? text("settings.cli-updated", { name, day: dayWords(cli.updated_ms), from })
+      : text("settings.cli-checked", { name, day: dayWords(cli.tried_ms > 0 ? cli.tried_ms : cli.updated_ms) });
+    return cli.error ? text("settings.line-with-error", { line: changed, error: cli.error }) : changed;
   }
-  if (cli.error) return `${name} · update failed: ${cli.error}`;
-  if (cli.tried_ms > 0) return `${name} · up to date, checked ${dayWords(cli.tried_ms)}`;
-  return `${name} · not checked yet`;
+  if (cli.error) return text("settings.cli-update-failed", { name, error: cli.error });
+  if (cli.tried_ms > 0) return text("settings.cli-up-to-date", { name, day: dayWords(cli.tried_ms) });
+  return text("settings.cli-not-checked", { name });
 }
 
 function workersSection(view, t, cx, s) {
@@ -962,13 +968,13 @@ function workersSection(view, t, cx, s) {
   for (let i = 0; i < subs.length; i++) rows.push(subagentRow(view, t, cx, s, subs[i], i));
   const clis = Array.isArray(s.workers?.clis) ? s.workers.clis : [];
   return v_flex().w_full()
-    .child(view.heading(t, "Workers"))
-    .child(div().pb(6).text_size(12).text_color(t.dim).child("Kompitum tries them from the top."))
+    .child(view.heading(t, text("settings.heading-workers")))
+    .child(div().pb(6).text_size(12).text_color(t.dim).child(text("settings.workers-about")))
     .when(Boolean(s.workerError), (el) => el.child(div().pb(6).text_size(12).text_color(t.blocked).truncate()
       .tooltip(s.workerError).child(firstLine(s.workerError) || s.workerError)))
     .when(rows.length > 0, (el) => el.children(rows))
-    .when(rows.length === 0, (el) => el.child(div().py(10).text_size(12).text_color(t.dim).child(s.workers ? "No workers in the order." : "Reading workers…")))
-    .child(h_flex().pt(10).child(view.button(t, "st-add-worker", "Add a worker", (_e, cx) => { s.addOpen = !s.addOpen; cx.notify(); })))
+    .when(rows.length === 0, (el) => el.child(div().py(10).text_size(12).text_color(t.dim).child(s.workers ? text("settings.no-workers") : text("settings.reading-workers"))))
+    .child(h_flex().pt(10).child(view.button(t, "st-add-worker", text("settings.add-worker"), (_e, cx) => { s.addOpen = !s.addOpen; cx.notify(); })))
     .when(s.addOpen, (el) => el.child(addPanel(view, t, cx, s)))
     .when(clis.length > 0, (el) => el.child(v_flex().pt(12).gap(3).when(view.lit("clis"), (line) => line.bg(t.selected).rounded(7))
       .children(clis.map((cli) => {

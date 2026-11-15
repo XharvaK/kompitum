@@ -5,13 +5,13 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Textarea, TextareaState, TextView } from "gpui-base";
-import { kom, readTextFile, home, props, closeOverlay, notify, theme, sheet } from "kompitum";
+import { kom, readTextFile, home, props, closeOverlay, notify, theme, sheet, text } from "kompitum";
 
-const OUTSIDE = "The vault is outside your home folder, so the mailbox can't read its notes.";
+const OUTSIDE = "outside";
 // The vault's marks are append-only, so a close written now could never be undone.
 const UNDO_MS = 6000;
 
-const text = (v) => (typeof v === "string" ? v : "");
+const str = (v) => (typeof v === "string" ? v : "");
 const base = (p) => String(p ?? "").split(/[\\/]/).filter(Boolean).pop() ?? "";
 const cap = (s) => (s ? String(s).replace(/^./, (c) => c.toUpperCase()) : "");
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
@@ -32,7 +32,7 @@ function problemParts(problem) {
 
 function plainReason(reason) {
   const unknown = /^has an unknown status: (.*)$/.exec(reason);
-  if (unknown) return `Its status is “${unknown[1]}”, which Kompitum doesn't know.`;
+  if (unknown) return text("mailbox.unknown-status", { status: unknown[1] });
   if (!reason) return "";
   const said = cap(reason);
   return /[.!?]$/.test(said) ? said : `${said}.`;
@@ -60,7 +60,7 @@ function errorText(result) {
 function parse(result) {
   if (result?.code !== 0) throw new Error(errorText(result));
   const data = JSON.parse(result?.stdout || "{}");
-  if (!data || typeof data !== "object") throw new Error("The vault did not answer an object.");
+  if (!data || typeof data !== "object") throw new Error(text("mailbox.vault-no-object"));
   return data;
 }
 
@@ -82,12 +82,12 @@ function underHome(path, root) {
 
 function ago(value) {
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return text(value);
+  if (Number.isNaN(d.getTime())) return str(value);
   const seconds = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
-  if (seconds < 60) return "now";
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
-  if (seconds < 7 * 86400) return `${Math.floor(seconds / 86400)} d ago`;
+  if (seconds < 60) return text("mailbox.now");
+  if (seconds < 3600) return text("mailbox.minutes-ago", { minutes: Math.floor(seconds / 60) });
+  if (seconds < 86400) return text("mailbox.hours-ago", { hours: Math.floor(seconds / 3600) });
+  if (seconds < 7 * 86400) return text("mailbox.days-ago", { days: Math.floor(seconds / 86400) });
   return day(d);
 }
 
@@ -97,7 +97,7 @@ function day(d) {
 
 function stamp(value) {
   const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return text(value);
+  if (Number.isNaN(d.getTime())) return str(value);
   return `${day(d)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
@@ -114,7 +114,7 @@ function bodyOf(raw) {
 }
 
 // The vault addresses a note to `all` to the Owner too.
-const forOwner = (note) => ["owner", "all"].includes(text(note?.to));
+const forOwner = (note) => ["owner", "all"].includes(str(note?.to));
 
 function readByOwner(note) {
   const reads = Array.isArray(note?.read_by) ? note.read_by : [];
@@ -123,8 +123,8 @@ function readByOwner(note) {
 
 // A note with no recipient has only its sender; never a dangling arrow.
 function route(note) {
-  const from = text(note?.from);
-  const to = text(note?.to);
+  const from = str(note?.from);
+  const to = str(note?.to);
   return to ? `${from} → ${to}` : from;
 }
 
@@ -153,7 +153,7 @@ export default class Mailbox extends View {
     this.closing = [];
     this.homePath = String(home() ?? "");
     this.handle = cx.focus_handle();
-    this.answerState = TextareaState.new({ placeholder: "Write your answer", rows: 5 });
+    this.answerState = TextareaState.new({ placeholder: text("mailbox.answer-placeholder"), rows: 5 });
     this.answerState.on("change", (_e, cx) => {
       this.answer = this.answerState.value();
       cx.notify();
@@ -195,8 +195,8 @@ export default class Mailbox extends View {
       if (open.code === 0) {
         const data = parse(open);
         this.needs = notesOf(data);
-        vault = text(data.vault);
-        agent = text(data.agent) || agent;
+        vault = str(data.vault);
+        agent = str(data.agent) || agent;
         problems.push(...problemsOf(data));
       } else {
         this.needs = [];
@@ -205,8 +205,8 @@ export default class Mailbox extends View {
       if (all.code === 0) {
         const data = parse(all);
         this.all = notesOf(data);
-        vault = vault || text(data.vault);
-        agent = text(data.agent) || agent;
+        vault = vault || str(data.vault);
+        agent = str(data.agent) || agent;
         problems.push(...problemsOf(data));
       } else {
         // A find that refuses an empty search leaves only Needs you.
@@ -219,14 +219,14 @@ export default class Mailbox extends View {
       this.problems = [...new Set(problems)];
       this.error = error;
       this.loaded = true;
-      const selected = text(this.selected?.path);
+      const selected = str(this.selected?.path);
       if (selected) {
-        const fresh = [...this.needs, ...(this.all ?? [])].find((n) => text(n.path) === selected);
+        const fresh = [...this.needs, ...(this.all ?? [])].find((n) => str(n.path) === selected);
         if (fresh) this.selected = fresh;
         else this.selected = null;
       }
     } catch (e) {
-      this.error = String(e?.message ?? e ?? "").trim() || "The mailbox couldn't read the vault.";
+      this.error = String(e?.message ?? e ?? "").trim() || text("mailbox.read-failed");
     } finally {
       this.loading = false;
       this.takeWanted(cx);
@@ -238,9 +238,9 @@ export default class Mailbox extends View {
     const wanted = this.wanted;
     if (!wanted) return;
     this.wanted = null;
-    const note = [...(this.all ?? []), ...this.needs].find((n) => text(n.path) === wanted);
+    const note = [...(this.all ?? []), ...this.needs].find((n) => str(n.path) === wanted);
     if (note) {
-      if (this.all !== null && !this.needs.some((n) => text(n.path) === wanted)) this.tab = "all";
+      if (this.all !== null && !this.needs.some((n) => str(n.path) === wanted)) this.tab = "all";
       this.select(note, cx);
       return;
     }
@@ -248,13 +248,13 @@ export default class Mailbox extends View {
     cx.spawn(async (cx) => {
       try {
         const data = parse(await kom(["vault", "read", wanted, "--json", "--as", "owner"]));
-        if (!data.note || typeof data.note !== "object") throw new Error("The note isn't in the vault.");
-        if (text(data.vault)) this.vault = text(data.vault);
+        if (!data.note || typeof data.note !== "object") throw new Error(text("mailbox.note-not-in-vault"));
+        if (str(data.vault)) this.vault = str(data.vault);
         this.select(data.note, cx);
         const problems = problemsOf(data);
         if (problems.length) this.actionError = problems.join(" ");
       } catch (e) {
-        this.actionError = String(e?.message ?? e ?? "").trim() || "The note couldn't be read.";
+        this.actionError = String(e?.message ?? e ?? "").trim() || text("mailbox.note-read-failed");
         cx.notify();
       }
     });
@@ -264,7 +264,7 @@ export default class Mailbox extends View {
     const rows = this.tab === "all" ? (this.all ?? []) : this.needs;
     // A note in its undo window reads as closed, though the vault still has it open.
     const closing = this.closing.map((p) => p.path);
-    return closing.length ? rows.filter((n) => !closing.includes(text(n.path))) : rows;
+    return closing.length ? rows.filter((n) => !closing.includes(str(n.path))) : rows;
   }
 
   select(note, cx) {
@@ -284,7 +284,7 @@ export default class Mailbox extends View {
   }
 
   markRead(note, cx) {
-    const path = text(note.path);
+    const path = str(note.path);
     if (!path) return;
     cx.spawn(async (cx) => {
       try {
@@ -293,7 +293,7 @@ export default class Mailbox extends View {
         if (problems.length) this.actionError = problems.join(" ");
         await this.load(cx);
       } catch (e) {
-        this.actionError = String(e?.message ?? e ?? "").trim() || "The read mark wasn't written.";
+        this.actionError = String(e?.message ?? e ?? "").trim() || text("mailbox.read-mark-failed");
       }
       cx.notify();
     });
@@ -314,9 +314,9 @@ export default class Mailbox extends View {
   }
 
   readBody(note, cx) {
-    const path = text(note.path);
+    const path = str(note.path);
     if (!this.vault || !path) {
-      this.bodyError = "The note has no vault path.";
+      this.bodyError = text("mailbox.no-vault-path");
       return;
     }
     if (!underHome(this.vault, this.homePath)) {
@@ -327,12 +327,12 @@ export default class Mailbox extends View {
     cx.spawn(async (cx) => {
       try {
         const body = await readTextFile(file);
-        if (text(this.selected?.path) !== path) return;
+        if (str(this.selected?.path) !== path) return;
         this.body = body ?? "";
         this.bodyError = null;
       } catch (e) {
-        if (text(this.selected?.path) !== path) return;
-        this.bodyError = String(e?.message ?? e ?? "").trim() || "The note couldn't be read.";
+        if (str(this.selected?.path) !== path) return;
+        this.bodyError = String(e?.message ?? e ?? "").trim() || text("mailbox.note-read-failed");
       }
       cx.notify();
     });
@@ -341,7 +341,7 @@ export default class Mailbox extends View {
   move(delta, cx) {
     const rows = this.rows();
     if (!rows.length) return;
-    const at = rows.findIndex((n) => text(n.path) === text(this.selected?.path));
+    const at = rows.findIndex((n) => str(n.path) === str(this.selected?.path));
     const next = at < 0 ? (delta > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, at + delta));
     this.select(rows[next], cx);
     cx.notify();
@@ -364,9 +364,9 @@ export default class Mailbox extends View {
     this.busy = true;
     this.actionError = null;
     cx.notify();
-    const path = text(note.path);
-    const to = text(note.from);
-    const title = `Re: ${text(note.title)}`;
+    const path = str(note.path);
+    const to = str(note.from);
+    const title = text("mailbox.reply-title", { title: str(note.title) });
     cx.spawn(async (cx) => {
       try {
         const result = await kom([
@@ -381,7 +381,7 @@ export default class Mailbox extends View {
         this.handle.focus();
         await this.load(cx);
       } catch (e) {
-        this.actionError = String(e?.message ?? e ?? "").trim() || "The answer wasn't sent.";
+        this.actionError = String(e?.message ?? e ?? "").trim() || text("mailbox.answer-failed");
       } finally {
         this.busy = false;
         cx.notify();
@@ -394,7 +394,7 @@ export default class Mailbox extends View {
   // mailbox writes what is still owed instead of dropping it.
   closeNote(cx) {
     const note = this.selected;
-    const path = text(note?.path);
+    const path = str(note?.path);
     if (!note || !path || this.busy || this.closing.some((p) => p.path === path)) return;
     const pending = { note, path, timer: null };
     pending.timer = cx.timer.after(UNDO_MS, (cx) => this.finishClose(pending, cx));
@@ -432,7 +432,7 @@ export default class Mailbox extends View {
       } catch (e) {
         // The vault refused it, so the note is still open: show it again with the words.
         if (!this.selected) this.select(pending.note, cx);
-        this.actionError = String(e?.message ?? e ?? "").trim() || "The note wasn't closed.";
+        this.actionError = String(e?.message ?? e ?? "").trim() || text("mailbox.note-close-failed");
       } finally {
         cx.notify();
       }
@@ -450,8 +450,8 @@ export default class Mailbox extends View {
         if (result.code !== 0) throw new Error(errorText(result));
       } catch (e) {
         notify({
-          title: "The note wasn't closed",
-          body: String(e?.message ?? e ?? "").trim() || "The vault didn't answer.",
+          title: text("mailbox.note-close-failed-title"),
+          body: String(e?.message ?? e ?? "").trim() || text("mailbox.vault-no-answer"),
           level: "error",
         });
       }
@@ -491,8 +491,8 @@ export default class Mailbox extends View {
   }
 
   tabs(t) {
-    const items = [["needs", "Needs you"]];
-    if (this.all !== null) items.push(["all", "All notes"]);
+    const items = [["needs", text("mailbox.needs-you")]];
+    if (this.all !== null) items.push(["all", text("mailbox.all-notes")]);
     return h_flex()
       .id("mail-tabs")
       .self_start()
@@ -517,7 +517,7 @@ export default class Mailbox extends View {
             .on_click((_e, cx) => {
               this.tab = id;
               this.answering = false;
-              if (!this.rows().some((n) => text(n.path) === text(this.selected?.path))) this.selected = null;
+              if (!this.rows().some((n) => str(n.path) === str(this.selected?.path))) this.selected = null;
               this.handle.focus();
               cx.notify();
             })
@@ -527,7 +527,7 @@ export default class Mailbox extends View {
   }
 
   row(t, note, index) {
-    const selected = text(note.path) === text(this.selected?.path);
+    const selected = str(note.path) === str(this.selected?.path);
     const waits = forOwner(note) && !readByOwner(note);
     return v_flex()
       .id(`mail-row-${index}`)
@@ -555,13 +555,14 @@ export default class Mailbox extends View {
           .gap(6)
           .items_center()
           .when(waits, (el) => el.child(div().w(6).h(6).flex_none().rounded(3).bg(t.accent)))
-          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(text(note.title) || base(note.path) || "Note")),
+          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(str(note.title) || base(note.path) || text("mailbox.note"))),
       );
   }
 
   bodyPane(t) {
     const markdown = bodyOf(this.body);
     const empty = !markdown.trim();
+    const error = this.bodyError === OUTSIDE ? text("mailbox.outside") : this.bodyError;
     return div()
       .id("mail-body")
       .flex_1()
@@ -576,19 +577,19 @@ export default class Mailbox extends View {
             .text_size(13)
             .line_height("20px")
             .text_color(this.bodyError === OUTSIDE ? t.muted : t.blocked)
-            .tooltip(this.bodyError)
-            .child(firstLine(this.bodyError) || this.bodyError),
+            .tooltip(error)
+            .child(firstLine(error) || error),
         ),
       )
       .when(!this.bodyError && this.body === null, (el) =>
-        el.child(div().text_size(13).text_color(t.muted).child("Reading the note…")),
+        el.child(div().text_size(13).text_color(t.muted).child(text("mailbox.reading-note"))),
       )
       .when(!this.bodyError && this.body !== null, (el) =>
         el.child(
           v_flex()
             .w_full()
             .max_w(680)
-            .when(empty, (col) => col.child(div().text_size(13).text_color(t.dim).child("This note has no text.")))
+            .when(empty, (col) => col.child(div().text_size(13).text_color(t.dim).child(text("mailbox.empty-note"))))
             .when(!empty, (col) =>
               col.child(TextView.markdown("mail-body-text", markdown).text_size(13).text_color(t.foreground).selectable(true)),
             ),
@@ -641,7 +642,7 @@ export default class Mailbox extends View {
               .items_center()
               .border_t(1)
               .border_color(t.border)
-              .child(this.textButton(t, "mail-undo", "Closed. Undo", (_e, cx) => this.undoClose(cx))),
+              .child(this.textButton(t, "mail-undo", text("mailbox.closed-undo"), (_e, cx) => this.undoClose(cx))),
           );
       }
       return v_flex()
@@ -652,10 +653,10 @@ export default class Mailbox extends View {
         .items_center()
         .justify_center()
         // While the list loads it says so itself; the reading pane stays empty.
-        .when(this.loaded, (el) => el.child(div().text_size(13).text_color(t.dim).child("Pick a note to read it.")));
+        .when(this.loaded, (el) => el.child(div().text_size(13).text_color(t.dim).child(text("mailbox.pick-note"))));
     }
     const owner = forOwner(note);
-    const kind = text(note.kind) || "note";
+    const kind = str(note.kind) || text("mailbox.note");
     const meta = [route(note), kind, stamp(note.date)].filter(Boolean).join(" · ");
     return v_flex()
       .id("mail-note")
@@ -672,7 +673,7 @@ export default class Mailbox extends View {
           .gap(5)
           .border_b(1)
           .border_color(t.border)
-          .child(div().id("mail-note-title").w_full().max_w(680).truncate().text_size(18).font_semibold().text_color(t.foreground).child(text(note.title) || base(note.path) || "Note"))
+          .child(div().id("mail-note-title").w_full().max_w(680).truncate().text_size(18).font_semibold().text_color(t.foreground).child(str(note.title) || base(note.path) || text("mailbox.note")))
           .child(div().w_full().max_w(680).truncate().text_size(12).text_color(t.dim).child(meta)),
       )
       .child(this.bodyPane(t))
@@ -688,7 +689,7 @@ export default class Mailbox extends View {
                   .gap(8)
                   .px(16)
                   .pt(12)
-                  .child(div().text_size(12).text_color(t.muted).child(`Answer ${text(note.from) || "the sender"}`))
+                  .child(div().text_size(12).text_color(t.muted).child(text("mailbox.answer-to", { from: str(note.from) || text("mailbox.the-sender") })))
                   .child(Textarea.new(this.answerState).h(96).w_full().px(10).py(8).rounded(7).border_1().border_color(t.input).bg(t.background).text_size(13).text_color(t.foreground)),
               ),
             )
@@ -705,13 +706,13 @@ export default class Mailbox extends View {
                 .child(div().flex_1())
                 .when(!this.answering && owner, (bar) =>
                   bar
-                    .child(this.textButton(t, "mail-close", "Close", (_e, cx) => this.closeNote(cx)))
-                    .child(this.primaryButton(t, "mail-answer", "Answer", (_e, cx) => this.answerNote(cx))),
+                    .child(this.textButton(t, "mail-close", text("mailbox.close"), (_e, cx) => this.closeNote(cx)))
+                    .child(this.primaryButton(t, "mail-answer", text("mailbox.answer"), (_e, cx) => this.answerNote(cx))),
                 )
                 .when(this.answering, (bar) =>
                   bar
-                    .child(this.textButton(t, "mail-cancel", "Cancel", (_e, cx) => { this.answering = false; this.handle.focus(); cx.notify(); }))
-                    .child(this.primaryButton(t, "mail-send", this.busy ? "Sending…" : "Send", (_e, cx) => this.send(cx))),
+                    .child(this.textButton(t, "mail-cancel", text("mailbox.cancel"), (_e, cx) => { this.answering = false; this.handle.focus(); cx.notify(); }))
+                    .child(this.primaryButton(t, "mail-send", this.busy ? text("mailbox.sending") : text("mailbox.send"), (_e, cx) => this.send(cx))),
                 ),
             ),
         ),
@@ -777,9 +778,9 @@ export default class Mailbox extends View {
                   .p(8)
                   .gap(2)
                   .overflow_y_scrollbar()
-                  .when(this.loading && !this.loaded, (el) => el.child(div().p(8).text_size(12).text_color(t.muted).child("Loading notes…")))
+                  .when(this.loading && !this.loaded, (el) => el.child(div().p(8).text_size(12).text_color(t.muted).child(text("mailbox.loading-notes"))))
                   .children(rows.map((note, i) => this.row(t, note, i)))
-                  .when(this.loaded && rows.length === 0, (el) => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.tab === "all" ? "No notes yet." : "Nothing needs you."))),
+                  .when(this.loaded && rows.length === 0, (el) => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.tab === "all" ? text("mailbox.no-notes") : text("mailbox.nothing-needs")))),
               )
               .when(filed.length > 0, (el) =>
                 el.child(
@@ -805,13 +806,13 @@ export default class Mailbox extends View {
                         .text_color(t.accent)
                         .hover((s) => s.text_color(t.foreground))
                         .on_click((_e, cx) => this.openFiled(cx))
-                        .child("Show"),
+                        .child(text("mailbox.show")),
                     ),
                 ),
               ),
           )
           .child(this.notePane(t, cx)),
       );
-    return sheet({ title: "Mailbox", width: 880, onClose: () => closeOverlay(props()?.overlay) }, content);
+    return sheet({ title: text("mailbox.title"), width: 880, onClose: () => closeOverlay(props()?.overlay) }, content);
   }
 }

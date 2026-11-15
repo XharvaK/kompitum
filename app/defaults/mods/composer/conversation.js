@@ -2,7 +2,7 @@
 
 import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, TextView, Scrollbar } from "gpui-base";
-import { lead as leadOf, conversation as conversationFrom, settings, run } from "kompitum";
+import { lead as leadOf, conversation as conversationFrom, settings, run, text } from "kompitum";
 import { codePieces, literalMarkdown } from "./util.js";
 
 export default {
@@ -100,7 +100,7 @@ export default {
             .id(`composer-steering-${item.id}`)
             .text_size(12)
             .text_color(t.dim)
-            .child("Steering · Claude sees it after this step"),
+            .child(text("composer.steering")),
         ))
       .when(quoted, (el) => el.child(this.replyButton(t, item.id, cx)));
   },
@@ -147,7 +147,7 @@ export default {
       .cursor_pointer()
       .hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => this.replyToQuote(cx))
-      .child("Reply");
+      .child(text("composer.reply"));
   },
 
   selectQuote(itemId, text, cx) {
@@ -214,7 +214,7 @@ export default {
             cx.notify();
           })
           .child(this.toolIcon(t, item.state))
-          .child(this.toolSummary(t, item.summary ?? item.name ?? "A tool")),
+          .child(this.toolSummary(t, item.summary ?? item.name ?? text("composer.a-tool"))),
       )
       .when(open && result, (el) =>
         el.child(
@@ -255,7 +255,7 @@ export default {
           cx.notify();
         })
         .child(svg("mods/workspace-chrome/check.svg").size(14).text_color(t.muted))
-        .child(div().text_size(12).text_color(t.muted).child(`Used ${group.items.length} tools`));
+        .child(div().text_size(12).text_color(t.muted).child(text("composer.tools-used", { count: group.items.length })));
     }
     return v_flex()
       .id("composer-tools-used")
@@ -315,7 +315,7 @@ export default {
           .text_color(t.muted)
           .child(`${summary.files} ${summary.files === 1 ? "file changed" : "files changed"}`),
       )
-      .child(div().text_size(12).text_color(t.muted).child(`+${summary.added} −${summary.removed}`))
+      .child(div().text_size(12).text_color(t.muted).child(text("composer.diff-count", { added: summary.added, removed: summary.removed })))
       .child(
         div()
           .id(`composer-turn-review-${summary.start}`)
@@ -326,7 +326,7 @@ export default {
             run("layout.select", { stack: "panel-body", child: "changes" });
             run("layout.show", { id: "panel" });
           })
-          .child("› Review"),
+          .child(text("composer.review")),
       );
   },
 
@@ -394,7 +394,7 @@ export default {
               this.scroll.scroll_to_end();
               cx.notify();
             })
-            .child("Jump to latest"),
+            .child(text("composer.jump-latest")),
         ),
       );
   },

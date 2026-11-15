@@ -2,14 +2,20 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, fonts, settings, shared, window } from "kompitum";
+import { run, fonts, settings, shared, window, text } from "kompitum";
 import { dropdown } from "./ui.js";
 
 const APPEARANCES = [
-  [null, "System"],
-  ["light", "Light"],
-  ["dark", "Dark"],
+  [null, "system", "System"],
+  ["light", "light", "Light"],
+  ["dark", "dark", "Dark"],
 ];
+
+function appearanceWord(which) {
+  if (which === "system") return text("settings.system");
+  if (which === "light") return text("settings.light");
+  return text("settings.dark");
+}
 
 // What the app uses when settings.json names no font (settings.rs).
 const DEFAULT_FONT = "Google Sans Code";
@@ -17,8 +23,8 @@ const DEFAULT_UI_FONT = "Google Sans Flex";
 
 // The fixed colours of each tile's picture, so it shows the look whatever is chosen.
 const WINDOW_LOOKS = {
-  Light: { window: "#f4f3ef", sidebar: "#e9e7e1", bars: "#cfccc4", lines: "#bdb9b0", composer: "#ffffff" },
-  Dark: { window: "#1c1e23", sidebar: "#15171a", bars: "#33373e", lines: "#454a53", composer: "#2a2d33" },
+  light: { window: "#f4f3ef", sidebar: "#e9e7e1", bars: "#cfccc4", lines: "#bdb9b0", composer: "#ffffff" },
+  dark: { window: "#1c1e23", sidebar: "#15171a", bars: "#33373e", lines: "#454a53", composer: "#2a2d33" },
 };
 
 // A small window: a sidebar with three bars, and a main area with two message lines and a composer.
@@ -40,12 +46,12 @@ function windowArt(c) {
 
 // System: the left half of Light's window and the right half of Dark's.
 function tileArt(which) {
-  if (which !== "System") return windowArt(WINDOW_LOOKS[which]);
+  if (which !== "system") return windowArt(WINDOW_LOOKS[which]);
   return h_flex()
     .w(112)
     .h(72)
-    .child(div().w(56).h_full().overflow_hidden().child(windowArt(WINDOW_LOOKS.Light)))
-    .child(div().w(56).h_full().overflow_hidden().child(div().ml(-56).child(windowArt(WINDOW_LOOKS.Dark))));
+    .child(div().w(56).h_full().overflow_hidden().child(windowArt(WINDOW_LOOKS.light)))
+    .child(div().w(56).h_full().overflow_hidden().child(div().ml(-56).child(windowArt(WINDOW_LOOKS.dark))));
 }
 
 // The Theme row's three tiles: a picture and its name. A click does what the old picker did.
@@ -54,10 +60,10 @@ function appearanceTiles(view, t) {
   return h_flex()
     .gap(12)
     .children(
-      APPEARANCES.map(([value, label]) => {
+      APPEARANCES.map(([value, which, id]) => {
         const chosen = now === value;
         return v_flex()
-          .id(`st-ap-${label}`)
+          .id(`st-ap-${id}`)
           .gap(6)
           .items_center()
           .cursor_pointer()
@@ -78,9 +84,9 @@ function appearanceTiles(view, t) {
               .border_2()
               .border_color(chosen ? t.accent : t.border)
               .when(!chosen, (el) => el.hover((s) => s.border_color(t.input)))
-              .child(tileArt(label)),
+              .child(tileArt(which)),
           )
-          .child(div().text_size(12).text_color(chosen ? t.foreground : t.muted).child(label));
+          .child(div().text_size(12).text_color(chosen ? t.foreground : t.muted).child(appearanceWord(which)));
       }),
     );
 }
@@ -178,7 +184,7 @@ function stepper(t, id, value, onMinus, onPlus) {
 // One look (REDESIGN): no layout or colour pickers, only the way back to the Desk as it ships.
 function layoutReset(view, t) {
   const current = shared("layout") ?? "desk";
-  return view.button(t, "st-layout-reset", current === "desk" ? "Reset" : "Back to Desk", () => {
+  return view.button(t, "st-layout-reset", current === "desk" ? text("settings.reset") : text("settings.back-to-desk"), () => {
     run("layout.reset", { name: "desk" });
     if (current !== "desk") run("layout.switch", { name: "desk" });
   });
@@ -190,9 +196,9 @@ function motionDropdown(view, t) {
   view.motionMenu ??= {};
   return dropdown(t, "st-motion", {
     items: [
-      { value: "", label: "System" },
-      { value: "on", label: "On" },
-      { value: "off", label: "Off" },
+      { value: "", label: text("settings.system") },
+      { value: "on", label: text("settings.on") },
+      { value: "off", label: text("settings.off") },
     ],
     value: now === true ? "on" : now === false ? "off" : "",
     onPick: (value, cx) => {
@@ -212,10 +218,10 @@ function glassDropdown(view, t) {
   view.glassMenu ??= {};
   return dropdown(t, "st-glass", {
     items: [
-      { value: "off", label: "Off" },
-      { value: "blur", label: "Blur" },
-      { value: "mica", label: "Mica" },
-      { value: "mica-alt", label: "Mica Alt" },
+      { value: "off", label: text("settings.off") },
+      { value: "blur", label: text("settings.blur") },
+      { value: "mica", label: text("settings.mica") },
+      { value: "mica-alt", label: text("settings.mica-alt") },
     ],
     value: view.person.glass ?? "off",
     onPick: (value, cx) => {
@@ -238,7 +244,7 @@ function fontMenu(view, which) {
 function fontDropdown(view, t, cx, which, def) {
   const saved = view.person?.[which] ?? "";
   const names = fonts();
-  const items = [{ value: "", label: def, detail: "Kompitum's default", font: def }];
+  const items = [{ value: "", label: def, detail: text("settings.kompitum-default"), font: def }];
   if (saved && !names.includes(saved)) items.push({ value: saved, label: saved, font: saved });
   for (const name of names) items.push({ value: name, label: name, font: name });
   return dropdown(t, `st-f-${which}`, {
@@ -270,7 +276,7 @@ export function appearancePage(view, t, cx) {
         view.row(
           t,
           title,
-          own(which, family, def) ? "This layout sets its own; yours shows in the others." : null,
+          own(which, family, def) ? text("settings.font-own") : null,
           h_flex()
             .gap(8)
             .items_center()
@@ -290,46 +296,46 @@ export function appearancePage(view, t, cx) {
         .border_b(1)
         .border_color(t.border)
         .when(view.lit("theme"), (el) => el.bg(t.selected).rounded(7))
-        .child(div().text_size(13).text_color(t.foreground).child("Theme"))
+        .child(div().text_size(13).text_color(t.foreground).child(text("settings.theme")))
         .child(appearanceTiles(view, t)),
     )
     .when(window()?.platform === "windows", (el) =>
       el.child(
         view.row(
           t,
-          "Sidebar glass",
-          `Lets the desktop show through the sidebar.${window()?.glass_live ? "" : " Applies when Kompitum starts again."}`,
+          text("settings.sidebar-glass"),
+          window()?.glass_live ? text("settings.glass-about") : text("settings.glass-about-restart"),
           glassDropdown(view, t),
           "glass",
         ),
       ),
     )
-    .child(view.row(t, "Reduce motion", "Spinners, loops and arrivals stand still. System follows your computer's setting.", motionDropdown(view, t), "motion"))
+    .child(view.row(t, text("settings.reduce-motion"), text("settings.reduce-motion-about"), motionDropdown(view, t), "motion"))
     .child(div().h(18))
-    .child(view.heading(t, "Size and fonts"))
+    .child(view.heading(t, text("settings.size-and-fonts")))
     .child(
       view.row(
         t,
-        "Zoom",
+        text("settings.zoom"),
         null,
         h_flex()
           .gap(8)
           .items_center()
           .child(stepper(t, "st-zoom", `${Math.round(s.zoom * 100)}%`, () => run("app.zoom_out"), () => run("app.zoom_in")))
-          .child(view.button(t, "st-zoom-reset", "Reset", () => run("app.zoom_reset"))),
+          .child(view.button(t, "st-zoom-reset", text("settings.reset"), () => run("app.zoom_reset"))),
         "zoom",
       ),
     )
-    .child(fontRow("font", "font_size", "Terminal font", s.font_family, DEFAULT_FONT, s.font_size))
-    .child(view.heading(t, "Sample"))
+    .child(fontRow("font", "font_size", text("settings.terminal-font"), s.font_family, DEFAULT_FONT, s.font_size))
+    .child(view.heading(t, text("settings.sample")))
     .child(sample(t, s))
     .child(
       view.advanced(
         t,
         "appearance",
         [
-          view.row(t, "Window", "Puts the window back as Kompitum ships it: its panes, sizes and drawers.", layoutReset(view, t), "layout"),
-          fontRow("ui_font", null, "Interface font", s.ui_font_family, DEFAULT_UI_FONT),
+          view.row(t, text("settings.window"), text("settings.window-about"), layoutReset(view, t), "layout"),
+          fontRow("ui_font", null, text("settings.interface-font"), s.ui_font_family, DEFAULT_UI_FONT),
         ],
         ["layout", "ui_font"],
       ),

@@ -520,15 +520,18 @@ export function settings(): Record<string, unknown>;
 export function keys(): { section: string; keys: string; action: string }[];
 
 /** One sheet's frame: a 52 px header with the title (15 px, semibold, left) and a 28 × 28
- *  close button (tooltip and accessibility label "Close"), the body, and an optional 60 px
- *  footer. `width` is 640 (Shortcuts, Add a machine, Welcome) or 880 (the rest); the app
- *  caps the height at the window's height minus 96, centers it below the top bar and draws
- *  the scrim. Esc and a click on the scrim close it; `onClose` runs for the close button too.
+ *  close button (its tooltip and accessibility label, "Close" from the strings table unless
+ *  `closeLabel` says otherwise), the body, and an optional 60 px footer. `width` is 640
+ *  (Shortcuts, Add a machine, Welcome) or 880 (the rest); the app caps the height at the
+ *  window's height minus 96, centers it below the top bar and draws the scrim. Esc and a
+ *  click on the scrim close it; `onClose` runs for the close button too.
  *  Draw one with `openOverlay({kind: "sheet", width, ...})`, or use it in a pane. */
 export function sheet(options: {
   title: string;
   width: 640 | 880;
   onClose: () => void;
+  /** The close button's tooltip and accessibility label; "Close" when omitted. */
+  closeLabel?: string;
   /** The footer's content; the app draws the 60 px bar around it. */
   footer?: unknown;
 }, body: unknown): any;

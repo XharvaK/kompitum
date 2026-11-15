@@ -1,7 +1,7 @@
 // Copy diagnostics: one plain-text block with the versions, the lead, the workers and the look,
 // with the home folder and anything token-shaped taken out.
 
-import { shared, settings, updates, home, lead as leadOf, exec, kom, copyText, system, window } from "kompitum";
+import { shared, settings, updates, home, lead as leadOf, exec, kom, copyText, system, window, text } from "kompitum";
 
 const TOKEN = /[A-Za-z0-9_-]{32,}/g;
 
@@ -100,7 +100,7 @@ export function copyDiagnostics(view, cx) {
       copyText(text);
       view.copiedAt = Date.now();
     } catch (error) {
-      view.diagnosticError = String(error?.message ?? error ?? "It didn't work.");
+      view.diagnosticError = String(error?.message ?? error ?? text("settings.it-didnt-work"));
     }
     cx.notify();
   });

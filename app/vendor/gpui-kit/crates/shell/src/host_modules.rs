@@ -428,6 +428,9 @@ pub struct HostModule {
     /// Values the runtime's own script surface already built: exported as they
     /// are, rather than wrapped as host calls. See [`HostModule::script`].
     script_exports: BTreeSet<String>,
+    /// Script exports the host supplies as an expression. See
+    /// [`HostModule::script_with`].
+    script_expressions: BTreeMap<String, String>,
     /// The module's TypeScript face, if the host wrote one. See
     /// [`HostModule::declarations`].
     declarations: Option<String>,
@@ -447,6 +450,7 @@ impl HostModule {
             async_functions: BTreeMap::new(),
             components: BTreeMap::new(),
             script_exports: BTreeSet::new(),
+            script_expressions: BTreeMap::new(),
             declarations: None,
         }
     }
@@ -466,6 +470,7 @@ impl HostModule {
         self.functions.remove(&name);
         self.async_functions.remove(&name);
         self.script_exports.remove(&name);
+        self.script_expressions.remove(&name);
         self.components.insert(name, ComponentFactory::new(build));
         self
     }
@@ -482,7 +487,25 @@ impl HostModule {
         self.functions.remove(&name);
         self.async_functions.remove(&name);
         self.components.remove(&name);
+        self.script_expressions.remove(&name);
         self.script_exports.insert(name);
+        self
+    }
+
+    /// Re-exports an expression the host writes into the module, as
+    /// `export const <name> = <expression>;`.
+    ///
+    /// Like [`Self::script`], but for a value that is not already a global: the
+    /// host supplies the JavaScript itself. The expression is part of the
+    /// module's export surface, so changing it reloads scripts that imported
+    /// this module.
+    pub fn script_with(mut self, name: impl Into<String>, expression: impl Into<String>) -> Self {
+        let name = name.into();
+        self.functions.remove(&name);
+        self.async_functions.remove(&name);
+        self.components.remove(&name);
+        self.script_exports.remove(&name);
+        self.script_expressions.insert(name, expression.into());
         self
     }
 
@@ -491,7 +514,14 @@ impl HostModule {
     }
 
     pub(crate) fn script_names(&self) -> impl Iterator<Item = &str> {
-        self.script_exports.iter().map(String::as_str)
+        self.script_exports
+            .iter()
+            .chain(self.script_expressions.keys())
+            .map(String::as_str)
+    }
+
+    pub(crate) fn script_expression(&self, name: &str) -> Option<&str> {
+        self.script_expressions.get(name).map(String::as_str)
     }
 
     pub(crate) fn resolve_component(&self, name: &str) -> Result<ComponentFactory, HostError> {
@@ -521,6 +551,7 @@ impl HostModule {
         self.components.remove(&name);
         self.async_functions.remove(&name);
         self.script_exports.remove(&name);
+        self.script_expressions.remove(&name);
         self.functions.insert(name, Rc::new(body));
         self
     }
@@ -591,6 +622,7 @@ impl HostModule {
         // having to decide which of two entries it meant.
         self.functions.remove(&name);
         self.script_exports.remove(&name);
+        self.script_expressions.remove(&name);
         self.async_functions.insert(
             name,
             Rc::new(move |arguments| {
@@ -660,7 +692,10 @@ impl HostModule {
     }
 
     fn has_export(&self, name: &str) -> bool {
-        self.has(name) || self.components.contains_key(name) || self.script_exports.contains(name)
+        self.has(name)
+            || self.components.contains_key(name)
+            || self.script_exports.contains(name)
+            || self.script_expressions.contains_key(name)
     }
 
     /// Whether this name answers with a promise.

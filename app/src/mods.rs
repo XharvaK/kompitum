@@ -1437,6 +1437,14 @@ fn text_call(a: &HostArguments) -> Result<HostValue, HostError> {
     }))
 }
 
+/// The `sheet` export: the toolkit's frame with this table's close label,
+/// which the toolkit itself cannot read. A caller may still pass its own.
+fn sheet_export() -> String {
+    let close_label = serde_json::to_string(&crate::strings::text("sheet.close"))
+        .unwrap_or_else(|_| "\"Close\"".to_owned());
+    format!("(o, b) => globalThis.__gpui.sheet({{ closeLabel: {close_label}, ...o }}, b)")
+}
+
 fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
     let ModuleState { reads, commands } = state;
     let props = inst.props.clone();
@@ -1444,7 +1452,7 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
         .declarations(DECLARATIONS)
         // The toolkit's sheet frame, re-exported so a mod imports every sheet
         // and overlay helper from the one module it already reads.
-        .script("sheet")
+        .script_with("sheet", sheet_export())
         .async_function("exec", |a| {
             let command = a.string(0)?.to_owned();
             Ok(exec_future(command, strings(a.get(1)), opt_str(a.get(2), "cwd"), opt_str(a.get(2), "on"), exec_limit(a.get(2))?))

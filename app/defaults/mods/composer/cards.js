@@ -2,7 +2,7 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
-import { run, settings } from "kompitum";
+import { run, settings, text } from "kompitum";
 import { CARD_WAIT_MS } from "./util.js";
 
 function planText(ask) {
@@ -33,35 +33,31 @@ function cut(text, limit = 300) {
 function permissionSummary(toolName, toolInput) {
   const name = String(toolName ?? "");
   const input = toolInput && typeof toolInput === "object" ? toolInput : {};
-  if (name === "Bash") return { title: "Run a command", detail: String(input.command ?? ""), mono: true };
-  if (name === "Edit" || name === "Write") return { title: `Edit ${String(input.file_path ?? "")}` };
-  if (name === "Read") return { title: `Read ${String(input.file_path ?? "")}` };
-  if (name === "WebFetch") return { title: `Fetch ${String(input.url ?? "")}` };
-  if (name === "WebSearch") return { title: `Search the web for ${String(input.query ?? "")}` };
+  if (name === "Bash") return { title: text("composer.run-command"), detail: String(input.command ?? ""), mono: true };
+  if (name === "Edit" || name === "Write") return { title: text("composer.edit-path", { path: String(input.file_path ?? "") }) };
+  if (name === "Read") return { title: text("composer.read-path", { path: String(input.file_path ?? "") }) };
+  if (name === "WebFetch") return { title: text("composer.fetch-url", { url: String(input.url ?? "") }) };
+  if (name === "WebSearch") return { title: text("composer.search-web", { query: String(input.query ?? "") }) };
   if (name.startsWith("mcp__")) {
     const rest = name.slice("mcp__".length);
     const at = rest.indexOf("__");
-    if (at > 0) return { title: `${rest.slice(at + 2)} on ${rest.slice(0, at)}` };
+    if (at > 0) return { title: text("composer.mcp-tool", { tool: rest.slice(at + 2), server: rest.slice(0, at) }) };
   }
-  return { title: name || "A tool", detail: cut(compactJson(input)) };
+  return { title: name || text("composer.a-tool"), detail: cut(compactJson(input)) };
 }
-
-const DESTINATIONS = {
-  session: "for this session",
-  localSettings: "in this project",
-  projectSettings: "in this project",
-  userSettings: "for all your projects",
-};
 
 function permissionDestination(ask) {
   const suggestions = ask?.input?.permission_suggestions;
   const destination = Array.isArray(suggestions) ? suggestions[0]?.destination : null;
-  return DESTINATIONS[destination] ?? null;
+  if (destination === "session") return text("composer.for-session");
+  if (destination === "localSettings" || destination === "projectSettings") return text("composer.in-project");
+  if (destination === "userSettings") return text("composer.for-all-projects");
+  return null;
 }
 
 function allowAlwaysLabel(ask) {
   const words = permissionDestination(ask);
-  return words ? `Allow always ${words}` : "Allow always";
+  return words ? text("composer.allow-always-destination", { destination: words }) : text("composer.allow-always");
 }
 
 function askQuestions(ask) {
@@ -141,7 +137,7 @@ export default {
   openNote(action, cx) {
     this.noteAction = action;
     this.noteInput = InputState.new({
-      placeholder: action === "deny" ? "Why not? (optional)" : "What should change? (optional)",
+      placeholder: action === "deny" ? text("composer.note-deny") : text("composer.note-change"),
     });
     this.noteInput.on("submit", (_event, cx) => this.sendNote(cx));
     this.noteOpen = true;
@@ -170,13 +166,13 @@ export default {
   // The answer a question sends: its pick, or the field's text; in a multi-choice, the text joins the picks.
   answerFor(question) {
     const picked = this.answers[question.question];
-    const text = this.questionText(question);
+    const written = this.questionText(question);
     if (question.multiSelect) {
       const labels = Array.isArray(picked) ? picked : [];
-      return text ? [...labels, text] : labels;
+      return written ? [...labels, written] : labels;
     }
     if (typeof picked === "string" && picked) return picked;
-    return text;
+    return written;
   },
 
   questionAnswered(question) {
@@ -202,7 +198,7 @@ export default {
     this.questionAsk = id;
     if (id) {
       for (const question of askQuestions(ask)) {
-        const input = InputState.new({ placeholder: "Something else…" });
+        const input = InputState.new({ placeholder: text("composer.something-else") });
         input.on("change", (_event, cx) => {
           this.answerTexts[question.question] = input.value();
           // One choice: the field and the pick are alternatives.
@@ -359,8 +355,8 @@ export default {
           .bg(t.surface)
           .child(Input.new(this.noteInput).w_full().text_size(12).text_color(t.foreground)),
       )
-      .child(this.cardButton("composer-note-cancel", "Cancel", (_e, cx) => this.closeNote(cx), t))
-      .child(this.cardButton("composer-note-send", "Send", (_e, cx) => this.sendNote(cx), t, { filled: true }));
+      .child(this.cardButton("composer-note-cancel", text("composer.cancel"), (_e, cx) => this.closeNote(cx), t))
+      .child(this.cardButton("composer-note-send", text("composer.send-label"), (_e, cx) => this.sendNote(cx), t, { filled: true }));
   },
 
   // The line under a card's buttons: what Enter and Esc do, or a note that the box holds a draft.
@@ -378,7 +374,7 @@ export default {
         h_flex()
           .gap(6)
           .items_center()
-          .child(this.cardTag(t, "Permission"))
+          .child(this.cardTag(t, text("composer.tag-permission")))
           .child(div().text_size(13).font_medium().text_color(t.foreground).child(summary.title)),
       );
     if (summary.detail) {
@@ -390,27 +386,27 @@ export default {
           .child(summary.detail),
       );
     }
-    if (ask.input?.cwd) head.child(div().text_size(12).text_color(t.dim).child(`Runs in ${ask.input.cwd}`));
+    if (ask.input?.cwd) head.child(div().text_size(12).text_color(t.dim).child(text("composer.runs-in", { folder: ask.input.cwd })));
     const buttons = h_flex().w_full().gap(8).items_center()
-      .child(this.cardButton("composer-allow", "Allow", (_e, cx) => this.answer(ask, { action: "allow" }, cx), t, { filled: true }))
+      .child(this.cardButton("composer-allow", text("composer.allow"), (_e, cx) => this.answer(ask, { action: "allow" }, cx), t, { filled: true }))
       .when(suggestions.length > 0, (el) => el.child(
         this.cardButton(
           "composer-allow-always",
           allowAlwaysLabel(ask),
           (_e, cx) => this.answer(ask, { action: "allow_always" }, cx),
           t,
-          { tooltip: permissionDestination(ask) ?? "where Claude keeps its rules" },
+          { tooltip: permissionDestination(ask) ?? text("composer.where-rules") },
         ),
       ))
-      .child(this.cardButton("composer-deny", "Deny", (_e, cx) => this.openNote("deny", cx), t));
+      .child(this.cardButton("composer-deny", text("composer.deny"), (_e, cx) => this.openNote("deny", cx), t));
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
       .child(head)
       .when(this.noteOpen, (el) => el.child(this.noteField(t, cx)))
       .when(!this.noteOpen, (el) => el.child(buttons))
       .when(!this.noteOpen, (el) => el.child(this.cardHint(
         t,
-        "Enter to allow · Esc to deny",
-        "You were typing. Click Allow, or press Esc to deny.",
+        text("composer.permission-hint"),
+        text("composer.permission-draft-hint"),
       )))
       .child(this.terminalAnswerLink(ask, t, cx));
   },
@@ -420,25 +416,25 @@ export default {
     const buttons = h_flex().w_full().gap(6).items_center()
       .child(this.cardButton(
         "composer-approve",
-        "Approve, accept edits",
+        text("composer.approve-accept-edits"),
         (_e, cx) => this.answer(ask, { action: "approve", mode: "acceptEdits" }, cx),
         t,
         { filled: true },
       ))
       .child(this.cardButton(
         "composer-approve-ask",
-        "Approve, ask first",
+        text("composer.approve-ask-first"),
         (_e, cx) => this.answer(ask, { action: "approve", mode: "default" }, cx),
         t,
       ))
-      .child(this.cardButton("composer-keep-planning", "Change the plan…", (_e, cx) => this.openNote("keep_planning", cx), t));
+      .child(this.cardButton("composer-keep-planning", text("composer.change-plan"), (_e, cx) => this.openNote("keep_planning", cx), t));
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
       .child(
         h_flex()
           .gap(6)
           .items_center()
-          .child(this.cardTag(t, "Plan"))
-          .child(div().text_size(13).font_medium().text_color(t.foreground).child("Claude's plan is ready")),
+          .child(this.cardTag(t, text("composer.tag-plan")))
+          .child(div().text_size(13).font_medium().text_color(t.foreground).child(text("composer.plan-ready"))),
       )
       .when(Boolean(plan), (el) => el.child(
         div()
@@ -451,8 +447,8 @@ export default {
       .when(!this.noteOpen, (el) => el.child(buttons))
       .when(!this.noteOpen, (el) => el.child(this.cardHint(
         t,
-        "Enter to approve · Esc to change the plan",
-        "You were typing. Click Approve, or press Esc to change the plan.",
+        text("composer.plan-hint"),
+        text("composer.plan-draft-hint"),
       )))
       .child(this.terminalAnswerLink(ask, t, cx));
   },
@@ -461,7 +457,7 @@ export default {
     const questions = askQuestions(ask);
     let optionAt = 0;
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.border).bg(t.surface)
-      .child(h_flex().child(this.cardTag(t, "Question")))
+      .child(h_flex().child(this.cardTag(t, text("composer.tag-question"))))
       .children(questions.map((question, questionIndex) => {
         const answer = this.answers[question.question];
         const chosen = Array.isArray(answer) ? answer : typeof answer === "string" ? [answer] : [];
@@ -496,7 +492,7 @@ export default {
                 this.optionAt = at;
                 this.toggleOption(question, label, cx);
               })
-              .child(div().text_size(12).font_medium().text_color(t.foreground).child(`${optionIndex + 1}. ${label}`))
+              .child(div().text_size(12).font_medium().text_color(t.foreground).child(text("composer.option-numbered", { number: optionIndex + 1, label })))
               .when(
                 Boolean(option.description) && !repeatsLabel(label, option.description),
                 (el) => el.child(div().text_size(12).text_color(t.dim).child(option.description)),
@@ -549,7 +545,7 @@ export default {
       .text_size(12)
       .font_medium();
     // Not every question answered: the fill goes and an outline keeps the shape (UD's disabled state).
-    if (!enabled) return button.border_1().border_color(t.input).text_color(t.dim).child("Send answers");
+    if (!enabled) return button.border_1().border_color(t.input).text_color(t.dim).child(text("composer.send-answers"));
     return button
       .relative()
       .bg(t.accent_fill)
@@ -560,7 +556,7 @@ export default {
       .focus_ring(t.focus, 7)
       .on_click((_e, cx) => this.sendAnswers(ask, cx))
       .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
-      .child("Send answers");
+      .child(text("composer.send-answers"));
   },
 
   terminalAnswerLink(ask, t, cx) {
@@ -575,7 +571,7 @@ export default {
       .focus_ring(t.focus, 0)
       .hover((style) => style.text_color(t.foreground))
       .on_click((_e, cx) => this.answerInTerminal(ask, cx))
-      .child("or answer in the terminal");
+      .child(text("composer.answer-in-terminal"));
   },
 
   card(t, cx) {
@@ -588,7 +584,7 @@ export default {
     return v_flex()
       .w_full()
       .gap(6)
-      .child(div().id("composer-draft-kept").text_size(12).text_color(t.dim).child("Your draft is kept."))
+      .child(div().id("composer-draft-kept").text_size(12).text_color(t.dim).child(text("composer.draft-kept")))
       .child(card);
   },
 };

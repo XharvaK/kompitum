@@ -2,7 +2,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, Scrollbar, InputState, Input, TextareaState } from "gpui-base";
-import { kom, run, theme, updates, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared, sheet } from "kompitum";
+import { kom, run, theme, updates, shared, appHome, readTextFile, writeTextFile, playSound, props, closeOverlay, window, setShared, sheet, text } from "kompitum";
 import { loadVault, vaultSection } from "./vault.js";
 import { loadMemory, memoryPage, saveMemory, forgetMemory } from "./memory.js";
 import { connectPage, initConnect, loadConnect } from "./connect.js";
@@ -15,15 +15,28 @@ import { copyDiagnostics } from "./diagnostics.js";
 const I = (name) => `frame/settings/${name}.svg`;
 
 const SECTIONS = [
-  { id: "appearance", title: "Appearance", icon: "palette" },
-  { id: "agents", title: "Agents", icon: "bot" },
-  { id: "vault", title: "Vault", icon: "mail" },
-  { id: "memory", title: "Memory", icon: "memory" },
-  { id: "connect", title: "Connect", icon: "link" },
-  { id: "notifications", title: "Notifications", icon: "bell" },
-  { id: "keyboard", title: "Keyboard", icon: "keyboard" },
-  { id: "about", title: "About", icon: "info" },
+  { id: "appearance", icon: "palette" },
+  { id: "agents", icon: "bot" },
+  { id: "vault", icon: "mail" },
+  { id: "memory", icon: "memory" },
+  { id: "connect", icon: "link" },
+  { id: "notifications", icon: "bell" },
+  { id: "keyboard", icon: "keyboard" },
+  { id: "about", icon: "info" },
 ];
+
+// A section's word, read while drawing so a language change is seen.
+function sectionTitle(id) {
+  if (id === "appearance") return text("settings.section-appearance");
+  if (id === "agents") return text("settings.section-agents");
+  if (id === "vault") return text("settings.section-vault");
+  if (id === "memory") return text("settings.section-memory");
+  if (id === "connect") return text("settings.section-connect");
+  if (id === "notifications") return text("settings.section-notifications");
+  if (id === "keyboard") return text("settings.section-keyboard");
+  if (id === "about") return text("settings.section-about");
+  return "";
+}
 
 const macos = () => window()?.platform === "macos";
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
@@ -36,36 +49,36 @@ function liveSections() {
 // What the search field finds: one entry per row the sections draw, so search
 // never reads the drawn tree. `key` matches the row's highlight key.
 const SEARCH = [
-  { section: "appearance", key: "theme", title: "Theme", words: "light dark system appearance" },
-  { section: "appearance", key: "glass", title: "Sidebar glass", words: "transparency blur mica desktop sidebar", only: "windows" },
-  { section: "appearance", key: "motion", title: "Reduce motion", words: "animation spinners still calm accessibility" },
-  { section: "appearance", key: "layout", title: "Window", words: "layout reset desk window shape back" },
-  { section: "appearance", key: "zoom", title: "Zoom", words: "size scale bigger smaller interface" },
-  { section: "appearance", key: "font", title: "Terminal font", words: "typeface monospace ligatures" },
-  { section: "appearance", key: "ui_font", title: "Interface font", words: "typeface panels" },
-  { section: "agents", key: "lead", title: "CLI", words: "lead agent program claude command code opencode grok" },
-  { section: "agents", key: "lead_model", title: "Model", words: "provider models list other" },
-  { section: "agents", key: "lead_model", title: "Reasoning", words: "effort levels low medium high xhigh max" },
-  { section: "agents", key: "folder", title: "Folder", words: "lead folder project directory picker" },
-  { section: "agents", key: "workers", title: "Workers", words: "order add remove drag subagents claude sonnet haiku" },
-  { section: "agents", key: "clis", title: "CLI versions", words: "update version releases" },
-  { section: "vault", key: "Folder", title: "Vault folder", words: "notes git mailbox" },
-  { section: "vault", key: "Needs you", title: "Notes that need you", words: "mailbox notes requests questions" },
-  { section: "memory", key: "memory", title: "Memory", words: "remember forget notes claude lead" },
-  { section: "connect", key: "connect", title: "Connect", words: "agent systems join prompt grok hermes openclaw manager machines" },
-  { section: "notifications", key: "sounds", title: "Play sounds", words: "sound audio notification" },
-  { section: "notifications", key: "blocked", title: "An agent needs you", words: "sound blocked attention" },
-  { section: "notifications", key: "done", title: "An agent finished", words: "sound done finished" },
-  { section: "notifications", key: "Notes between agents", title: "Notes between agents", words: "pop-ups toast vault mail" },
-  { section: "notifications", key: "Quiet while a game is fullscreen", title: "Quiet while a game is fullscreen", words: "game fullscreen mute do not disturb" },
-  { section: "notifications", key: "Windows notifications", title: "Windows notifications", words: "system toast needs you in front", only: "windows" },
-  { section: "notifications", key: "Summon Kompitum", title: "Summon Kompitum", words: "keyboard shortcut hotkey bring forward composer", only: "windows" },
-  { section: "connect", key: "this", title: "This computer", words: "local version kom machines" },
-  { section: "connect", key: "add", title: "Add a machine", words: "ssh remote host machines" },
-  { section: "keyboard", key: "option", title: "Option key", words: "alt macos accents keyboard" },
-  { section: "about", key: "welcome", title: "Welcome", words: "show again onboarding first start setup" },
-  { section: "about", key: "app", title: "Kompitum", words: "version update what's new release" },
-  { section: "about", key: "core", title: "kompitum-core", words: "version update core terminals" },
+  { section: "appearance", key: "theme", title: () => text("settings.theme"), words: "light dark system appearance" },
+  { section: "appearance", key: "glass", title: () => text("settings.sidebar-glass"), words: "transparency blur mica desktop sidebar", only: "windows" },
+  { section: "appearance", key: "motion", title: () => text("settings.reduce-motion"), words: "animation spinners still calm accessibility" },
+  { section: "appearance", key: "layout", title: () => text("settings.window"), words: "layout reset desk window shape back" },
+  { section: "appearance", key: "zoom", title: () => text("settings.zoom"), words: "size scale bigger smaller interface" },
+  { section: "appearance", key: "font", title: () => text("settings.terminal-font"), words: "typeface monospace ligatures" },
+  { section: "appearance", key: "ui_font", title: () => text("settings.interface-font"), words: "typeface panels" },
+  { section: "agents", key: "lead", title: () => text("settings.cli"), words: "lead agent program claude command code opencode grok" },
+  { section: "agents", key: "lead_model", title: () => text("settings.model"), words: "provider models list other" },
+  { section: "agents", key: "lead_model", title: () => text("settings.reasoning"), words: "effort levels low medium high xhigh max" },
+  { section: "agents", key: "folder", title: () => text("settings.folder"), words: "lead folder project directory picker" },
+  { section: "agents", key: "workers", title: () => text("settings.workers"), words: "order add remove drag subagents claude sonnet haiku" },
+  { section: "agents", key: "clis", title: () => text("settings.cli-versions"), words: "update version releases" },
+  { section: "vault", key: "Folder", title: () => text("settings.vault-folder"), words: "notes git mailbox" },
+  { section: "vault", key: "Needs you", title: () => text("settings.notes-need-you"), words: "mailbox notes requests questions" },
+  { section: "memory", key: "memory", title: () => text("settings.memory"), words: "remember forget notes claude lead" },
+  { section: "connect", key: "connect", title: () => text("settings.connect"), words: "agent systems join prompt grok hermes openclaw manager machines" },
+  { section: "notifications", key: "sounds", title: () => text("settings.play-sounds"), words: "sound audio notification" },
+  { section: "notifications", key: "blocked", title: () => text("settings.agent-needs-you"), words: "sound blocked attention" },
+  { section: "notifications", key: "done", title: () => text("settings.agent-finished"), words: "sound done finished" },
+  { section: "notifications", key: "Notes between agents", title: () => text("settings.notes-between-agents"), words: "pop-ups toast vault mail" },
+  { section: "notifications", key: "Quiet while a game is fullscreen", title: () => text("settings.quiet-fullscreen"), words: "game fullscreen mute do not disturb" },
+  { section: "notifications", key: "Windows notifications", title: () => text("settings.windows-notifications"), words: "system toast needs you in front", only: "windows" },
+  { section: "notifications", key: "Summon Kompitum", title: () => text("settings.summon-kompitum"), words: "keyboard shortcut hotkey bring forward composer", only: "windows" },
+  { section: "connect", key: "this", title: () => text("settings.this-computer"), words: "local version kom machines" },
+  { section: "connect", key: "add", title: () => text("settings.add-machine"), words: "ssh remote host machines" },
+  { section: "keyboard", key: "option", title: () => text("settings.option-key"), words: "alt macos accents keyboard" },
+  { section: "about", key: "welcome", title: () => text("settings.welcome"), words: "show again onboarding first start setup" },
+  { section: "about", key: "app", title: () => text("settings.kompitum"), words: "version update what's new release" },
+  { section: "about", key: "core", title: () => text("settings.kompitum-core"), words: "version update core terminals" },
 ];
 
 // Sections that were named differently or merged before; old links still open their page.
@@ -83,13 +96,13 @@ export default class Settings extends View {
     this.search = "";
     this.highlight = null; // { section, key } while a search result's row is lit
     this.advancedOpen = {}; // which pages' Advanced folds the person opened
-    this.searchInput = InputState.new({ placeholder: "Search or ask" });
+    this.searchInput = InputState.new({ placeholder: text("settings.search-ask-placeholder") });
     this.searchInput.on("change", (_e, cx) => { this.search = this.searchInput.value(); cx.notify(); });
     this.searchInput.on("submit", (_e, cx) => {
       const first = this.searchMatches()[0];
       if (first) this.openMatch(first, cx);
     });
-    this.fontInput = InputState.new({ placeholder: "Type to search fonts" });
+    this.fontInput = InputState.new({ placeholder: text("settings.font-search-placeholder") });
     this.fontInput.on("change", (_e, cx) => { this.filter = this.fontInput.value(); cx.notify(); });
     this.renameInput = InputState.new();
     this.renameInput.on("focus", (_e, cx) => { this.renameFocused = true; cx.notify(); });
@@ -120,7 +133,7 @@ export default class Settings extends View {
     this.memoryWhyText = "";
     this.memoryRowError = null;
     this.memoryForgottenOpen = false;
-    this.memoryTitle = InputState.new({ placeholder: "Title" });
+    this.memoryTitle = InputState.new({ placeholder: text("settings.title-placeholder") });
     this.memoryTitle.on("change", (_e, cx) => {
       if (this.memoryEdit) this.memoryEdit.title = this.memoryTitle.value();
       cx.notify();
@@ -130,7 +143,7 @@ export default class Settings extends View {
       if (this.memoryEdit) this.memoryEdit.body = this.memoryBody.value();
       cx.notify();
     });
-    this.memoryWhy = InputState.new({ placeholder: "Why it no longer holds" });
+    this.memoryWhy = InputState.new({ placeholder: text("settings.why-placeholder") });
     this.memoryWhy.on("change", (_e, cx) => {
       this.memoryWhyText = this.memoryWhy.value();
       cx.notify();
@@ -232,8 +245,8 @@ export default class Settings extends View {
     const live = new Set(liveSections().map((s) => s.id));
     return SEARCH.filter((e) => live.has(e.section)).filter((e) => {
       if (e.only && window()?.platform !== e.only) return false;
-      const text = `${e.title} ${e.words}`.toLowerCase();
-      return words.every((w) => text.includes(w));
+      const line = `${e.title()} ${e.words}`.toLowerCase();
+      return words.every((w) => line.includes(w));
     });
   }
 
@@ -337,7 +350,7 @@ export default class Settings extends View {
             this.advancedOpen[key] = !this.advancedOpen[key];
             cx.notify();
           })
-          .child(div().text_size(13).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child("Advanced"))
+          .child(div().text_size(13).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child(text("settings.advanced")))
           .child(div().text_size(13).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child(open ? "⌄" : "›")),
       )
       .when(open, (el) => el.child(v_flex().w_full().children(rows)));
@@ -420,20 +433,20 @@ export default class Settings extends View {
 
   keyboard(t) {
     const choices = [
-      ["auto", "Automatic (Alt on US keyboards)"],
-      ["on", "Alt"],
-      ["off", "Types characters"],
-      ["left", "Left Option is Alt"],
-      ["right", "Right Option is Alt"],
+      ["auto", text("settings.option-auto")],
+      ["on", text("settings.option-alt")],
+      ["off", text("settings.option-types-characters")],
+      ["left", text("settings.option-left-alt")],
+      ["right", text("settings.option-right-alt")],
     ];
     return v_flex()
       .w_full()
-      .child(this.heading(t, "Option key"))
+      .child(this.heading(t, text("settings.option-key")))
       .when(window()?.platform === "macos", (el) =>
-        el.child(div().pb(12).text_size(13).text_color(t.dim).child("Use Option for terminal shortcuts or to type accents and special characters.")),
+        el.child(div().pb(12).text_size(13).text_color(t.dim).child(text("settings.option-about"))),
       )
       .when(window()?.platform !== "macos", (el) =>
-        el.child(div().pb(12).text_size(12).line_height("18px").text_color(t.dim).child("Option-key settings are for macOS.")),
+        el.child(div().pb(12).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.option-mac-only"))),
       )
       .when(window()?.platform === "macos", (el) =>
         el.children(choices.map(([value, label]) => {
@@ -463,9 +476,9 @@ export default class Settings extends View {
     this.machineLoading = true;
     try {
       const r = await kom(["machine", "ls", "--json"]);
-      if (r.code !== 0) throw new Error(r.stderr || r.stdout || "Couldn't read machines.");
+      if (r.code !== 0) throw new Error(r.stderr || r.stdout || text("settings.machines-read-failed"));
       const list = JSON.parse(r.stdout).machines;
-      if (!Array.isArray(list)) throw new Error("Couldn't read machines.");
+      if (!Array.isArray(list)) throw new Error(text("settings.machines-read-failed"));
       this.machineList = list.filter((m) => !m.temporary);
       this.machineError = null;
     } catch (e) {
@@ -490,10 +503,14 @@ export default class Settings extends View {
         const r = await kom(args);
         let payload = null;
         try { payload = JSON.parse(r.stdout || r.stderr); } catch {}
-        if (r.code !== 0) throw new Error(payload?.error?.message || (r.stderr || r.stdout || "It didn't work.").trim());
+        if (r.code !== 0) throw new Error(payload?.error?.message || (r.stderr || r.stdout || text("settings.it-didnt-work")).trim());
         const message = action === "update"
-          ? `Updated ${machine}${payload?.version ? ` to kom ${payload.version}` : ""}; its terminals kept running.`
-          : action === "rename" ? `Renamed ${machine} to ${name.trim()}.` : `Removed ${machine}; its terminals keep running there.`;
+          ? payload?.version
+            ? text("settings.machine-updated-version", { machine, version: payload.version })
+            : text("settings.machine-updated", { machine })
+          : action === "rename"
+            ? text("settings.machine-renamed", { machine, name: name.trim() })
+            : text("settings.machine-removed", { machine });
         if (action === "update") this.machineResults[machine] = { message, ok: true };
         else this.machineNotice = message;
       } catch (e) {
@@ -531,10 +548,10 @@ export default class Settings extends View {
     const color = ["connected", "online"].includes(m.state) ? t.ansi2 : ["connecting", "reconnecting"].includes(m.state) ? t.working : t.blocked;
     const result = this.machineResults[m.name];
     const controls = h_flex().gap(6).items_center();
-    if (busy) controls.child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12).text_color(t.muted).child(busy === "update" ? "Updating…" : busy === "rename" ? "Renaming…" : "Removing…"));
+    if (busy) controls.child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12).text_color(t.muted).child(busy === "update" ? text("settings.updating") : busy === "rename" ? text("settings.renaming") : text("settings.removing")));
     else {
-      if (this.olderCore(m.version, localVersion)) controls.child(this.button(t, `st-m-update-${m.name}`, "Update", (_e, cx) => this.machineAction(m.name, "update", cx)));
-      for (const [action, label] of [["rename", "Rename"], ["rm", "Remove"]]) {
+      if (this.olderCore(m.version, localVersion)) controls.child(this.button(t, `st-m-update-${m.name}`, text("settings.update"), (_e, cx) => this.machineAction(m.name, "update", cx)));
+      for (const [action, label] of [["rename", text("settings.rename")], ["rm", text("settings.remove")]]) {
         controls.child(this.button(t, `st-m-${action}-${m.name}`, label, (_e, cx) => {
           this.machineEdit = { machine: m.name, action, name: m.name };
           if (action === "rename") {
@@ -552,19 +569,21 @@ export default class Settings extends View {
         .child(div().w(7).h(7).flex_none().rounded(4).bg(color))
         .child(v_flex().flex_1().min_w(0).gap(3)
           .child(div().text_size(13).text_color(t.foreground).child(m.name))
-          .child(div().text_size(12).text_color(t.dim).child(`${m.target ?? ""} · ${state} · ${m.version ? `kom ${m.version}` : "kom version unknown"}`)))
+          .child(div().text_size(12).text_color(t.dim).child(m.version
+            ? text("settings.machine-line", { target: m.target ?? "", state, version: m.version })
+            : text("settings.machine-line-no-version", { target: m.target ?? "", state }))))
         .child(controls.flex_none()));
-    if (busy === "update") row.child(div().text_size(12).text_color(t.dim).child("Copying this computer's kompitum-core. Its terminals keep running."));
+    if (busy === "update") row.child(div().text_size(12).text_color(t.dim).child(text("settings.copying-core")));
     if (edit && !busy) {
-      const cancel = this.button(t, `st-m-cancel-${m.name}`, "Cancel", (_e, cx) => { this.machineEdit = null; this.handle.focus(); cx.notify(); });
+      const cancel = this.button(t, `st-m-cancel-${m.name}`, text("settings.cancel"), (_e, cx) => { this.machineEdit = null; this.handle.focus(); cx.notify(); });
       if (edit.action === "rm") row.child(v_flex().gap(8)
-        .child(div().text_size(12).text_color(t.muted).child(`Remove ${m.name}? Its terminals keep running there.`))
-        .child(h_flex().gap(6).child(cancel).child(this.button(t, `st-m-confirm-${m.name}`, "Remove machine", (_e, cx) => this.machineAction(m.name, "rm", cx)))));
+        .child(div().text_size(12).text_color(t.muted).child(text("settings.remove-machine-confirm", { machine: m.name })))
+        .child(h_flex().gap(6).child(cancel).child(this.button(t, `st-m-confirm-${m.name}`, text("settings.remove-machine"), (_e, cx) => this.machineAction(m.name, "rm", cx)))));
       else row.child(v_flex().gap(6)
-        .child(div().text_size(12).text_color(t.dim).child("New name (addresses using the old name stop working)"))
+        .child(div().text_size(12).text_color(t.dim).child(text("settings.new-name-hint")))
         .child(h_flex().gap(6).items_center()
           .child(Input.new(this.renameInput).flex_1().min_w(0).h(32).px(10).rounded(7).border_1().border_color(this.renameFocused ? t.accent : t.input).bg(t.background).text_size(13).text_color(t.foreground))
-          .child(cancel).child(this.button(t, `st-m-save-${m.name}`, "Save", (_e, cx) => this.machineAction(m.name, "rename", cx, edit.name)))));
+          .child(cancel).child(this.button(t, `st-m-save-${m.name}`, text("settings.save"), (_e, cx) => this.machineAction(m.name, "rename", cx, edit.name)))));
     }
     if (result) row.child(div().text_size(12).text_color(result.ok ? t.ansi2 : t.blocked).tooltip(result.ok ? null : result.message).child(result.ok ? result.message : firstLine(result.message) || result.message));
     return row;
@@ -573,15 +592,15 @@ export default class Settings extends View {
   machines(t) {
     const version = updates().core.version;
     return v_flex().w_full()
-      .child(this.heading(t, "Machines"))
-      .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim).child("Your other computers. Their agents keep working when this one sleeps."))
-      .child(this.row(t, "This computer", "Connected", div().w(7).h(7).rounded(4).bg(t.ansi2), "this"))
+      .child(this.heading(t, text("settings.heading-machines")))
+      .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.machines-about")))
+      .child(this.row(t, text("settings.this-computer"), text("settings.connected"), div().w(7).h(7).rounded(4).bg(t.ansi2), "this"))
       .children((this.machineList ?? []).map((m) => this.machineRow(t, m, version)))
-      .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12).text_color(t.dim).child("Reading machines…"))))
-      .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(12).text_color(t.dim).child("No other machines yet.")))
+      .when(this.machineList === null && !this.machineError, (el) => el.child(h_flex().py(14).gap(8).items_center().child(svg("mods/workspace-chrome/spinner.svg").size(12).text_color(t.working).spin(900)).child(div().text_size(12).text_color(t.dim).child(text("settings.reading-machines")))))
+      .when(this.machineList?.length === 0, (el) => el.child(div().py(14).text_size(12).text_color(t.dim).child(text("settings.no-machines"))))
       .when(Boolean(this.machineError), (el) => el.child(div().py(10).text_size(12).text_color(t.blocked).tooltip(this.machineError).child(firstLine(this.machineError) || this.machineError)))
       .when(Boolean(this.machineNotice), (el) => el.child(div().py(10).text_size(12).text_color(t.ansi2).child(this.machineNotice)))
-      .child(this.row(t, "Add a machine", "Another computer, reached over ssh.", this.button(t, "st-m-add", "Add", () => run("mod.open", { name: "machine-add" })), "add"));
+      .child(this.row(t, text("settings.add-machine"), text("settings.add-machine-about"), this.button(t, "st-m-add", text("settings.add"), () => run("mod.open", { name: "machine-add" })), "add"));
   }
 
   // Alerts ---------------------------------------------------------------
@@ -594,12 +613,12 @@ export default class Settings extends View {
     const notifications = this.person.system_notifications !== false;
     const summon = this.person.summon_key ?? "ctrl+alt+k";
     const taken = Boolean(window()?.summon_taken);
-    const file = (f) => (f ? f.split(/[\\/]/).pop() : "Kompitum's sound");
+    const file = (f) => (f ? f.split(/[\\/]/).pop() : text("settings.kompitum-sound"));
     const summonMenu = dropdown(t, "st-summon-key", {
       items: [
         { value: "ctrl+alt+k", label: "Ctrl+Alt+K" },
         { value: "ctrl+alt+space", label: "Ctrl+Alt+Space" },
-        { value: "off", label: "Off" },
+        { value: "off", label: text("settings.off") },
       ],
       value: summon,
       onPick: (value, cx) => this.summonKeyPick(value, cx),
@@ -607,32 +626,32 @@ export default class Settings extends View {
       width: 200,
     });
     const summonAbout = taken
-      ? div().text_size(12).line_height("18px").text_color(t.blocked).child("Another app is using this key. Pick another.")
-      : "Brings Kompitum forward with the keyboard in the composer, from any app.";
+      ? div().text_size(12).line_height("18px").text_color(t.blocked).child(text("settings.summon-taken"))
+      : text("settings.summon-about");
     return v_flex()
       .w_full()
-      .child(this.heading(t, "Sounds"))
+      .child(this.heading(t, text("settings.heading-sounds")))
       .child(
         this.row(
           t,
-          "Play sounds",
-          "When an agent needs you, and when one finishes while you're not looking. A note shows in the corner either way.",
+          text("settings.play-sounds"),
+          text("settings.play-sounds-about"),
           this.toggle(t, "st-sounds", on, (_e, cx) => this.change((p) => (p.sounds = { ...(p.sounds ?? {}), enabled: !on }), cx)),
           "sounds",
         ),
       )
-      .child(this.row(t, "An agent needs you", file(sounds.blocked), this.button(t, "st-play-blocked", "Play", () => playSound("blocked")), "blocked"))
-      .child(this.row(t, "An agent finished", file(sounds.done), this.button(t, "st-play-done", "Play", () => playSound("done")), "done"))
+      .child(this.row(t, text("settings.agent-needs-you"), file(sounds.blocked), this.button(t, "st-play-blocked", text("settings.play"), () => playSound("blocked")), "blocked"))
+      .child(this.row(t, text("settings.agent-finished"), file(sounds.done), this.button(t, "st-play-done", text("settings.play"), () => playSound("done")), "done"))
       .child(div().h(18))
-      .child(this.heading(t, "Pop-ups"))
-      .child(this.row(t, "Notes between agents", "Show a note for a few seconds when agents write to each other.", this.toggle(t, "st-notes-between-agents", between, (_e, cx) => this.change((p) => (p.notes_between_agents = !between), cx))))
-      .child(this.row(t, "Quiet while a game is fullscreen", "No sounds and no passing notes while another app fills the screen. Notes that need you still wait for you.", this.toggle(t, "st-quiet-fullscreen", quiet, (_e, cx) => this.change((p) => (p.quiet_while_fullscreen = !quiet), cx))))
+      .child(this.heading(t, text("settings.heading-popups")))
+      .child(this.row(t, text("settings.notes-between-agents"), text("settings.notes-between-agents-about"), this.toggle(t, "st-notes-between-agents", between, (_e, cx) => this.change((p) => (p.notes_between_agents = !between), cx))))
+      .child(this.row(t, text("settings.quiet-fullscreen"), text("settings.quiet-fullscreen-about"), this.toggle(t, "st-quiet-fullscreen", quiet, (_e, cx) => this.change((p) => (p.quiet_while_fullscreen = !quiet), cx))))
       .when(window()?.platform === "windows", (el) =>
         el
-          .child(this.row(t, "Windows notifications", "When something needs you and Kompitum isn't in front.", this.toggle(t, "st-system-notifications", notifications, (_e, cx) => this.change((p) => (p.system_notifications = !notifications), cx))))
-          .child(this.row(t, "Summon Kompitum", summonAbout, summonMenu)),
+          .child(this.row(t, text("settings.windows-notifications"), text("settings.windows-notifications-about"), this.toggle(t, "st-system-notifications", notifications, (_e, cx) => this.change((p) => (p.system_notifications = !notifications), cx))))
+          .child(this.row(t, text("settings.summon-kompitum"), summonAbout, summonMenu)),
       )
-      .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child("Want your own sounds? Ask your lead to change them."));
+      .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.sounds-own")));
   }
 
   // About ----------------------------------------------------------------
@@ -644,10 +663,12 @@ export default class Settings extends View {
       const d = new Date(secs * 1000);
       return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
     };
-    const checked = u.checked ? ` Checked at ${at(u.checked)}.` : "";
-    const result = u.checking ? "Checking\u2026" : u.checked
-      ? `Up to date.${checked}`
-      : "No successful check. Check your connection and try again.";
+    const checkedAt = u.checked ? at(u.checked) : null;
+    const result = u.checking
+      ? text("settings.checking")
+      : u.checked
+        ? checkedAt ? text("settings.up-to-date-checked", { time: checkedAt }) : text("settings.up-to-date")
+        : text("settings.no-check");
     // Pressed: "Checking\u2026" while it looks, then "Up to date" for a moment
     // (a find changes the row instead). One per row: an element shows once.
     const asked = this.asked && Date.now() - this.asked < 3000;
@@ -655,10 +676,10 @@ export default class Settings extends View {
       !u.checks
         ? null
         : u.checking && this.asked
-          ? div().px(12).py(5).text_size(13).text_color(t.dim).child("Checking\u2026")
+          ? div().px(12).py(5).text_size(13).text_color(t.dim).child(text("settings.checking"))
           : asked && u.checked && !u.checking
-            ? div().px(12).py(5).text_size(13).text_color(t.ansi2).child("\u2713 Up to date")
-            : this.button(t, id, "Check now", (_e, cx) => {
+            ? div().px(12).py(5).text_size(13).text_color(t.ansi2).child(text("settings.up-to-date-check"))
+            : this.button(t, id, text("settings.check-now"), (_e, cx) => {
                 this.asked = Date.now();
                 run("app.check_updates");
                 cx.notify();
@@ -669,20 +690,20 @@ export default class Settings extends View {
     const app = source
       ? [null, null]
       : u.app.ready
-        ? [`${u.app.ready} is ready. Restart to switch now; it also switches when you quit.`, primary("st-app-update", "Restart to update", () => run("app.update"))]
+        ? [text("settings.app-ready", { version: u.app.ready }), primary("st-app-update", text("settings.restart-update"), () => run("app.update"))]
         : [result, check("st-check-app")];
     const c = u.core;
     const core = c.managed
-      ? [`Managed by ${c.managed}: update it there.`, null]
+      ? [text("settings.core-managed", { manager: c.managed }), null]
       : c.updating
-        ? ["Updating\u2026 your terminals keep running.", null]
+        ? [text("settings.core-updating"), null]
         : c.error
-          ? [`The update failed: ${c.error}`, primary("st-core-retry", "Try again", () => run("app.update_core"))]
+          ? [text("settings.core-failed", { error: c.error }), primary("st-core-retry", text("settings.try-again"), () => run("app.update_core"))]
           : c.ready
-            ? [`${c.ready} is ready. Your terminals keep running through it.`, primary("st-core-update", "Update kompitum-core", () => run("app.update_core"))]
+            ? [text("settings.core-ready", { version: c.ready }), primary("st-core-update", text("settings.core-update"), () => run("app.update_core"))]
             : u.checks
               ? [result, check("st-check-core")]
-              : ["This build was made from source, so it doesn't update itself.", null];
+              : [text("settings.built-from-source"), null];
     return v_flex()
       .w_full()
       .child(
@@ -692,9 +713,9 @@ export default class Settings extends View {
           .gap(9)
           .border_b(1)
           .border_color(t.border)
-          .child(div().text_size(13).text_color(t.foreground).child(`Kompitum ${u.app.version} · core ${c.version ?? ""}`))
+          .child(div().text_size(13).text_color(t.foreground).child(text("settings.version-line", { app: u.app.version, core: c.version ?? "" })))
           .child(div().text_size(12).line_height("18px").text_color(t.dim)
-            .child(source ? "Built from source; updates come from your checkout." : "Checks for new versions of the app and its core every hour."))
+            .child(source ? text("settings.built-from-checkout") : text("settings.update-check")))
           .child(
             h_flex()
               .w_full()
@@ -702,11 +723,11 @@ export default class Settings extends View {
               .items_center()
               .flex_wrap()
               .when(this.lit("app"), (el) => el.bg(t.selected).rounded(7))
-              .child(div().text_size(12).text_color(t.dim).child("App"))
+              .child(div().text_size(12).text_color(t.dim).child(text("settings.app-word")))
               .when(Boolean(app[0]), (el) => el.child(div().flex_1().min_w(0).text_size(12).line_height("18px").text_color(t.muted).child(app[0])))
               .child(div().flex_1())
               .when(Boolean(u.app.version), (el) => el.child(div().text_size(12).text_color(t.muted).child(u.app.version)))
-              .child(this.button(t, "st-whats-new", "What's new", () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
+              .child(this.button(t, "st-whats-new", text("settings.whats-new"), () => { closeOverlay(props()?.overlay); run("app.whats_new"); }))
               .when(Boolean(app[1]), (el) => el.child(app[1])),
           )
           .child(
@@ -716,7 +737,7 @@ export default class Settings extends View {
               .items_center()
               .flex_wrap()
               .when(this.lit("core"), (el) => el.bg(t.selected).rounded(7))
-              .child(div().text_size(12).text_color(t.dim).child("Core"))
+              .child(div().text_size(12).text_color(t.dim).child(text("settings.core-word")))
               .child(div().flex_1().min_w(0).text_size(12).line_height("18px").text_color(t.muted).tooltip(core[0]).child(firstLine(core[0]) || core[0]))
               .when(Boolean(core[1]), (el) => el.child(core[1])),
           ),
@@ -724,9 +745,9 @@ export default class Settings extends View {
       .child(
         this.row(
           t,
-          "Welcome",
+          text("settings.welcome"),
           null,
-          this.button(t, "st-general-welcome", "Show again", () => {
+          this.button(t, "st-general-welcome", text("settings.show-again"), () => {
             closeOverlay(props().overlay);
             run("app.welcome");
           }),
@@ -736,17 +757,17 @@ export default class Settings extends View {
       .child(
         this.row(
           t,
-          "Export settings…",
-          "One file with your settings and the workers you added.",
-          this.button(t, "st-export", "Export settings…", (_e, cx) => exportSettings(this, cx)),
+          text("settings.export-settings"),
+          text("settings.export-about"),
+          this.button(t, "st-export", text("settings.export-settings"), (_e, cx) => exportSettings(this, cx)),
         ),
       )
       .child(
         this.row(
           t,
-          "Import settings…",
-          "Restore settings and workers from an exported file.",
-          this.button(t, "st-import", "Import settings…", (_e, cx) => importSettings(this, cx)),
+          text("settings.import-settings"),
+          text("settings.import-about"),
+          this.button(t, "st-import", text("settings.import-settings"), (_e, cx) => importSettings(this, cx)),
         ),
       )
       .when(Boolean(this.exportNote), (el) =>
@@ -758,19 +779,19 @@ export default class Settings extends View {
       .child(
         this.row(
           t,
-          "Copy diagnostics",
-          "Versions, the lead, the workers and the look, for a report.",
+          text("settings.copy-diagnostics"),
+          text("settings.copy-diagnostics-about"),
           h_flex()
             .gap(8)
             .items_center()
-            .child(this.button(t, "st-copy-diagnostics", "Copy diagnostics", (_e, cx) => copyDiagnostics(this, cx)))
-            .when(Boolean(this.copiedAt), (el) => el.child(div().id("st-copied").text_size(12).text_color(t.ansi2).child("Copied."))),
+            .child(this.button(t, "st-copy-diagnostics", text("settings.copy-diagnostics"), (_e, cx) => copyDiagnostics(this, cx)))
+            .when(Boolean(this.copiedAt), (el) => el.child(div().id("st-copied").text_size(12).text_color(t.ansi2).child(text("settings.copied")))),
         ),
       )
       .when(Boolean(this.diagnosticError), (el) =>
         el.child(div().id("st-diagnostic-error").py(6).text_size(12).text_color(t.blocked).child(this.diagnosticError)))
-      .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child("Kompitum sends nothing: no usage data, no crash reports. Send feedback opens an issue on GitHub."))
-      .child(div().text_size(12).line_height("18px").text_color(t.dim).child("Built on herdr (Apache 2.0)."));
+      .child(div().pt(12).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.privacy-note")))
+      .child(div().text_size(12).line_height("18px").text_color(t.dim).child(text("settings.built-on-herdr")));
   }
 
 
@@ -808,7 +829,7 @@ export default class Settings extends View {
         el.children(
           matches.length
             ? matches.map((m, i) => {
-                const where = SECTIONS.find((s) => s.id === m.section)?.title ?? m.section;
+                const where = sectionTitle(m.section) || m.section;
                 // The setting's name over its section: two short lines that truncate fit the column, where one
                 // long "Section › Setting" ran out over the page. The tooltip keeps the whole path.
                 return v_flex()
@@ -822,13 +843,13 @@ export default class Settings extends View {
                   .hover((st) => st.bg(t.hover).text_color(t.foreground)).active((st) => st.bg(t.selected))
                   .tab_stop(true)
                   .focus_ring(t.focus, 7)
-                  .tooltip(`${where} › ${m.title}`)
+                  .tooltip(`${where} › ${m.title()}`)
                   .on_click((_e, cx) => this.openMatch(m, cx))
-                  .child(div().truncate().text_size(13).text_color(t.foreground).child(m.title))
+                  .child(div().truncate().text_size(13).text_color(t.foreground).child(m.title()))
                   .child(div().truncate().text_size(11).text_color(t.dim).child(where));
               })
             : [
-                div().px(10).py(6).text_size(12).line_height("18px").text_color(t.dim).child(`No setting matches "${query}".`),
+                div().px(10).py(6).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.no-match", { query })),
                 h_flex()
                   .id("st-ask-lead")
                   .px(10)
@@ -842,7 +863,7 @@ export default class Settings extends View {
                   .focus_ring(t.focus, 7)
                   .on_click((_e, cx) => this.askLead(cx))
                   .child(svg(I("bot")).size(14).text_color(t.accent))
-                  .child(div().text_size(12).text_color(t.foreground).child("Ask the lead")),
+                  .child(div().text_size(12).text_color(t.foreground).child(text("settings.ask-lead"))),
               ],
         ),
       )
@@ -876,7 +897,7 @@ export default class Settings extends View {
               cx.notify();
             })
             .child(svg(I(s.icon)).size(15).text_color(on ? t.accent : t.dim))
-            .child(div().flex_1().text_size(13).text_color(on ? t.foreground : t.muted).child(s.title))
+            .child(div().flex_1().text_size(13).text_color(on ? t.foreground : t.muted).child(sectionTitle(s.id)))
             .when(s.id === "about" && waiting, (el) => el.child(div().w(7).h(7).rounded(4).bg(t.accent)));
         }),
       ));
@@ -910,7 +931,7 @@ export default class Settings extends View {
           .flex_1()
           .min_h(0)
           .items_start()
-          .child(nav.h_full().child(div().flex_1()).child(this.textButton(t, "st-feedback", "Send feedback", () => { closeOverlay(props()?.overlay); run("app.feedback"); })))
+          .child(nav.h_full().child(div().flex_1()).child(this.textButton(t, "st-feedback", text("settings.send-feedback"), () => { closeOverlay(props()?.overlay); run("app.feedback"); })))
           .child(
             // A bar that always shows: the pages are taller than the dialog and
             // people should see that they scroll.
@@ -952,7 +973,7 @@ export default class Settings extends View {
               .child(Scrollbar.vertical("st-body").mode("always").absolute().inset_0()),
           ),
       );
-    const where = query ? "Search" : SECTIONS.find((s) => s.id === section)?.title ?? "";
-    return sheet({ title: `Settings › ${where}`, width: 880, onClose: () => this.close() }, content);
+    const where = query ? text("settings.search") : sectionTitle(section);
+    return sheet({ title: text("settings.sheet-title", { where }), width: 880, onClose: () => this.close() }, content);
   }
 }

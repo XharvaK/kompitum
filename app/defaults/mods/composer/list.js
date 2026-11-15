@@ -3,7 +3,7 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { leadCommands, listDir } from "kompitum";
+import { leadCommands, listDir, text } from "kompitum";
 import { byteIndex, charIndex } from "./util.js";
 
 const LIST_ROWS = 8;
@@ -405,7 +405,7 @@ export default {
       .h(24)
       .px(8)
       .items_center()
-      .child(div().text_size(12).text_color(t.dim).child("Search history"));
+      .child(div().text_size(12).text_color(t.dim).child(text("composer.search-history")));
   },
 
   listMenu(t, cx) {

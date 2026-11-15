@@ -4,7 +4,7 @@
 
 import { div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { appLink, kom, exec, openLink } from "kompitum";
+import { appLink, kom, exec, openLink, text } from "kompitum";
 
 const I = (name) => `frame/settings/${name}.svg`;
 
@@ -43,7 +43,8 @@ function filledPrompt(connect, where) {
 }
 
 function words(result) {
-  return (result.stderr || result.stdout || "It didn't work.").trim() || "It didn't work.";
+  const fallback = text("settings.it-didnt-work");
+  return (result.stderr || result.stdout || fallback).trim() || fallback;
 }
 
 const firstLine = (v) => String(v ?? "").split(/\r?\n/).map((line) => line.trim()).find(Boolean) ?? "";
@@ -110,7 +111,7 @@ export function loadConnect(view, cx) {
         info = JSON.parse(opened.stdout);
       } catch {}
       if (typeof info?.vault !== "string" || !info.vault) {
-        throw new Error("Couldn't read the vault.");
+        throw new Error(text("settings.vault-read-failed"));
       }
       connect.vault = info.vault;
       const remote = await exec("git", ["-C", info.vault, "remote", "get-url", "origin"]);
@@ -196,13 +197,13 @@ function checkJoined(view, cx) {
 
 function copyPrompt(view, where, cx) {
   if (!view.connect.vault) {
-    view.connect.message = "Reading the vault\u2026 Try again in a moment.";
+    view.connect.message = text("settings.reading-vault-retry");
     loadConnect(view, cx);
     cx.notify();
     return false;
   }
   if (where === "remote" && !view.connect.address) {
-    view.connect.message = "Your vault has no remote, so another machine can't reach it.";
+    view.connect.message = text("settings.no-remote");
     cx.notify();
     return false;
   }
@@ -212,7 +213,7 @@ function copyPrompt(view, where, cx) {
 
 function copyOther(view, where, cx) {
   if (!copyPrompt(view, where, cx)) return;
-  view.connect.message = "Copied. Paste it into your agent.";
+  view.connect.message = text("settings.copied-prompt");
   cx.notify();
 }
 
@@ -232,7 +233,7 @@ function connectSystem(view, system, cx) {
 }
 
 function showPromptButton(view, t, id, cx) {
-  return view.textButton(t, id, "Show the prompt", (_e, cx) => {
+  return view.textButton(t, id, text("settings.show-prompt"), (_e, cx) => {
     view.connect.showPrompt = !view.connect.showPrompt;
     cx.notify();
   });
@@ -249,20 +250,20 @@ function systemRow(view, t, system, cx) {
       .gap(8)
       .items_center()
       .child(div().w(7).h(7).rounded(4).bg(t.ansi2))
-      .child(div().text_size(12).text_color(t.muted).child(`Joined as ${saved.agent}`))
-      .child(view.button(t, `st-c-open-${system.id}`, "Open", () => openLink(`${system.scheme}://`)))
+      .child(div().text_size(12).text_color(t.muted).child(text("settings.joined-as", { agent: saved.agent })))
+      .child(view.button(t, `st-c-open-${system.id}`, text("settings.open"), () => openLink(`${system.scheme}://`)))
       .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
   } else if (saved.since) {
     state = h_flex()
       .gap(8)
       .items_center()
-      .child(div().text_size(12).text_color(t.muted).child("Waiting for it to join"))
+      .child(div().text_size(12).text_color(t.muted).child(text("settings.waiting-join")))
       .child(showPromptButton(view, t, `st-c-prompt-${system.id}`, cx));
   } else {
     state = h_flex()
       .gap(8)
       .items_center()
-      .child(view.primaryButton(t, `st-c-connect-${system.id}`, "Connect", (_e, cx) => connectSystem(view, system, cx)));
+      .child(view.primaryButton(t, `st-c-connect-${system.id}`, text("settings.connect"), (_e, cx) => connectSystem(view, system, cx)));
   }
   return h_flex()
     .id(`st-c-${system.id}`)
@@ -284,19 +285,19 @@ function otherRow(view, t, cx) {
     .gap(3)
     .border_b(1)
     .border_color(t.border)
-    .child(div().text_size(13).text_color(t.foreground).child("Any other agent"))
-    .child(div().text_size(12).line_height("18px").text_color(t.dim).child("Any agent that can run a command on a computer you added."))
+    .child(div().text_size(13).text_color(t.foreground).child(text("settings.any-other-agent")))
+    .child(div().text_size(12).line_height("18px").text_color(t.dim).child(text("settings.any-agent-about")))
     .child(
       h_flex()
         .pt(8)
         .gap(8)
-        .child(view.button(t, "st-c-other-local", "On this computer", (_e, cx) => copyOther(view, "local", cx)))
-        .child(view.button(t, "st-c-other-remote", "On another machine", (_e, cx) => copyOther(view, "remote", cx))),
+        .child(view.button(t, "st-c-other-local", text("settings.on-this-computer"), (_e, cx) => copyOther(view, "local", cx)))
+        .child(view.button(t, "st-c-other-remote", text("settings.on-another-machine"), (_e, cx) => copyOther(view, "remote", cx))),
     );
 }
 
 function promptBox(view, t) {
-  const text = view.connect.vault ? filledPrompt(view.connect, "local") : "Reading the vault\u2026";
+  const prompt = view.connect.vault ? filledPrompt(view.connect, "local") : text("settings.reading-vault");
   return v_flex()
     .id("st-c-prompt-text")
     .mt(10)
@@ -307,7 +308,7 @@ function promptBox(view, t) {
     .border_1()
     .border_color(t.border)
     .children(
-      text
+      prompt
         .split("\n")
         .map((line) => div().text_size(12).line_height("17px").text_color(t.muted).child(line || " ")),
     );
@@ -318,8 +319,8 @@ export function connectPage(view, t, cx) {
   return v_flex()
     .w_full()
     .child(view.machines(t))
-    .child(view.heading(t, "Agents from other systems"))
-    .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim).child("Bring another agent into Kompitum."))
+    .child(view.heading(t, text("settings.connect-heading")))
+    .child(div().pb(8).text_size(12).line_height("18px").text_color(t.dim).child(text("settings.connect-about")))
     .child(
       h_flex()
         .id("st-c-how")
@@ -334,11 +335,11 @@ export function connectPage(view, t, cx) {
           cx.notify();
         })
         .child(div().text_size(12).text_color(t.dim).child(connect.showHow ? "\u25be" : "\u25b8"))
-        .child(div().text_size(12).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child("How it works")),
+        .child(div().text_size(12).text_color(t.muted).hover((s) => s.text_color(t.foreground)).child(text("settings.how-it-works"))),
     )
     .when(connect.showHow, (el) =>
       el.child(div().pt(4).pb(8).text_size(12).line_height("18px").text_color(t.dim)
-        .child("Connect copies a prompt for them; they show as joined once their first note reaches the vault")),
+        .child(text("settings.how-it-works-about"))),
     )
     .children(connect.found.map((system) => systemRow(view, t, system, cx)))
     .child(otherRow(view, t, cx))

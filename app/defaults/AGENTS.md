@@ -1090,9 +1090,10 @@ All of it is in `kompitum.d.ts`. In short:
   `notify({ title, body, level, icon, timeout })` posts a notification, drawn by the `toast` mod:
   at the top right, newest first, three at a time; the bell lists it under Earlier once it leaves.
   `at: "top-right"` opens a popup in that corner.
-- Sheets (`kind: "sheet"`): one family, drawn with `sheet({ title, width, onClose, footer? }, body)`
+- Sheets (`kind: "sheet"`): one family, drawn with `sheet({ title, width, onClose, closeLabel?, footer? }, body)`
   from `kompitum`. The frame has a 52 px header — the title at 15 px semibold on
-  the left, a 28 × 28 close icon button on the right with tooltip and accessibility label "Close" —
+  the left, a 28 × 28 close icon button on the right whose tooltip and accessibility label
+  come from the strings table (`closeLabel` overrides it) —
   the body, and an optional 60 px footer. `width` is 640 (Shortcuts, Add a machine, Welcome) or
   880 (the rest). The app caps the height at the window's height minus 96, centers it below the
   top bar, and draws a black scrim (40% in dark themes, 30% in light ones). Esc closes it, and so
@@ -1167,7 +1168,7 @@ value is the exact text, and a variable is written `{name}`. A sentence built fr
 key with `{variables}`, never several pieces.
 
 An area is the mod's folder (`bell.clear`), or `settings`, `welcome`, `whatsnew`, `palette` and
-`mailbox` for the frame, and `app`, `lead` and `tray` for Rust. Draw a word with
+`mailbox` for the frame, `sheet` for the shared sheet frame, and `app`, `lead` and `tray` for Rust. Draw a word with
 `text("bell.clear")`, or fill its variables with `text("bell.count", { n })`. The person's
 `language` picks the table; keys it lacks fall back to English. Only English ships today.
 

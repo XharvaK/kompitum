@@ -2,7 +2,7 @@
 
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, Textarea } from "gpui-base";
-import { run, pickFiles, pasteImage, lead as leadOf, window, home } from "kompitum";
+import { run, pickFiles, pasteImage, lead as leadOf, window, home, text } from "kompitum";
 import { errorText, COMPACT_FIRST_TOKENS, PULSE_MS } from "./util.js";
 import { effortIds, leadUsage, modelLabel } from "./model.js";
 
@@ -28,8 +28,8 @@ function leadName(entry, key) {
 
 // The box says only what the lead is doing now: working, or waiting on the Owner's answer. Idle says nothing.
 function leadStatus(state) {
-  if (state === "working") return "Working";
-  if (state === "asking") return "Waiting for you";
+  if (state === "working") return text("composer.working");
+  if (state === "asking") return text("composer.waiting");
   return null;
 }
 
@@ -54,8 +54,8 @@ function contextFraction(usage) {
 function usageWindows(usage) {
   const now = Date.now() / 1000;
   return [
-    { short: "5h", long: "5-hour limit", window: usage?.five_hour },
-    { short: "week", long: "Week", window: usage?.seven_day },
+    { short: text("composer.window-5h"), long: "5-hour limit", window: usage?.five_hour },
+    { short: text("composer.window-week"), long: "Week", window: usage?.seven_day },
   ]
     .map(({ short, long, window }) => ({ short, long, pct: window?.used_percentage, resets: window?.resets_at }))
     .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
@@ -63,20 +63,22 @@ function usageWindows(usage) {
 }
 
 // Claude Code's permission modes (its hooks' `permission_mode`): the word the box shows, and what the mode does.
-const MODES = {
-  default: { word: "Ask first", line: "Asks before it edits files or runs commands." },
-  acceptEdits: { word: "Accept edits", line: "Edits files without asking; asks before commands." },
-  plan: { word: "Plan first", line: "Plans and changes nothing until you approve." },
-  auto: { word: "Auto", line: "Approves routine actions itself; asks about risky ones." },
-  bypassPermissions: { word: "Full access", line: "Runs everything without asking." },
-  dontAsk: { word: "Don't ask", line: "Runs only what is already allowed and refuses the rest." },
-};
+// An unknown mode shows its id as it is (text in an event handler, never at module scope).
+function modeWords(mode) {
+  if (mode === "default") return { word: text("composer.mode-ask-first"), line: text("composer.mode-ask-first-line") };
+  if (mode === "acceptEdits") return { word: text("composer.mode-accept-edits"), line: text("composer.mode-accept-edits-line") };
+  if (mode === "plan") return { word: text("composer.mode-plan-first"), line: text("composer.mode-plan-first-line") };
+  if (mode === "auto") return { word: text("composer.mode-auto"), line: text("composer.mode-auto-line") };
+  if (mode === "bypassPermissions") return { word: text("composer.mode-full-access"), line: text("composer.mode-full-access-line") };
+  if (mode === "dontAsk") return { word: text("composer.mode-dont-ask"), line: text("composer.mode-dont-ask-line") };
+  return { word: mode };
+}
 
 export default {
   addChip(path) {
-    const text = String(path ?? "");
-    if (!text || this.chips.some((chip) => chip.path === text)) return;
-    this.chips.push({ path: text });
+    const pathText = String(path ?? "");
+    if (!pathText || this.chips.some((chip) => chip.path === pathText)) return;
+    this.chips.push({ path: pathText });
     this.syncDraft();
   },
 
@@ -138,8 +140,8 @@ export default {
       return div()
         .text_size(12)
         .text_color(t.muted)
-        .tooltip("No word from the lead for 10 minutes.")
-        .child("Working?");
+        .tooltip(text("composer.quiet-tooltip"))
+        .child(text("composer.working-question"));
     }
     const word = leadStatus(this.state);
     if (!word) return null;
@@ -186,6 +188,7 @@ export default {
           .justify_center()
           .cursor_pointer()
           .keep_focus(true)
+          .accessibility_label(text("composer.remove-attachment"))
           .on_click((_e, cx) => this.removeChip(index, cx))
           .child(
             h_flex()
@@ -208,7 +211,7 @@ export default {
       try {
         for (const path of (await pickFiles()) ?? []) this.addChip(path);
       } catch (error) {
-        this.error = `Couldn't open the file picker: ${String(error?.message ?? error)}`;
+        this.error = text("composer.file-picker-failed", { error: String(error?.message ?? error) });
       }
       cx.notify();
     });
@@ -267,7 +270,7 @@ export default {
             this.tasksOpen = !open;
             cx.notify();
           })
-          .child(div().text_size(12).text_color(t.muted).child(`${done} of ${tasks.length}`))
+          .child(div().text_size(12).text_color(t.muted).child(text("composer.tasks-count", { done, total: tasks.length })))
           .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(label))
           .child(div().text_size(12).text_color(t.dim).child("›")),
       );
@@ -287,6 +290,10 @@ export default {
       && (Boolean(this.text?.value?.()?.trim()) || this.chips.length > 0);
     // Send is the view's one prominent action: the accent fill once there is something to send, an outline until
     // then. Hover and press lay the theme's state tints over the fill, so it lightens in dark and darkens in light.
+    const sendHint = !this.leadReady()
+      ? text("composer.send-starting")
+      : compacting ? text("composer.send-tidying") : this.sending ? text("composer.sending")
+        : this.compactFirst ? text("composer.send-compact") : text("composer.send");
     const send = h_flex()
       .id("composer-send")
       .relative()
@@ -297,14 +304,8 @@ export default {
       .justify_center()
       .rounded_full()
       .keep_focus(true)
-      .tooltip(!this.leadReady()
-        ? "Claude is asking something before it starts."
-        : compacting ? "Claude is tidying up. Your message waits in the box." : this.sending ? "Sending…"
-          : this.compactFirst ? "Compact, then send (Enter)" : "Send (Enter)")
-      .accessibility_label(!this.leadReady()
-        ? "Claude is asking something before it starts."
-        : compacting ? "Claude is tidying up. Your message waits in the box." : this.sending ? "Sending…"
-          : this.compactFirst ? "Compact, then send (Enter)" : "Send (Enter)")
+      .tooltip(sendHint)
+      .accessibility_label(sendHint)
       .when(canSend, (el) => el.bg(t.accent_fill).cursor_pointer().on_click((_e, cx) => this.send(cx))
         .child(div().id("composer-send-state").absolute().inset_0().rounded_full().hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))))
       // Nothing to send: an outline and a dim arrow, with no hover or press (UD's disabled state).
@@ -322,8 +323,8 @@ export default {
       .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .keep_focus(true)
-      .tooltip("Attach files")
-      .accessibility_label("Attach files")
+      .tooltip(text("composer.attach"))
+      .accessibility_label(text("composer.attach"))
       .on_click((_e, cx) => this.attach(cx))
       .child(svg("mods/composer/paperclip.svg").size(16));
     // Voice: the system's own dictation for the focused box (Win+H on Windows, Dictation on macOS).
@@ -341,17 +342,17 @@ export default {
         .text_color(t.muted)
         .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .keep_focus(true)
-        .tooltip(window()?.platform === "windows" ? "Dictate (Win+H)" : "Dictate")
-        .accessibility_label(window()?.platform === "windows" ? "Dictate (Win+H)" : "Dictate")
+        .tooltip(window()?.platform === "windows" ? text("composer.dictate-windows") : text("composer.dictate"))
+        .accessibility_label(window()?.platform === "windows" ? text("composer.dictate-windows") : text("composer.dictate"))
         .on_click((_e, cx) => this.dictate(cx))
         .child(svg("mods/composer/mic.svg").size(16))
       : null;
     const note = this.error
       ? div().id("composer-error").min_w(0).truncate().text_size(12).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)
       : this.compactThenSend
-        ? div().text_size(12).text_color(t.dim).child("Tidying up, then sending…")
+        ? div().text_size(12).text_color(t.dim).child(text("composer.tidying-then-sending"))
         : compacting
-          ? div().text_size(12).text_color(t.dim).child("Tidying up…")
+          ? div().text_size(12).text_color(t.dim).child(text("composer.tidying"))
           : this.state ? this.statusWord(t) : null;
     // The limit and the ring read the lead's usage; neither is drawn on the first-start card.
     const usage = first ? null : leadUsage();
@@ -438,7 +439,7 @@ export default {
     const folder = trim(this.person?.lead?.folder);
     const parts = folder.split(/[\\/]/).filter(Boolean);
     const atHome = parts.length === 0 || folder.toLowerCase() === trim(home()).toLowerCase();
-    const place = atHome ? "your home folder" : parts[parts.length - 1];
+    const place = atHome ? text("composer.your-home-folder") : parts[parts.length - 1];
     return v_flex()
       .id("composer-start")
       .size_full()
@@ -456,7 +457,7 @@ export default {
               .text_size(22)
               .font_semibold()
               .text_color(t.foreground)
-              .child("What's next?"),
+              .child(text("composer.whats-next")),
           )
           .child(
             div()
@@ -464,7 +465,7 @@ export default {
               .mt(6)
               .text_size(13)
               .text_color(t.muted)
-              .child(`${leadName(entry, entry.key)} in ${place}`),
+              .child(text("composer.start-where", { lead: leadName(entry, entry.key), place })),
           ),
       )
       .child(this.bar(t, cx, true));
@@ -488,10 +489,11 @@ export default {
   modeControl(t) {
     const mode = leadOf()?.permission_mode;
     if (typeof mode !== "string" || !mode) return null;
-    const { word, line = "" } = MODES[mode] ?? { word: mode };
+    const { word, line = "" } = modeWords(mode);
     const guessed = leadOf()?.mode_guessed === true;
     const live = this.modeLive();
-    const tip = live ? [line, "Click for the next mode (Shift+Tab)."].filter(Boolean).join(" ") : line;
+    const tip = !live ? line
+      : line ? text("composer.mode-tooltip", { line }) : text("composer.mode-next-click");
     return h_flex()
       .id("composer-mode")
       .h(28)
@@ -532,20 +534,22 @@ export default {
       .keep_focus(true)
       .when(!on, (el) => el.hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
       .tooltip(on
-        ? `Your next message compacts ${k}K tokens first. Click to keep them.`
-        : `Your next message keeps all ${k}K tokens. Click to compact first.`)
+        ? text("composer.compact-on-tooltip", { k })
+        : text("composer.compact-off-tooltip", { k }))
       .on_click((_e, cx) => {
         this.compactFirst = !this.compactFirst;
         cx.notify();
       })
-      .child("Compact first");
+      .child(text("composer.compact-first"));
   },
 
   startLabel() {
     const lead = this.person?.lead ?? {};
     const entry = this.leadProgram();
-    const model = lead.model ? ` (${modelLabel(entry, lead.model)})` : "";
-    return `Start ${leadName(entry, entry.key)}${model}`;
+    const name = leadName(entry, entry.key);
+    return lead.model
+      ? text("composer.start-lead-model", { lead: name, model: modelLabel(entry, lead.model) })
+      : text("composer.start-lead-name", { lead: name });
   },
 
   firstPickCard(t, cx) {
@@ -564,15 +568,15 @@ export default {
     // No model picked yet: the fill goes and an outline keeps the shape (UD's disabled state).
     const button = picked
       ? start.bg(t.accent_fill).text_color(t.accent_foreground).cursor_pointer().keep_focus(true).on_click((_e, cx) => this.startFirstPick(cx))
-        .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))).child("Start the lead")
-      : start.border_1().border_color(t.input).text_color(t.dim).child("Start the lead");
+        .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))).child(text("composer.start-the-lead"))
+      : start.border_1().border_color(t.input).text_color(t.dim).child(text("composer.start-the-lead"));
     return v_flex()
       .id("composer-first")
       .flex_1()
       .min_h(0)
       .gap(6)
-      .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Which model should the lead use?"))
-      .child(div().text_size(12).text_color(t.dim).child("You can change it any time from the model menu below."))
+      .child(div().text_size(15).font_semibold().text_color(t.foreground).child(text("composer.which-model")))
+      .child(div().text_size(12).text_color(t.dim).child(text("composer.model-change-hint")))
       .children(models.map((model) =>
         v_flex()
           .id(`composer-first-${model.id}`)
@@ -608,7 +612,7 @@ export default {
       .justify_center()
       .text_size(12)
       .text_color(t.muted)
-      .child(`${leadName(entry, entry.key)} is asking something before it starts. Answer it above.`);
+      .child(text("composer.starting", { lead: leadName(entry, entry.key) }));
   },
 
   // No live lead: one quiet line and the way to start it, in the middle of whatever room it has.
@@ -623,7 +627,7 @@ export default {
       .border_t(1)
       .border_color(t.border)
       .bg(t.chrome)
-      .child(div().text_size(12).text_color(t.muted).child("The lead isn't running"))
+      .child(div().text_size(12).text_color(t.muted).child(text("composer.lead-not-running")))
       .child(this.filledButton("composer-open", this.startLabel(), () => run("lead.open"), t));
   },
 };

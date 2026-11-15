@@ -1,5 +1,7 @@
 // Helpers that more than one file of the composer uses.
 
+import { text } from "kompitum";
+
 // A card's Enter and digit keys wait this long after the card shows, so a key pressed in passing can't answer it.
 export const CARD_WAIT_MS = 600;
 
@@ -95,7 +97,7 @@ export function charIndex(text, b) {
 }
 
 export function errorText(error) {
-  if (error == null) return "The command failed.";
+  if (error == null) return text("composer.command-failed");
   if (typeof error === "string") return error;
   if (typeof error.message === "string" && error.message.trim()) return error.message.trim();
   for (const raw of [error.stderr, error.stdout]) {
@@ -107,6 +109,6 @@ export function errorText(error) {
     } catch {}
     return raw.trim();
   }
-  if (typeof error.code === "number") return `The command failed with exit code ${error.code}.`;
+  if (typeof error.code === "number") return text("composer.command-exit", { code: error.code });
   return String(error);
 }

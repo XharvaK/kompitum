@@ -204,7 +204,8 @@ fn module_with_lead(
     // closes as the real window's hook reply would close it.
     let lead_after_answer = values.remove("leadAfterAnswer");
     let answered = Rc::new(Cell::new(false));
-    let mut module = HostModule::new("kompitum").script("sheet");
+    // The sheet frame's word comes from the table, as it does in `mods.rs`.
+    let mut module = HostModule::new("kompitum").script_with("sheet", sheet_export());
     for (name, value) in values {
         if name == "person" || (name == "lead" && lead.is_some()) {
             continue;

@@ -3,13 +3,13 @@
 
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { kom, readTextFile, writeTextFile, pickFiles, pickSavePath, window } from "kompitum";
+import { kom, readTextFile, writeTextFile, pickFiles, pickSavePath, window, text } from "kompitum";
 import { BUILTIN } from "./agents.js";
 
 const EXCLUDED = /token|secret|password|key/i;
 
 function errorText(error) {
-  return String(error?.message ?? error ?? "It didn't work.").trim();
+  return String(error?.message ?? error ?? text("settings.it-didnt-work")).trim();
 }
 
 function firstLine(text) {
@@ -102,7 +102,7 @@ export function importChanges(currentPerson, currentWorkers, document) {
     const before = currentPerson?.[name];
     const after = mergeValue(before, value);
     if (JSON.stringify(before) !== JSON.stringify(after)) {
-      changes.push(`${name}: ${short(before)} → ${short(after)}`);
+      changes.push(text("settings.import-change", { field: name, before: short(before), after: short(after) }));
     }
   }
   const workers = document?.workers ?? {};
@@ -110,7 +110,7 @@ export function importChanges(currentPerson, currentWorkers, document) {
   const have = new Set(now.map((worker) => worker.key));
   for (const worker of workers.added ?? []) {
     if (!worker?.key || have.has(worker.key)) continue;
-    changes.push(`Add worker ${labelOf(worker, worker.key)}`);
+    changes.push(text("settings.import-add-worker", { worker: labelOf(worker, worker.key) }));
   }
   const currentOrder = currentWorkers?.order ?? [];
   const order = workers.order ?? [];
@@ -119,7 +119,7 @@ export function importChanges(currentPerson, currentWorkers, document) {
     const was = currentOrder.indexOf(key);
     if (was < 0 || was === index) continue;
     const worker = now.find((entry) => entry.key === key);
-    changes.push(`Move worker ${labelOf(worker, key)}: ${was + 1} → ${index + 1}`);
+    changes.push(text("settings.import-move-worker", { worker: labelOf(worker, key), from: was + 1, to: index + 1 }));
   }
   return changes;
 }
@@ -160,9 +160,9 @@ export function exportSettings(view, cx) {
         } catch {}
       }
       await writeTextFile(path, text, expected);
-      view.exportNote = "Exported.";
+      view.exportNote = text("settings.exported");
     } catch (error) {
-      view.exportNote = `Couldn't export settings: ${firstLine(errorText(error))}`;
+      view.exportNote = text("settings.export-failed", { error: firstLine(errorText(error)) });
     }
     cx.notify();
   });
@@ -182,7 +182,7 @@ export function importSettings(view, cx) {
         document = JSON.parse(raw ?? "");
       } catch {}
       if (!document || document.kompitum_settings !== 1) {
-        view.importError = "This isn't a Kompitum settings file.";
+        view.importError = text("settings.not-a-settings-file");
         cx.notify();
         return;
       }
@@ -198,7 +198,7 @@ export function importSettings(view, cx) {
         changes: importChanges(view.person, workers, document),
       };
     } catch (error) {
-      view.importError = `Couldn't read that file: ${firstLine(errorText(error))}`;
+      view.importError = text("settings.read-file-failed", { error: firstLine(errorText(error)) });
     }
     cx.notify();
   });
@@ -211,9 +211,9 @@ function runWorkerImport(view, document, workers, cx) {
         const r = await kom(args);
         if (r.code !== 0) throw new Error(parseKomError(r, args));
       }
-      view.importNote = "Imported.";
+      view.importNote = text("settings.imported");
     } catch (error) {
-      view.importNote = `Couldn't import the workers: ${firstLine(errorText(error))}`;
+      view.importNote = text("settings.import-workers-failed", { error: firstLine(errorText(error)) });
     }
     cx.notify();
   });
@@ -223,7 +223,7 @@ export function applyImport(view, cx) {
   const sheet = view.importSheet;
   if (!sheet) return;
   view.importSheet = null;
-  view.importNote = "Importing…";
+  view.importNote = text("settings.importing");
   view.change((person) => {
     const merged = mergePerson(person, sheet.document.person ?? {});
     for (const name of Object.keys(person)) delete person[name];
@@ -238,10 +238,10 @@ export function importSheet(view, t, cx) {
     .id("st-import-sheet")
     .w_full()
     .gap(10)
-    .child(div().text_size(15).font_semibold().text_color(t.foreground).child("Import settings"))
-    .child(div().text_size(12).line_height("18px").text_color(t.dim).child("These settings and workers will change:"))
+    .child(div().text_size(15).font_semibold().text_color(t.foreground).child(text("settings.import-settings-title")))
+    .child(div().text_size(12).line_height("18px").text_color(t.dim).child(text("settings.import-changes")))
     .when(sheet.changes.length === 0, (el) =>
-      el.child(div().text_size(13).text_color(t.muted).child("Nothing will change.")))
+      el.child(div().text_size(13).text_color(t.muted).child(text("settings.nothing-will-change"))))
     .children(sheet.changes.map((change, index) =>
       div()
         .id(`st-import-change-${index}`)
@@ -255,10 +255,10 @@ export function importSheet(view, t, cx) {
         .w_full()
         .gap(8)
         .justify_end()
-        .child(view.button(t, "st-import-cancel", "Cancel", (_e, cx) => {
+        .child(view.button(t, "st-import-cancel", text("settings.cancel"), (_e, cx) => {
           view.importSheet = null;
           cx.notify();
         }))
-        .child(view.primaryButton(t, "st-import-confirm", "Import", (_e, cx) => applyImport(view, cx))),
+        .child(view.primaryButton(t, "st-import-confirm", text("settings.import"), (_e, cx) => applyImport(view, cx))),
     );
 }

@@ -54,6 +54,38 @@ fn the_sheet_frame_has_a_title_close_body_and_footer(cx: &mut TestAppContext) {
     }
 }
 
+/// The shared frame's only word is the table's: a sheet drawn through
+/// `kompitum` carries it as the close button's tooltip and accessibility label.
+#[gpui::test]
+fn a_sheet_drawn_through_kompitum_carries_the_tables_close_label(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let dir = staged.0.join("mods/sheet-demo");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("mod.json"), r#"{ "place": "none" }"#).unwrap();
+    std::fs::write(dir.join("main.js"), SHEET_DEMO).unwrap();
+    let tree = describe_with_values(
+        cx,
+        &staged,
+        "mods/sheet-demo",
+        fixture(false, props(), updates("current", "current")),
+        None,
+    )
+    .unwrap();
+    let table: BTreeMap<String, String> =
+        serde_json::from_str(include_str!("../../../defaults/strings/en.json")).unwrap();
+    let label = table.get("sheet.close").expect("sheet.close is in the table");
+    assert_eq!(label, "Close");
+    assert!(
+        tree.contains(&format!(":tooltip[Str({label:?})]")),
+        "the close tooltip is the table's label: {tree}"
+    );
+    assert!(
+        tree.contains(&format!(":accessibility_label[Str({label:?})]")),
+        "the close label is the table's label: {tree}"
+    );
+}
+
 #[gpui::test]
 fn settings_is_a_sheet(cx: &mut TestAppContext) {
     cx.update(gpui_shell::init);

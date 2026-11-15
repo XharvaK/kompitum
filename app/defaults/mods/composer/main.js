@@ -7,7 +7,7 @@
 
 import { View } from "gpui-kit";
 import { v_flex, TextareaState, VirtualListScrollHandle } from "gpui-base";
-import { kom, run, theme, props, shared, setShared, terminals, knownAgents, appHome, readTextFile, writeTextFile, pickFolder, lead as leadOf, nextCommand } from "kompitum";
+import { kom, run, theme, props, shared, setShared, terminals, knownAgents, appHome, readTextFile, writeTextFile, pickFolder, lead as leadOf, nextCommand, text } from "kompitum";
 import { errorText, CARD_WAIT_MS, COMPACT_FIRST_TOKENS, PULSE_MS } from "./util.js";
 import cards from "./cards.js";
 import model, { leadUsage } from "./model.js";
@@ -232,12 +232,12 @@ export default class Composer extends View {
     this.askedFolder = true;
     cx.spawn(async (cx) => {
       try {
-        const folder = await pickFolder({ prompt: "Choose the folder the lead works in" });
+        const folder = await pickFolder({ prompt: text("composer.choose-folder-prompt") });
         if (!folder) return;
         await this.writeLead({ folder });
         run("lead.open");
       } catch (error) {
-        this.error = `Couldn't choose the lead's folder: ${String(error?.message ?? error)}`;
+        this.error = text("composer.folder-choose-failed", { error: String(error?.message ?? error) });
       }
       cx.notify();
     });
@@ -382,7 +382,7 @@ export default class Composer extends View {
     const paths = this.chips.map((chip) => chip.path);
     if (!text.trim() && paths.length === 0) return;
     if (!this.leadLive()) {
-      this.error = "The lead isn't running";
+      this.error = text("composer.lead-not-running");
       cx.notify();
       return;
     }
@@ -448,7 +448,7 @@ export default class Composer extends View {
       try {
         await this.writeLead(patch);
       } catch (error) {
-        this.error = `Couldn't save the lead's model: ${String(error?.message ?? error)}`;
+        this.error = text("composer.model-save-failed", { error: String(error?.message ?? error) });
         cx.notify();
         return;
       }
@@ -466,7 +466,7 @@ export default class Composer extends View {
         await this.writeLead(patch);
         run("lead.open");
       } catch (error) {
-        this.error = `Couldn't save the lead's model: ${String(error?.message ?? error)}`;
+        this.error = text("composer.model-save-failed", { error: String(error?.message ?? error) });
       }
       cx.notify();
     });
@@ -484,7 +484,7 @@ export default class Composer extends View {
         cx.timer.after(0, (cx) => this.send(cx));
       } else if (Date.now() - wait.at > 15000) {
         this.compactThenSend = null;
-        this.error = "Couldn't tidy up first. Your message is still here.";
+        this.error = text("composer.tidy-failed");
       }
     }
     if (this.compactFirst && (!this.hasDraft() || !((leadUsage()?.context_tokens ?? 0) >= COMPACT_FIRST_TOKENS))) {

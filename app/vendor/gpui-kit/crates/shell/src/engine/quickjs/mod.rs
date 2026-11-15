@@ -6830,8 +6830,14 @@ globalThis.__gpui = (() => {
     const width = options.width;
     const onClose = options.onClose;
     const footer = options.footer;
+    const closeLabel = options.closeLabel === undefined || options.closeLabel === null
+      ? "Close"
+      : options.closeLabel;
     if (typeof title !== "string" || title.trim() === "") {
       throw new TypeError("sheet: options.title must be a non-empty string");
+    }
+    if (typeof closeLabel !== "string" || closeLabel.trim() === "") {
+      throw new TypeError("sheet: options.closeLabel must be a non-empty string");
     }
     if (width !== 640 && width !== 880) {
       throw new TypeError("sheet: options.width must be 640 or 880");
@@ -6856,8 +6862,8 @@ globalThis.__gpui = (() => {
       .justify_center()
       .text_color(t.muted_foreground)
       .cursor_pointer()
-      .tooltip("Close")
-      .accessibility_label("Close")
+      .tooltip(closeLabel)
+      .accessibility_label(closeLabel)
       .hover((s) => s.bg(t.accent).text_color(t.foreground))
       .active((s) => s.bg(t.secondary))
       .on_click(onClose)

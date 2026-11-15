@@ -23,6 +23,7 @@ import {
   spaces,
   leadSetup,
   sheet,
+  text,
 } from "kompitum";
 
 const W = (name) => `mods/workspace-chrome/${name}.svg`;
@@ -47,6 +48,11 @@ function isProjectsFolder(folder) {
   const path = norm(folder);
   const cut = path.lastIndexOf("/");
   return cut >= 0 && PROJECT_FOLDERS.includes(path.slice(cut + 1)) && path.slice(0, cut) === norm(home());
+}
+
+// A run's kind as the notice names it.
+function runKindWord(kind) {
+  return kind === "Install" ? text("welcome.install") : text("welcome.sign-in");
 }
 
 // The list's bottom edge fades into the window instead of cutting a row off.
@@ -191,7 +197,9 @@ export default class Welcome extends View {
 
   startRun(kind, agent, argv, cx) {
     if (!argv?.length) return;
-    const name = kind === "Install" ? `Install ${agent.name}` : `Sign in to ${agent.name}`;
+    const name = kind === "Install"
+      ? text("welcome.install-run", { name: agent.name })
+      : text("welcome.signin-run", { name: agent.name });
     this.chosen = agent.key;
     this.runs[agent.key] = { kind, name, started: Date.now() };
     this.notes[agent.key] = null;
@@ -232,12 +240,12 @@ export default class Welcome extends View {
       if (!ended) continue;
       delete this.runs[key];
       const code = terminal?.exit_code;
-      this.notes[key] = code != null && code !== 0 ? `${running.kind} ended with code ${code}.` : null;
+      this.notes[key] = code != null && code !== 0 ? text("welcome.run-ended", { kind: runKindWord(running.kind), code }) : null;
       cx.spawn(async (cx) => {
         await this.loadAgents(true);
         const agent = this.agents.find((one) => one.key === key);
         if (running.kind === "Install" && agent && !agent.installed && !this.notes[key]) {
-          this.notes[key] = `The install ended, but Kompitum can't find ${agent.name} yet.`;
+          this.notes[key] = text("welcome.install-missing", { name: agent.name });
         }
         cx.notify();
       });
@@ -271,7 +279,7 @@ export default class Welcome extends View {
         return;
       } catch {}
     }
-    throw new Error("Couldn't write settings.json.");
+    throw new Error(text("welcome.settings-write-failed"));
   }
 
   async start(cx) {
@@ -283,7 +291,7 @@ export default class Welcome extends View {
     try {
       await this.saveLead();
     } catch (error) {
-      this.startError = errorText(error) || "Couldn't write settings.json.";
+      this.startError = errorText(error) || text("welcome.settings-write-failed");
       this.busy = false;
       cx.notify();
       return;
@@ -293,7 +301,7 @@ export default class Welcome extends View {
         await leadSetup();
       } catch (error) {
         // Its words stay under the toggle, and the next Start goes on without it.
-        this.setupError = errorText(error) || "lead.setup failed.";
+        this.setupError = errorText(error) || text("welcome.lead-setup-failed");
         this.useClaude = false;
         this.busy = false;
         cx.notify();
@@ -306,7 +314,7 @@ export default class Welcome extends View {
 
   chooseFolder(cx) {
     cx.spawn(async (cx) => {
-      const folder = await pickFolder({ prompt: "Choose" }).catch(() => null);
+      const folder = await pickFolder({ prompt: text("welcome.choose-folder-prompt") }).catch(() => null);
       if (!folder) return; // a cancelled pick keeps the old choice
       this.setFolder(folder);
       cx.notify();
@@ -316,9 +324,9 @@ export default class Welcome extends View {
   // The folder rows: a projects folder when the step knows one, the home folder, and another.
   folderRows() {
     return [
-      ...(this.projects ? [{ id: "w-folder-projects", label: "Projects folder", path: this.projects }] : []),
-      { id: "w-folder-user", label: "User folder", path: home() },
-      { id: "w-choose-folder", label: "Another folder…", path: this.other },
+      ...(this.projects ? [{ id: "w-folder-projects", label: text("welcome.projects-folder"), path: this.projects }] : []),
+      { id: "w-folder-user", label: text("welcome.user-folder"), path: home() },
+      { id: "w-choose-folder", label: text("welcome.another-folder"), path: this.other },
     ];
   }
 
@@ -415,41 +423,41 @@ export default class Welcome extends View {
   // What the app has observed about a program, and nothing more.
   stateOf(t, agent, cx) {
     if (this.runs[agent.key]) {
-      return div().text_size(12).text_color(t.dim).child("Running in the tab behind this window.");
+      return div().text_size(12).text_color(t.dim).child(text("welcome.running-behind"));
     }
     if (!agent.installed) {
       const argv = this.installArgv(agent);
       if (argv) {
-        return this.rowButton(t, `w-install-${agent.key}`, "Install", (_e, cx) =>
+        return this.rowButton(t, `w-install-${agent.key}`, text("welcome.install"), (_e, cx) =>
           this.startRun("Install", agent, argv, cx),
         );
       }
-      return this.rowButton(t, `w-get-${agent.key}`, `Get ${agent.name}`, () => {
+      return this.rowButton(t, `w-get-${agent.key}`, text("welcome.get-agent", { name: agent.name }), () => {
         if (agent.install?.page) openLink(agent.install.page);
       });
     }
     if (!agent.signed_in?.length) {
-      return div().text_size(12).text_color(t.dim).child("Installed");
+      return div().text_size(12).text_color(t.dim).child(text("welcome.installed"));
     }
     if (this.signedIn[agent.key] === true) {
       return h_flex()
         .gap(6)
         .items_center()
         .child(svg(W("check")).size(13).text_color(t.ansi2))
-        .child(div().text_size(12).text_color(t.muted).child("Signed in"));
+        .child(div().text_size(12).text_color(t.muted).child(text("welcome.signed-in")));
     }
     if (this.signedIn[agent.key] === false) {
       return h_flex()
         .gap(8)
         .items_center()
-        .child(div().text_size(12).text_color(t.muted).child("Not signed in"))
+        .child(div().text_size(12).text_color(t.muted).child(text("welcome.not-signed-in")))
         .child(
-          this.rowButton(t, `w-signin-${agent.key}`, "Sign in", (_e, cx) =>
+          this.rowButton(t, `w-signin-${agent.key}`, text("welcome.sign-in"), (_e, cx) =>
             this.startRun("Sign in", agent, agent.login, cx),
           ),
         );
     }
-    return div().text_size(12).text_color(t.dim).child("Checking…");
+    return div().text_size(12).text_color(t.dim).child(text("welcome.checking"));
   }
 
   agentRow(t, agent, cx) {
@@ -507,8 +515,8 @@ export default class Welcome extends View {
       .child(
         this.heading(
           t,
-          "Who do you want to talk to?",
-          "This is your lead. It plans the work and hands parts of it to workers.",
+          text("welcome.who"),
+          text("welcome.who-about"),
         ),
       )
       .child(
@@ -516,7 +524,7 @@ export default class Welcome extends View {
           .w_full()
           .gap(8)
           .when(rows.length === 0, (el) =>
-            el.child(div().py(12).text_size(12).text_color(t.dim).child("Reading agents…")),
+            el.child(div().py(12).text_size(12).text_color(t.dim).child(text("welcome.reading-agents"))),
           )
           .children(rows.map((agent) => this.agentRow(t, agent, cx))),
       );
@@ -557,8 +565,8 @@ export default class Welcome extends View {
       .child(
         this.heading(
           t,
-          "Where is your work?",
-          "Your lead starts in this folder and can reach every project inside it.",
+          text("welcome.where"),
+          text("welcome.where-about"),
         ),
       )
       .child(
@@ -579,7 +587,7 @@ export default class Welcome extends View {
                 ),
               ),
           )
-          .child(div().text_size(12).text_color(t.dim).child("You can change this in Settings.")),
+          .child(div().text_size(12).text_color(t.dim).child(text("welcome.change-in-settings"))),
       );
   }
 
@@ -589,7 +597,7 @@ export default class Welcome extends View {
     return v_flex()
       .w_full()
       .gap(18)
-      .child(this.heading(t, "One permission"))
+      .child(this.heading(t, text("welcome.one-permission")))
       .child(
         v_flex()
           .w_full()
@@ -610,15 +618,13 @@ export default class Welcome extends View {
                   .flex_1()
                   .min_w(0)
                   .gap(2)
-                  .child(div().text_size(13).text_color(t.foreground).child("Let Claude Code use Kompitum"))
+                  .child(div().text_size(13).text_color(t.foreground).child(text("welcome.use-kompitum")))
                   .child(
                     div()
                       .text_size(13)
                       .line_height("18px")
                       .text_color(t.muted)
-                      .child(
-                        "Adds Kompitum's tools and skill to Claude Code, for all your projects. You can remove them in Settings › Agents.",
-                      ),
+                      .child(text("welcome.use-kompitum-about")),
                   ),
               )
               .child(
@@ -693,12 +699,12 @@ export default class Welcome extends View {
       .px(20)
       .items_center()
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .when(step > 1, (el) => el.child(this.rowButton(t, "w-back", "Back", (_e, cx) => this.back(cx))))
+      .when(step > 1, (el) => el.child(this.rowButton(t, "w-back", text("welcome.back"), (_e, cx) => this.back(cx))))
       .child(div().flex_1())
       .child(
         last
-          ? this.primaryButton(t, "w-start", "Start", enabled, (_e, cx) => this.start(cx))
-          : this.primaryButton(t, "w-next", "Continue", enabled, (_e, cx) => this.next(cx)),
+          ? this.primaryButton(t, "w-start", text("welcome.start"), enabled, (_e, cx) => this.start(cx))
+          : this.primaryButton(t, "w-next", text("welcome.continue"), enabled, (_e, cx) => this.next(cx)),
       );
 
     const content = v_flex()
@@ -718,7 +724,7 @@ export default class Welcome extends View {
       .child(progress)
       .child(body);
     return sheet(
-      { title: "Welcome to Kompitum", width: 640, onClose: () => this.done("skipped"), footer },
+      { title: text("welcome.title"), width: 640, onClose: () => this.done("skipped"), footer },
       content,
     );
   }
