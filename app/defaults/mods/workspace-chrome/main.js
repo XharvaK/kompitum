@@ -198,7 +198,7 @@ export default class WorkspaceChrome extends View {
   openTasks() {
     const body = find(layout(), "panel-body");
     if (!body?.children?.some((child) => child.id === "tasks")) {
-      openOverlay({ mod: "board", kind: "sheet", width: 880 });
+      openOverlay({ mod: "board", kind: "sheet", width: 880, height: 620 });
       return;
     }
     const panel = find(layout(), "panel");

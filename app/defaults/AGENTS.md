@@ -1102,7 +1102,8 @@ All of it is in `kompitum.d.ts`. In short:
   the left, a 28 × 28 close icon button on the right whose tooltip and accessibility label
   come from the strings table (`closeLabel` overrides it) —
   the body, and an optional 60 px footer. `width` is 640 (Shortcuts, Add a machine, Welcome) or
-  880 (the rest). The app caps the height at the window's height minus 96, centers it below the
+  880 (the rest). Its height is `openOverlay`'s `height` (give one when the body scrolls: a scroll
+  area has no height of its own), else its content's. The app caps the height at the window's height minus 96, centers it below the
   top bar, and draws a black scrim (40% in dark themes, 30% in light ones). Esc closes it, and so
   does a click on the scrim; pass `modal: true` to `openOverlay` when a click beside it must not
   close it (the welcome). No sheet prints the word "Esc".

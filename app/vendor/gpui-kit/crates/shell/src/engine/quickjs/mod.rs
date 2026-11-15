@@ -6881,6 +6881,7 @@ globalThis.__gpui = (() => {
     const frame = element(__v_flex())
       .id("sheet")
       .w(width)
+      .h_full()
       .max_h("100%")
       .overflow_hidden()
       .rounded(16)
@@ -6889,7 +6890,9 @@ globalThis.__gpui = (() => {
       .border_color(t.border)
       .shadow_lg()
       .child(header)
-      .child(body);
+      // The body grows into a sheet given a height (its own scroll area then has room) and
+      // stays its content's height in one that has none.
+      .child(body.flex_auto().min_h(0));
     if (footer !== undefined && footer !== null) {
       frame.child(
         element(__h_flex())

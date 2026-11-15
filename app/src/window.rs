@@ -1519,14 +1519,14 @@ impl AppWindow {
             return;
         }
         // A sheet inside the window, never over its top bar and status bar: longer notes scroll.
-        let spec = json!({ "mod": "frame-whatsnew", "kind": "sheet", "width": 880, "props": { "notes": notes } });
+        let spec = json!({ "mod": "frame-whatsnew", "kind": "sheet", "width": 880, "height": 760, "props": { "notes": notes } });
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 
     fn open_welcome(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A sheet over the live app; a click beside it doesn't end it, as the
         // window it used to be did, because each step changes what's behind it.
-        let spec = json!({ "mod": "frame-welcome", "kind": "sheet", "width": 640, "modal": true });
+        let spec = json!({ "mod": "frame-welcome", "kind": "sheet", "width": 640, "height": 600, "modal": true });
         self.open_overlay(mods::new_overlay_id(), spec, window, cx);
     }
 
@@ -7331,7 +7331,7 @@ impl AppWindow {
                     self.close_overlay("settings", window, cx);
                 }
                 if !open || section.is_some() {
-                    let spec = json!({ "mod": "frame-settings", "kind": "sheet", "width": 880, "props": { "section": section } });
+                    let spec = json!({ "mod": "frame-settings", "kind": "sheet", "width": 880, "height": 620, "props": { "section": section } });
                     self.open_overlay("settings".into(), spec, window, cx);
                 }
                 return;
@@ -7344,7 +7344,7 @@ impl AppWindow {
                     self.close_overlay("mailbox", window, cx);
                 }
                 if !open || note.is_some() {
-                    let spec = json!({ "mod": "frame-mailbox", "kind": "sheet", "width": 880, "props": { "note": note } });
+                    let spec = json!({ "mod": "frame-mailbox", "kind": "sheet", "width": 880, "height": 620, "props": { "note": note } });
                     self.open_overlay("mailbox".into(), spec, window, cx);
                 }
                 return;
@@ -7360,7 +7360,7 @@ impl AppWindow {
                 if self.overlays.iter().any(|o| o.id == "help") {
                     self.close_overlay("help", window, cx);
                 } else {
-                    let spec = json!({ "mod": "help", "kind": "sheet", "width": 640 });
+                    let spec = json!({ "mod": "help", "kind": "sheet", "width": 640, "height": 520 });
                     self.open_overlay("help".into(), spec, window, cx);
                 }
                 return;
@@ -7827,9 +7827,10 @@ impl AppWindow {
             OverlayKind::Toast => size(TOAST_WIDTH, num("height", toast_height(&props))),
             // No size: as big as its content (0 = unset).
             OverlayKind::Window => size(num("width", 0.0), num("height", 0.0)),
-            // A sheet's width is its two designed widths; its height is its
-            // content's, capped when it is drawn.
-            OverlayKind::Sheet => size(num("width", 880.0), 0.0),
+            // A sheet's width is one of its two designed widths. Its height is the spec's (a sheet
+            // whose body scrolls needs one: a scroll area has no height of its own), else its
+            // content's; either is capped when it is drawn.
+            OverlayKind::Sheet => size(num("width", 880.0), num("height", 0.0)),
             // No height: as tall as the content, up to most of the window.
             _ => size(num("width", 420.0), num("height", 0.85)),
         };
@@ -7853,8 +7854,8 @@ impl AppWindow {
             self.remove_overlay(&old, window, cx);
         }
         let fit = layout.is_none()
-            && (matches!(kind, OverlayKind::Popup | OverlayKind::Sheet)
-                || (matches!(kind, OverlayKind::Dialog | OverlayKind::Window)
+            && (kind == OverlayKind::Popup
+                || (matches!(kind, OverlayKind::Dialog | OverlayKind::Window | OverlayKind::Sheet)
                     && spec.get("height").is_none()));
         if kind == OverlayKind::Window
             && place.is_none()
@@ -9263,7 +9264,10 @@ impl AppWindow {
                     d.key_context("Overlay")
                 })
                 .when(sized(o.size.width), |d| d.w(w))
-                .when(sheet, |d| d.max_h(sheet_max_height(viewport)))
+                .when(sheet, |d| {
+                    let cap = sheet_max_height(viewport);
+                    if o.size.height > 0.0 { d.h(if h < cap { h } else { cap }) } else { d.max_h(cap) }
+                })
                 .when(!sheet && sized(o.size.height), |d| {
                     if o.fit { d.max_h(h) } else { d.h(h) }
                 })
@@ -12147,6 +12151,69 @@ export default class TallSheet extends View {
   }
 }
 "#;
+
+    // Welcome's shape: progress, then a body that takes the rest and scrolls, and a footer. The
+    // scroll area has no height of its own, so only a sheet with a height gives it room.
+    const SCROLL_SHEET: &str = r#"
+import { View, div } from 'gpui-kit';
+import { v_flex } from 'gpui-base';
+import { sheet } from 'kompitum';
+export default class ScrollSheet extends View {
+  render() {
+    return sheet(
+      { title: 'Scroll sheet', width: 640, onClose: () => {}, footer: div().child('footer') },
+      v_flex().w_full().min_h(0)
+        .child(div().h(36).flex_none().child('progress'))
+        .child(div().id('scroll-body').relative().flex_1().min_h(0)
+          .child(div().id('scroll-inner').size_full().overflow_y_scroll()
+            .children(Array.from({ length: 60 }, (_, i) => div().h(32).child(`row ${i}`))))),
+    );
+  }
+}
+"#;
+
+    #[test]
+    fn a_sheet_with_a_height_gives_its_scrolling_body_room() {
+        in_own_process("sheet_with_height");
+    }
+
+    #[gpui::test]
+    fn sheet_with_height(cx: &mut gpui::TestAppContext) {
+        use serde_json::json;
+        if !running_alone("sheet_with_height") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "scroll-sheet",
+            SCROLL_SHEET,
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        cx.update(|window, cx| {
+            view.update(cx, |this, cx| {
+                this.open_overlay(
+                    "scroll".into(),
+                    json!({"kind": "sheet", "mod": "scroll-sheet", "width": 640, "height": 520}),
+                    window,
+                    cx,
+                );
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let viewport = cx.update(|window, _| window.viewport_size());
+        let sheet = cx.debug_bounds("sheet").expect("the sheet is drawn");
+        let want = crate::settings::z(520.0).min(super::sheet_max_height(viewport));
+        assert!(
+            (f32::from(sheet.size.height) - f32::from(want)).abs() <= 1.0,
+            "the sheet is as tall as asked, inside the cap: {sheet:?} in {viewport:?}"
+        );
+        let body = cx.debug_bounds("scroll-body").expect("the list is drawn");
+        assert!(
+            f32::from(body.size.height) > 200.0,
+            "the list takes the room left under the filter: {body:?}"
+        );
+    }
 
     #[test]
     fn a_tall_sheet_is_capped_to_the_window() {

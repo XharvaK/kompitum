@@ -549,8 +549,9 @@ export interface OverlaySpec {
    *  Closes itself when its terminal ends. */
   layout?: unknown;
   /** dialog: centered, dims the window. sheet: centered below the top bar over a black scrim
-   *  (40% in dark themes, 30% in light ones), as tall as its content up to the window's height
-   *  minus 96; the mod draws its frame with `sheet()`, and Esc or a click on the scrim closes it
+   *  (40% in dark themes, 30% in light ones), `height` tall (give one when the body scrolls: a
+   *  scroll area has no height of its own), else as tall as its content, either at most the
+   *  window's height minus 96; the mod draws its frame with `sheet()`, and Esc or a click on the scrim closes it
    *  (unless `modal`). popup: at `at` (default: the pointer), no scrim.
    *  window: stays open until closed (no dimming, a click beside it doesn't close it, Esc goes to
    *  the mod); dragged by any press the mod doesn't stop (`cx.stop_propagation()` on its controls'

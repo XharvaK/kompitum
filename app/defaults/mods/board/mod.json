@@ -1,1 +1,1 @@
-{ "place": "none", "title": "Board", "overlay": { "kind": "sheet", "width": 880 } }
+{ "place": "none", "title": "Board", "overlay": { "kind": "sheet", "width": 880, "height": 620 } }
