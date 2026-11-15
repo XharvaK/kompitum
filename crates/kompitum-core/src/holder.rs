@@ -186,6 +186,7 @@ impl Holder {
         }
         st.previous = how;
         st.core_left = Instant::now();
+        self.changed.notify_all();
     }
 
     /// Writes one core's frames in order; a failed write means that core is gone.
@@ -242,6 +243,7 @@ impl Holder {
             std::thread::spawn(move || holder.write_to_core(generation, writer, queued, written));
             st.core = Some(Core { generation, frames, backlog, stream: kept });
             self.to_core(&mut st, &out);
+            self.changed.notify_all();
             generation
         };
 
@@ -291,6 +293,7 @@ impl Holder {
                         // Leftover background jobs still hold the PTY: hang them up.
                         t.pty.hang_up(t.pid);
                     }
+                    self.changed.notify_all();
                     self.exit_if_drained();
                 }
                 proto::DRAIN => {
@@ -460,10 +463,18 @@ impl Holder {
     /// Starts a core when the last one crashed and none came back in time.
     fn supervise(&self) {
         loop {
-            std::thread::sleep(self.grace.min(Duration::from_millis(100)));
             let mut st = self.lock();
-            if st.core.is_some() || st.core_left.elapsed() < self.grace {
-                continue;
+            // A connected core needs no restart: wait for the link to change.
+            while st.core.is_some() {
+                st = self.changed.wait(st).unwrap_or_else(|p| p.into_inner());
+            }
+            let left = self.grace.saturating_sub(st.core_left.elapsed());
+            if !left.is_zero() {
+                let (guard, _) = self.changed.wait_timeout(st, left).unwrap_or_else(|p| p.into_inner());
+                st = guard;
+                if st.core.is_some() || st.core_left.elapsed() < self.grace {
+                    continue;
+                }
             }
             if st.terms.is_empty() {
                 self.exit();
@@ -472,6 +483,10 @@ impl Holder {
             st.restarts.retain(|t| now.duration_since(*t) < Duration::from_secs(300));
             let backoff = self.grace * 2u32.pow(st.restarts.len().min(6) as u32);
             if st.restarts.last().is_some_and(|t| now.duration_since(*t) < backoff.min(Duration::from_secs(60))) {
+                // Nothing to wait for but time: a connect still wakes us early.
+                let wait = backoff.min(Duration::from_secs(60));
+                let (guard, _) = self.changed.wait_timeout(st, wait).unwrap_or_else(|p| p.into_inner());
+                drop(guard);
                 continue;
             }
             st.restarts.push(now);

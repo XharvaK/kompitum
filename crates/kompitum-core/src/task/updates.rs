@@ -14,6 +14,7 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -138,22 +139,63 @@ pub struct Installed {
     pub argv: Vec<String>,
 }
 
+/// What a config names for a CLI that can be overridden, so a new config is a
+/// new answer and the same one is never looked up on PATH twice.
+fn install_key(spec: &Spec, config: &Config) -> String {
+    let explicit = match spec.key {
+        "opencode" => config.opencode(),
+        "codex" => config.codex(),
+        _ => None,
+    };
+    match explicit {
+        Some(argv) => format!("{}:{}", spec.key, argv.join("\u{0}")),
+        None => format!("{}:path", spec.key),
+    }
+}
+
+static INSTALLED: OnceLock<Mutex<BTreeMap<String, Option<Vec<String>>>>> = OnceLock::new();
+
 /// The CLIs this machine has. A program that isn't installed is skipped.
 pub fn installed(config: &Config) -> Vec<Installed> {
+    let cache = INSTALLED.get_or_init(|| Mutex::new(BTreeMap::new()));
     let mut found = Vec::new();
     for spec in SPECS {
-        let argv = if spec.key == "opencode" {
-            worker::opencode_prefix(config).ok()
-        } else if spec.key == "codex" {
-            worker::codex_prefix(config).ok()
-        } else {
-            worker::on_path(&[worker::program(spec.program)]).map(|path| vec![path.display().to_string()])
+        let key = install_key(spec, config);
+        let mut cache = cache.lock().unwrap_or_else(|p| p.into_inner());
+        let argv = match cache.get(&key) {
+            Some(argv) => argv.clone(),
+            None => {
+                let argv = if spec.key == "opencode" {
+                    worker::opencode_prefix(config).ok()
+                } else if spec.key == "codex" {
+                    worker::codex_prefix(config).ok()
+                } else {
+                    worker::on_path(&[worker::program(spec.program)]).map(|path| vec![path.display().to_string()])
+                };
+                cache.insert(key, argv.clone());
+                argv
+            }
         };
+        drop(cache);
         if let Some(argv) = argv {
             found.push(Installed { spec, argv });
         }
     }
     found
+}
+
+/// The process table, reused for two seconds: `kom workers` asks often.
+fn process_names_cached() -> Option<Vec<String>> {
+    static NAMES: Mutex<Option<(Instant, Option<Vec<String>>)>> = Mutex::new(None);
+    let mut cache = NAMES.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some((at, names)) = cache.as_ref()
+        && at.elapsed() < Duration::from_secs(2)
+    {
+        return names.clone();
+    }
+    let names = crate::platform::process_names();
+    *cache = Some((Instant::now(), names.clone()));
+    names
 }
 
 /// Whether a CLI is in use: a running task's worker, or a process with its name.
@@ -286,7 +328,7 @@ pub struct CliUpdate {
 /// The installed CLIs and what the record says of each.
 pub fn views(core: &Core, config: &Config) -> Vec<CliUpdate> {
     let entries = load(&core.paths.state);
-    let names = crate::platform::process_names();
+    let names = process_names_cached();
     let now = now_ms();
     let started_ms = now.saturating_sub(core.started.elapsed().as_millis() as u64);
     installed(config)
@@ -345,7 +387,7 @@ pub async fn when_due(core: &std::sync::Arc<Core>) {
         if due(entries.get(item.spec.key), started_ms, now, Busy::No) == Due::No {
             continue;
         }
-        let processes = names.get_or_insert_with(crate::platform::process_names);
+        let processes = names.get_or_insert_with(process_names_cached);
         match due(entries.get(item.spec.key), started_ms, now, busy_now(core, &item, processes.as_deref())) {
             Due::No => {}
             Due::Now => {
@@ -542,6 +584,32 @@ mod tests {
         assert_eq!(due(Some(&noted), started, now, Busy::Yes("running now".into())), Due::No, "not yet an hour");
         noted.busy_ms = now - 61 * MINUTE;
         assert_eq!(due(Some(&noted), started, now, Busy::Yes("running now".into())), Due::Busy);
+    }
+
+    #[test]
+    fn installed_is_cached_per_config_and_a_new_one_is_read() {
+        let missing = std::env::temp_dir().join("kom-no-opencode-here").display().to_string();
+        let absent = Config {
+            workers: Some(crate::config::WorkersConfig {
+                opencode: Some(vec![missing.clone()]),
+                codex: Some(vec![missing]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(!installed(&absent).iter().any(|item| item.spec.key == "opencode"));
+        let present = Config {
+            workers: Some(crate::config::WorkersConfig {
+                opencode: Some(vec![std::env::current_exe().unwrap().display().to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(installed(&present).iter().any(|item| item.spec.key == "opencode"));
+        assert!(
+            installed(&present).iter().any(|item| item.spec.key == "opencode"),
+            "the same config keeps its cached answer"
+        );
     }
 
     #[test]

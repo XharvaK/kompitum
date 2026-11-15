@@ -222,8 +222,9 @@ impl Core {
         if first_task_finished {
             t.first_task_turn = None;
         }
-        let (status, records, turn, reported) = (t.status.clone(), t.records.clone(), t.turn, t.reported);
-        if change.status {
+        let status = change.status.then(|| (t.status.clone(), t.records.clone(), t.reported));
+        let turn = change.turn_ended.then(|| (t.turn, t.status.as_ref().map(|s| s.state.clone())));
+        if let Some((status, records, reported)) = status {
             self.emit(
                 st,
                 "status",
@@ -231,8 +232,7 @@ impl Core {
                 serde_json::json!({"status": status, "records": records, "reported": reported}),
             );
         }
-        if change.turn_ended {
-            let state = status.map(|s| s.state);
+        if let Some((turn, state)) = turn {
             self.emit(st, "turn", id, serde_json::json!({"turn": turn, "state": state}));
         }
         if (change.turn_ended || change.stuck || first_task_finished) && st.reg.terminals[&id].is_live() {

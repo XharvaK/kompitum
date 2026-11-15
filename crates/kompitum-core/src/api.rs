@@ -773,8 +773,9 @@ async fn machine_add(core: Ctx<'_>, p: MachineAddParams) -> Result<crate::machin
         ));
     }
     st.machines.push(machine.clone());
-    crate::machines::save(&core.paths.state, &st.machines);
+    let machines = st.machines.clone();
     drop(st);
+    crate::machines::save(&core.paths.state, &machines);
     crate::remote::keep_up(core.core, machine.id.clone());
     Ok(machine)
 }
@@ -816,8 +817,11 @@ async fn machine_rename(core: Ctx<'_>, p: MachineRenameParams) -> Result<crate::
     if p.new_name != p.machine {
         crate::remote::rename_mirror(core, &mut st, &id, &p.machine, &p.new_name);
     }
-    crate::machines::save(&core.paths.state, &st.machines);
-    Ok(st.machines[i].clone())
+    let renamed = st.machines[i].clone();
+    let machines = st.machines.clone();
+    drop(st);
+    crate::machines::save(&core.paths.state, &machines);
+    Ok(renamed)
 }
 
 async fn machine_rm(core: Ctx<'_>, p: MachineParams) -> Result<RemoveResult, RpcError> {
@@ -829,9 +833,10 @@ async fn machine_rm(core: Ctx<'_>, p: MachineParams) -> Result<RemoveResult, Rpc
         .ok_or_else(|| crate::machines::unknown(&st.machines, &p.machine))?;
     let gone = st.machines.remove(i);
     crate::remote::forget(core, &mut st, &gone.id);
-    crate::machines::save(&core.paths.state, &st.machines);
     let last_on_target = !st.machines.iter().any(|m| m.target == gone.target);
+    let machines = st.machines.clone();
     drop(st);
+    crate::machines::save(&core.paths.state, &machines);
     if last_on_target {
         crate::machines::logout(&core.paths, gone.reach());
     }

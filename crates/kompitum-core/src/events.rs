@@ -90,6 +90,16 @@ impl Core {
         });
     }
 
+    /// Forget one wait's subscription; its channel is what tells it from another.
+    pub fn unsubscribe_waiter(&self, st: &mut State, tx: &mpsc::UnboundedSender<Value>) {
+        st.events.subs.retain(|s| !matches!(&s.sink, Sink::Waiter(own) if own.same_channel(tx)));
+    }
+
+    #[cfg(test)]
+    pub fn waiter_count(&self, st: &State) -> usize {
+        st.events.subs.iter().filter(|s| matches!(s.sink, Sink::Waiter(_))).count()
+    }
+
     pub fn subscribed(&self, st: &State, conn: &Arc<Conn>, channel: u32) -> bool {
         st.events
             .subs
@@ -107,8 +117,16 @@ impl Core {
     /// it `was` hear about it too, or they'd keep it forever. One it newly
     /// matches gets the whole record with it, to add.
     pub fn emit_from(&self, st: &mut State, kind: &str, id: u32, data: Value, was: Option<&Terminal>) {
-        let Some(t) = st.reg.terminals.get(&id).or(was).map(record) else { return };
-        self.deliver(st, kind, &crate::terminals::address(id), data, &t, was.map(record).as_ref());
+        let Some(t) = st.reg.terminals.get(&id).or(was) else { return };
+        // Nobody listening: the fact still changed, but its record and line cost nothing.
+        if st.events.subs.is_empty() {
+            st.events.seq += 1;
+            self.changed.notify_waiters();
+            return;
+        }
+        let current = record(t);
+        let before = was.map(record);
+        self.deliver(st, kind, &crate::terminals::address(id), data, &current, before.as_ref());
     }
 
     /// One fact change about the terminal at `address` to every subscriber it
@@ -130,22 +148,32 @@ impl Core {
     fn deliver_event(&self, st: &mut State, mut params: Value, record: &Value, was: Option<&Value>) {
         st.events.seq += 1;
         params["seq"] = st.events.seq.into();
+        if st.events.subs.is_empty() {
+            self.changed.notify_waiters();
+            return;
+        }
         let afar = params["machine"].is_string() || params["terminal"].as_str().is_some_and(|a| a.contains('/'));
-        let plain = notification("event", params.clone());
-        let with_record = || {
-            let mut params = params.clone();
-            params["data"]["record"] = record.clone();
-            notification("event", params)
-        };
+        // A wait needs the params alone; only a framed or plain sink needs a line.
+        let lines = st.events.subs.iter().any(|sub| matches!(sub.sink, Sink::Framed { .. } | Sink::Plain { .. }));
+        let plain = lines.then(|| notification("event", params.clone()));
+        let mut with_record = None;
         let mut subs = std::mem::take(&mut st.events.subs);
         subs.retain(|sub| {
             let (now, before) = (sub.filter.matches(record), was.is_some_and(|w| sub.filter.matches(w)));
             if (!now && !before) || (afar && sub.filter.here_only) {
                 return true;
             }
-            let line = if now && was.is_some() && !before { with_record() } else { plain.clone() };
             match &sub.sink {
                 Sink::Framed { conn, channel } => {
+                    let line = if now && was.is_some() && !before {
+                        with_record.get_or_insert_with(|| {
+                            let mut params = params.clone();
+                            params["data"]["record"] = record.clone();
+                            notification("event", params)
+                        })
+                    } else {
+                        plain.as_ref().expect("a framed sink needs a line")
+                    };
                     let fresh = || notification("missed", self.snapshot(st, &sub.filter));
                     conn.with(|out| {
                         if !out.data_lines(*channel, line.as_bytes()) {
@@ -154,14 +182,25 @@ impl Core {
                     });
                     true
                 }
-                Sink::Plain { tx, behind } => match tx.try_send(line) {
-                    Ok(()) => true,
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        behind.store(true, Ordering::SeqCst);
-                        true
+                Sink::Plain { tx, behind } => {
+                    let line = if now && was.is_some() && !before {
+                        with_record.get_or_insert_with(|| {
+                            let mut params = params.clone();
+                            params["data"]["record"] = record.clone();
+                            notification("event", params)
+                        })
+                    } else {
+                        plain.as_ref().expect("a plain sink needs a line")
+                    };
+                    match tx.try_send(line.clone()) {
+                        Ok(()) => true,
+                        Err(mpsc::error::TrySendError::Full(_)) => {
+                            behind.store(true, Ordering::SeqCst);
+                            true
+                        }
+                        Err(mpsc::error::TrySendError::Closed(_)) => false,
                     }
-                    Err(mpsc::error::TrySendError::Closed(_)) => false,
-                },
+                }
                 Sink::Waiter(tx) => tx.send(params.clone()).is_ok(),
             }
         });
@@ -209,4 +248,43 @@ impl Core {
 
 pub fn heartbeat_line(seq: u64) -> String {
     notification("heartbeat", json!({"seq": seq}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paths::Paths;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn an_event_with_no_subscriber_still_wakes_the_core() {
+        let root = std::env::temp_dir().join(format!("kom-events-{}", crate::platform::random_hex()));
+        let paths = Paths {
+            state: root.join("state"),
+            config: root.join("config.toml"),
+            socket: root.join("run/core.sock"),
+            holder_socket: root.join("run/core.holder.sock"),
+        };
+        paths.create_dirs().unwrap();
+        let core = Core::start(paths, crate::api::CoreInfo { id: "test".into(), name: "test".into() }).unwrap();
+        let id = {
+            let mut st = core.lock();
+            st.reg.create(crate::terminals::NewTerminal { argv: vec!["sh".into()], ..Default::default() }, 0).unwrap()
+        };
+        {
+            let changed = core.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let mut st = core.lock();
+                core.emit(&mut st, "title", id, json!({"title": "no one listens"}));
+            }
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), changed.as_mut()).await.is_ok(),
+                "a state change must wake the pump and waits even with no subscriber"
+            );
+        }
+        drop(core);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

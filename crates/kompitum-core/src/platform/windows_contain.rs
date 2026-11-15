@@ -1,34 +1,57 @@
 //! What `kom run --contain` adds on Windows: a COMSPEC that keeps shells hidden.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+
+type ShellKey = (PathBuf, u64, std::time::SystemTime);
+type ShellHashes = Mutex<HashMap<ShellKey, u64>>;
+
+/// The shell's hash by path, size and modification time: a kept terminal asks
+/// every second, and the file must not be read and hashed each time.
+static HASHED: OnceLock<ShellHashes> = OnceLock::new();
+#[cfg(test)]
+static READS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+fn missing_shell() -> io::Error {
+    io::Error::other("kompitum-shell.exe is missing beside kom, and a contained terminal needs it")
+}
+
+fn shell_hash(source: &Path) -> io::Result<u64> {
+    let missing = |e: io::Error| if e.kind() == io::ErrorKind::NotFound { missing_shell() } else { e };
+    let meta = std::fs::metadata(source).map_err(missing)?;
+    let key = (source.to_path_buf(), meta.len(), meta.modified()?);
+    let hashes = HASHED.get_or_init(Default::default);
+    if let Some(hash) = hashes.lock().unwrap_or_else(|p| p.into_inner()).get(&key) {
+        return Ok(*hash);
+    }
+    let bytes = std::fs::read(source).map_err(missing)?;
+    #[cfg(test)]
+    READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    let hash = hasher.finish();
+    hashes.lock().unwrap_or_else(|p| p.into_inner()).insert(key, hash);
+    Ok(hash)
+}
 
 /// What a contained terminal adds to its program's environment: on Windows, a
 /// COMSPEC that keeps shells hidden. An error means the terminal must not start.
 pub fn contain_env(state: &Path, env: &mut BTreeMap<String, String>) -> io::Result<()> {
     let source = std::env::current_exe()?.with_file_name("kompitum-shell.exe");
-    let bytes = match std::fs::read(&source) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            return Err(io::Error::other(
-                "kompitum-shell.exe is missing beside kom, and a contained terminal needs it",
-            ));
-        }
-        Err(e) => return Err(e),
-    };
     // A copy per build of the shell: a copy in use is never replaced, and a
     // new build gets a folder of its own.
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    let folder = state.join(format!("shell-{:016x}", hasher.finish()));
+    let folder = state.join(format!("shell-{:016x}", shell_hash(&source)?));
     // Its name must be cmd.exe: Node and others pass cmd's /d /s /c only to a
     // shell of that name.
     let shell = folder.join("cmd.exe");
     if !shell.is_file() {
         std::fs::create_dir_all(&folder)?;
         let staged = folder.join(format!("cmd.{}.exe", std::process::id()));
+        let bytes = std::fs::read(&source)
+            .map_err(|e| if e.kind() == io::ErrorKind::NotFound { missing_shell() } else { e })?;
         std::fs::write(&staged, &bytes)?;
         if let Err(e) = std::fs::rename(&staged, &shell) {
             let _ = std::fs::remove_file(&staged);
@@ -85,6 +108,26 @@ mod tests {
         point_comspec(&mut env, inner);
         assert_eq!(env["COMSPEC"], inner.display().to_string());
         assert_eq!(env["KOMPITUM_COMSPEC"], real);
+    }
+
+    #[test]
+    fn the_shell_is_hashed_once_per_file_version() {
+        let dir = std::env::temp_dir().join(format!("kom-shell-hash-{}", crate::platform::random_hex()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shell = dir.join("kompitum-shell.exe");
+        std::fs::write(&shell, b"first build").unwrap();
+        let first = shell_hash(&shell).unwrap();
+        let reads = READS.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(shell_hash(&shell).unwrap(), first);
+        assert_eq!(
+            READS.load(std::sync::atomic::Ordering::SeqCst),
+            reads,
+            "the same file and version is not read again"
+        );
+        std::fs::write(&shell, b"a different build").unwrap();
+        let second = shell_hash(&shell).unwrap();
+        assert_ne!(second, first, "a new build has a new hash");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

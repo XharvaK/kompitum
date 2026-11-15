@@ -60,6 +60,27 @@ impl Core {
             }
         };
         let base_env = crate::platform::program_env().await;
+        // Build each environment before taking the state lock: a contained
+        // terminal's shell is hashed and copied without holding the core up.
+        let pending: Vec<(u32, std::collections::BTreeMap<String, String>, bool)> = {
+            let st = self.lock();
+            st.reg
+                .terminals
+                .values()
+                .filter(|t| t.is_live() && t.keep && t.holder.is_none() && (startup || t.restart_after_ms <= now_ms()))
+                .map(|t| (t.id(), t.restart_env.clone(), t.contain))
+                .collect()
+        };
+        let mut ready: Vec<(u32, std::collections::BTreeMap<String, String>)> = Vec::new();
+        for (id, extra, contain) in pending {
+            let mut env = crate::api::child_env(base_env.clone(), extra);
+            if contain && let Err(e) = crate::platform::contain_env(&self.paths.state, &mut env) {
+                // Like a bad shell setting: leave it pending, and try again.
+                eprintln!("core: kept terminal {} waiting for its hidden shell: {e}", crate::terminals::address(id));
+                continue;
+            }
+            ready.push((id, env));
+        }
         let mut st = self.lock();
         if st.stopping
             || self.restart.load(Ordering::SeqCst)
@@ -68,25 +89,19 @@ impl Core {
         {
             return;
         }
-        let ids: Vec<u32> = st
-            .reg
-            .terminals
-            .values()
-            .filter(|t| t.is_live() && t.keep && t.holder.is_none() && (startup || t.restart_after_ms <= now_ms()))
-            .map(|t| t.id())
+        let now = now_ms();
+        let ids: Vec<(u32, std::collections::BTreeMap<String, String>)> = ready
+            .into_iter()
+            .filter(|(id, _)| {
+                st.reg.terminals.get(id).is_some_and(|t| {
+                    t.is_live() && t.keep && t.holder.is_none() && (startup || t.restart_after_ms <= now)
+                })
+            })
             .collect();
-        for id in ids {
+        for (id, env) in ids {
             let Some(holder) = st.current() else { break };
             let instance = holder.instance.clone();
             let t = st.reg.terminals.get_mut(&id).expect("pending");
-            let mut env = crate::api::child_env(base_env.clone(), t.restart_env.clone());
-            if t.contain
-                && let Err(e) = crate::platform::contain_env(&self.paths.state, &mut env)
-            {
-                // Like a bad shell setting: leave it pending, and try again.
-                eprintln!("core: kept terminal {} waiting for its hidden shell: {e}", t.address);
-                continue;
-            }
             let cwd = t
                 .last_cwd
                 .as_ref()

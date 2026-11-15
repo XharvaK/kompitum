@@ -926,6 +926,30 @@ fn line_lost(e: &RpcError) -> bool {
     e.message.starts_with("lost the line")
 }
 
+fn still_connecting(e: &RpcError) -> bool {
+    e.message.starts_with("still connecting to ")
+}
+
+/// Waits for the line to `m` to be past dialing. While it is still connecting,
+/// a `changed` notification wakes us; any other failure is the answer at once.
+async fn wait_for_line(core: &Core, m: &Machine, deadline: tokio::time::Instant) -> Result<(), RpcError> {
+    loop {
+        match line(core, m).await {
+            Ok(_) => return Ok(()),
+            Err(error) if still_connecting(&error) => {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(error);
+                }
+                let changed = core.changed.notified();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                let _ = tokio::time::timeout_at(deadline, changed).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 /// A wait there outlives a dropped line: once the line is back it waits
 /// again, until its own deadline. A run is found again by a label it was
 /// started with; its output is read once it is done.
@@ -946,9 +970,10 @@ async fn forward_waiting(core: &Core, m: &Machine, method: &str, mut params: Val
             return Err(first);
         }
         dialed(core, &m.id).await;
-        if line(core, m).await.is_err() {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            continue;
+        match wait_for_line(core, m, deadline).await {
+            Ok(()) => {}
+            Err(error) if still_connecting(&error) => return Err(first),
+            Err(error) => return Err(error),
         }
         if target.is_none()
             && let Some(mark) = &mark

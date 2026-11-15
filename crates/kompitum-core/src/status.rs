@@ -99,27 +99,37 @@ pub fn apply(t: &mut Terminal, r: &StatusReport) -> Change {
     let (was_working, was_word) = (working(t), word(t));
     let was = stuck(t).map(String::from);
     t.reported = true;
-    if r.state == "clear" {
+    let status = if r.state == "clear" {
         if r.id.is_empty() {
+            let changed = t.status.is_some() || !t.records.is_empty();
             t.status = None;
             t.records.clear();
+            changed
         } else {
+            let before = t.records.len();
             let child = format!("{}/", r.id);
             t.records.retain(|id, _| *id != r.id && !id.starts_with(&child));
+            t.records.len() != before
         }
     } else if r.id.is_empty() {
-        t.status = Some(Status::from(r));
+        let record = Status::from(r);
+        let changed = t.status.as_ref() != Some(&record);
+        t.status = Some(record);
+        changed
     } else {
+        let record = Status::from(r);
+        let changed = t.records.get(&r.id) != Some(&record);
         // Over the limit, the record updated longest ago goes (approximated by first id).
         if !t.records.contains_key(&r.id) && t.records.len() >= MAX_RECORDS - 1 {
             let oldest = t.records.keys().next().cloned().expect("non-empty");
             t.records.remove(&oldest);
         }
-        t.records.insert(r.id.clone(), Status::from(r));
-    }
+        t.records.insert(r.id.clone(), record);
+        changed
+    };
     stamp(t, was_word);
     Change {
-        status: true,
+        status,
         root_report: r.id.is_empty(),
         turn_ended: end_turn(t, was_working),
         stuck: stuck(t).is_some() && stuck(t) != was.as_deref(),
@@ -206,6 +216,19 @@ mod tests {
         t.status_ms = Some(1);
         reset(&mut t);
         assert!(t.status_ms > Some(1), "exiting clears the word");
+    }
+
+    #[test]
+    fn an_unchanged_report_is_not_a_status_change() {
+        let mut t = terminal();
+        assert!(apply(&mut t, &report("working", "")).status, "the first report is a change");
+        assert!(!apply(&mut t, &report("working", "")).status, "the same root record again is none");
+        assert!(apply(&mut t, &report("working", "build")).status, "a new child record is a change");
+        assert!(!apply(&mut t, &report("working", "build")).status, "the same child record again is none");
+        assert!(apply(&mut t, &report("clear", "build")).status, "clearing a child record is a change");
+        assert!(!apply(&mut t, &report("clear", "build")).status, "clearing it again is none");
+        assert!(apply(&mut t, &report("clear", "")).status, "clearing the root is a change");
+        assert!(!apply(&mut t, &report("clear", "")).status, "clearing it again is none");
     }
 
     #[test]

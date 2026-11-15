@@ -145,6 +145,7 @@ fn limit() -> Duration {
 
 /// What a stitched read captured: the rows (history, then the screen), how
 /// many of them are the screen, and whether it reached the top.
+#[derive(Default)]
 pub struct Capture {
     rows: Vec<String>,
     screen: usize,

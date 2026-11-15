@@ -366,6 +366,24 @@ pub(super) async fn task_get(core: Ctx<'_>, p: TaskParams) -> Result<TaskView, R
     })
 }
 
+/// The cheap facts `task.wait` compares before rebuilding every line: a task
+/// with the same state, turns and waiting word has the same wake.
+#[derive(Debug, PartialEq)]
+struct WaitVersion {
+    state: TaskState,
+    turns: usize,
+    waiting: Option<String>,
+}
+
+fn wait_version(task: &Task) -> WaitVersion {
+    WaitVersion { state: task.state, turns: task.turns.len(), waiting: task.waiting.clone() }
+}
+
+fn wait_versions(core: &Core, names: &[String]) -> Vec<Option<WaitVersion>> {
+    let tasks = core.tasks.tasks.lock().unwrap_or_else(|p| p.into_inner());
+    names.iter().map(|name| tasks.get(name).map(wait_version)).collect()
+}
+
 fn wait_snapshot(core: &Core, names: &[String], first: bool, while_stranded: bool) -> TaskWaitResult {
     let now = now_ms();
     let workers = workers::all(&core.tasks.workers());
@@ -396,18 +414,25 @@ pub(super) async fn task_wait(core: Ctx<'_>, p: TaskWaitParams) -> Result<TaskWa
         return Err(RpcError::invalid_params("timeout must be 0 to 300 seconds"));
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs_f64(limit);
+    let mut versions = None;
+    let mut built = false;
     loop {
         // Armed before the snapshot, so a change between the two is not missed.
         let notified = core.changed.notified();
         tokio::pin!(notified);
         notified.as_mut().enable();
-        let result = wait_snapshot(core.core, &p.tasks, p.first, p.while_stranded);
-        if result.over {
-            return Ok(result);
+        let now = wait_versions(core.core, &p.tasks);
+        if !built || versions.as_ref() != Some(&now) {
+            let result = wait_snapshot(core.core, &p.tasks, p.first, p.while_stranded);
+            if result.over {
+                return Ok(result);
+            }
+            versions = Some(now);
+            built = true;
         }
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
-            return Ok(result);
+            return Ok(wait_snapshot(core.core, &p.tasks, p.first, p.while_stranded));
         }
         let _ = tokio::time::timeout(remaining, notified).await;
     }
@@ -646,4 +671,26 @@ pub(super) async fn workers_set(core: Ctx<'_>, p: WorkersSetParams) -> Result<Wo
     // A stranded task must hear about a cleared block at once, not at the next pass.
     core.changed.notify_waiters();
     Ok(workers_view(core.core))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wait_version_moves_with_state_turns_and_the_waiting_word_only() {
+        let mut task = Task::default();
+        let first = wait_version(&task);
+        assert_eq!(first, wait_version(&task));
+        task.warnings.push("not part of the wake's version".into());
+        assert_eq!(first, wait_version(&task), "warnings alone do not rebuild a line");
+        task.waiting = Some("waiting for a start slot".into());
+        assert_ne!(first, wait_version(&task));
+        let waiting = wait_version(&task);
+        task.turns.push(Default::default());
+        assert_ne!(waiting, wait_version(&task));
+        let turns = wait_version(&task);
+        task.state = TaskState::Running;
+        assert_ne!(turns, wait_version(&task));
+    }
 }

@@ -472,6 +472,66 @@ fn the_app_document_saved_before_the_rename_loads_under_the_new_name() {
     assert_eq!(both.get(old).map(|d| d.version), Some(3), "the old one stays beside it");
 }
 
+#[test]
+fn removing_a_terminal_forgets_everything_kept_for_it() {
+    let (core, root) = test_core();
+    let (id, other) = {
+        let mut st = core.lock();
+        let id = st
+            .reg
+            .create(crate::terminals::NewTerminal { argv: vec!["sh".into()], ..Default::default() }, now_ms())
+            .unwrap();
+        let other = st
+            .reg
+            .create(crate::terminals::NewTerminal { argv: vec!["sh".into()], ..Default::default() }, now_ms())
+            .unwrap();
+        for id in [id, other] {
+            st.reg.finish(id, Some(0), None, "exited", now_ms());
+            st.gates.insert(id, Default::default());
+            st.queues.insert(id, Arc::new(Default::default()));
+            st.foreground.insert(id, Vec::new());
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            st.output_watch.insert(id, vec![tx]);
+            st.last_send.insert(("caller".into(), id), 1);
+            st.waiting.insert(("caller".into(), id), 1);
+            st.messages.insert(id, Some("caller".into()));
+            st.last_output.insert(id, Instant::now());
+            st.output_seq.insert(id, 3);
+            st.stitching.insert(id);
+            st.stitched.insert(id, (3, crate::stitch::Capture::default()));
+            st.held_notes.insert(id, vec!["hello".into()]);
+        }
+        (id, other)
+    };
+    {
+        let mut st = core.lock();
+        core.remove(&mut st, id);
+    }
+    let st = core.lock();
+    assert!(!st.reg.terminals.contains_key(&id));
+    assert!(st.reg.terminals.contains_key(&other), "another terminal keeps its entries");
+    for entries in [
+        st.gates.contains_key(&id),
+        st.queues.contains_key(&id),
+        st.foreground.contains_key(&id),
+        st.output_watch.contains_key(&id),
+        st.last_output.contains_key(&id),
+        st.output_seq.contains_key(&id),
+        st.stitching.contains(&id),
+        st.stitched.contains_key(&id),
+        st.messages.contains_key(&id),
+        st.held_notes.contains_key(&id),
+        st.last_send.keys().any(|(_, terminal)| *terminal == id),
+        st.waiting.keys().any(|(_, terminal)| *terminal == id),
+    ] {
+        assert!(!entries, "an entry for the removed terminal is still kept");
+    }
+    assert!(st.gates.contains_key(&other) && st.output_watch.contains_key(&other), "the other terminal's entries stay");
+    drop(st);
+    drop(core);
+    remove_root(&root);
+}
+
 /// Holder threads can keep the core, and so its registry writer, alive a
 /// moment after the test drops it: a last snapshot may still land.
 fn remove_root(root: impl AsRef<std::path::Path>) {

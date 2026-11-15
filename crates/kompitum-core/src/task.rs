@@ -36,7 +36,7 @@ use crate::task::decide::{Step, TerminalNow};
 use crate::task::opencode::RouteCheck;
 use crate::task::types::{Beat, ChangedFile, Ending, Task, TaskLine, TaskState, Turn};
 use crate::task::worker::{Cli, TurnOutcome, Worker};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -254,39 +254,145 @@ pub async fn supervise(core: Arc<Core>) {
     }
 }
 
+/// One pump pass's inputs, read once: the tasks as the pass began, the config,
+/// and each worker's prefix. Nothing here is re-read per task.
+struct Pass<'a> {
+    tasks: &'a [Task],
+    config: crate::config::Config,
+    config_error: Option<RpcError>,
+    prefixes: std::sync::Mutex<BTreeMap<String, Result<Vec<String>, RpcError>>>,
+    #[cfg(test)]
+    prefix_calls: std::sync::atomic::AtomicUsize,
+}
+
+impl<'a> Pass<'a> {
+    fn new(tasks: &'a [Task], loaded: Result<crate::config::Config, RpcError>) -> Pass<'a> {
+        let (config, config_error) = match loaded {
+            Ok(config) => (config, None),
+            Err(error) => (crate::config::Config::default(), Some(error)),
+        };
+        Pass {
+            tasks,
+            config,
+            config_error,
+            prefixes: std::sync::Mutex::new(BTreeMap::new()),
+            #[cfg(test)]
+            prefix_calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    /// The same config and cached prefixes, with the snapshot the pass will use.
+    fn rebind<'b>(self, tasks: &'b [Task]) -> Pass<'b> {
+        Pass {
+            tasks,
+            config: self.config,
+            config_error: self.config_error,
+            prefixes: self.prefixes,
+            #[cfg(test)]
+            prefix_calls: self.prefix_calls,
+        }
+    }
+
+    fn tasks_in(&self, state: TaskState) -> Vec<Task> {
+        self.tasks.iter().filter(|task| task.state == state).cloned().collect()
+    }
+
+    fn prefix(&self, worker: &Worker) -> Result<Vec<String>, RpcError> {
+        let prefixes = self.prefixes.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(prefix) = prefixes.get(worker.key()) {
+            return prefix.clone();
+        }
+        drop(prefixes);
+        #[cfg(test)]
+        self.prefix_calls.fetch_add(1, Ordering::SeqCst);
+        let prefix = worker::prefix(worker, &self.config);
+        self.prefixes.lock().unwrap_or_else(|p| p.into_inner()).insert(worker.key().into(), prefix.clone());
+        prefix
+    }
+
+    fn installed(&self, worker: &Worker) -> bool {
+        self.prefix(worker).is_ok()
+    }
+}
+
+type VersionChecks = BTreeMap<String, Result<(), RpcError>>;
+
+/// OpenCode's version check, before the serializing lock: a slow `--version`
+/// delays this pass, never another task's changes.
+async fn check_opencode_versions(core: &Core, pass: &Pass<'_>) -> VersionChecks {
+    let mut checks = VersionChecks::new();
+    if pass.config_error.is_some() {
+        return checks;
+    }
+    let file = core.tasks.workers();
+    let now = now_ms();
+    // Only a worker a queued task could start this pass is worth checking: a
+    // blocked one is not picked, and its turn must not wait on a version.
+    let mut wanted = BTreeSet::new();
+    for task in pass.tasks.iter().filter(|task| task.state == TaskState::Queued) {
+        let chain: Vec<Worker> = task.chain.iter().filter_map(|key| workers::find(&file, key).ok()).collect();
+        let chain = if chain.is_empty() { workers::chain_for(&file, "auto").unwrap_or_default() } else { chain };
+        for worker in chain {
+            let blocked = file.blocks.get(worker.key()).is_some_and(|block| block.until_ms > now);
+            if worker.cli == Cli::Opencode && !blocked {
+                wanted.insert(worker.key().to_string());
+            }
+        }
+    }
+    for key in wanted {
+        let Ok(worker) = workers::find(&file, &key) else { continue };
+        let Ok(prefix) = pass.prefix(&worker) else { continue };
+        checks.insert(key, worker::check_version(&prefix).await);
+    }
+    checks
+}
+
 /// One pass: end what ended, cut what ran too long, start what may start.
 pub async fn pump(core: Arc<Core>) {
+    // Load the pass's config and preflight a planned snapshot before the
+    // serializing lock; the pass itself reads the tasks once it holds it.
+    let planning = core.tasks.all();
+    let loaded = if planning.iter().any(|task| matches!(task.state, TaskState::Queued | TaskState::Stranded)) {
+        crate::config::load(&core.paths.config)
+    } else {
+        Ok(crate::config::Config::default())
+    };
+    let pass = Pass::new(&planning, loaded);
+    let checks = if planning.iter().any(|task| task.state == TaskState::Queued) {
+        check_opencode_versions(&core, &pass).await
+    } else {
+        VersionChecks::new()
+    };
     let _serial = core.tasks.lock.lock().await;
     if stopping(&core) {
         return;
     }
-    let running: Vec<Task> = core.tasks.all().into_iter().filter(|task| task.state == TaskState::Running).collect();
-    for task in running {
+    let tasks = core.tasks.all();
+    let pass = pass.rebind(&tasks);
+    for task in pass.tasks_in(TaskState::Running) {
         pump_running(&core, task).await;
         if stopping(&core) {
             return;
         }
     }
-    let checking: Vec<Task> = core.tasks.all().into_iter().filter(|task| task.state == TaskState::Checking).collect();
-    for task in checking {
+    for task in pass.tasks_in(TaskState::Checking) {
         checking::pump_checking(&core, task).await;
         if stopping(&core) {
             return;
         }
     }
-    let mut stranded: Vec<Task> =
-        core.tasks.all().into_iter().filter(|task| task.state == TaskState::Stranded).collect();
+    let mut stranded = pass.tasks_in(TaskState::Stranded);
     stranded.sort_by_key(|task| task.seq);
     for task in stranded {
-        pump_stranded(&core, task).await;
+        pump_stranded(&core, task, &pass).await;
         if stopping(&core) {
             return;
         }
     }
-    let mut queued: Vec<Task> = core.tasks.all().into_iter().filter(|task| task.state == TaskState::Queued).collect();
+    let mut queued = pass.tasks_in(TaskState::Queued);
     queued.sort_by_key(|task| task.seq);
     for task in queued {
-        pump_queued(&core, task).await;
+        pump_queued(&core, task, &pass, &checks).await;
         if stopping(&core) {
             return;
         }
@@ -295,13 +401,12 @@ pub async fn pump(core: Arc<Core>) {
 
 /// A stranded task asks again on every pass: a worker whose block lapsed, or
 /// whose block a person cleared, puts it back in the queue.
-async fn pump_stranded(core: &Arc<Core>, task: Task) {
-    if stopping(core) {
+async fn pump_stranded(core: &Arc<Core>, task: Task, pass: &Pass<'_>) {
+    if stopping(core) || pass.config_error.is_some() {
         return;
     }
-    let Ok(config) = crate::config::load(&core.paths.config) else { return };
     let file = core.tasks.workers();
-    let installed = |worker: &Worker| worker::prefix(worker, &config).is_ok();
+    let installed = |worker: &Worker| pass.installed(worker);
     let chain: Vec<Worker> = task.chain.iter().filter_map(|key| workers::find(&file, key).ok()).collect();
     let chain = if chain.is_empty() { workers::chain_for(&file, "auto").unwrap_or_default() } else { chain };
     let now = now_ms();
@@ -344,13 +449,12 @@ async fn pump_running(core: &Arc<Core>, task: Task) {
     }
 }
 
-async fn pump_queued(core: &Arc<Core>, task: Task) {
+async fn pump_queued(core: &Arc<Core>, task: Task, pass: &Pass<'_>, checks: &VersionChecks) {
     if stopping(core) {
         return;
     }
-    let others = core.tasks.all();
-    let others: Vec<&Task> = others.iter().filter(|other| other.name != task.name).collect();
-    match decide::may_start(&task, &others, core.settings().cap()) {
+    let others: Vec<&Task> = pass.tasks.iter().filter(|other| other.name != task.name).collect();
+    match decide::may_start(&task, &others, pass.config.cap()) {
         Err(waiting) => {
             if task.waiting.as_deref() != Some(waiting.as_str()) {
                 update(core, &task.name, |task| task.waiting = Some(waiting));
@@ -358,13 +462,12 @@ async fn pump_queued(core: &Arc<Core>, task: Task) {
             }
         }
         Ok(()) => {
+            if let Some(error) = &pass.config_error {
+                return fail_start(core, &task, error.clone()).await;
+            }
             let now = now_ms();
-            let config = match crate::config::load(&core.paths.config) {
-                Ok(config) => config,
-                Err(error) => return fail_start(core, &task, error).await,
-            };
             let file = core.tasks.workers();
-            let installed = |worker: &Worker| worker::prefix(worker, &config).is_ok();
+            let installed = |worker: &Worker| pass.installed(worker);
             let chain: Vec<Worker> = task.chain.iter().filter_map(|key| workers::find(&file, key).ok()).collect();
             let chain = if chain.is_empty() { workers::chain_for(&file, "auto").unwrap_or_default() } else { chain };
             // A follow-up stays with the worker that did the work, while it can.
@@ -392,6 +495,22 @@ async fn pump_queued(core: &Arc<Core>, task: Task) {
                     return fail_start(core, &task, error).await;
                 }
             };
+            let prefix = match pass.prefix(&worker) {
+                Ok(prefix) => prefix,
+                Err(error) => return fail_start(core, &task, error).await,
+            };
+            if worker.cli == Cli::Opencode {
+                match checks.get(worker.key()) {
+                    Some(Ok(())) => {}
+                    Some(Err(error)) => return fail_start(core, &task, error.clone()).await,
+                    // A worker added after the pass's check: fail rather than hold the queue.
+                    None => {
+                        if let Err(error) = worker::check_version(&prefix).await {
+                            return fail_start(core, &task, error).await;
+                        }
+                    }
+                }
+            }
             let last = *core.tasks.last_start_ms.lock().unwrap_or_else(|p| p.into_inner());
             if let Err(waiting) = decide::start_slot(last, now) {
                 if task.waiting.as_deref() != Some(waiting.as_str()) {
@@ -400,7 +519,7 @@ async fn pump_queued(core: &Arc<Core>, task: Task) {
                 }
                 return;
             }
-            match start_task(core, &task, worker).await {
+            match start_task(core, &task, worker, &prefix).await {
                 Ok(()) => *core.tasks.last_start_ms.lock().unwrap_or_else(|p| p.into_inner()) = Some(now_ms()),
                 Err(error) => fail_start(core, &task, error).await,
             }
@@ -451,6 +570,25 @@ fn read_tail(path: &Path, max: usize) -> String {
     String::from_utf8_lossy(&bytes[start..]).into_owned()
 }
 
+/// What a blocked read's panic said, in words.
+fn panic_words(error: tokio::task::JoinError) -> String {
+    if error.is_cancelled() {
+        return "the read was cancelled".into();
+    }
+    let payload = error.into_panic();
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        (*text).to_string()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        "the read stopped unexpectedly".into()
+    }
+}
+
+fn unreadable_turn(error: tokio::task::JoinError) -> String {
+    format!("the core could not read this turn's output: {}", panic_words(error))
+}
+
 /// The turn ended: read what it wrote, judge it, keep the diff and the result.
 async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&TerminalNow>) {
     if stopping(core) {
@@ -473,7 +611,7 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         .map(|turn| (turn.session.clone(), turn.usage.cost_usd, turn.usage.clone()))
         .collect();
     let resumes = task.turns[index].resumes.clone();
-    let (outcome, warning, route, stderr_tail) = tokio::task::spawn_blocking(move || {
+    let read = tokio::task::spawn_blocking(move || {
         let mut outcome = match std::fs::read(&path) {
             Ok(bytes) => TurnOutcome::from_bytes(cli, &bytes),
             Err(_) => TurnOutcome::default(),
@@ -514,8 +652,16 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         let route = std::fs::read(&route_path).ok().and_then(|bytes| serde_json::from_slice::<RouteCheck>(&bytes).ok());
         (outcome, warning, route, read_tail(&err_path, 8 * 1024))
     })
-    .await
-    .unwrap_or_default();
+    .await;
+    let (outcome, warning, route, stderr_tail) = match read {
+        Ok(read) => read,
+        Err(error) => {
+            // A panic here is the core's failure to read, never the worker's
+            // turn being empty: keep the turn's file and say what happened.
+            finish_with_error(core, &task, &unreadable_turn(error));
+            return;
+        }
+    };
     let code = terminal.and_then(|terminal| terminal.exit_code).or_else(|| read_exit(&core.paths.state, name, n));
     let ended = now_ms();
     let offset = crate::platform::utc_offset_minutes();
@@ -784,16 +930,10 @@ fn read_turn_file(folder: &Path, n: u32, kind: &str) -> Result<Option<Vec<u8>>, 
     }
 }
 
-async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(), RpcError> {
+async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker, prefix: &[String]) -> Result<(), RpcError> {
     let mut task = task.clone();
     let n = next_turn(&task);
     let all_workers = worker_list(core);
-    let config = crate::config::load(&core.paths.config)?;
-    let prefix = worker::prefix(&worker, &config)?;
-    // The version check is OpenCode's alone.
-    if worker.cli == Cli::Opencode {
-        worker::check_version(&prefix).await?;
-    }
     let folder = task_folder(&core.paths.state, &task.name);
     std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
     let brief = std::fs::read_to_string(folder.join("brief.md"))
@@ -859,7 +999,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker) -> Result<(),
     };
     let prepared = setup::prepare(core, &task, &worker, &worktree, n).await?;
     let command =
-        worker::turn_command(&worker, &prefix, &task.name, &prompt_path.display().to_string(), resume.as_deref());
+        worker::turn_command(&worker, prefix, &task.name, &prompt_path.display().to_string(), resume.as_deref());
     let exe = std::env::current_exe().map_err(|e| unavailable(format!("cannot find this kom: {e}")))?;
     let mut argv = vec![
         exe.display().to_string(),
@@ -1125,4 +1265,53 @@ pub async fn discard(
     replace(core, task);
     core.changed.notify_waiters();
     Ok((TaskState::Discarded, removal.removed, removal.left))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pass_answers_each_worker_prefix_once() {
+        let config = crate::config::Config {
+            workers: Some(crate::config::WorkersConfig {
+                opencode: Some(vec![std::env::current_exe().unwrap().display().to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let pass = Pass::new(&[], Ok(config));
+        let worker = Worker { key: "go".into(), label: "go".into(), cli: Cli::Opencode, route: "r".into() };
+        assert!(pass.installed(&worker));
+        assert_eq!(pass.prefix_calls.load(Ordering::SeqCst), 1);
+        assert!(pass.installed(&worker));
+        assert_eq!(pass.prefix_calls.load(Ordering::SeqCst), 1, "the second answer comes from the pass's cache");
+    }
+
+    #[test]
+    fn a_pass_selects_each_state_from_its_one_snapshot() {
+        let tasks = vec![
+            Task { name: "q".into(), state: TaskState::Queued, ..Default::default() },
+            Task { name: "r".into(), state: TaskState::Running, ..Default::default() },
+        ];
+        let pass = Pass::new(&tasks, Ok(crate::config::Config::default()));
+        let names = |state| pass.tasks_in(state).into_iter().map(|task| task.name).collect::<Vec<_>>();
+        assert_eq!(names(TaskState::Queued), ["q"]);
+        assert_eq!(names(TaskState::Running), ["r"]);
+        assert!(names(TaskState::Stranded).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_panic_reading_a_turn_is_reported_as_the_core_failing_to_read_it() {
+        let error = match tokio::task::spawn_blocking(|| panic!("the record vanished mid-read")).await {
+            Err(error) => error,
+            Ok(_) => panic!("the read was expected to panic"),
+        };
+        let words = unreadable_turn(error);
+        assert_eq!(words, "the core could not read this turn's output: the record vanished mid-read");
+        assert!(
+            !words.contains("worker produced no final text"),
+            "the worker was blamed for the core's own failure: {words}"
+        );
+    }
 }

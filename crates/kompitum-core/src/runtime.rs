@@ -784,6 +784,20 @@ impl Core {
         // fell behind must not bring it back.
         let Some(was) = st.reg.terminals.remove(&id) else { return };
         self.emit_from(st, "removed", id, serde_json::json!({}), Some(&was));
+        // Everything kept for this terminal goes with its record, not at the
+        // core's exit: an id is never handed out again.
+        st.gates.remove(&id);
+        st.queues.remove(&id);
+        st.foreground.remove(&id);
+        st.output_watch.remove(&id);
+        st.last_output.remove(&id);
+        st.output_seq.remove(&id);
+        st.stitching.remove(&id);
+        st.stitched.remove(&id);
+        st.messages.remove(&id);
+        st.held_notes.remove(&id);
+        st.last_send.retain(|(_, terminal), _| *terminal != id);
+        st.waiting.retain(|(_, terminal), _| *terminal != id);
         let _ = std::fs::remove_file(self.snapshot_path(id));
         let _ = std::fs::remove_dir_all(crate::put::dir(&self.paths.state, id));
         self.save(st);

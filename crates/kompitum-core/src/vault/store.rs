@@ -482,6 +482,8 @@ pub(super) fn written(root: &Path, path: String, result: git::GitResult, verb: &
     let (unpushed, push_problem) = git::unpushed_under_lock(root);
     let mut said = if result.ok {
         format!("{verb} {path}. {}", result.output)
+    } else if result.rolled_back {
+        result.error
     } else {
         format!("{verb} {path}, but: {}", result.error)
     };
@@ -658,6 +660,30 @@ mod tests {
         assert!(!written.said.to_lowercase().contains("unstaged"), "{}", written.said);
         let marks = std::fs::read_to_string(clone.join("opus").join("reads.jsonl")).unwrap();
         assert_eq!(marks.lines().filter(|line| line.contains("manager/to/opus/a.md")).count(), 1);
+        assert!(git::status_paths(&clone).is_empty(), "the vault is left clean: {:?}", git::status_paths(&clone));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_post_whose_commit_fails_undoes_its_write_and_says_so() {
+        let (root, clone, _) = vault_with_a_note("post-rollback");
+        let vault = Vault { root: clone.clone(), agent: "opus".into() };
+        command(&clone, &["config", "commit.gpgsign", "true"]);
+        let missing = clone.join("missing-gpg").display().to_string();
+        command(&clone, &["config", "gpg.program", &missing]);
+        let written = vault
+            .post(Post {
+                to: "manager".into(),
+                kind: "report".into(),
+                title: "Back".into(),
+                body: "Done.".into(),
+                ..Post::default()
+            })
+            .expect("a post answers in words, even when its commit fails");
+        assert!(!written.pushed);
+        assert!(written.said.contains("nothing was written"), "{}", written.said);
+        assert!(written.said.contains(&written.path), "{}", written.said);
+        assert!(!clone.join(&written.path).exists(), "the note was left behind");
         assert!(git::status_paths(&clone).is_empty(), "the vault is left clean: {:?}", git::status_paths(&clone));
         std::fs::remove_dir_all(root).unwrap();
     }
