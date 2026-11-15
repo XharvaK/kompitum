@@ -798,12 +798,17 @@ thread_local! {
     static SHOWN_COPIES: RefCell<std::collections::HashSet<u64>> = RefCell::new(std::collections::HashSet::new());
     static LIVE_READS: RefCell<HashMap<u64, Weak<RefCell<LiveReads>>>> = RefCell::new(HashMap::new());
     static REVISIONS: RefCell<HashMap<&'static str, u64>> = RefCell::new(HashMap::new());
+    /// The converted values `theme()` and `settings()` hand out, with the copies they came from.
+    static THEME_HOST: RefCell<Option<(Rc<crate::settings::Theme>, HostValue)>> = const { RefCell::new(None) };
+    static SETTINGS_HOST: RefCell<Option<(Rc<crate::settings::Settings>, HostValue)>> = const { RefCell::new(None) };
     static COPY_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     static OVERLAY_SEQ: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 pub struct Snapshot {
     pub layout: Value,
+    /// The layout names in layouts/ (main first), kept by the window.
+    pub layouts: Value,
     pub spaces: Value,
     pub machines: Value,
     pub agents: Value,
@@ -826,6 +831,7 @@ impl Default for Snapshot {
     fn default() -> Self {
         Snapshot {
             layout: Value::Null,
+            layouts: json!([]),
             spaces: json!([]),
             machines: json!([]),
             agents: json!([]),
@@ -856,6 +862,11 @@ pub fn publish_layout(layout: &Node) -> bool {
     let v = serde_json::to_value(layout).unwrap_or(Value::Null);
     publish("layout", |s| {
         (std::mem::replace(&mut s.layout, v.clone()), v)
+    })
+}
+pub fn publish_layouts(v: Value) -> bool {
+    publish("layouts", |s| {
+        (std::mem::replace(&mut s.layouts, v.clone()), v)
     })
 }
 pub fn publish_machines(v: Value) -> bool {
@@ -1049,6 +1060,49 @@ pub fn from_host(v: &HostValue) -> Value {
     }
 }
 
+#[cfg(test)]
+static HOST_CONVERSIONS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+fn host_conversions() -> usize {
+    HOST_CONVERSIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The resolved theme as a mod reads it, converted again only when the theme changes.
+fn theme_host() -> HostValue {
+    let theme = crate::settings::theme();
+    THEME_HOST.with_borrow_mut(|cache| {
+        if let Some((cached, value)) = cache
+            && Rc::ptr_eq(cached, &theme)
+        {
+            return value.clone();
+        }
+        let value = to_host(&serde_json::to_value(&*theme).unwrap_or(Value::Null));
+        #[cfg(test)]
+        HOST_CONVERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *cache = Some((theme, value.clone()));
+        value
+    })
+}
+
+/// The settings as a mod reads them, converted again only when they change.
+fn settings_host() -> HostValue {
+    let settings = crate::settings::get();
+    SETTINGS_HOST.with_borrow_mut(|cache| {
+        if let Some((cached, value)) = cache
+            && Rc::ptr_eq(cached, &settings)
+        {
+            return value.clone();
+        }
+        let value = to_host(&serde_json::to_value(&*settings).unwrap_or(Value::Null));
+        #[cfg(test)]
+        HOST_CONVERSIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        *cache = Some((settings, value.clone()));
+        value
+    })
+}
+
 pub const DECLARATIONS: &str = include_str!("../defaults/kompitum.d.ts");
 
 fn strings(v: Option<&HostValue>) -> Vec<String> {
@@ -1211,9 +1265,9 @@ pub fn run_here(command: &str, args: &[String]) -> Option<String> {
 /// The folder a relative path in `listDir` starts from: the lead's folder, as `leadCommands` uses,
 /// or the person's home when none is saved.
 fn lead_folder(home: PathBuf) -> PathBuf {
-    crate::settings::load_person()
-        .ok()
-        .and_then(|person| person.lead)
+    crate::settings::get()
+        .lead
+        .clone()
         .and_then(|lead| lead.folder)
         .filter(|folder| !folder.trim().is_empty())
         .map(PathBuf::from)
@@ -1757,20 +1811,19 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
                 };
                 REVISIONS.with_borrow(|r| reads.borrow_mut().record("lead_items", r));
                 let items = SNAPSHOT.with(|s| {
-                    s.borrow()
-                        .lead_items
-                        .get(&terminal)
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default()
+                    let s = s.borrow();
+                    let Some(items) = s.lead_items.get(&terminal).and_then(Value::as_array) else {
+                        return HostValue::Array(Vec::new());
+                    };
+                    let from = from.min(items.len());
+                    HostValue::Array(items[from..].iter().map(to_host).collect())
                 });
-                let from = from.min(items.len());
-                Ok(to_host(&Value::Array(items[from..].to_vec())))
+                Ok(items)
             }
         })
         .function("focused", reader(reads.clone(), "focused", |s| &s.focused))
         .function("layout", reader(reads.clone(), "layout", |s| &s.layout))
-        .function("layouts", |_| Ok(to_host(&json!(crate::window::layout_names()))))
+        .function("layouts", reader(reads.clone(), "layouts", |s| &s.layouts))
         .function("commands", |_| {
             let list: Vec<Value> = crate::commands::COMMANDS
                 .iter()
@@ -1782,8 +1835,8 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
             Ok(to_host(&Value::Array(list)))
         })
         .function("window", reader(reads.clone(), "window", |s| &s.window))
-        .function("theme", |_| Ok(to_host(&serde_json::to_value(&*crate::settings::theme()).unwrap_or(Value::Null))))
-        .function("settings", |_| Ok(to_host(&serde_json::to_value(&*crate::settings::get()).unwrap_or(Value::Null))))
+        .function("theme", |_| Ok(theme_host()))
+        .function("settings", |_| Ok(settings_host()))
         .function("keys", |_| {
             let list: Vec<Value> = crate::keys::listing().into_iter().map(|(s, k, a)| json!({ "section": s, "keys": k, "action": a })).collect();
             Ok(to_host(&Value::Array(list)))
@@ -2261,6 +2314,42 @@ mod tests {
                 empty.call("conversation", &gpui_shell::HostArguments::new([])).unwrap().as_array().map(|a| a.len()),
                 Some(0)
             );
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn theme_and_settings_hand_out_a_cached_value_until_they_change() {
+        std::thread::spawn(|| {
+            let host = module(
+                Instance {
+                    name: "board".into(),
+                    props: Value::Null,
+                },
+                8,
+            );
+            let arguments = gpui_shell::HostArguments::new([]);
+            let original = crate::settings::get();
+            let theme = host.call("theme", &arguments).unwrap();
+            assert_eq!(host.call("theme", &arguments).unwrap(), theme);
+            let settings = host.call("settings", &arguments).unwrap();
+            assert_eq!(host.call("settings", &arguments).unwrap(), settings);
+            let before = host_conversions();
+            assert_eq!(host.call("theme", &arguments).unwrap(), theme);
+            assert_eq!(host.call("settings", &arguments).unwrap(), settings);
+            assert_eq!(
+                host_conversions(),
+                before,
+                "an unchanged theme and settings are not converted again"
+            );
+            let mut changed = (*original).clone();
+            changed.zoom = 1.25;
+            crate::settings::set(changed);
+            let changed = host.call("settings", &arguments).unwrap();
+            assert_eq!(changed.get("zoom").and_then(HostValue::as_number), Some(1.25));
+            assert!(host_conversions() > before, "changed settings are rebuilt");
+            crate::settings::set((*original).clone());
         })
         .join()
         .unwrap();

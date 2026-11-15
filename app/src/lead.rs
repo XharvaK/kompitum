@@ -16,8 +16,8 @@ pub mod conversation;
 mod upkeep;
 pub use upkeep::*;
 pub use conversation::{
-    Conversation, Event, Item, Reveal, TerminalVis, event_from_hook, fold, is_compact_command,
-    items_from_transcript, reveal_after_auth_status,
+    Conversation, Event, Item, Reveal, TerminalVis, TranscriptLoad, event_from_hook, fold,
+    is_compact_command, items_from_transcript, reveal_after_auth_status,
 };
 
 /// The compaction window each Claude terminal the app starts gets
@@ -679,6 +679,9 @@ pub struct Session {
     /// SessionStart). Not saved: a new window reads it again once.
     #[serde(skip)]
     pub history_read: bool,
+    /// Which transcript read is the newest for this session; an older one that arrives late is dropped.
+    #[serde(skip)]
+    pub history_generation: u64,
     /// Whether this window has seen the lead's SessionStart. Not saved.
     #[serde(skip)]
     pub started: bool,
@@ -787,26 +790,53 @@ pub fn apply_hook_event(session: &mut Session, event: &str, input: &Value) -> bo
     true
 }
 
-/// Reads the SessionStart transcript into the same items `fold` builds.
-/// Returns how many unknown line types were skipped. A missing path, or a session whose transcript
-/// isn't written yet, is no history at all; a file that is there but can't be read is a notice.
-pub fn apply_transcript_path(session: &mut Session, path: Option<&str>) -> u32 {
+/// What reading a lead's transcript found, ready to fold on the UI thread.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TranscriptRead {
+    Loaded(TranscriptLoad),
+    /// No path, or a transcript Claude hasn't written yet: no history at all.
+    Missing,
+    /// A file that is there but can't be read: a notice.
+    Unread,
+}
+
+/// Reads and parses a transcript; no session and no UI thread.
+pub fn read_transcript(path: Option<&str>) -> TranscriptRead {
     let Some(path) = path.map(str::trim).filter(|path| !path.is_empty()) else {
-        return 0;
+        return TranscriptRead::Missing;
     };
-    let (event, skipped, tasks) = match std::fs::read_to_string(path) {
-        Ok(text) => {
-            let loaded = items_from_transcript(&text);
-            (Event::History { items: loaded.items }, loaded.skipped, Some(loaded.tasks))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return 0,
-        Err(_) => (Event::HistoryUnread, 0, None),
+    match std::fs::read_to_string(path) {
+        Ok(text) => TranscriptRead::Loaded(items_from_transcript(&text)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => TranscriptRead::Missing,
+        Err(_) => TranscriptRead::Unread,
+    }
+}
+
+/// Folds a transcript read into the conversation; returns how many unknown line types were skipped.
+pub fn apply_history(session: &mut Session, read: TranscriptRead) -> u32 {
+    let (event, skipped, tasks) = match read {
+        TranscriptRead::Loaded(loaded) => (
+            Event::History {
+                items: loaded.items,
+            },
+            loaded.skipped,
+            Some(loaded.tasks),
+        ),
+        TranscriptRead::Missing => return 0,
+        TranscriptRead::Unread => (Event::HistoryUnread, 0, None),
     };
     session.conversation = fold(std::mem::take(&mut session.conversation), &event);
     if let Some(tasks) = tasks {
         session.conversation.tasks = tasks;
     }
     skipped
+}
+
+/// Reads the SessionStart transcript into the same items `fold` builds.
+/// Returns how many unknown line types were skipped.
+#[cfg(test)]
+pub fn apply_transcript_path(session: &mut Session, path: Option<&str>) -> u32 {
+    apply_history(session, read_transcript(path))
 }
 
 /// A check around the lead's start failed: the panel says so in plain words. A lead that hasn't
