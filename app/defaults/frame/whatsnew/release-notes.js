@@ -11,8 +11,8 @@ export function versionHeader(t, note) {
   const date = year && months[Number(month) - 1] && Number(day)
     ? `${months[Number(month) - 1]} ${Number(day)}` : note.date;
   return h_flex().gap(10).items_center()
-    .child(div().text_size(13).font_medium().text_color(t.muted).child(note.version))
-    .child(div().text_size(12).text_color(t.dim).child(date));
+    .child(div().text_size(14).font_medium().text_color(t.muted).child(note.version))
+    .child(div().text_size(13).text_color(t.dim).child(date));
 }
 
 export function releaseItems(t, note, { collapsed = false, width = 0, onSizeChange } = {}) {
@@ -26,16 +26,16 @@ export function releaseItems(t, note, { collapsed = false, width = 0, onSizeChan
       card.child(image(media.path).w_full().h(Math.max(1, mediaWidth - 2) * media.height / media.width).flex_none());
     }
     const text = v_flex().p(collapsed ? 10 : 14).gap(5);
-    if (item.headline) text.child(div().text_size(collapsed ? 12 : 14).font_semibold().text_color(t.foreground).child(plain(item.headline)));
-    if (item.detail && (!collapsed || !item.headline)) text.child(div().text_size(collapsed ? 12 : 13).line_height("20px").text_color(t.muted).child(plain(item.detail)));
+    if (item.headline) text.child(div().text_size(collapsed ? 13 : 15).font_semibold().text_color(t.foreground).child(plain(item.headline)));
+    if (item.detail && (!collapsed || !item.headline)) text.child(div().text_size(collapsed ? 13 : 14).line_height("20px").text_color(t.muted).child(plain(item.detail)));
     body.child(card.child(text));
   }
   const fixes = note.items.filter(item => item.fixed);
   if (fixes.length && !collapsed) {
     const list = v_flex().gap(5)
-      .child(div().mb(3).text_size(11).font_medium().text_color(t.dim).child(text("whatsnew.also-fixed")));
+      .child(div().mb(3).text_size(12).font_medium().text_color(t.dim).child(text("whatsnew.also-fixed")));
     for (const item of fixes) {
-      list.child(div().text_size(12).line_height("17px").text_color(t.muted).child(`• ${plain([item.headline, item.detail].filter(Boolean).join(" "))}`));
+      list.child(div().text_size(13).line_height("17px").text_color(t.muted).child(`• ${plain([item.headline, item.detail].filter(Boolean).join(" "))}`));
       for (const media of item.media) list.child(image(media.path).w_full().h(Math.max(1, mediaWidth) * media.height / media.width));
     }
     body.child(list);

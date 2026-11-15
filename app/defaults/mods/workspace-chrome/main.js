@@ -125,7 +125,7 @@ export default class WorkspaceChrome extends View {
       .items_center()
       .rounded(6)
       .cursor_pointer()
-      .text_size(13)
+      .text_size(14)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .keep_focus(true)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -147,7 +147,7 @@ export default class WorkspaceChrome extends View {
               .flex_1()
               .min_w(0)
               .child(div().truncate().font_semibold().text_color(t.foreground).child(space?.name ?? ""))
-              .child(div().truncate().text_size(12).text_color(t.dim).child(space?.folder ?? "")),
+              .child(div().truncate().text_size(13).text_color(t.dim).child(space?.folder ?? "")),
           ),
       )
       .child(div().h(1).my(4).bg(t.border))
@@ -187,7 +187,7 @@ export default class WorkspaceChrome extends View {
   // A sidebar row: an icon, and its label beside it unless the rail is narrow.
   navRow(t, collapsed, id, icon, label, tip, action) {
     return h_flex().id(id).h(36).px(8).gap(10).items_center().rounded(8).cursor_pointer().relative()
-      .text_size(13).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
+      .text_size(14).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .when(collapsed, (el) => el.justify_center().px(0))
       .keep_focus(true)
       .tooltip(tip)
@@ -221,8 +221,8 @@ export default class WorkspaceChrome extends View {
       () => this.openTasks())
       .when(!collapsed, (el) => el.child(div().flex_1()))
       .when(!collapsed && review > 0, (el) => el.child(div().id("sidebar-tasks-review").h(18).min_w(18).px(5).rounded(9).flex().items_center().justify_center()
-        .bg(t.accent_fill).text_color(t.accent_foreground).text_size(11).font_semibold().child(review > 99 ? "99+" : String(review))))
-      .when(!collapsed && review <= 0 && busy > 0, (el) => el.child(div().id("sidebar-tasks-count").text_size(12).text_color(t.dim).child(String(busy))))
+        .bg(t.accent_fill).text_color(t.accent_foreground).text_size(12).font_semibold().child(review > 99 ? "99+" : String(review))))
+      .when(!collapsed && review <= 0 && busy > 0, (el) => el.child(div().id("sidebar-tasks-count").text_size(13).text_color(t.dim).child(String(busy))))
       .when(collapsed && review > 0, (el) => el.child(div().size(6).rounded_full().bg(t.accent).absolute().top(8).right(8)));
     return v_flex().size_full().px(8).py(4)
       .child(this.navRow(t, collapsed, "sidebar-search", "mods/workspace-chrome/search.svg", text("workspace-chrome.search"), text("workspace-chrome.search"), () => run("app.palette")))
@@ -248,7 +248,7 @@ export default class WorkspaceChrome extends View {
     const collapsed = narrow();
     if (props()?.nav) return this.nav(t, collapsed);
     if (props()?.footer) return this.foot(t, collapsed);
-    return h_flex().size_full().pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(13)
+    return h_flex().size_full().pl(collapsed ? 6 : 14).pr(10).gap(4).items_center().text_size(14)
       .when(window()?.platform === "macos" && !window()?.fullscreen && !collapsed, el => el.pl(76))
       .when(!collapsed, el => el.child(h_flex().flex_1().gap(8).items_center().child(image("frame/welcome/kompitum.png").size(20).rounded(5)).child(div().font_semibold().text_color(t.foreground).child("Kompitum"))))
       .when(!collapsed, el => el.child(this.spaceMenu(t)))

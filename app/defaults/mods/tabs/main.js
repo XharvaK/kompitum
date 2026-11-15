@@ -70,7 +70,7 @@ export default class Tabs extends View {
         if (tabPanes.filter(p => p.terminal).every(p => p.program?.shell === true)) run("tab.close", { id: c.id });
         else openOverlay({ mod: "confirm", kind: "dialog", width: 380, props: { title: text("tabs.close-terminal"), detail: text("tabs.close-terminal-detail", { name }), command: { name: "tab.close", args: { id: c.id } } } });
       };
-      return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(13)
+      return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(14)
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
         .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); this.pressed = i; if (e.click_count === 2) run("tab.rename", { id: c.id }); })
@@ -97,7 +97,7 @@ export default class Tabs extends View {
     const panelButton = (id, label, icon) => {
       const on = panel && !panel.hidden && body?.active === id;
       return h_flex().id(`panel-${id}`).h(26).px(8).gap(5).flex_none().items_center().rounded(6)
-        .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
+        .text_size(13).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)).on_mouse_down("left", stop)
         .on_click(() => {
           if (on) run("layout.hide", { id: "panel" });

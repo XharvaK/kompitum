@@ -315,7 +315,7 @@ export default class Board extends View {
       .bg(t.surface)
       .border_b(1)
       .border_color(t.border)
-      .text_size(12)
+      .text_size(13)
       .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(label || ""))
       .child(div()
         .id("board-close")
@@ -343,7 +343,7 @@ export default class Board extends View {
       .items_center()
       .rounded(4)
       .bg(color + "1f")
-      .text_size(11)
+      .text_size(12)
       .font_medium()
       .text_color(color)
       .child(label);
@@ -394,7 +394,7 @@ export default class Board extends View {
       .rounded(5)
       .bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.dim)
-      .text_size(11)
+      .text_size(12)
       .font_medium()
       .cursor_pointer()
       .relative();
@@ -463,16 +463,16 @@ export default class Board extends View {
         .child(div().flex_1().min_w(0).truncate().font_medium().text_color(t.foreground).child(task.name))
         .when(Boolean(by), (el) => el.child(this.chip(t, by, this.byColor(t, task.by))))
         .child(h_flex().gap(4).children(buttons.map((button) => button.el))))
-      .when(meta.length > 0, (el) => el.child(h_flex().flex_wrap().gap(8).text_size(11).text_color(t.dim).children(meta)))
+      .when(meta.length > 0, (el) => el.child(h_flex().flex_wrap().gap(8).text_size(12).text_color(t.dim).children(meta)))
       .when(accepting, (el) => el.child(h_flex().pt(2).gap(6).items_center()
         .child(div().flex_1().min_w(0).h(24).px(6).rounded(5).border_1().border_color(t.accent).bg(t.background)
-          .child(Input.new(this.accepting.input).h_full().text_size(11).text_color(t.foreground)))
-        .child(div().text_size(11).text_color(t.dim).child(text("board.enter-accepts")))));
+          .child(Input.new(this.accepting.input).h_full().text_size(12).text_color(t.foreground)))
+        .child(div().text_size(12).text_color(t.dim).child(text("board.enter-accepts")))));
   }
 
   section(t, title, list, kind, cx) {
     return v_flex().gap(1).pt(8)
-      .child(h_flex().px(10).pb(3).gap(6).items_center().text_size(11).font_medium().text_color(t.dim)
+      .child(h_flex().px(10).pb(3).gap(6).items_center().text_size(12).font_medium().text_color(t.dim)
         .child(title)
         .child(div().text_color(t.dim).child(String(list.length))))
       .children(list.map((task) => this.row(t, task, kind, cx)));
@@ -518,7 +518,7 @@ export default class Board extends View {
       .size_full()
       .min_h(0)
       .bg(props()?.embedded ? t.background : t.chrome)
-      .text_size(13)
+      .text_size(14)
       .text_color(t.foreground)
       .track_focus(this.handle)
       .on_key_down((e, cx) => {
@@ -529,16 +529,16 @@ export default class Board extends View {
         }
       })
       .child(v_flex().flex_none().px(12).pt(10).pb(8).gap(3)
-        .child(div().text_size(13).font_semibold().text_color(waits.length ? t.foreground : t.muted).child(headline))
-        .when(Boolean(workerLine), (el) => el.child(div().id("board-workers").text_size(11).text_color(t.muted)
+        .child(div().text_size(14).font_semibold().text_color(waits.length ? t.foreground : t.muted).child(headline))
+        .when(Boolean(workerLine), (el) => el.child(div().id("board-workers").text_size(12).text_color(t.muted)
           .when(Boolean(workerDetail), (line) => line.tooltip(workerDetail))
           .child(workerLine)))
-        .when(Boolean(resetAt), (el) => el.child(div().text_size(11).text_color(t.muted)
+        .when(Boolean(resetAt), (el) => el.child(div().text_size(12).text_color(t.muted)
           .child(text("board.claude-reset", { time: clock(resetAt) }))))
-        .when(Boolean(this.error), (el) => el.child(div().text_size(11).text_color(t.muted).child(this.error))))
+        .when(Boolean(this.error), (el) => el.child(div().text_size(12).text_color(t.muted).child(this.error))))
       .child(v_flex().id("board-list").flex_1().min_h(0).overflow_y_scrollbar().mode("always").p(8)
-        .when(empty && !this.data && !this.error, (el) => el.child(div().p(6).text_size(12).text_color(t.muted).child(text("board.loading"))))
-        .when(empty && Boolean(this.data), (el) => el.child(div().p(6).text_size(12).text_color(t.muted).child(text("board.no-tasks"))))
+        .when(empty && !this.data && !this.error, (el) => el.child(div().p(6).text_size(13).text_color(t.muted).child(text("board.loading"))))
+        .when(empty && Boolean(this.data), (el) => el.child(div().p(6).text_size(13).text_color(t.muted).child(text("board.no-tasks"))))
         .children(sections.map(([title, list, kind]) => this.section(t, title, list, kind, cx))));
   }
 
@@ -559,7 +559,7 @@ export default class Board extends View {
         .overflow_y_scrollbar()
         .p(12)
         .font_family(settings()?.font_family ?? "Google Sans Code")
-        .text_size(12)
+        .text_size(13)
         .child(v_flex().w_full().children(lines(review.body))));
   }
 

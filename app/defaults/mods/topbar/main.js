@@ -4,7 +4,7 @@
 // for other layouts.
 // The same mod, with `panel: true`, is the side panel's header: its picker of Files, Changes and Tasks.
 
-import { View, div, svg, image } from "gpui-kit";
+import { View, div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, run, theme, window, shared, layout, settings, home, props, openOverlay, agents, lead, updates, kom, text } from "kompitum";
 
@@ -33,6 +33,43 @@ function claudeWindows(usage) {
     .map(({ short, limit }) => ({ short, pct: limit?.used_percentage, resets: limit?.resets_at }))
     .filter((w) => typeof w.pct === "number" && Number.isFinite(w.pct))
     .filter((w) => !(typeof w.resets === "number" && w.resets < now));
+}
+
+// The share of the context the lead holds, from 0 up to 1 (capped); null when the count or the limit is unknown.
+function contextFraction(usage) {
+  const tokens = usage?.context_tokens;
+  const max = usage?.compact_at;
+  if (typeof tokens !== "number" || !Number.isFinite(tokens) || typeof max !== "number" || !(max > 0)) return null;
+  return Math.min(1, Math.max(0, tokens / max));
+}
+
+// The ring's paths, 16 px across: a 2 px stroke on a circle of radius 7, drawn from the top, clockwise.
+function ringPath(fraction) {
+  const c = 8;
+  const r = 7;
+  const builder = PathBuilder.stroke(2).move_to(c, c - r);
+  if (fraction >= 1) return builder.arc_to(r, r, 0, false, true, c, c + r).arc_to(r, r, 0, false, true, c, c - r).build();
+  const angle = 2 * Math.PI * Math.min(fraction, 0.999);
+  const x = c + r * Math.sin(angle);
+  const y = c - r * Math.cos(angle);
+  return builder.arc_to(r, r, 0, fraction > 0.5, true, x, y).build();
+}
+
+// The ring's colour: calm under 75%, the warning colour from 75%, the alarm colour from 95%.
+function ringTone(fraction) {
+  return fraction >= 0.95 ? "blocked" : fraction >= 0.75 ? "working" : "done";
+}
+
+// The context ring, or the gauge when the count or the limit is unknown.
+function contextRing(t, fraction) {
+  const tone = ringTone(fraction);
+  let drawing = div().relative().w(16).h(16).flex_none()
+    .child(globalThis.window.paint_path(ringPath(1), Background.solid(t.border)).absolute().top(0).left(0).size_full());
+  if (fraction > 0) {
+    drawing = drawing.child(globalThis.window.paint_path(ringPath(fraction), Background.solid(t[tone]))
+      .id(`topbar-context-${tone}`).absolute().top(0).left(0).size_full());
+  }
+  return drawing;
 }
 
 export default class TopBar extends View {
@@ -69,19 +106,25 @@ export default class TopBar extends View {
     });
   }
 
-  // Limits, then the bell. Limits names Claude's windows in its tooltip, and a dot shows when the higher one is at
-  // 75 or more. The bell counts what needs you (the lead's question, blocked agents, ready updates) plus the
-  // notes waiting; tasks don't count. Both open in the corner where toasts show.
+  // Limits, then the bell. Limits draws the lead's context as a ring, or the gauge before it is known; its tooltip
+  // names the context and Claude's windows, and a dot shows when the higher window is at 75 or more. The bell
+  // counts what needs you (the lead's question, blocked agents, ready updates) plus the notes waiting; tasks don't
+  // count. Both open in the corner where toasts show.
   status(t, button) {
-    const windows = claudeWindows(lead()?.usage);
+    const usage = lead()?.usage;
+    const fraction = contextFraction(usage);
+    const windows = claudeWindows(usage);
     const top = Math.max(0, ...windows.map((w) => w.pct));
-    const limitsTip = [text("topbar.limits"), ...windows.map((w) => text("topbar.limit", { window: w.short, percent: Math.round(w.pct) }))].join(" · ");
-    const limits = button("topbar-limits", svg("mods/workspace-chrome/gauge.svg").size(16),
+    const limitParts = windows.map((w) => text("topbar.limit", { window: w.short, percent: Math.round(w.pct) }));
+    const limitsTip = (fraction == null
+      ? [text("topbar.limits"), ...limitParts]
+      : [text("topbar.context", { percent: Math.round(fraction * 100) }), ...limitParts]).join(" · ");
+    const limits = button("topbar-limits", fraction == null ? svg("mods/workspace-chrome/gauge.svg").size(16) : contextRing(t, fraction),
       () => openOverlay({ mod: "limits", kind: "popup", width: 340, height: 480, at: "top-right" }))
       .text_color(t.muted)
       .tooltip(limitsTip)
       .accessibility_label(limitsTip)
-      .when(top >= 75, (el) => el.relative().child(div().size(6).rounded_full().absolute().top(4).right(4)
+      .when(top >= 75, (el) => el.relative().child(div().id("topbar-limits-dot").size(6).rounded_full().absolute().top(3).right(3)
         .bg(top >= 100 ? t.blocked : t.working)));
     const u = updates();
     const needs = agents().filter((a) => a.status === "blocked").length + (lead()?.ask ? 1 : 0)
@@ -96,7 +139,7 @@ export default class TopBar extends View {
       .tooltip(count === 0 ? text("topbar.nothing-needs-you") : parts.filter(Boolean).join(" · "))
       .accessibility_label(count === 0 ? text("topbar.nothing-needs-you") : parts.filter(Boolean).join(" · "))
       .when(count > 0, (el) => el.child(div().id("topbar-bell-count").absolute().top(-2).right(-2).h(16).min_w(16).px(4).rounded(8)
-        .flex().items_center().justify_center().bg(t.accent_fill).text_color(t.accent_foreground).text_size(11).font_semibold()
+        .flex().items_center().justify_center().bg(t.accent_fill).text_color(t.accent_foreground).text_size(12).font_semibold()
         .child(count > 99 ? "99+" : String(count))));
     return [limits, bell];
   }
@@ -123,7 +166,7 @@ export default class TopBar extends View {
     const enabled = shared("workspace.panels") ?? ["files", "changes", "tasks"];
     const word = (id, label) => {
       const on = body?.active === id;
-      return h_flex().id(`panel-pick-${id}`).h(26).px(10).items_center().rounded(7).cursor_pointer().text_size(12)
+      return h_flex().id(`panel-pick-${id}`).h(26).px(10).items_center().rounded(7).cursor_pointer().text_size(13)
         .keep_focus(true)
         .when(on, (el) => el.bg(t.selected).text_color(t.foreground).font_medium())
         .when(!on, (el) => el.text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected)))
@@ -214,17 +257,17 @@ export default class TopBar extends View {
       .accessibility_label(open ? text("topbar.hide-panel") : text("topbar.show-panel"));
     const machine = space?.machine, branch = space?.branch;
     const crumbs = h_flex().id("topbar-crumbs").min_w(0).gap(6).items_center()
-      .when(Boolean(dirText), (el) => el.child(div().id("topbar-folder").min_w(0).truncate().text_size(13).text_color(t.dim).tooltip(dir).child(dirText)))
-      .when(Boolean(dirText) && Boolean(shown), (el) => el.child(div().text_size(13).text_color(t.dim).child("/")))
+      .when(Boolean(dirText), (el) => el.child(div().id("topbar-folder").min_w(0).truncate().text_size(14).text_color(t.dim).tooltip(dir).child(dirText)))
+      .when(Boolean(dirText) && Boolean(shown), (el) => el.child(div().text_size(14).text_color(t.dim).child("/")))
       .when(Boolean(shown), (el) => el.child(h_flex().id("topbar-tab").min_w(0).gap(7).items_center()
         .when(Boolean(program?.icon), (el) => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
-        .child(div().min_w(0).truncate().text_size(13).font_medium().text_color(t.foreground).child(name))))
+        .child(div().min_w(0).truncate().text_size(14).font_medium().text_color(t.foreground).child(name))))
       .when(Boolean(branch), (el) => el.child(h_flex().id("topbar-branch").gap(5).flex_none()
         .child(svg("mods/workspace-chrome/branch.svg").size(13))
-        .child(div().text_size(12).text_color(t.dim).child(branch))))
+        .child(div().text_size(13).text_color(t.dim).child(branch))))
       .when(Boolean(machine), (el) => el.child(h_flex().id("topbar-machine").gap(5).flex_none()
         .child(svg("mods/workspace-chrome/server.svg").size(13))
-        .child(div().text_size(12).text_color(t.dim).child(machine))));
+        .child(div().text_size(13).text_color(t.dim).child(machine))));
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(4).items_center().bg(t.chrome)
       .child(crumbs)
       .child(div().flex_1())

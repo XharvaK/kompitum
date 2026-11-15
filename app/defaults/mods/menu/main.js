@@ -5,7 +5,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, text } from "kompitum";
+import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, copyText, text } from "kompitum";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 function place(s) {
@@ -25,6 +25,22 @@ function items(p, git) {
   p = p ?? {};
   const tg = p.target ?? {};
   switch (p.tab) {
+    case "lead":
+      return [
+        [text("agents.menu-show-terminal"), "lead.terminal", { terminal: tg.terminal, show: true }],
+        [text("agents.menu-restart-lead"), "lead.restart", { terminal: tg.terminal }],
+        [text("agents.menu-copy-folder"), "copyText", { text: String(tg.folder ?? "") }],
+      ];
+    case "agent": {
+      const open = tg.open ?? { name: "pane.focus", args: { pane: tg.pane } };
+      const close = tg.close ?? (tg.pane ? { name: "pane.close", args: { pane: tg.pane } } : { name: "terminal.kill", args: { terminal: tg.terminal } });
+      return [
+        [text("agents.menu-open"), open.name, open.args],
+        [tg.pinned ? text("agents.unpin") : text("agents.menu-pin"), "terminal.pin", { terminal: tg.terminal, pinned: !tg.pinned }],
+        [text("agents.menu-copy-folder"), "copyText", { text: String(tg.folder ?? "") }],
+        [text("agents.close"), close.name, close.args, "close"],
+      ];
+    }
     case "pane": {
       // A kept sub-agent can go back under its parent, still running.
       const all = terminals();
@@ -109,7 +125,18 @@ export default class Menu extends View {
     if (!it) return;
     closeOverlay(props()?.overlay);
     if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
-    else run(it[1], it[2]);
+    else if (it[1] === "copyText") copyText(String(it[2]?.text ?? ""));
+    else if (it[3] === "close" && props()?.target?.shell !== true) {
+      const target = props()?.target ?? {};
+      openOverlay({
+        mod: "confirm", kind: "dialog", width: 380,
+        props: {
+          title: text("agents.close-terminal"),
+          detail: text("agents.close-terminal-detail", { name: target.name || target.terminal || "" }),
+          command: { name: it[1], args: it[2] },
+        },
+      });
+    } else run(it[1], it[2]);
   }
 
   render(cx) {
@@ -122,7 +149,7 @@ export default class Menu extends View {
       .min_h(0)
       .p(5)
       .bg(t.popover)
-      .text_size(13)
+      .text_size(14)
       .on_key_down((e, cx) => {
         if (e.key === "down") this.at = (this.at + 1) % list.length;
         else if (e.key === "up") this.at = (this.at + list.length - 1) % list.length;
@@ -149,7 +176,7 @@ export default class Menu extends View {
             .on_click((_e, cx) => this.choose(i, cx))
             .child(svg(menuIcon(it[1])).size(14).flex_none().text_color(t.muted))
             .child(div().flex_1().child(it[0]))
-            .child(div().text_size(11).text_color(t.dim).child(shortcut(it[1], it[2])))),
+            .child(div().text_size(12).text_color(t.dim).child(shortcut(it[1], it[2])))),
         ),
       );
   }

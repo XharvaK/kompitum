@@ -210,7 +210,7 @@ export default class Help extends View {
       .map((name) => [name, shown.filter((row) => groupOf(row.action) === name)])
       .filter(([, rows]) => rows.length > 0);
     const keycap = (p) =>
-      div().px(5).rounded(4).border_1().border_color(t.border).bg(t.raised).text_size(11).text_color(t.dim).child(p);
+      div().px(5).rounded(4).border_1().border_color(t.border).bg(t.raised).text_size(12).text_color(t.dim).child(p);
     const content = v_flex()
       .id("help")
       .track_focus(this.handle)
@@ -218,8 +218,8 @@ export default class Help extends View {
       .min_h(0)
       .p(18)
       .gap(14)
-      .text_size(12)
-      .child(Input.new(this.input).h(36).flex_none().px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(13).text_color(t.foreground))
+      .text_size(13)
+      .child(Input.new(this.input).h(36).flex_none().px(10).rounded(9).border_1().border_color(t.accent).bg(t.background).text_size(14).text_color(t.foreground))
       .child(
         v_flex()
           .flex_1()
@@ -231,7 +231,7 @@ export default class Help extends View {
             groups.map(([name, rows]) =>
               v_flex()
                 .gap(2)
-                .child(div().text_size(12).font_medium().text_color(t.dim).child(name))
+                .child(div().text_size(13).font_medium().text_color(t.dim).child(name))
                 .children(
                   rows.map((row) =>
                     h_flex()
@@ -251,7 +251,7 @@ export default class Help extends View {
                                 .gap(3)
                                 .items_center()
                                 .children(keyParts(k.keys).map(keycap))
-                                .when(k.section !== "global", (el) => el.child(div().pl(4).text_size(11).text_color(t.dim).child(k.section))),
+                                .when(k.section !== "global", (el) => el.child(div().pl(4).text_size(12).text_color(t.dim).child(k.section))),
                             ),
                           ),
                       )

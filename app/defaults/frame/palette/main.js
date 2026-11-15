@@ -322,7 +322,7 @@ export default class Palette extends View {
     }
     this.scroll = Math.max(0, Math.min(this.scroll, this.maxScroll));
     const key = (k) =>
-      h_flex().gap(3).children(keyParts(k).map((p) => div().px(5).rounded(4).border_1().border_color(t.border).bg(t.raised).text_size(11).text_color(t.dim).child(p)));
+      h_flex().gap(3).children(keyParts(k).map((p) => div().px(5).rounded(4).border_1().border_color(t.border).bg(t.raised).text_size(12).text_color(t.dim).child(p)));
     // In a scrolling list each item is placed at its edges from the model
     // above, not stacked: GPUI rounds every height to whole pixels, and a
     // stack of rounded heights drifts away from the model (19 px at zoom 1.3
@@ -335,7 +335,7 @@ export default class Palette extends View {
     const list = [];
     rows.forEach((r, i) => {
       const { head, title, row } = tops[i];
-      if (head && visible(title, row)) list.push(place(h_flex(), title, row).px(14).pb(4).items_end().text_size(11).font_semibold().text_color(t.dim).child(groupWord(r.head)));
+      if (head && visible(title, row)) list.push(place(h_flex(), title, row).px(14).pb(4).items_end().text_size(12).font_semibold().text_color(t.dim).child(groupWord(r.head)));
       if (!visible(row, row + ROW_H)) return;
       const on = i === this.at;
       const k = keyOf(r.e, bound);
@@ -348,12 +348,12 @@ export default class Palette extends View {
           .items_center()
           .rounded(7)
           .cursor_pointer()
-          .text_size(13)
+          .text_size(14)
           .when(on, (el) => el.bg(t.selected))
           .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
           .on_click(() => this.go(r.e))
           .child(div().flex_1().min_w(0).child(this.title(t, r.e.title, r.hits, on)))
-          .when(Boolean(this.query), (el) => el.child(div().text_size(12).text_color(t.dim).child(groupWord(r.e.group))))
+          .when(Boolean(this.query), (el) => el.child(div().text_size(13).text_color(t.dim).child(groupWord(r.e.group))))
           .when(Boolean(k), (el) => el.child(key(k))),
       );
     });
@@ -389,7 +389,7 @@ export default class Palette extends View {
           .border_color(t.accent)
           .bg(t.background)
           .child(svg(win()?.platform === "macos" ? "frame/palette/command.svg" : "mods/workspace-chrome/search.svg").size(16).text_color(t.dim))
-          .child(Input.new(this.input).flex_1().h_full().text_size(13).text_color(t.foreground)),
+          .child(Input.new(this.input).flex_1().h_full().text_size(14).text_color(t.foreground)),
       )
       .child(
         rows.length
@@ -408,7 +408,7 @@ export default class Palette extends View {
                 cx.notify();
               })
               .children(fixed ? list : [v_flex().children(list)])
-          : div().px(16).py(14).text_size(13).text_color(t.dim).child(text("palette.nothing-matches", { query: this.query })),
+          : div().px(16).py(14).text_size(14).text_color(t.dim).child(text("palette.nothing-matches", { query: this.query })),
       );
   }
 }

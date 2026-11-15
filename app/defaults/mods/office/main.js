@@ -357,7 +357,7 @@ export default class Office extends View {
 
   sign(W, g) {
     return div().absolute().left(W / 2 - 140).top(g.wallBottom - 34).w(280).py(4).rounded(4).bg("#00000033")
-      .text_size(11).text_color("#fffaf0").flex().justify_center().child(text("office.empty"));
+      .text_size(12).text_color("#fffaf0").flex().justify_center().child(text("office.empty"));
   }
 
   prop(art, x, g, lift = 0) {
@@ -394,9 +394,9 @@ export default class Office extends View {
       .when(st === "working", (el) => el.children(CODE.map((c, k) =>
         div().absolute().left(P * (k % 2 === 0 ? 1 : 2)).top(P * (1 + 2 * k) - 1).h(P - 1).bg(c)
           .loop("width", { from: P, to: P * (8 - (k % 2)), period: 700 + k * 260, easing: "linear" }))))
-      .when(st === "blocked", (el) => el.flex().items_center().justify_center().text_size(14).font_bold().text_color("#ff6b6b")
+      .when(st === "blocked", (el) => el.flex().items_center().justify_center().text_size(15).font_bold().text_color("#ff6b6b")
         .child("!").loop("opacity", { from: 0.4, to: 1, period: 700 }))
-      .when(st === "done", (el) => el.flex().items_center().justify_center().text_size(13).font_bold().text_color("#6be38b").child("✓"))
+      .when(st === "done", (el) => el.flex().items_center().justify_center().text_size(14).font_bold().text_color("#6be38b").child("✓"))
       .when(screensaver, (el) => el.child(div().absolute().top(P * 3).h(P).w(P).bg("#3d8be0")
         .loop("left", { from: P, to: P * 8, period: 5000 })));
   }
@@ -408,7 +408,7 @@ export default class Office extends View {
   }
 
   ding(P) {
-    return div().absolute().left(15 * P).top((A.BOX - 21) * P).text_size(10).font_bold().text_color("#b8860b")
+    return div().absolute().left(15 * P).top((A.BOX - 21) * P).text_size(11).font_bold().text_color("#b8860b")
       .child(text("office.ding")).loop("opacity", { from: 0, to: 1, period: 640 });
   }
 
@@ -437,7 +437,7 @@ export default class Office extends View {
   plate(a) {
     const focused = a.focused;
     return div().max_w((A.SLOT - 8) * A.P).h(16).px(5).gap(4).rounded(4).flex().items_center()
-      .bg(focused ? "#fff6dd" : "#00000040").text_size(10).text_color(focused ? "#3b2a1a" : "#fffaf0")
+      .bg(focused ? "#fff6dd" : "#00000040").text_size(11).text_color(focused ? "#3b2a1a" : "#fffaf0")
       .child(div().size(6).flex_none().rounded_full().bg(STATUS[a.status] ?? STATUS.idle))
       .child(this.spaceTile(a.space))
       .when(remote(a.address), (el) => el.child(div().flex_none().text_size(9).text_color("#fffaf0").child("🎧")))
@@ -469,7 +469,7 @@ export default class Office extends View {
     });
     if (kids.length > shown.length)
       els.push(div().absolute().left(x0 + 3 * 8 * P).top(pos.y - 14 * P).px(4).rounded(4).bg("#00000055")
-        .text_size(10).text_color("#fffaf0").child(`+${kids.length - shown.length}`));
+        .text_size(11).text_color("#fffaf0").child(`+${kids.length - shown.length}`));
     return els;
   }
 
@@ -599,7 +599,7 @@ export default class Office extends View {
     const y = at.y - A.BOX * P + (A.BOX - (at.headTop ?? 22)) * P;
     return div().absolute().left(Math.max(4, x - 20)).top(Math.max(2, y - 54))
       .child(div().max_w(260).px(8).py(4).rounded(10).bg("#ffffff").border_1().border_color("#3b3b44")
-        .text_size(10).text_color("#3b3b44").child(div().truncate().child(`💭 ${words}`)))
+        .text_size(11).text_color("#3b3b44").child(div().truncate().child(`💭 ${words}`)))
       .child(div().absolute().left(16).top(26).size(7).rounded_full().bg("#ffffff").border_1().border_color("#3b3b44"))
       .child(div().absolute().left(22).top(35).size(4).rounded_full().bg("#ffffff").border_1().border_color("#3b3b44"));
   }
@@ -679,6 +679,6 @@ export default class Office extends View {
 
   bubble(top, color, p = A.P) {
     return div().absolute().left((A.PERSON * p) / 2 - 4).top(top).px(5).h(16).flex().items_center().rounded(6)
-      .bg("#fffdf7").border_1().border_color("#3b3b44").text_size(10).font_bold().text_color(color).whitespace_nowrap();
+      .bg("#fffdf7").border_1().border_color("#3b3b44").text_size(11).font_bold().text_color(color).whitespace_nowrap();
   }
 }

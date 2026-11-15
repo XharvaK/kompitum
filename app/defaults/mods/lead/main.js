@@ -378,7 +378,7 @@ export default class Lead extends View {
       .border_color(primary ? t.solid : t.input)
       .bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground)
-      .text_size(12)
+      .text_size(13)
       .font_medium()
       .cursor_pointer()
       .relative()
@@ -405,7 +405,7 @@ export default class Lead extends View {
       .bg(t.chrome)
       .border_t(1)
       .border_color(t.border)
-      .text_size(12);
+      .text_size(13);
     const other = joined();
     if (!other) return bar;
     bar = bar.child(
@@ -452,7 +452,7 @@ export default class Lead extends View {
           .bg(t.chrome)
           .border_b(1)
           .border_color(t.border)
-          .child(div().text_size(13).font_semibold().child(p.title ?? text("lead.the-lead")))
+          .child(div().text_size(14).font_semibold().child(p.title ?? text("lead.the-lead")))
           .child(
             h_flex()
               .id("lead-close")
@@ -480,7 +480,7 @@ export default class Lead extends View {
           .overflow_y_scrollbar()
           .child(
             TextView.markdown("lead-markdown", String(p.markdown ?? ""))
-              .text_size(12)
+              .text_size(13)
               .text_color(t.foreground)
               .selectable(true),
           ),

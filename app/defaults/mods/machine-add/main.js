@@ -182,15 +182,15 @@ export default class MachineAdd extends View {
       .bg(t.blocked + "14")
       .border_1()
       .border_color(t.blocked + "40")
-      .child(div().text_size(13).font_semibold().text_color(t.foreground).child(text("machine-add.mac-folders", { name: mac.name })))
+      .child(div().text_size(14).font_semibold().text_color(t.foreground).child(text("machine-add.mac-folders", { name: mac.name })))
       .child(
         div()
-          .text_size(12)
+          .text_size(13)
           .line_height("18px")
           .text_color(t.muted)
           .child(text("machine-add.mac-about")),
       )
-      .child(div().px(8).py(4).rounded(6).bg(t.background).border_1().border_color(t.border).text_size(12).text_color(t.foreground).child(mac.core))
+      .child(div().px(8).py(4).rounded(6).bg(t.background).border_1().border_color(t.border).text_size(13).text_color(t.foreground).child(mac.core))
       .child(
         h_flex()
           .gap(8)
@@ -205,7 +205,7 @@ export default class MachineAdd extends View {
               .rounded(7)
               .bg(t.accent_fill)
               .text_color(t.accent_foreground)
-              .text_size(12)
+              .text_size(13)
               .font_medium()
               .cursor_pointer()
               .relative()
@@ -217,7 +217,7 @@ export default class MachineAdd extends View {
               .child(div().absolute().inset_0().rounded(7).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected)))
               .child(text("machine-add.open-setting", { name: mac.name })),
           )
-          .when(Boolean(this.opened[target]), (el) => el.child(div().text_size(12).text_color(t.dim).child(text("machine-add.setting-open")))),
+          .when(Boolean(this.opened[target]), (el) => el.child(div().text_size(13).text_color(t.dim).child(text("machine-add.setting-open")))),
       );
   }
 
@@ -233,7 +233,7 @@ export default class MachineAdd extends View {
       .child(
         div()
           .id(`ma-message-${target}`)
-          .text_size(12)
+          .text_size(13)
           .line_height("16px")
           .text_color(t.muted)
           .child(text("machine-add.answer", { target })),
@@ -248,7 +248,7 @@ export default class MachineAdd extends View {
           .rounded(7)
           .bg(t.accent_fill)
           .text_color(t.accent_foreground)
-          .text_size(12)
+          .text_size(13)
           .font_medium()
           .cursor_pointer()
           .relative()
@@ -274,7 +274,7 @@ export default class MachineAdd extends View {
     const text = String(this.state[target]);
     return div()
       .id(`ma-message-${target}`)
-      .text_size(12)
+      .text_size(13)
       .line_height("16px")
       .max_h(32)
       .overflow_hidden()
@@ -294,9 +294,9 @@ export default class MachineAdd extends View {
     const done = this.isAdded(target);
     const answer = this.pending.has(target);
     const right = done
-      ? h_flex().gap(5).items_center().text_size(12).text_color(t.ansi2).child(svg(I("circle-check")).size(13)).child(text("machine-add.added"))
+      ? h_flex().gap(5).items_center().text_size(13).text_color(t.ansi2).child(svg(I("circle-check")).size(13)).child(text("machine-add.added"))
       : st === "adding"
-        ? div().id(`ma-add-${target}`).h(26).px(8).flex().items_center().rounded(6).text_size(12).text_color(t.dim).child(text("machine-add.adding"))
+        ? div().id(`ma-add-${target}`).h(26).px(8).flex().items_center().rounded(6).text_size(13).text_color(t.dim).child(text("machine-add.adding"))
         : answer
           ? div()
           : div()
@@ -306,7 +306,7 @@ export default class MachineAdd extends View {
               .flex()
               .items_center()
               .rounded(6)
-              .text_size(12)
+              .text_size(13)
               .font_medium()
               .text_color(t.foreground)
               .cursor_pointer()
@@ -325,8 +325,8 @@ export default class MachineAdd extends View {
           .items_center()
           .rounded(8)
           .child(svg(I("server")).size(15).text_color(t.muted))
-          .child(div().flex_none().text_size(13).text_color(t.foreground).child(label))
-          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(sub ?? ""))
+          .child(div().flex_none().text_size(14).text_color(t.foreground).child(label))
+          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.dim).child(sub ?? ""))
           .child(right),
       )
       .when(Boolean(message), (el) => el.child(div().px(35).pb(8).child(message)))
@@ -348,12 +348,12 @@ export default class MachineAdd extends View {
       .child(
         div()
           .pt(6)
-          .text_size(13)
+          .text_size(14)
           .line_height("19px")
           .text_color(t.muted)
           .child(text("machine-add.intro")),
       )
-      .child(div().pt(16).pb(6).text_size(12).font_medium().text_color(t.dim).child(hosts.length ? text("machine-add.from-config") : text("machine-add.no-hosts")))
+      .child(div().pt(16).pb(6).text_size(13).font_medium().text_color(t.dim).child(hosts.length ? text("machine-add.from-config") : text("machine-add.no-hosts")))
       .child(
         v_flex()
           .id("ma-hosts")
@@ -363,11 +363,11 @@ export default class MachineAdd extends View {
           .overflow_y_scroll()
           .children(
             this.hosts === null
-              ? [div().px(10).py(8).text_size(12).text_color(t.dim).child(text("machine-add.reading"))]
+              ? [div().px(10).py(8).text_size(13).text_color(t.dim).child(text("machine-add.reading"))]
               : hosts.map((h) => this.row(t, h.alias, h.alias, [h.user, h.hostname].filter(Boolean).join("@") || (h.aliases.length ? text("machine-add.also", { aliases: h.aliases.join(", ") }) : ""))),
           ),
       )
-      .child(div().pt(14).pb(6).text_size(12).font_medium().text_color(t.dim).child(text("machine-add.or-address")))
+      .child(div().pt(14).pb(6).text_size(13).font_medium().text_color(t.dim).child(text("machine-add.or-address")))
       .child(
         h_flex()
           .gap(8)
@@ -382,7 +382,7 @@ export default class MachineAdd extends View {
               .border_1()
               .border_color(this.inputFocused ? t.accent : t.input)
               .bg(t.background)
-              .text_size(13)
+              .text_size(14)
               .text_color(t.foreground),
           )
           .child(
@@ -394,7 +394,7 @@ export default class MachineAdd extends View {
               .items_center()
               .rounded(8)
               .relative()
-              .text_size(12)
+              .text_size(13)
               .font_medium()
               // Nothing typed: the fill goes and an outline keeps the shape (UD's disabled state).
               .when(!typed, (el) => el.border_1().border_color(t.input).text_color(t.dim))

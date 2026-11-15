@@ -147,17 +147,17 @@ export default class Bell extends View {
 
   // A section's name: the label size, in the secondary text color, so it reads as a heading over its rows.
   header(t, label) {
-    return div().px(8).pt(12).pb(4).text_size(12).font_medium().text_color(t.muted).child(label);
+    return div().px(8).pt(12).pb(4).text_size(13).font_medium().text_color(t.muted).child(label);
   }
 
   // A row: a title and, when there is one, a detail. Its button runs a command and closes the popup.
   item(t, id, title, detail, button) {
     return h_flex().id(id).min_h(40).px(8).py(4).gap(12).items_center().rounded(8).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .child(v_flex().flex_1().min_w(0).gap(2)
-        .child(div().text_size(13).text_color(t.foreground).truncate().child(title))
-        .when(Boolean(detail), (el) => el.child(div().text_size(12).text_color(t.dim).truncate().child(detail))))
+        .child(div().text_size(14).text_color(t.foreground).truncate().child(title))
+        .when(Boolean(detail), (el) => el.child(div().text_size(13).text_color(t.dim).truncate().child(detail))))
       .when(Boolean(button), (el) => el.child(h_flex().id(`${id}-do`).h(24).px(10).flex_none().items_center().rounded(6).bg(t.raised)
-        .text_size(12).font_medium().text_color(t.foreground).cursor_pointer().relative().keep_focus(true).tab_stop(true).focus_ring(t.focus, 6)
+        .text_size(13).font_medium().text_color(t.foreground).cursor_pointer().relative().keep_focus(true).tab_stop(true).focus_ring(t.focus, 6)
         .accessibility_label(button.label)
         .on_click(() => {
           button.go();
@@ -169,7 +169,7 @@ export default class Bell extends View {
 
   // A quiet line that runs a command and closes the popup.
   link(t, id, label, go) {
-    return div().id(id).px(8).py(4).text_size(12).text_color(t.muted).cursor_pointer()
+    return div().id(id).px(8).py(4).text_size(13).text_color(t.muted).cursor_pointer()
       .keep_focus(true)
       .tab_stop(true)
       .focus_ring(t.focus, 0)
@@ -246,7 +246,7 @@ export default class Bell extends View {
     const earlier = this.earlier(t);
     const notes = [];
     if (this.vaultError) {
-      notes.push(div().id("bell-vault-error").px(8).py(4).text_size(12).text_color(t.dim).child(this.vaultError));
+      notes.push(div().id("bell-vault-error").px(8).py(4).text_size(13).text_color(t.dim).child(this.vaultError));
     } else if (this.notes.length === 0) {
       // The empty mailbox is one row with its own button, not a sentence and a bare link.
       notes.push(this.item(t, "bell-mailbox", text("bell.mailbox"), text("bell.no-notes"), { label: text("bell.open"), go: () => run("app.mailbox") }));
@@ -254,16 +254,16 @@ export default class Bell extends View {
       notes.push(...this.notes.slice(0, 8).map((note, index) => this.noteItem(t, note, index)));
       if (this.notes.length > 8) notes.push(this.link(t, "bell-more", text("bell.all-notes", { count: this.notes.length }), () => run("app.mailbox")));
     }
-    return v_flex().id("bell").size_full().min_h(0).bg(t.chrome).text_color(t.foreground).text_size(13).px(8).pt(2).pb(8).gap(2).overflow_y_scroll()
+    return v_flex().id("bell").size_full().min_h(0).bg(t.chrome).text_color(t.foreground).text_size(14).px(8).pt(2).pb(8).gap(2).overflow_y_scroll()
       // With nothing to act on, one calm line says so in place of the heading over an empty list.
       .when(needs.length > 0, (el) => el.child(this.header(t, text("bell.needs-you"))).children(needs))
-      .when(needs.length === 0, (el) => el.child(div().id("bell-calm").px(8).pt(12).pb(2).text_size(13).text_color(t.muted).child(text("bell.nothing-needs-you"))))
-      .when(Boolean(this.statusError), (el) => el.child(div().id("bell-status-error").px(8).pb(4).text_size(12).text_color(t.dim).child(this.statusError)))
+      .when(needs.length === 0, (el) => el.child(div().id("bell-calm").px(8).pt(12).pb(2).text_size(14).text_color(t.muted).child(text("bell.nothing-needs-you"))))
+      .when(Boolean(this.statusError), (el) => el.child(div().id("bell-status-error").px(8).pb(4).text_size(13).text_color(t.dim).child(this.statusError)))
       .when(news.length > 0, (el) => el.child(this.header(t, text("bell.updates"))).children(news))
       .when(earlier.length > 0, (el) => el.child(h_flex().px(8).pt(12).pb(4).items_center()
-        .child(div().text_size(12).font_medium().text_color(t.muted).child(text("bell.earlier")))
+        .child(div().text_size(13).font_medium().text_color(t.muted).child(text("bell.earlier")))
         .child(div().flex_1())
-        .child(div().id("bell-recent-clear").text_size(12).text_color(t.muted).cursor_pointer()
+        .child(div().id("bell-recent-clear").text_size(13).text_color(t.muted).cursor_pointer()
           .keep_focus(true)
           .tab_stop(true)
           .focus_ring(t.focus, 0)
@@ -272,9 +272,9 @@ export default class Bell extends View {
           .child(text("bell.clear"))))
         .children(earlier))
       .child(h_flex().px(8).pt(12).pb(4).items_center()
-        .child(div().text_size(12).font_medium().text_color(t.muted).child(text("bell.notes")))
+        .child(div().text_size(13).font_medium().text_color(t.muted).child(text("bell.notes")))
         .child(div().flex_1())
-        .when(Boolean(other), (el) => el.child(div().id("bell-thread").text_size(12).text_color(t.muted).cursor_pointer()
+        .when(Boolean(other), (el) => el.child(div().id("bell-thread").text_size(13).text_color(t.muted).cursor_pointer()
           .keep_focus(true)
           .tab_stop(true)
           .focus_ring(t.focus, 0)

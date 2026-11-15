@@ -150,10 +150,10 @@ export default class Picker extends View {
           .pb(3)
           .gap(8)
           .items_center()
-          .text_size(11)
+          .text_size(12)
           .font_semibold()
           .text_color(t.dim)
-          .child(h_flex().size(18).rounded(5).bg(spaceColor(t, r.w)).items_center().justify_center().text_size(11).font_bold().text_color("#ffffff").child([...r.w.name][0]?.toUpperCase() ?? "?"))
+          .child(h_flex().size(18).rounded(5).bg(spaceColor(t, r.w)).items_center().justify_center().text_size(12).font_bold().text_color("#ffffff").child([...r.w.name][0]?.toUpperCase() ?? "?"))
           .child(r.w.name);
       }
       if (r.kind === "earlier") {
@@ -164,7 +164,7 @@ export default class Picker extends View {
           .py(6)
           .border_t(1)
           .border_color(t.border)
-          .text_size(12)
+          .text_size(13)
           .text_color(t.dim)
           .cursor_pointer()
           .hover((s) => s.text_color(t.foreground))
@@ -210,9 +210,9 @@ export default class Picker extends View {
         .on_click(() => this.go(r))
         .child(this.glyph(t, r.ctx.status))
         .child(div().flex_1().truncate().text_color(t.foreground).when(here, (d) => d.font_semibold()).child(r.ctx.name))
-        .when(r.ctx.status === "blocked", (el) => el.child(div().text_size(11).text_color(t.blocked).child(text("picker.needs-you"))))
-        .when(r.ctx.status === "done", (el) => el.child(div().text_size(11).text_color(t.done).child(text("picker.finished"))))
-        .child(div().text_size(11).text_color(t.dim).child(who + (r.team ? `  +${r.team}` : "")));
+        .when(r.ctx.status === "blocked", (el) => el.child(div().text_size(12).text_color(t.blocked).child(text("picker.needs-you"))))
+        .when(r.ctx.status === "done", (el) => el.child(div().text_size(12).text_color(t.done).child(text("picker.finished"))))
+        .child(div().text_size(12).text_color(t.dim).child(who + (r.team ? `  +${r.team}` : "")));
     };
 
     return v_flex()
@@ -223,7 +223,7 @@ export default class Picker extends View {
       .p(18)
       .gap(10)
       .bg(t.popover)
-      .text_size(13)
+      .text_size(14)
       .on_key_down((e, cx) => {
         const k = e.key;
         if (k === "escape") return this.close();
@@ -241,11 +241,11 @@ export default class Picker extends View {
         cx.stop_propagation();
         cx.notify();
       })
-      .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().text_color(t.foreground).child(text("picker.go-to"))))
+      .child(h_flex().items_center().child(div().flex_1().text_size(16).font_semibold().text_color(t.foreground).child(text("picker.go-to"))))
       .child(
         h_flex().h(36).flex_none().px(10).gap(8).items_center().rounded(9).border_1().border_color(t.accent).bg(t.background)
           .child(svg("mods/workspace-chrome/search.svg").size(15).text_color(t.dim))
-          .child(Input.new(this.input).flex_1().h_full().text_size(13).text_color(t.foreground)),
+          .child(Input.new(this.input).flex_1().h_full().text_size(14).text_color(t.foreground)),
       )
       .child(
         v_flex()

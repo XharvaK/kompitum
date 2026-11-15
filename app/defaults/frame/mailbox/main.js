@@ -466,7 +466,7 @@ export default class Mailbox extends View {
       .py(5)
       .rounded(7)
       .cursor_pointer()
-      .text_size(12)
+      .text_size(13)
       .text_color(t.muted)
       .hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))
       .on_click(onClick)
@@ -482,7 +482,7 @@ export default class Mailbox extends View {
       .cursor_pointer()
       .bg(t.accent_fill)
       .text_color(t.accent_foreground)
-      .text_size(12)
+      .text_size(13)
       .font_medium()
       .relative()
       .on_click(onClick)
@@ -511,7 +511,7 @@ export default class Mailbox extends View {
             .py(4)
             .rounded(6)
             .cursor_pointer()
-            .text_size(13)
+            .text_size(14)
             .when(on, (el) => el.bg(t.raised).text_color(t.foreground).font_medium())
             .when(!on, (el) => el.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
             .on_click((_e, cx) => {
@@ -546,8 +546,8 @@ export default class Mailbox extends View {
           .w_full()
           .gap(6)
           .items_center()
-          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(route(note)))
-          .child(div().flex_none().text_size(12).text_color(t.dim).child(ago(note.date))),
+          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.dim).child(route(note)))
+          .child(div().flex_none().text_size(13).text_color(t.dim).child(ago(note.date))),
       )
       .child(
         h_flex()
@@ -555,7 +555,7 @@ export default class Mailbox extends View {
           .gap(6)
           .items_center()
           .when(waits, (el) => el.child(div().w(6).h(6).flex_none().rounded(3).bg(t.accent)))
-          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.foreground).child(str(note.title) || base(note.path) || text("mailbox.note"))),
+          .child(div().flex_1().min_w(0).truncate().text_size(14).text_color(t.foreground).child(str(note.title) || base(note.path) || text("mailbox.note"))),
       );
   }
 
@@ -574,7 +574,7 @@ export default class Mailbox extends View {
         el.child(
           div()
             .max_w(680)
-            .text_size(13)
+            .text_size(14)
             .line_height("20px")
             .text_color(this.bodyError === OUTSIDE ? t.muted : t.blocked)
             .tooltip(error)
@@ -582,16 +582,16 @@ export default class Mailbox extends View {
         ),
       )
       .when(!this.bodyError && this.body === null, (el) =>
-        el.child(div().text_size(13).text_color(t.muted).child(text("mailbox.reading-note"))),
+        el.child(div().text_size(14).text_color(t.muted).child(text("mailbox.reading-note"))),
       )
       .when(!this.bodyError && this.body !== null, (el) =>
         el.child(
           v_flex()
             .w_full()
             .max_w(680)
-            .when(empty, (col) => col.child(div().text_size(13).text_color(t.dim).child(text("mailbox.empty-note"))))
+            .when(empty, (col) => col.child(div().text_size(14).text_color(t.dim).child(text("mailbox.empty-note"))))
             .when(!empty, (col) =>
-              col.child(TextView.markdown("mail-body-text", markdown).text_size(13).text_color(t.foreground).selectable(true)),
+              col.child(TextView.markdown("mail-body-text", markdown).text_size(14).text_color(t.foreground).selectable(true)),
             ),
         ),
       );
@@ -614,8 +614,8 @@ export default class Mailbox extends View {
           .id(`mail-filed-${i}`)
           .flex_none()
           .gap(2)
-          .child(div().text_size(13).text_color(t.foreground).child(name))
-          .when(Boolean(reason), (el) => el.child(div().text_size(12).text_color(t.dim).child(reason)));
+          .child(div().text_size(14).text_color(t.foreground).child(name))
+          .when(Boolean(reason), (el) => el.child(div().text_size(13).text_color(t.dim).child(reason)));
       }));
   }
 
@@ -653,7 +653,7 @@ export default class Mailbox extends View {
         .items_center()
         .justify_center()
         // While the list loads it says so itself; the reading pane stays empty.
-        .when(this.loaded, (el) => el.child(div().text_size(13).text_color(t.dim).child(text("mailbox.pick-note"))));
+        .when(this.loaded, (el) => el.child(div().text_size(14).text_color(t.dim).child(text("mailbox.pick-note"))));
     }
     const owner = forOwner(note);
     const kind = str(note.kind) || text("mailbox.note");
@@ -674,7 +674,7 @@ export default class Mailbox extends View {
           .border_b(1)
           .border_color(t.border)
           .child(div().id("mail-note-title").w_full().max_w(680).truncate().text_size(18).font_semibold().text_color(t.foreground).child(str(note.title) || base(note.path) || text("mailbox.note")))
-          .child(div().w_full().max_w(680).truncate().text_size(12).text_color(t.dim).child(meta)),
+          .child(div().w_full().max_w(680).truncate().text_size(13).text_color(t.dim).child(meta)),
       )
       .child(this.bodyPane(t))
       .when(owner || this.answering || Boolean(this.actionError), (el) =>
@@ -689,8 +689,8 @@ export default class Mailbox extends View {
                   .gap(8)
                   .px(16)
                   .pt(12)
-                  .child(div().text_size(12).text_color(t.muted).child(text("mailbox.answer-to", { from: str(note.from) || text("mailbox.the-sender") })))
-                  .child(Textarea.new(this.answerState).h(96).w_full().px(10).py(8).rounded(7).border_1().border_color(t.input).bg(t.background).text_size(13).text_color(t.foreground)),
+                  .child(div().text_size(13).text_color(t.muted).child(text("mailbox.answer-to", { from: str(note.from) || text("mailbox.the-sender") })))
+                  .child(Textarea.new(this.answerState).h(96).w_full().px(10).py(8).rounded(7).border_1().border_color(t.input).bg(t.background).text_size(14).text_color(t.foreground)),
               ),
             )
             .child(
@@ -701,7 +701,7 @@ export default class Mailbox extends View {
                 .gap(8)
                 .items_center()
                 .when(Boolean(this.actionError), (bar) =>
-                  bar.child(div().id("mail-error").flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked).tooltip(this.actionError).child(firstLine(this.actionError) || this.actionError)),
+                  bar.child(div().id("mail-error").flex_1().min_w(0).truncate().text_size(13).text_color(t.blocked).tooltip(this.actionError).child(firstLine(this.actionError) || this.actionError)),
                 )
                 .child(div().flex_1())
                 .when(!this.answering && owner, (bar) =>
@@ -766,10 +766,10 @@ export default class Mailbox extends View {
                     .gap(2)
                     .border_b(1)
                     .border_color(t.border)
-                    .children(sync.map((problem, i) => div().id(`mail-problem-${i}`).text_size(12).line_height("17px").text_color(t.blocked).tooltip(problem).child(firstLine(problem) || problem))),
+                    .children(sync.map((problem, i) => div().id(`mail-problem-${i}`).text_size(13).line_height("17px").text_color(t.blocked).tooltip(problem).child(firstLine(problem) || problem))),
                 ),
               )
-              .when(Boolean(this.error), (el) => el.child(div().id("mail-load-error").flex_none().px(10).py(6).text_size(12).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)))
+              .when(Boolean(this.error), (el) => el.child(div().id("mail-load-error").flex_none().px(10).py(6).text_size(13).text_color(t.blocked).tooltip(this.error).child(firstLine(this.error) || this.error)))
               .child(
                 v_flex()
                   .id("mail-rows")
@@ -778,9 +778,9 @@ export default class Mailbox extends View {
                   .p(8)
                   .gap(2)
                   .overflow_y_scrollbar()
-                  .when(this.loading && !this.loaded, (el) => el.child(div().p(8).text_size(12).text_color(t.muted).child(text("mailbox.loading-notes"))))
+                  .when(this.loading && !this.loaded, (el) => el.child(div().p(8).text_size(13).text_color(t.muted).child(text("mailbox.loading-notes"))))
                   .children(rows.map((note, i) => this.row(t, note, i)))
-                  .when(this.loaded && rows.length === 0, (el) => el.child(div().p(8).text_size(12).text_color(t.dim).child(this.tab === "all" ? text("mailbox.no-notes") : text("mailbox.nothing-needs")))),
+                  .when(this.loaded && rows.length === 0, (el) => el.child(div().p(8).text_size(13).text_color(t.dim).child(this.tab === "all" ? text("mailbox.no-notes") : text("mailbox.nothing-needs")))),
               )
               .when(filed.length > 0, (el) =>
                 el.child(
@@ -794,7 +794,7 @@ export default class Mailbox extends View {
                     .items_center()
                     .border_t(1)
                     .border_color(t.border)
-                    .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(`${filed.length} ${filed.length === 1 ? "note" : "notes"} couldn't be filed`))
+                    .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.muted).child(`${filed.length} ${filed.length === 1 ? "note" : "notes"} couldn't be filed`))
                     .child(
                       div()
                         .id("mail-show-filed")
@@ -802,7 +802,7 @@ export default class Mailbox extends View {
                         .py(2)
                         .rounded(5)
                         .cursor_pointer()
-                        .text_size(12)
+                        .text_size(13)
                         .text_color(t.accent)
                         .hover((s) => s.text_color(t.foreground))
                         .on_click((_e, cx) => this.openFiled(cx))
