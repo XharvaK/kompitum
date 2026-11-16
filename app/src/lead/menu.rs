@@ -156,10 +156,7 @@ fn pointer_of(line: &str) -> Option<(usize, &str)> {
     Some((indent, rest))
 }
 
-fn pointer_in<'a>(
-    region: &'a [String],
-    rule_index: usize,
-) -> Option<(usize, usize, &'a str)> {
+fn pointer_in(region: &[String], rule_index: usize) -> Option<(usize, usize, &str)> {
     let mut found = None;
     for (offset, line) in region.iter().enumerate() {
         if let Some((indent, text)) = pointer_of(line) {

@@ -6040,8 +6040,7 @@ impl AppWindow {
                     };
                     let mut presses = 0;
                     let mut found = false;
-                    loop {
-                        let Some(current) = read() else { break };
+                    while let Some(current) = read() {
                         if current.rows.get(row).map(|row| row.label.as_str()) != Some(target.as_str()) {
                             break;
                         }
