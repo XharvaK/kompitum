@@ -295,6 +295,11 @@ pub const COMMANDS: &[Command] = &[
         "Choose in the menu Claude shows in the lead's terminal: key is one of the menu's own (enter, esc, or a letter it names); row and label pick a row first.",
     ),
     cmd(
+        "lead.sent",
+        &[req("terminal"), req("text")],
+        "Tell the app the composer sent this text to the lead: Claude Code sends no hook for its own commands, so a bare picker command (/model, /resume...) brings up its menu's card or the terminal.",
+    ),
+    cmd(
         "lead.steer",
         &[req("terminal"), req("text")],
         "Mark a message the Owner sent while the lead works as steering: it shows as on its way until Claude takes it.",

@@ -773,6 +773,25 @@ fn a_send_while_waiting_does_not_steer(cx: &mut TestAppContext) {
     );
 }
 
+/// A send while the lead waits tells the app what went (`lead.sent`): Claude Code sends no hook for
+/// its own commands, so the app brings up a picker's menu from that word.
+#[gpui::test]
+fn a_send_tells_the_app_what_went(cx: &mut TestAppContext) {
+    let effects = composer_live_run_after_clicks(
+        cx,
+        conversation_values(json!([]), "hidden", Value::Null, None),
+        "this.text.set_value('/resume');",
+        &["composer-send"],
+    );
+    assert!(
+        effects.iter().any(|args| {
+            args.first() == Some(&json!("lead.sent"))
+                && args.get(1) == Some(&json!({"terminal": "t1", "text": "/resume"}))
+        }),
+        "a send should run lead.sent: {effects:?}"
+    );
+}
+
 /// An owner item marked steering says so under its words; an ordinary one does not.
 #[gpui::test]
 fn a_steering_owner_item_says_it_is_on_its_way(cx: &mut TestAppContext) {

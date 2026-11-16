@@ -572,6 +572,16 @@ pub fn is_picker_command(text: &str) -> bool {
     PICKER_COMMANDS.contains(&text)
 }
 
+/// The composer sent `text` to the lead (`lead.sent`). Claude Code sends no hook for its own
+/// commands, so a bare picker command reveals here as `on_submit` would: the menu's card, or the
+/// terminal, comes up. Anything else waits for its hook.
+pub fn on_sent(conversation: &mut Conversation, text: &str) {
+    if is_picker_command(text) && conversation.reveal != Some(Reveal::Manual) {
+        let why = strings::text_with("lead.showing-menu", &[("menu", text.trim())]);
+        conversation.show(Reveal::Auto, Some(why));
+    }
+}
+
 /// Reads a Claude Code JSONL transcript into the same items `fold` builds.
 /// Unknown line types are skipped and counted.
 pub fn items_from_transcript(text: &str) -> TranscriptLoad {

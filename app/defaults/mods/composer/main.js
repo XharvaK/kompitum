@@ -473,6 +473,8 @@ export default class Composer extends View {
         const r = await kom(["send", this.terminal, body]);
         if (!r || r.code !== 0) throw new Error(errorText(r));
         if (steering) run("lead.steer", { terminal: this.terminal, text: body });
+        // Claude Code sends no hook for its own commands: the app brings up a picker's menu from here.
+        else run("lead.sent", { terminal: this.terminal, text: body });
         this.text.set_value("");
         this.chips = [];
         this.syncDraft();

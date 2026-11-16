@@ -675,6 +675,8 @@ The main ones:
   `lead.menu {terminal, key, row?, label?}` (choose in the menu Claude shows in the lead's terminal: `key` is
   one of the menu's own, `enter`, `esc` or a letter it names; `row` and `label` walk the pointer to a row first;
   a menu that changed before the choice went in opens the terminal by hand).
+  `lead.sent {terminal, text}` (the composer sent this to the lead: Claude Code sends no hook for its own
+  commands, so a bare picker command such as `/resume` brings up its menu's card, or the terminal, from here).
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
   `lead.steer {terminal, text}` (mark a message the Owner sent while the lead works as steering: it shows
   as on its way until Claude takes it).

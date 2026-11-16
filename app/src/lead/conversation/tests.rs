@@ -160,6 +160,26 @@ fn a_transcript_with_only_a_repl_call_draws_the_code_row_alone() {
     }
 }
 
+/// Claude Code sends no hook for its own commands: the composer's word that it sent a bare picker
+/// command starts the automatic reveal, so the menu's card or the terminal comes up.
+#[test]
+fn a_sent_picker_command_reveals_without_a_hook() {
+    let mut c = Conversation::default();
+    on_sent(&mut c, "/resume");
+    assert_eq!(c.terminal, TerminalVis::Shown);
+    assert_eq!(c.reveal, Some(Reveal::Auto));
+    assert!(c.items.is_empty(), "no message is drawn for it");
+
+    let mut c = Conversation::default();
+    on_sent(&mut c, "fix the login bug");
+    assert_eq!(c.reveal, None, "a message waits for its hook");
+
+    let mut c = Conversation::default();
+    c.show(Reveal::Manual, None);
+    on_sent(&mut c, "/model");
+    assert_eq!(c.reveal, Some(Reveal::Manual), "a reveal by hand stays");
+}
+
 #[test]
 fn a_btw_question_is_drawn_and_shows_the_terminal() {
     let c = fold(

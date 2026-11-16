@@ -7831,6 +7831,20 @@ impl AppWindow {
                 self.choose_lead_menu(terminal, key.clone(), row, target, window, cx);
                 self.reply = Some(json!({ "pressed": key }));
             }
+            "lead.sent" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let text = Self::arg(a, "text").unwrap_or_default().to_owned();
+                let program = self.lead_program();
+                if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
+                    return self.fail(format!("{terminal:?} isn't the lead's terminal"));
+                }
+                if let Some(session) = self.lead_sessions.get_mut(&terminal) {
+                    crate::lead::conversation::on_sent(&mut session.conversation, &text);
+                }
+                self.apply_lead_terminal_layout(&terminal);
+                self.publish_lead(cx);
+                self.reply = Some(json!({ "sent": true }));
+            }
             "lead.fit" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
                 let Some(px) = a.get("px").and_then(Value::as_f64).filter(|px| px.is_finite()) else {
