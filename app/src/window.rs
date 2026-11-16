@@ -5657,6 +5657,8 @@ impl AppWindow {
                 || (blocked && !ask_held)
                 || (session.conversation.reveal == Some(crate::lead::Reveal::Auto)
                     && session.conversation.reveal_why.as_deref() != Some(side.as_str()))
+                // The startup question, also when an earlier run started the lead.
+                || session.conversation.reveal == Some(crate::lead::Reveal::Startup)
                 || session.menu.is_some();
             if wants_menu && !session.menu_reading {
                 session.menu_reading = true;
@@ -6119,7 +6121,7 @@ impl AppWindow {
         let now = model::now_ms();
         let side = strings::text("lead.side-question");
         if let Some(session) = self.lead_sessions.get_mut(terminal) {
-            if session.conversation.reveal == Some(crate::lead::Reveal::Auto) {
+            if crate::lead::card_can_stand_in(session.conversation.reveal) {
                 if session.menu_wait_until_ms.is_none()
                     && session.conversation.reveal_why.as_deref() != Some(side.as_str())
                 {

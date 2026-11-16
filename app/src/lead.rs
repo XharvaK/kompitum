@@ -954,13 +954,19 @@ pub fn reveal_not_started(started_this_run: bool, started: bool, started_ms: Opt
     started_this_run && !started && started_ms.is_some_and(|started| now_ms.saturating_sub(started) >= 10_000)
 }
 
-/// Whether the lead's terminal pane is drawn: an automatic reveal gives a menu card a second to
-/// appear and steps aside while one is there; a reveal by hand, login or startup is unchanged.
+/// The reveals a menu card can stand in for: an automatic one, and the startup question (Claude's
+/// trust prompt comes before the conversation). A reveal by hand or for a login keeps the terminal.
+pub fn card_can_stand_in(reveal: Option<Reveal>) -> bool {
+    matches!(reveal, Some(Reveal::Auto) | Some(Reveal::Startup))
+}
+
+/// Whether the lead's terminal pane is drawn: an automatic or startup reveal gives a menu card a
+/// second to appear and steps aside while one is there; a reveal by hand or for a login is unchanged.
 pub fn terminal_shown(session: &Session, now_ms: u64) -> bool {
     if session.conversation.terminal != TerminalVis::Shown {
         return false;
     }
-    if session.conversation.reveal != Some(Reveal::Auto) {
+    if !card_can_stand_in(session.conversation.reveal) {
         return true;
     }
     if session.menu.is_some() {

@@ -1434,7 +1434,8 @@ fn a_lead_that_has_not_started_reveals_after_ten_seconds() {
     );
 }
 
-/// A menu card stands in for an automatic reveal; a reveal by hand, login or startup is unchanged.
+/// A menu card stands in for an automatic or startup reveal (the trust question comes before the
+/// conversation starts); a reveal by hand or for a login is unchanged.
 #[test]
 fn a_menu_card_stands_in_for_an_automatic_reveal() {
     let mut session = Session::default();
@@ -1464,7 +1465,11 @@ fn a_menu_card_stands_in_for_an_automatic_reveal() {
     session.conversation.reveal = Some(Reveal::Login);
     assert!(terminal_shown(&session, 0), "a login reveal is unchanged");
     session.conversation.reveal = Some(Reveal::Startup);
-    assert!(terminal_shown(&session, 0), "a startup reveal is unchanged");
+    assert!(!terminal_shown(&session, 0), "a card stands in for the startup question");
+    session.menu_wait_until_ms = None;
+    let card = session.menu.take();
+    assert!(terminal_shown(&session, 0), "a startup question with no card shows the terminal");
+    session.menu = card;
     session.conversation.reveal = Some(Reveal::Auto);
     assert!(!terminal_shown(&session, 0), "a card stands in for an automatic reveal");
     session.menu = None;
