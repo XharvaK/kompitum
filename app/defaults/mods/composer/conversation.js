@@ -54,11 +54,14 @@ export default {
   },
 
   terminalShown() {
+    const shown = leadOf()?.terminal_shown;
+    if (typeof shown === "boolean") return shown;
     return leadOf()?.terminal === "shown";
   },
 
   revealNote(t) {
     const lead = leadOf();
+    if (lead?.menu && !lead?.ask) return null;
     if (lead?.terminal !== "shown") return null;
     if (lead?.reveal !== "auto" && lead?.reveal !== "login" && lead?.reveal !== "startup") return null;
     const why = typeof lead.reveal_why === "string" && lead.reveal_why.trim() ? lead.reveal_why : null;
@@ -280,6 +283,23 @@ export default {
       .child(item.text ?? "");
   },
 
+  // An answered question stays where Claude's text goes: the question quietly, then what the Owner chose.
+  answerItem(t, item) {
+    return v_flex()
+      .id(`composer-item-${item.id}`)
+      .w_full()
+      .gap(4)
+      .children((item.rows ?? []).map((row) =>
+        v_flex()
+          .w_full()
+          .gap(1)
+          .child(div().w_full().truncate().text_size(13).text_color(t.muted).child(String(row?.question ?? "")))
+          .child(div().text_size(14).text_color(t.foreground)
+            .child(row?.chosen
+              ? text("composer.you-chose", { answer: String(row?.answer ?? "") })
+              : text("composer.you-answered", { answer: String(row?.answer ?? "") })))));
+  },
+
   toolsGroup(t, group, cx) {
     const open = Boolean(this.openToolGroups[group.start]);
     if (!open) {
@@ -306,6 +326,7 @@ export default {
     if (item?.kind === "owner") return this.ownerItem(t, item, cx);
     if (item?.kind === "assistant") return this.assistantItem(t, item, cx);
     if (item?.kind === "tool") return this.toolItem(t, item, cx);
+    if (item?.kind === "answer") return this.answerItem(t, item);
     if (item?.kind === "notice") return this.noticeItem(t, item);
     return null;
   },

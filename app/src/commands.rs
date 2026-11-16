@@ -290,6 +290,11 @@ pub const COMMANDS: &[Command] = &[
         "Answer the lead's open ask: its id and the Owner's answer ({ action: allow, allow_always, deny, approve, keep_planning, answers, or terminal, with note or answers }).",
     ),
     cmd(
+        "lead.menu",
+        &[req("terminal"), req("key"), opt("row"), opt("label")],
+        "Choose in the menu Claude shows in the lead's terminal: key is one of the menu's own (enter, esc, or a letter it names); row and label pick a row first.",
+    ),
+    cmd(
         "lead.steer",
         &[req("terminal"), req("text")],
         "Mark a message the Owner sent while the lead works as steering: it shows as on its way until Claude takes it.",

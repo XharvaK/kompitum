@@ -6,7 +6,7 @@
 
 import { View, div, svg, image, PathBuilder, Background } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { spaces, panes, run, theme, window, shared, layout, settings, home, props, openOverlay, agents, lead, updates, kom, text } from "kompitum";
+import { spaces, panes, run, theme, window, shared, layout, settings, home, props, openOverlay, agents, terminals, lead, updates, kom, text } from "kompitum";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -128,7 +128,11 @@ export default class TopBar extends View {
       .when(top >= 75, (el) => el.relative().child(div().id("topbar-limits-dot").size(6).rounded_full().absolute().top(3).right(3)
         .bg(top >= 100 ? t.blocked : t.working)));
     const u = updates();
-    const needs = agents().filter((a) => a.status === "blocked").length + (lead()?.ask ? 1 : 0)
+    const leadTerminal = terminals().find((terminal) => terminal.state === "live" && terminal.labels?.lead);
+    const blocked = agents().filter((a) => a.status === "blocked" && a.address !== leadTerminal?.address).length;
+    // An older app copy publishes no needs_you; its ask is the same one.
+    const needsLead = lead()?.needs_you ?? Boolean(lead()?.ask);
+    const needs = blocked + (needsLead ? 1 : 0)
       + (u.app.ready ? 1 : 0) + (u.core.ready && !u.core.updating ? 1 : 0);
     const count = needs + this.notes;
     const parts = [needs > 1 ? `${needs} need you` : needs === 1 ? "1 needs you" : "",

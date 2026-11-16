@@ -13,8 +13,10 @@ use std::path::{Path, PathBuf};
 pub mod commands;
 #[path = "lead/conversation.rs"]
 pub mod conversation;
+pub mod menu;
 mod upkeep;
 pub use upkeep::*;
+pub use menu::menu_steps;
 pub use conversation::{
     Conversation, Event, Item, Reveal, TerminalVis, TranscriptLoad, event_from_hook, fold,
     is_compact_command, items_from_transcript, reveal_after_auth_status,
@@ -747,6 +749,24 @@ pub struct Session {
     /// A `lead.set_mode` target waits for the lead to wait, then the app presses for it. Not saved.
     #[serde(skip)]
     pub set_mode_held: Option<String>,
+    /// The menu Claude shows in its terminal, read off its screen. Not saved.
+    #[serde(skip)]
+    pub menu: Option<menu::ScreenMenu>,
+    /// A screen read for the menu is in flight. Not saved.
+    #[serde(skip)]
+    pub menu_reading: bool,
+    /// An automatic reveal gives a menu this long to appear before it shows the terminal. Not saved.
+    #[serde(skip)]
+    pub menu_wait_until_ms: Option<u64>,
+    /// `lead.menu` is pressing in the terminal now. Not saved.
+    #[serde(skip)]
+    pub menu_busy: bool,
+    /// Whether the asking-in-terminal reveal is on right now. Not saved.
+    #[serde(skip)]
+    pub asking_in_terminal: bool,
+    /// The last `terminal_shown` the pane was laid out with. Not saved.
+    #[serde(skip)]
+    pub shown_applied: Option<bool>,
 }
 
 impl Session {
@@ -787,9 +807,15 @@ pub fn ask_kind(event: &str, input: &Value) -> Option<AskKind> {
 
 /// What `lead()` publishes: state, ask, reveal, and conversation meta, never the items.
 pub fn published_session(session: &Session) -> Value {
+    let needs_you = session.ask.is_some()
+        || session.asking_in_terminal
+        || (session.menu.is_some() && !session.started);
     json!({
         "state": session.state,
         "ask": session.ask,
+        "menu": session.menu,
+        "menu_busy": session.menu_busy,
+        "needs_you": needs_you,
         "code_mode_status": session.code_mode_status,
         "terminal": session.conversation.terminal,
         "reveal": session.conversation.reveal,
@@ -926,6 +952,21 @@ pub fn hide_auto(conversation: &mut Conversation, why: &str) {
 /// asking something in its terminal before any hook can carry a card.
 pub fn reveal_not_started(started_this_run: bool, started: bool, started_ms: Option<u64>, now_ms: u64) -> bool {
     started_this_run && !started && started_ms.is_some_and(|started| now_ms.saturating_sub(started) >= 10_000)
+}
+
+/// Whether the lead's terminal pane is drawn: an automatic reveal gives a menu card a second to
+/// appear and steps aside while one is there; a reveal by hand, login or startup is unchanged.
+pub fn terminal_shown(session: &Session, now_ms: u64) -> bool {
+    if session.conversation.terminal != TerminalVis::Shown {
+        return false;
+    }
+    if session.conversation.reveal != Some(Reveal::Auto) {
+        return true;
+    }
+    if session.menu.is_some() {
+        return false;
+    }
+    session.menu_wait_until_ms.is_none_or(|until| now_ms >= until)
 }
 
 /// A core status that says `blocked` while the app holds no ask for that terminal, for three seconds

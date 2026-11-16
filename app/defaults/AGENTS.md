@@ -672,6 +672,9 @@ The main ones:
   did; held until the lead waits while it asks or tidies up; Settings › Agents runs it after saving
   `lead.permission_mode`). `lead()` carries `permission_mode` (from Claude Code's hooks and its mode line) and
   `mode_guessed` (true from a press until the screen or the next hook says the mode).
+  `lead.menu {terminal, key, row?, label?}` (choose in the menu Claude shows in the lead's terminal: `key` is
+  one of the menu's own, `enter`, `esc` or a letter it names; `row` and `label` walk the pointer to a row first;
+  a menu that changed before the choice went in opens the terminal by hand).
   `lead.answer {id, answer}` (answer the lead's card: the hook's reply; `status` lists open asks' ids).
   `lead.steer {terminal, text}` (mark a message the Owner sent while the lead works as steering: it shows
   as on its way until Claude takes it).

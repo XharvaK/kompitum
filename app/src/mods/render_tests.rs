@@ -25,6 +25,7 @@ mod memory;
 mod pack15;
 mod pack17a;
 mod pack17b;
+mod pack18;
 mod palette_keys;
 mod settings_pages;
 mod sheets;

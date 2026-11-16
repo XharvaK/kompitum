@@ -346,7 +346,12 @@ export default {
               .when(panel, (asks) => asks.max_h(360))
               .when(!panel, (asks) => asks.flex_1().min_h(0))
               .overflow_y_scrollbar().child(this.card(t, cx))))
-          .when(!first && !this.ask, (el) =>
+          .when(!first && !this.ask && Boolean(this.menu), (el) =>
+            el.child(v_flex().id("composer-asks")
+              .when(panel, (asks) => asks.max_h(360))
+              .when(!panel, (asks) => asks.flex_1().min_h(0))
+              .overflow_y_scrollbar().child(this.menuCard(t, cx))))
+          .when(!first && !this.ask && !this.menu, (el) =>
             el.child(div().when(!panel, (box) => box.flex_1().min_h(0)).child(Textarea.new(this.text).w_full().text_size(14))))
           .child(
             h_flex()
@@ -367,7 +372,7 @@ export default {
               .when(Boolean(pill), (el) => el.child(pill))
               .when(!first, (el) => el.child(this.modelChip(t)))
               .when(Boolean(voice), (el) => el.child(voice))
-              .when(!first && !this.ask, (el) => el.child(send)),
+              .when(!first && !this.ask && !this.menu, (el) => el.child(send)),
           );
     // The `/` list is an absolute child of the box's own frame, so it can sit above the box
     // without taking the textarea's keyboard (a Popover would).
