@@ -1,0 +1,18 @@
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Hooks
+   3 hooks on 3 events
+
+   This menu is read-only. To add or change a hook, edit settings.json or ask Claude. Learn more
+
+     PostToolUse  after tool execution
+   ❯ [User] C:/Users/owner/AppData/Roaming/uv/python/cpython-…   command
+
+     UserPromptSubmit  when the user submits a prompt
+     [User] C:/Users/owner/AppData/Roaming/uv/python/cpython-…   command
+
+     SessionStart  when a new session is started
+     [User] C:/Users/owner/AppData/Roaming/uv/python/cpython-…   startup · command
+
+     All events
+
+   Enter to view · Esc to close

@@ -1,0 +1,45 @@
+     ✔ claude.ai Google Docs                 2 tools
+     ✔ claude.ai Google Drive                14 tools
+     ✔ claude.ai Google Sheets               9 tools
+
+     Built-in MCPs (always available)
+     ◯ plugin:bio-research:benchling         not configured
+     ⚠ plugin:bio-research:biorender         needs authentication
+     ✔ plugin:bio-research:biorxiv           7 tools
+     ✔ plugin:bio-research:c-trials          6 tools
+     ✔ plugin:bio-research:chembl            6 tools
+     ✔ plugin:bio-research:consensus         1 tool
+     ✔ plugin:bio-research:ot                5 tools
+     ✔ plugin:bio-research:pubmed            7 tools
+     ⚠ plugin:bio-research:synapse           needs authentication
+     ⚠ plugin:bio-research:wiley             needs authentication
+     ◯ plugin:data:databricks                not configured
+     ✘ plugin:data:definite
+     ⚠ plugin:data:hex                       needs authentication
+     ◯ plugin:data:snowflake                 not configured
+     ⚠ plugin:design:atlassian               needs authentication
+     ⚠ plugin:design:figma                   needs authentication
+     ◯ plugin:design:gmail                   not configured
+     ◯ plugin:design:google calendar         not configured
+     ⚠ plugin:design:intercom                needs authentication
+     ⚠ plugin:design:linear                  needs authentication
+     ⚠ plugin:design:notion                  needs authentication
+     ⚠ plugin:design:slack                   needs authentication
+     ✘ plugin:github:github
+     ⚠ plugin:marketing:ahrefs               needs authentication
+     ⚠ plugin:marketing:amplitude            needs authentication
+     ⚠ plugin:marketing:amplitude-eu         needs authentication
+     ⚠ plugin:marketing:canva                needs authentication
+     ◯ plugin:marketing:gmail                not configured
+     ◯ plugin:marketing:google calendar      not configured
+     ⚠ plugin:marketing:klaviyo              needs authentication
+     ⚠ plugin:marketing:similarweb           needs authentication
+     ⚠ plugin:marketing:supermetrics         needs authentication
+     ⚠ plugin:productivity:clickup           needs authentication
+     ◯ plugin:productivity:gmail             not configured
+     ◯ plugin:productivity:google calendar   not configured
+     ⚠ plugin:productivity:monday            needs authentication
+
+   ※ Run claude --debug to see error logs
+   https://code.claude.com/docs/en/mcp for help
+   ↑/↓ to navigate · Enter to confirm · Esc to cancel

@@ -1,0 +1,26 @@
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Resume session
+   ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+   │ ⌕ Search…                                                                                                                                                                                      │
+   ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+     proj
+
+   ❯ Git model directory
+     2 minutes ago · master · 614.2KB
+
+     Notes.py docstrings
+     20 hours ago · master · 600.2KB
+
+     Notes.py left or right question
+     20 hours ago · master · 472.2KB
+
+     AskUserQuestion rain or sun
+     20 hours ago · master · 457.9KB
+
+     Tea or coffee question
+     20 hours ago · master · 480.1KB
+
+     Notes.py docstrings
+     20 hours ago · master · 473.1KB
+
+     Ctrl+A to show all projects · Ctrl+B to only show current branch · Space to preview · Ctrl+R to rename · Type to search · Esc to cancel

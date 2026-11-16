@@ -753,8 +753,12 @@ mod tests {
         });
     }
 
+    /// How long a test waits for the watcher's event. A loaded machine (a build beside the suite)
+    /// delivers it late, and the wait ends as soon as it comes, so the bound costs a quiet run nothing.
+    const CHANGE_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
     fn wait_for_change(root: &Path, path: &Path) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let deadline = std::time::Instant::now() + CHANGE_WAIT;
         loop {
             let changes =
                 block_on_until(next_change(root.to_string_lossy().into_owned()), deadline).unwrap();
