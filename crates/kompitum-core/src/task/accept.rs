@@ -97,6 +97,86 @@ fn commit_failed(name: &str, words: &str) -> RpcError {
     )
 }
 
+fn not_applied(name: &str, words: &str) -> RpcError {
+    RpcError::new(
+        "conflict",
+        format!("{name}'s patch does not apply: {words}"),
+        "the repository was not touched; see `kom task review`",
+    )
+}
+
+/// None of the patch's files has changes in the repository: a failed three-way can be rolled back.
+async fn unchanged(repo: &str, files: &[String]) -> Result<bool, RpcError> {
+    let mut args = vec!["status", "--porcelain", "--"];
+    args.extend(files.iter().map(String::as_str));
+    let out = git::git(repo, &args).await?;
+    Ok(String::from_utf8_lossy(&out.stdout).trim().is_empty())
+}
+
+/// The files a failed three-way names as conflicted, or every patch file when it names none.
+fn conflicted_files(out: &std::process::Output, files: &[String]) -> Vec<String> {
+    let text = format!("{}\n{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let mut found: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let named = line.strip_prefix("U ").or_else(|| {
+            line.strip_prefix("Applied patch to '").and_then(|rest| rest.strip_suffix("' with conflicts."))
+        });
+        let Some(file) = named.map(str::trim).filter(|file| !file.is_empty()) else { continue };
+        if !found.iter().any(|seen| seen == file) {
+            found.push(file.to_string());
+        }
+    }
+    if found.is_empty() { files.to_vec() } else { found }
+}
+
+fn conflicted(name: &str, out: &std::process::Output, files: &[String]) -> RpcError {
+    RpcError::new(
+        "conflict",
+        format!(
+            "{name}'s patch conflicts in {} (a three-way apply was tried)",
+            conflicted_files(out, files).join(", ")
+        ),
+        "the repository was not touched; see `kom task review`",
+    )
+}
+
+/// Puts every patch file back as HEAD has it, and a file the patch added away from the index and
+/// the disk, after a three-way apply that conflicted. A file that was on disk before the apply
+/// (`before`) is never deleted: it is someone's, even when git ignores it.
+async fn restore(repo: &str, files: &[String], before: &[bool]) -> Result<(), RpcError> {
+    let mut tracked: Vec<&str> = Vec::new();
+    let mut added: Vec<&str> = Vec::new();
+    for (file, was_there) in files.iter().zip(before) {
+        let listed = git::git(repo, &["ls-tree", "-z", "HEAD", "--", file]).await?;
+        if listed.stdout.is_empty() {
+            if !was_there {
+                added.push(file);
+            }
+        } else {
+            tracked.push(file);
+        }
+    }
+    if !tracked.is_empty() {
+        let mut args = vec!["checkout", "HEAD", "--"];
+        args.extend(tracked);
+        git::git(repo, &args).await?;
+    }
+    if !added.is_empty() {
+        let mut args = vec!["rm", "-q", "--cached", "--ignore-unmatch", "--"];
+        args.extend(added.iter().copied());
+        git::git(repo, &args).await?;
+        for file in added {
+            let path = Path::new(repo).join(file);
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(RpcError::new("unavailable", format!("cannot remove {file}: {e}"), "")),
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptResult, RpcError> {
     let serial = core.tasks.lock.lock().await;
     if super::stopping(core) {
@@ -174,13 +254,24 @@ pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptR
         }
     }
     if let Err(error) = git::git(&task.repo, &["apply", "--check", "--whitespace=nowarn", &patch]).await {
-        return Err(RpcError::new(
-            "conflict",
-            format!("{}'s patch does not apply: {}", task.name, error.message),
-            "the repository was not touched; see `kom task review`",
-        ));
-    }
-    if let Err(error) = git::git(&task.repo, &["apply", "--whitespace=nowarn", &patch]).await {
+        // With no commit, a rollback would lose the Owner's edits: try three-way only when the
+        // patch's files have none.
+        if p.no_commit && !unchanged(&task.repo, &files).await? {
+            return Err(not_applied(&task.name, &error.message));
+        }
+        let before: Vec<bool> = files.iter().map(|file| Path::new(&task.repo).join(file).exists()).collect();
+        let applied = git::git_raw(&task.repo, &["apply", "--3way", "--whitespace=nowarn", &patch]).await?;
+        if !applied.status.success() {
+            restore(&task.repo, &files, &before).await?;
+            return Err(conflicted(&task.name, &applied, &files));
+        }
+        if p.no_commit {
+            let mut args = vec!["reset", "-q", "--"];
+            args.extend(files.iter().map(String::as_str));
+            git::git(&task.repo, &args).await?;
+        }
+        task.warnings.push(format!("{}'s patch applied three-way: the repository had changed under it", task.name));
+    } else if let Err(error) = git::git(&task.repo, &["apply", "--whitespace=nowarn", &patch]).await {
         return Err(RpcError::new(
             "conflict",
             format!("{}'s patch could not be applied: {}", task.name, error.message),

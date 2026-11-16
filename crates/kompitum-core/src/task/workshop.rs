@@ -197,11 +197,11 @@ pub async fn settle(
         restore(path, files).await?;
         return Ok(None);
     };
-    if head(path).await? != before {
-        if let Err(e) = sync(path, before).await {
-            restore(path, files).await?;
-            return Ok(Some(e.message));
-        }
+    if head(path).await? != before
+        && let Err(e) = sync(path, before).await
+    {
+        restore(path, files).await?;
+        return Ok(Some(e.message));
     }
     follow(path, after).await?;
     Ok(None)

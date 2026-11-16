@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `task accept` tries a three-way apply before refusing a conflict, and names the conflicting files.
+
 ## [0.1.17] - 2026-11-02
 
 ### Fixed

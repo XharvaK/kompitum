@@ -18,6 +18,21 @@ pub async fn git(dir: &str, args: &[&str]) -> Result<Output, RpcError> {
 
 /// `git` with its own limit, for what can take longer: a commit runs the repo's hooks.
 pub async fn git_for(dir: &str, args: &[&str], limit: Duration) -> Result<Output, RpcError> {
+    let out = run(dir, args, limit).await?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let what = if stderr.is_empty() { format!("{}", out.status) } else { stderr };
+        return Err(RpcError::new("unavailable", format!("git {} failed: {what}", args.join(" ")), ""));
+    }
+    Ok(out)
+}
+
+/// `git` for a caller that reads a failure itself: a non-zero exit is part of the returned output.
+pub async fn git_raw(dir: &str, args: &[&str]) -> Result<Output, RpcError> {
+    run(dir, args, LIMIT).await
+}
+
+async fn run(dir: &str, args: &[&str], limit: Duration) -> Result<Output, RpcError> {
     let mut command = std::process::Command::new("git");
     command
         .arg("-C")
@@ -37,14 +52,7 @@ pub async fn git_for(dir: &str, args: &[&str], limit: Duration) -> Result<Output
             "check the repository for a lock or a hook waiting on input",
         )
     })?;
-    let out = out
-        .map_err(|e| RpcError::new("unavailable", format!("cannot run git: {e}"), "install git and put it on PATH"))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        let what = if stderr.is_empty() { format!("{}", out.status) } else { stderr };
-        return Err(RpcError::new("unavailable", format!("git {} failed: {what}", args.join(" ")), ""));
-    }
-    Ok(out)
+    out.map_err(|e| RpcError::new("unavailable", format!("cannot run git: {e}"), "install git and put it on PATH"))
 }
 
 /// The repo a folder belongs to, the branch `HEAD` was on ("HEAD" when

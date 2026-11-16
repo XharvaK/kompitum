@@ -295,9 +295,144 @@ fn accept_refuses_a_conflict_and_leaves_the_repo_untouched() {
     let head = git(&repo, &["rev-parse", "HEAD"]);
     let error = refused(&s, &["task", "accept", "fix-11"]);
     assert_eq!(error["error"]["kind"], "conflict", "{error}");
+    let message = error["error"]["message"].as_str().unwrap();
+    assert!(message.contains("a.txt"), "the message names the file: {error}");
+    assert!(message.contains("three-way"), "the message says a three-way apply was tried: {error}");
     assert_eq!(git(&repo, &["rev-parse", "HEAD"]), head, "no commit was made");
-    assert_eq!(std::fs::read_to_string(repo.join("a.txt")).unwrap(), "mine\n", "the repository was not touched");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap().replace("\r\n", "\n"),
+        "mine\n",
+        "the repository was not touched"
+    );
     assert!(git(&repo, &["status", "--porcelain"]).trim().is_empty(), "and it is still clean");
+}
+
+/// `a.txt` holds seven lines and a task rewrites line five; then the repository commits line three,
+/// inside the hunk's context, so a plain apply fails.
+fn moved_near_the_hunk(s: &Session, repo: &Path, name: &str) {
+    std::fs::write(repo.join("a.txt"), "1\n2\n3\n4\n5\n6\n7\n").unwrap();
+    git(repo, &["commit", "-q", "-am", "seven lines"]);
+    run_one(s, repo, name, vec![json!({"write": ["a.txt", "1\n2\n3\n4\nfive\n6\n7\n"]})], &["--worker", "go"]);
+    std::fs::write(repo.join("a.txt"), "1\n2\nthree\n4\n5\n6\n7\n").unwrap();
+    git(repo, &["commit", "-q", "-am", "line three"]);
+}
+
+#[test]
+fn accept_applies_three_way_when_the_repo_moved_near_the_hunk() {
+    let s = Session::new();
+    let repo = s.repo();
+    moved_near_the_hunk(&s, &repo, "fix-3way");
+    let commits: u32 = git(&repo, &["rev-list", "--count", "HEAD"]).trim().parse().unwrap();
+    let accepted = accept(&s, "fix-3way", &[]);
+    assert_eq!(accepted["state"], "accepted", "{accepted}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap().replace("\r\n", "\n"),
+        "1\n2\nthree\n4\nfive\n6\n7\n",
+        "both changes are there"
+    );
+    assert_eq!(
+        git(&repo, &["rev-list", "--count", "HEAD"]).trim().parse::<u32>().unwrap(),
+        commits + 1,
+        "one new commit"
+    );
+    assert!(git(&repo, &["status", "--porcelain"]).trim().is_empty(), "the repository is clean");
+    let view = s.task("fix-3way");
+    let warnings = view["task"]["warnings"].as_array().cloned().unwrap_or_default();
+    assert!(
+        warnings.iter().any(|warning| warning.as_str().is_some_and(|text| text.contains("applied three-way"))),
+        "the task says so: {view}"
+    );
+}
+
+#[test]
+fn accept_no_commit_applies_three_way_and_stages_nothing() {
+    let s = Session::new();
+    let repo = s.repo();
+    moved_near_the_hunk(&s, &repo, "fix-3way-nc");
+    let head = git(&repo, &["rev-parse", "HEAD"]);
+    let accepted = accept(&s, "fix-3way-nc", &["--no-commit"]);
+    assert_eq!(accepted["state"], "accepted", "{accepted}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap().replace("\r\n", "\n"),
+        "1\n2\nthree\n4\nfive\n6\n7\n",
+        "both changes are in the tree"
+    );
+    assert!(git(&repo, &["diff", "--cached", "--name-only"]).trim().is_empty(), "nothing is staged");
+    assert_eq!(git(&repo, &["rev-parse", "HEAD"]), head, "HEAD did not move");
+}
+
+#[test]
+fn a_conflicting_three_way_leaves_an_added_file_out() {
+    let s = Session::new();
+    let repo = s.repo();
+    run_one(
+        &s,
+        &repo,
+        "fix-added",
+        vec![json!({"write": ["a.txt", "worker\n"]}), json!({"write": ["new.txt", "new\n"]})],
+        &["--worker", "go"],
+    );
+    std::fs::write(repo.join("a.txt"), "mine\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "mine"]);
+    let head = git(&repo, &["rev-parse", "HEAD"]);
+    let error = refused(&s, &["task", "accept", "fix-added"]);
+    assert_eq!(error["error"]["kind"], "conflict", "{error}");
+    let message = error["error"]["message"].as_str().unwrap();
+    assert!(message.contains("a.txt"), "the message names the conflicting file: {error}");
+    assert!(message.contains("three-way"), "the message says a three-way apply was tried: {error}");
+    assert!(!message.contains("new.txt"), "the file that applied cleanly is not named: {error}");
+    assert!(!repo.join("new.txt").exists(), "the added file is gone: {error}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap().replace("\r\n", "\n"),
+        "mine\n",
+        "a.txt is as HEAD has it"
+    );
+    assert!(git(&repo, &["status", "--porcelain"]).trim().is_empty(), "the index and tree are clean");
+    assert_eq!(git(&repo, &["rev-parse", "HEAD"]), head, "HEAD did not move");
+}
+
+/// The clean check can't see a file the repository hides (here, untracked files are hidden); a
+/// conflicting three-way must still leave such a file where it was.
+#[test]
+fn a_conflicting_three_way_keeps_a_file_that_was_already_there() {
+    let s = Session::new();
+    let repo = s.repo();
+    run_one(
+        &s,
+        &repo,
+        "fix-hidden",
+        vec![json!({"write": ["a.txt", "worker\n"]}), json!({"write": ["new.txt", "new\n"]})],
+        &["--worker", "go"],
+    );
+    std::fs::write(repo.join("a.txt"), "mine\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "mine"]);
+    git(&repo, &["config", "status.showUntrackedFiles", "no"]);
+    std::fs::write(repo.join("new.txt"), "the owner's\n").unwrap();
+    let error = refused(&s, &["task", "accept", "fix-hidden"]);
+    assert_eq!(error["error"]["kind"], "conflict", "{error}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("new.txt")).unwrap().replace("\r\n", "\n"),
+        "the owner's\n",
+        "the file that was there is still there: {error}"
+    );
+}
+
+#[test]
+fn no_commit_with_local_edits_refuses_without_three_way() {
+    let s = Session::new();
+    let repo = s.repo();
+    std::fs::write(repo.join("a.txt"), "one\ntwo\n").unwrap();
+    git(&repo, &["commit", "-q", "-am", "two lines"]);
+    run_one(&s, &repo, "fix-local", vec![json!({"write": ["a.txt", "one\nworker\n"]})], &["--worker", "go"]);
+    std::fs::write(repo.join("a.txt"), "one\nmine\n").unwrap();
+    let error = refused(&s, &["task", "accept", "fix-local", "--no-commit"]);
+    assert_eq!(error["error"]["kind"], "conflict", "{error}");
+    assert!(!error["error"]["message"].as_str().unwrap().contains("three-way"), "three-way was not tried: {error}");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("a.txt")).unwrap().replace("\r\n", "\n"),
+        "one\nmine\n",
+        "the Owner's edit is still there"
+    );
 }
 
 #[test]
