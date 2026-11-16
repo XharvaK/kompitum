@@ -5404,6 +5404,30 @@ impl AppWindow {
             return false;
         };
         let parsed = crate::lead::Answer::from_json(answer);
+        if let Some(crate::lead::Answer::Answers(answers)) = &parsed
+            && pending.ask.kind == crate::lead::AskKind::Question
+        {
+            let questions = pending
+                .ask
+                .input
+                .pointer("/tool_input/questions")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let id = pending
+                .ask
+                .input
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .unwrap_or(&pending.ask.id);
+            if let Some(item) = crate::lead::conversation::answer_item(
+                id,
+                &questions,
+                &Value::Object(answers.clone()),
+            ) && let Some(session) = self.lead_sessions.get_mut(&pending.ask.terminal)
+            {
+                session.conversation.push_item(item);
+            }
+        }
         if matches!(parsed, Some(crate::lead::Answer::Deny { .. }))
             && pending.ask.kind == crate::lead::AskKind::Permission
             && let Some(tool) = pending.ask.input.get("tool_use_id").and_then(Value::as_str)
@@ -5448,8 +5472,11 @@ impl AppWindow {
     fn publish_lead(&mut self, cx: &mut Context<Self>) {
         let mut all = serde_json::Map::new();
         let mut versions = Vec::new();
+        let now = model::now_ms();
         for (terminal, session) in &self.lead_sessions {
-            all.insert(terminal.clone(), crate::lead::published_session(session));
+            let mut published = crate::lead::published_session(session);
+            published["terminal_shown"] = json!(crate::lead::terminal_shown(session, now));
+            all.insert(terminal.clone(), published);
             versions.push((terminal.clone(), session.conversation.version));
         }
         let mut items = serde_json::Map::new();
@@ -5576,20 +5603,27 @@ impl AppWindow {
     }
 
     /// The two automatic reveals a lead's terminal asks for: a start that never reached SessionStart,
-    /// and a core status of `blocked` with no ask held. A reveal by hand is never touched.
+    /// and a core status of `blocked` with no ask held. A reveal by hand is never touched. Also reads
+    /// the screen for a menu card while one may be there, and re-applies the pane when the card or
+    /// the wait changes what is shown.
     fn lead_reveals(&mut self, cx: &mut Context<Self>) {
         let now = model::now_ms();
         let not_started = strings::text("lead.not-started-yet");
         let asking = strings::text("lead.asking-in-terminal");
+        let side = strings::text("lead.side-question");
         let terminals: Vec<String> = self.lead_sessions.keys().cloned().collect();
         let mut changed = Vec::new();
+        let mut reads = Vec::new();
+        let mut layouts = Vec::new();
         for terminal in terminals {
             let blocked = self.model.status(&terminal) == Some("blocked");
             let Some(session) = self.lead_sessions.get_mut(&terminal) else {
                 continue;
             };
             let before = session.conversation.version;
-            if blocked {
+            // An ask holds its own card; the clock starts again from its answer, never from a status that lags.
+            let ask_held = session.ask.is_some();
+            if blocked && !ask_held {
                 session.blocked_since_ms.get_or_insert(now);
             } else {
                 session.blocked_since_ms = None;
@@ -5603,8 +5637,9 @@ impl AppWindow {
             } else if session.started {
                 crate::lead::hide_auto(&mut session.conversation, &not_started);
             }
-            let ask_held = session.ask.is_some();
-            if crate::lead::reveal_asking_in_terminal(blocked, ask_held, session.blocked_since_ms, now) {
+            session.asking_in_terminal =
+                crate::lead::reveal_asking_in_terminal(blocked, ask_held, session.blocked_since_ms, now);
+            if session.asking_in_terminal {
                 if session.conversation.reveal != Some(crate::lead::Reveal::Manual) {
                     session
                         .conversation
@@ -5613,7 +5648,31 @@ impl AppWindow {
             } else if !blocked || ask_held {
                 crate::lead::hide_auto(&mut session.conversation, &asking);
             }
+            let wants_menu = (session.started_this_run
+                && !session.started
+                && session
+                    .started_ms
+                    .is_some_and(|started| now.saturating_sub(started) >= 1_000))
+                || (blocked && !ask_held)
+                || (session.conversation.reveal == Some(crate::lead::Reveal::Auto)
+                    && session.conversation.reveal_why.as_deref() != Some(side.as_str()))
+                || session.menu.is_some();
+            if wants_menu && !session.menu_reading {
+                session.menu_reading = true;
+                reads.push(terminal.clone());
+            }
             if session.conversation.version != before {
+                changed.push(terminal.clone());
+            }
+            if Some(crate::lead::terminal_shown(session, now)) != session.shown_applied {
+                layouts.push(terminal);
+            }
+        }
+        for terminal in reads {
+            self.read_lead_menu(terminal, cx);
+        }
+        for terminal in layouts {
+            if !changed.contains(&terminal) {
                 changed.push(terminal);
             }
         }
@@ -5933,6 +5992,105 @@ impl AppWindow {
         .detach();
     }
 
+    /// `lead.menu`: walks the menu's pointer to the chosen row, reads the screen after each press, then
+    /// presses the action key. A menu that moved or changed opens the terminal by hand with a toast.
+    fn choose_lead_menu(
+        &mut self,
+        terminal: String,
+        key: String,
+        row: Option<usize>,
+        target: Option<String>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let max = self
+            .lead_sessions
+            .get(&terminal)
+            .and_then(|session| session.menu.as_ref())
+            .map_or(0, |menu| menu.rows.len() + 2);
+        let core = self.core.clone();
+        let guard = crate::inflight::track();
+        let address = terminal.clone();
+        let wanted = key.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let reached = cx
+                .background_executor()
+                .spawn(async move {
+                    let _guard = guard;
+                    let press = |keys: Value| {
+                        core.call(
+                            "terminal.keys",
+                            json!({ "terminal": &address, "keys": keys }),
+                        )
+                        .is_ok()
+                    };
+                    if wanted == "esc" || target.is_none() {
+                        return press(json!([wanted]));
+                    }
+                    let row = row.unwrap_or(0);
+                    let target = target.unwrap_or_default();
+                    let read = || {
+                        core.call("terminal.read", json!({ "terminal": &address, "lines": 60 }))
+                            .ok()
+                            .and_then(|value| {
+                                value["text"]
+                                    .as_str()
+                                    .and_then(crate::lead::menu::menu_from_screen)
+                            })
+                    };
+                    let mut presses = 0;
+                    let mut found = false;
+                    loop {
+                        let Some(current) = read() else { break };
+                        if current.rows.get(row).map(|row| row.label.as_str()) != Some(target.as_str()) {
+                            break;
+                        }
+                        if current.pointer == row {
+                            found = true;
+                            break;
+                        }
+                        if presses >= max {
+                            break;
+                        }
+                        let (direction, _) = crate::lead::menu_steps(current.pointer, row);
+                        if direction.is_empty() || !press(json!([direction])) {
+                            break;
+                        }
+                        presses += 1;
+                        std::thread::sleep(Duration::from_millis(crate::lead::MENU_STEP_MS));
+                    }
+                    found && press(json!([wanted]))
+                })
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                if let Some(session) = this.lead_sessions.get_mut(&terminal) {
+                    session.menu_busy = false;
+                }
+                if !reached {
+                    if let Some(session) = this.lead_sessions.get_mut(&terminal) {
+                        session
+                            .conversation
+                            .show(crate::lead::Reveal::Manual, None);
+                    }
+                    this.apply_lead_terminal_layout(&terminal);
+                    let notification = json!({
+                        "title": strings::text("lead.menu-missed"),
+                        "body": "",
+                        "level": "error",
+                    });
+                    this.open_overlay(
+                        mods::new_overlay_id(),
+                        json!({ "kind": "toast", "notification": notification }),
+                        window,
+                        cx,
+                    );
+                }
+                this.publish_lead(cx);
+            });
+        })
+        .detach();
+    }
+
     /// Says how the lead's restart after a core restart went.
     fn lead_restart_toast(&mut self, name: &str, outcome: Result<(), String>, window: &mut Window, cx: &mut Context<Self>) {
         let notification = match outcome {
@@ -5955,12 +6113,29 @@ impl AppWindow {
         );
     }
 
-    /// Hide or show the lead's terminal pane; it stays attached either way.
+    /// Hide or show the lead's terminal pane; it stays attached either way. An automatic reveal gives a
+    /// menu card a second to appear before the terminal takes its place.
     fn apply_lead_terminal_layout(&mut self, terminal: &str) {
+        let now = model::now_ms();
+        let side = strings::text("lead.side-question");
+        if let Some(session) = self.lead_sessions.get_mut(terminal) {
+            if session.conversation.reveal == Some(crate::lead::Reveal::Auto) {
+                if session.menu_wait_until_ms.is_none()
+                    && session.conversation.reveal_why.as_deref() != Some(side.as_str())
+                {
+                    session.menu_wait_until_ms = Some(now + crate::lead::MENU_WAIT_MS);
+                }
+            } else {
+                session.menu_wait_until_ms = None;
+            }
+        }
         let shown = self
             .lead_sessions
             .get(terminal)
-            .is_some_and(|s| s.conversation.terminal == crate::lead::TerminalVis::Shown);
+            .is_some_and(|s| crate::lead::terminal_shown(s, now));
+        if let Some(session) = self.lead_sessions.get_mut(terminal) {
+            session.shown_applied = Some(shown);
+        }
         if let Some(pane) = self.model.pane_of(terminal) {
             for tab in self.model.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()) {
                 if let Some(node) = tab.root.find_mut(&pane) {
@@ -5970,6 +6145,47 @@ impl AppWindow {
             }
         }
         self.fit_composers();
+    }
+
+    /// Reads the lead terminal's screen for one of Claude Code's own menus, off the UI thread, and
+    /// stores it when it differs. The conversation's version rises so the composer redraws the card.
+    fn read_lead_menu(&mut self, terminal: String, cx: &mut Context<Self>) {
+        let core = self.core.clone();
+        let address = terminal.clone();
+        cx.spawn(async move |this, cx| {
+            let menu = cx
+                .background_executor()
+                .spawn(async move {
+                    core.call("terminal.read", json!({ "terminal": address, "lines": 60 }))
+                        .ok()
+                        .and_then(|value| {
+                            value["text"]
+                                .as_str()
+                                .and_then(crate::lead::menu::menu_from_screen)
+                        })
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let changed = {
+                    let Some(session) = this.lead_sessions.get_mut(&terminal) else {
+                        return;
+                    };
+                    session.menu_reading = false;
+                    if session.menu == menu {
+                        false
+                    } else {
+                        session.menu = menu;
+                        session.conversation.touched();
+                        true
+                    }
+                };
+                if changed {
+                    this.publish_lead(cx);
+                    this.apply_lead_terminal_layout(&terminal);
+                }
+            });
+        })
+        .detach();
     }
 
     /// A space with its first tab and terminal, shown at once.
@@ -7570,6 +7786,48 @@ impl AppWindow {
                 }
                 self.set_lead_mode_now(terminal, mode.clone(), window, cx);
                 self.reply = Some(json!({ "switching": mode }));
+            }
+            "lead.menu" => {
+                let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
+                let key = Self::arg(a, "key").unwrap_or_default().to_owned();
+                let program = self.lead_program();
+                if !self.live.get(&terminal).is_some_and(|record| crate::lead::is_lead_record(record, &program)) {
+                    return self.fail(format!("{terminal:?} isn't the lead's terminal"));
+                }
+                let Some(menu) = self.lead_sessions.get(&terminal).and_then(|session| session.menu.clone()) else {
+                    return self.fail(strings::text("lead.menu-none"));
+                };
+                if !menu.actions.iter().any(|action| action.key == key) {
+                    return self.fail(strings::text_with("lead.menu-key", &[("key", &key)]));
+                }
+                let row = match a.get("row") {
+                    None | Some(Value::Null) => None,
+                    Some(value) => match value.as_u64() {
+                        Some(row) => Some(row as usize),
+                        None => return self.fail(strings::text("lead.menu-row-number")),
+                    },
+                };
+                let label = a.get("label").and_then(Value::as_str).map(str::to_owned);
+                if let Some(row) = row {
+                    let Some(wanted) = menu.rows.get(row) else {
+                        return self.fail(strings::text_with("lead.menu-row", &[("row", &row.to_string())]));
+                    };
+                    if let Some(label) = label.as_deref()
+                        && wanted.label != label
+                    {
+                        return self.fail(strings::text_with(
+                            "lead.menu-label",
+                            &[("row", &row.to_string()), ("label", label)],
+                        ));
+                    }
+                }
+                let target = row.map(|row| label.unwrap_or_else(|| menu.rows[row].label.clone()));
+                if let Some(session) = self.lead_sessions.get_mut(&terminal) {
+                    session.menu_busy = true;
+                }
+                self.publish_lead(cx);
+                self.choose_lead_menu(terminal, key.clone(), row, target, window, cx);
+                self.reply = Some(json!({ "pressed": key }));
             }
             "lead.fit" => {
                 let terminal = Self::arg(a, "terminal").unwrap_or_default().to_owned();
@@ -15016,6 +15274,206 @@ export default class Probe extends View {
                 Some(Reveal::Manual),
                 "a reveal by hand stays"
             );
+        });
+    }
+
+    /// `lead.menu` refuses a terminal with no menu, a key the menu doesn't name, a row out of range,
+    /// and a label that isn't that row's.
+    #[test]
+    fn a_lead_menu_refuses_what_it_cannot_press() {
+        in_own_process("lead_menu_refuses");
+    }
+
+    #[gpui::test]
+    fn lead_menu_refuses(cx: &mut gpui::TestAppContext) {
+        use crate::lead::menu;
+        use serde_json::json;
+        if !running_alone("lead_menu_refuses") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, window, cx| {
+            this.live.insert(
+                "t1".into(),
+                json!({"state": "live", "labels": {"lead": "claude"}}),
+            );
+            this.lead_sessions.entry("t1".into()).or_default();
+            let call = |this: &mut super::AppWindow,
+                        window: &mut Window,
+                        cx: &mut Context<super::AppWindow>,
+                        args: serde_json::Value| {
+                this.run_as(
+                    "lead.menu",
+                    args,
+                    false,
+                    window,
+                    cx,
+                )["error"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let no_menu = call(
+                this,
+                window,
+                cx,
+                json!({"terminal": "t1", "key": "enter"}),
+            );
+            assert!(no_menu.contains("menu"), "no menu: {no_menu}");
+
+            this.lead_sessions.get_mut("t1").unwrap().menu = Some(menu::ScreenMenu {
+                title: "Select model".into(),
+                body: Vec::new(),
+                rows: vec![
+                    menu::MenuRow {
+                        label: "Default".into(),
+                        detail: String::new(),
+                        current: true,
+                    },
+                    menu::MenuRow {
+                        label: "More models".into(),
+                        detail: String::new(),
+                        current: false,
+                    },
+                ],
+                pointer: 0,
+                notes: Vec::new(),
+                actions: vec![
+                    menu::MenuAction {
+                        key: "enter".into(),
+                        label: "Choose".into(),
+                    },
+                    menu::MenuAction {
+                        key: "s".into(),
+                        label: "Session".into(),
+                    },
+                    menu::MenuAction {
+                        key: "esc".into(),
+                        label: "Cancel".into(),
+                    },
+                ],
+            });
+            let bad_key = call(
+                this,
+                window,
+                cx,
+                json!({"terminal": "t1", "key": "z"}),
+            );
+            assert!(bad_key.contains("key"), "an unnamed key: {bad_key}");
+            let bad_row = call(
+                this,
+                window,
+                cx,
+                json!({"terminal": "t1", "key": "enter", "row": 5}),
+            );
+            assert!(bad_row.contains("row"), "a row out of range: {bad_row}");
+            let stale = call(
+                this,
+                window,
+                cx,
+                json!({"terminal": "t1", "key": "enter", "row": 0, "label": "Other"}),
+            );
+            assert!(stale.contains("Other"), "a stale label: {stale}");
+        });
+    }
+
+    /// A held ask stops the blocked clock, and answering it starts the clock again; a stored menu keeps
+    /// an automatic reveal's pane hidden.
+    #[test]
+    fn a_lead_menu_and_ask_clock() {
+        in_own_process("lead_menu_clock");
+    }
+
+    #[gpui::test]
+    fn lead_menu_clock(cx: &mut gpui::TestAppContext) {
+        use crate::lead::{Reveal, TerminalVis, menu};
+        use serde_json::json;
+        if !running_alone("lead_menu_clock") {
+            return;
+        }
+        let (view, cx) = open_window(
+            cx,
+            "unused",
+            "",
+            json!({ "id": "root", "type": "block", "content": { "tab": "active" } }),
+        );
+        view.update_in(cx, |this, _window, cx| {
+            this.live.insert(
+                "t1".into(),
+                json!({"state": "live", "labels": {"lead": "claude"}}),
+            );
+            this.model.agents.insert(
+                "t1".into(),
+                crate::model::Agent {
+                    word: Some("blocked".into()),
+                    ..Default::default()
+                },
+            );
+            let session = this.lead_sessions.entry("t1".into()).or_default();
+            session.started = true;
+            session.blocked_since_ms = Some(crate::model::now_ms().saturating_sub(5_000));
+            session.ask = Some(crate::lead::Ask {
+                id: "a1".into(),
+                terminal: "t1".into(),
+                kind: crate::lead::AskKind::Question,
+                input: serde_json::Value::Null,
+            });
+            this.lead_reveals(cx);
+            let session = &this.lead_sessions["t1"];
+            assert_eq!(session.blocked_since_ms, None, "an ask holds the blocked clock");
+            assert!(!session.asking_in_terminal, "an ask is its own card");
+
+            let session = this.lead_sessions.get_mut("t1").unwrap();
+            session.ask = None;
+            this.lead_reveals(cx);
+            let session = &this.lead_sessions["t1"];
+            let since = session.blocked_since_ms.expect("the clock starts again");
+            assert!(
+                crate::model::now_ms().saturating_sub(since) < 1_000,
+                "the clock restarts from the answer, not the old blocked status"
+            );
+            assert!(!session.asking_in_terminal, "three seconds have not passed yet");
+
+            let session = this.lead_sessions.get_mut("t1").unwrap();
+            session.conversation.show(Reveal::Auto, Some("Claude is showing a menu.".into()));
+            session.menu = Some(menu::ScreenMenu {
+                title: "Select model".into(),
+                body: Vec::new(),
+                rows: vec![
+                    menu::MenuRow {
+                        label: "Default".into(),
+                        detail: String::new(),
+                        current: true,
+                    },
+                    menu::MenuRow {
+                        label: "More models".into(),
+                        detail: String::new(),
+                        current: false,
+                    },
+                ],
+                pointer: 0,
+                notes: Vec::new(),
+                actions: vec![menu::MenuAction {
+                    key: "enter".into(),
+                    label: String::new(),
+                }],
+            });
+            let now = crate::model::now_ms();
+            assert!(!crate::lead::terminal_shown(&this.lead_sessions["t1"], now));
+            this.lead_reveals(cx);
+            let session = &this.lead_sessions["t1"];
+            assert_eq!(
+                session.conversation.terminal,
+                TerminalVis::Shown,
+                "the conversation still calls for its terminal"
+            );
+            assert!(!crate::lead::terminal_shown(session, now), "the menu card stands in");
+            assert_eq!(session.shown_applied, Some(false), "the pane follows the card");
         });
     }
 

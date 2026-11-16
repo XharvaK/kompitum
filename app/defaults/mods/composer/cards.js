@@ -1,6 +1,6 @@
 // The composer's cards (permission, plan and question): their keys, answers and parts.
 
-import { div } from "gpui-kit";
+import { div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
 import { run, settings, text } from "kompitum";
 import { CARD_WAIT_MS } from "./util.js";
@@ -583,6 +583,163 @@ export default {
       .hover((style) => style.text_color(t.foreground))
       .on_click((_e, cx) => this.answerInTerminal(ask, cx))
       .child(text("composer.answer-in-terminal"));
+  },
+
+  // The menu Claude shows in its terminal, drawn where an ask card goes. Its rows are a single choice list;
+  // the buttons are the menu's own actions, with the fixed link out to the terminal.
+  menuCard(t, cx) {
+    const menu = this.menu;
+    const mono = settings()?.font_family ?? "Google Sans Code";
+    return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.input).bg(t.surface)
+      .child(div().text_size(13).text_color(t.muted).child(text("composer.menu-eyebrow")))
+      .child(div().text_size(15).font_medium().text_color(t.foreground).child(String(menu?.title ?? "")))
+      .children((menu?.body ?? []).map((block) => this.menuBlock(t, block, mono, 14)))
+      .children((menu?.rows ?? []).map((row, index) => this.menuRow(t, row, index, cx)))
+      .children((menu?.notes ?? []).map((block) => this.menuBlock(t, block, mono, 13)))
+      .child(this.menuButtons(t, cx));
+  },
+
+  menuBlock(t, block, mono, size) {
+    if (block?.mono) {
+      return div()
+        .w_full()
+        .max_h(240)
+        .overflow_y_scrollbar()
+        .child(div().text_size(13).font_family(mono).text_color(t.dim).child(String(block.text ?? "")));
+    }
+    return div().w_full().text_size(size).text_color(t.muted).child(String(block?.text ?? ""));
+  },
+
+  menuRow(t, row, index, cx) {
+    const on = this.menuAt === index;
+    const label = String(row?.label ?? "");
+    return h_flex()
+      .id(`composer-menu-row-${index}`)
+      .w_full()
+      .gap(8)
+      .items_center()
+      .px(8)
+      .py(5)
+      .rounded(7)
+      .border_1()
+      .border_color(on ? t.accent : t.input)
+      .bg(on ? t.selected : t.raised)
+      .cursor_pointer()
+      .role("radio_button")
+      .aria_selected(on)
+      .on_click((event, cx) => {
+        if (this.menuBusy) return;
+        this.menuAt = index;
+        if (event?.click_count >= 2) this.menuAction(this.menuActionFor("enter"), cx);
+        else cx.notify();
+      })
+      .child(div().w(18).flex_none().text_size(14).text_color(t.muted).child(index < 9 ? `${index + 1}.` : ""))
+      .child(div().min_w(0).text_size(14).text_color(t.foreground).child(label))
+      .when(Boolean(row?.current), (el) => el.child(svg("mods/workspace-chrome/check.svg").size(13).text_color(t.muted)))
+      .when(Boolean(row?.detail), (el) =>
+        el.child(div().min_w(0).truncate().text_size(13).text_color(t.muted).child(String(row.detail))));
+  },
+
+  menuButtons(t, cx) {
+    const actions = this.menu?.actions ?? [];
+    const enter = actions.find((action) => action.key === "enter");
+    const esc = actions.find((action) => action.key === "esc");
+    const letters = actions.filter((action) => /^[a-z0-9]$/.test(String(action.key ?? "")));
+    const buttons = h_flex().w_full().gap(6).items_center().when(this.menuBusy, (el) => el.opacity(0.5));
+    if (enter) {
+      buttons.child(this.cardButton(
+        "composer-menu-enter",
+        enter.label || text("composer.menu-choose"),
+        (_e, cx) => this.menuAction(enter, cx),
+        t,
+        { filled: true },
+      ));
+    }
+    for (const action of letters) {
+      buttons.child(this.cardButton(
+        `composer-menu-${action.key}`,
+        String(action.label ?? ""),
+        (_e, cx) => this.menuAction(action, cx),
+        t,
+      ));
+    }
+    if (esc) {
+      buttons.child(this.cardButton(
+        "composer-menu-esc",
+        String(esc.label ?? ""),
+        (_e, cx) => this.menuAction(esc, cx),
+        t,
+      ));
+    }
+    buttons.child(div().flex_1());
+    buttons.child(this.textButton(
+      "composer-menu-show-terminal",
+      text("composer.menu-show-terminal"),
+      () => run("lead.terminal", { terminal: this.terminal, show: true }),
+      t,
+    ));
+    return buttons;
+  },
+
+  menuAction(key, cx) {
+    if (this.menuBusy) return;
+    const action = this.menuActionFor(key);
+    if (!action) return;
+    const args = { terminal: this.terminal, key: action.key };
+    if (action.key !== "esc") {
+      const row = (this.menu?.rows ?? [])[this.menuAt];
+      if (row) {
+        args.row = this.menuAt;
+        args.label = String(row.label ?? "");
+      }
+    }
+    run("lead.menu", args);
+    cx.notify();
+  },
+
+  menuActionFor(key) {
+    return (this.menu?.actions ?? []).find((action) => action.key === key) ?? null;
+  },
+
+  menuHighlight(index, cx) {
+    if (this.menuBusy) return;
+    const rows = this.menu?.rows ?? [];
+    if (!rows[index]) return;
+    this.menuAt = index;
+    cx.notify();
+  },
+
+  menuArrow(direction, cx) {
+    if (this.menuBusy) return;
+    const rows = this.menu?.rows ?? [];
+    if (rows.length === 0) return;
+    const at = Math.max(0, Math.min(rows.length - 1, Number.isInteger(this.menuAt) ? this.menuAt : 0));
+    this.menuAt = (at + direction + rows.length) % rows.length;
+    cx.notify();
+  },
+
+  menuKey(event, cx) {
+    if (!this.menu) return;
+    const keystroke = event?.keystroke;
+    if (keystroke === "enter") {
+      if (Date.now() - this.menuSince >= CARD_WAIT_MS) this.menuAction("enter", cx);
+      cx.stop_propagation();
+    } else if (keystroke === "escape") {
+      this.menuAction("esc", cx);
+      cx.stop_propagation();
+    } else if (/^[1-9]$/.test(keystroke)) {
+      const at = Number(keystroke) - 1;
+      if ((this.menu.rows ?? [])[at]) this.menuHighlight(at, cx);
+      cx.stop_propagation();
+    } else if (keystroke === "space") {
+      this.menuHighlight(this.menuAt, cx);
+      cx.stop_propagation();
+    }
+  },
+
+  menuEscape(cx) {
+    if (this.menuBusy) return;
+    this.menuAction("esc", cx);
   },
 
   card(t, cx) {

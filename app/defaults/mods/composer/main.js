@@ -80,6 +80,12 @@ export default class Composer extends View {
     this.state = null;
     this.ask = null;
     this.askId = null;
+    // Claude's own menu, when it shows one: its rows, the highlighted one, and when the card appeared.
+    this.menu = null;
+    this.menuLabels = null;
+    this.menuAt = 0;
+    this.menuSince = 0;
+    this.menuBusy = false;
     // The last permission mode a hook confirmed: a later one posts a toast; the first after a start is quiet.
     this.lastConfirmedMode = null;
     // When the open card appeared (0 with none): its Enter and digit keys wait for it.
@@ -302,6 +308,32 @@ export default class Composer extends View {
     cx.notify();
   }
 
+  // Takes Claude's menu, starting the highlight at its pointer whenever the rows change, and restarts
+  // the card's wait when a different menu appears after one was already showing.
+  syncMenu(lead, cx) {
+    const menu = lead?.menu ?? null;
+    const hadMenu = Boolean(this.menu);
+    this.menuBusy = lead?.menu_busy === true;
+    const labels = (menu?.rows ?? []).map((row) => String(row?.label ?? "")).join("\u0000");
+    if (labels !== this.menuLabels) {
+      const wasShown = this.menuLabels !== null;
+      this.menuLabels = labels;
+      this.menuAt = menu && Number.isInteger(menu.pointer) ? menu.pointer : 0;
+      if (menu && wasShown) this.menuSince = Date.now();
+    }
+    this.menu = menu;
+    if (!menu) {
+      this.menuLabels = null;
+      this.menuSince = 0;
+    } else if (!this.menuSince) {
+      this.menuSince = Date.now();
+    }
+    if (menu && !hadMenu && cx) cx.timer.after(0, () => this.handle.focus());
+    else if (!menu && hadMenu && cx && !this.ask) cx.timer.after(0, () => this.text.focus());
+    const rows = menu?.rows ?? [];
+    this.menuAt = Math.max(0, Math.min(rows.length - 1, Number.isInteger(this.menuAt) ? this.menuAt : 0));
+  }
+
   // The box holds text or a file that the Owner has not sent.
   hasDraft() {
     return this.text.value().length > 0 || this.chips.length > 0;
@@ -325,10 +357,15 @@ export default class Composer extends View {
       this.closeList(cx);
       return;
     }
-    if (this.state === "asking") {
-      if (this.ask) this.cardEscape(this.ask, cx);
+    if (this.ask && this.state === "asking") {
+      this.cardEscape(this.ask, cx);
       return;
     }
+    if (this.menu) {
+      this.menuEscape(cx);
+      return;
+    }
+    if (this.state === "asking") return;
     if (this.text.value().length === 0 && this.leadLive()) this.stopTurn(cx);
   }
 
@@ -336,7 +373,8 @@ export default class Composer extends View {
   // on the textarea's own ComposerHistory context instead, so they outrank the
   // editor's caret keys only while the box is empty or browsing history.
   keyDown(event, cx) {
-    if (this.state === "asking" && this.ask) this.cardKey(event, cx);
+    if (this.ask) this.cardKey(event, cx);
+    else if (this.menu) this.menuKey(event, cx);
   }
 
   setHistory(value, cx) {
@@ -350,6 +388,10 @@ export default class Composer extends View {
     // A card's options are the list the arrows move through while it shows.
     if (this.ask) {
       this.cardArrow(-direction, cx);
+      return;
+    }
+    if (this.menu) {
+      this.menuArrow(-direction, cx);
       return;
     }
     if (direction > 0) {
@@ -570,6 +612,7 @@ export default class Composer extends View {
         cx.timer.after(120, (cx) => { this.scroll.scroll_to_end(); cx.notify(); });
       }
     }
+    this.syncMenu(lead, cx);
     this.fit(cx);
     const root = v_flex()
       .id("composer")
@@ -577,7 +620,7 @@ export default class Composer extends View {
       .min_h(0)
       .bg(t.background)
       .track_focus(this.handle)
-      .key_context(this.ask ? "ComposerCard" : this.historyMode ? "ComposerHistory" : "Composer")
+      .key_context(this.ask || this.menu ? "ComposerCard" : this.historyMode ? "ComposerHistory" : "Composer")
       .on_action("composer-escape", (_event, cx) => this.escape(cx))
       .on_action("composer-history-up", (_event, cx) => this.historyKey(1, cx))
       .on_action("composer-history-down", (_event, cx) => this.historyKey(-1, cx))
@@ -612,13 +655,13 @@ export default class Composer extends View {
         .when(Boolean(this.revealNote(t)), (el) => el.child(this.revealNote(t)))
         .child(this.bar(t, cx));
     }
-    if (this.items.length === 0 && this.leadReady() && !this.ask) return root.child(this.startView(t, cx));
+    if (this.items.length === 0 && this.leadReady() && !this.ask && !this.menu) return root.child(this.startView(t, cx));
     return root.child(this.conversationPanel(t, cx)).child(this.bar(t, cx, true));
   }
 
   // The pane grows with the text, up to six lines; the window holds the height (lead.fit).
   fit(cx) {
-    if (!this.terminal || this.ask) return;
+    if (!this.terminal || this.ask || this.menu) return;
     if (this.terminalShown() !== true) return;
     // Before the lead starts, its terminal may be asking something: the pane is one row for that.
     let px = STARTING_PX;

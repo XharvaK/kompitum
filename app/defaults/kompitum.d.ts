@@ -169,7 +169,7 @@ export function openLink(url: string): void;
  *   terminal.right_click {to: "program" | "menu", terminal?} (right-clicks to a program that takes the mouse; Shift: the menu).
  *   terminal.scroll {lines | pages | to: "top" | "bottom", terminal?} (Kompitum's view of the history: negative goes up; pages may be fractional).
  * Agents: agent.next, agent.prev (the agents list's order), agent.focus {terminal} (sub-agents too),
- *   lead.open (focus or start the lead, with the composer under it), lead.restart {terminal} (end the lead and start it again with the saved model and reasoning), lead.apply {terminal} (send Claude's /model and /effort for the saved pick now, or hold it until the lead waits), lead.mode {terminal} (Shift+Tab in the lead's terminal: Claude Code's next permission mode), lead.set_mode {terminal, mode} (switch the lead to a permission mode: default, acceptEdits, plan or auto), lead.steer {terminal, text} (mark a message the Owner sent while the lead works as steering).
+ *   lead.open (focus or start the lead, with the composer under it), lead.restart {terminal} (end the lead and start it again with the saved model and reasoning), lead.apply {terminal} (send Claude's /model and /effort for the saved pick now, or hold it until the lead waits), lead.mode {terminal} (Shift+Tab in the lead's terminal: Claude Code's next permission mode), lead.set_mode {terminal, mode} (switch the lead to a permission mode: default, acceptEdits, plan or auto), lead.menu {terminal, key, row?, label?} (choose in the menu Claude shows in the lead's terminal: key is one of the menu's own, enter, esc or a letter it names; row and label walk the pointer to a row first), lead.steer {terminal, text} (mark a message the Owner sent while the lead works as steering).
  * Layout (the shown layout's nodes by id): layout.toggle|show|hide {id}, layout.resize {id, px | weight},
  *   layout.select {stack, child}, layout.set {layout} (personal trees; shipped layouts: click/look fields only), layout.switch {name?} (no name: the next one).
  *   layout.clone {name, as?} duplicates and switches; mod.clone {name, as?} duplicates a mod.
@@ -346,7 +346,12 @@ export type ConversationItem =
       /** A REPL call's code (`tool_input.code`), shown in the mono font when the row is open. */
       code?: string;
     }
-  | { kind: "notice"; id: string; text: string };
+  | { kind: "notice"; id: string; text: string }
+  | {
+      kind: "answer";
+      id: string;
+      rows: { question: string; answer: string; chosen: boolean }[];
+    };
 
 /** One row of Claude's task list, from its task tools. */
 export interface TaskRow {
@@ -364,6 +369,21 @@ export interface TaskRow {
 export function lead(): {
   state: "working" | "asking" | "waiting" | null;
   ask: LeadAsk | null;
+  /** The menu Claude shows in its terminal, read off its screen; null when there is none. */
+  menu: {
+    title: string;
+    body: { text: string; mono: boolean }[];
+    rows: { label: string; detail: string; current: boolean }[];
+    pointer: number;
+    notes: { text: string; mono: boolean }[];
+    actions: { key: string; label: string }[];
+  } | null;
+  /** True while `lead.menu` is pressing in the terminal. */
+  menu_busy: boolean;
+  /** The lead needs the Owner: an ask, something asked in its terminal, or a menu before it starts. */
+  needs_you: boolean;
+  /** Whether the terminal pane is drawn now (a menu card stands in for an automatic reveal). */
+  terminal_shown: boolean;
   /** Whether this window has seen the lead's SessionStart; Send waits for it. */
   started: boolean;
   /** Whether the lead's terminal pane is drawn. */

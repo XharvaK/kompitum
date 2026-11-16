@@ -4,7 +4,7 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { kom, theme, run, props, openOverlay, closeOverlay, settings, knownAgents, agents, lead, updates, shared, setShared, text } from "kompitum";
+import { kom, theme, run, props, openOverlay, closeOverlay, settings, knownAgents, agents, terminals, lead, updates, shared, setShared, text } from "kompitum";
 
 // The toasts that left, newest first (Kompitum keeps 20); the bell shows this many.
 const RECENT = "notifications.recent";
@@ -184,12 +184,16 @@ export default class Bell extends View {
   // covers them.
   needs(t) {
     const rows = [];
-    if (lead()?.ask) {
+    const leadTerminal = terminals().find((terminal) => terminal.state === "live" && terminal.labels?.lead);
+    // An older app copy publishes no needs_you; its ask is the same row.
+    const needsLead = lead()?.needs_you ?? Boolean(lead()?.ask);
+    if (needsLead) {
       const program = settings()?.lead?.program ?? "claude";
       rows.push(this.item(t, "bell-lead", text("bell.lead-asking", { name: leadName(this.catalog, program) }), "",
         { label: text("bell.open"), go: () => run("lead.open") }));
     }
     for (const a of agents().filter((agent) => agent.status === "blocked")) {
+      if (leadTerminal && a.address === leadTerminal.address) continue;
       rows.push(this.item(t, `bell-agent-${a.address}`, text("bell.agent-needs-you", { name: agentName(a) }), str(a.detail),
         { label: text("bell.show"), go: () => run("pane.focus", { pane: a.pane }) }));
     }

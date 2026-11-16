@@ -1506,3 +1506,133 @@ fn a_created_files_empty_patch_counts_its_input_lines() {
         })
     );
 }
+
+fn answer_rows(item: &Item) -> &[AnswerRow] {
+    match item {
+        Item::Answer { rows, .. } => rows,
+        other => panic!("expected an answer, got {other:?}"),
+    }
+}
+
+fn weather_questions() -> Value {
+    json!([{
+        "question": "Rain or sun?",
+        "header": "Weather",
+        "multiSelect": false,
+        "options": [{"label": "Rain"}, {"label": "Sun"}],
+    }])
+}
+
+#[test]
+fn an_answered_question_reads_its_chosen_option() {
+    let item = answer_item("tu1", &weather_questions(), &json!({"Rain or sun?": "Rain"})).unwrap();
+    assert_eq!(item.id(), "answer-tu1");
+    let rows = answer_rows(&item);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].question, "Rain or sun?");
+    assert_eq!(rows[0].answer, "Rain");
+    assert!(rows[0].chosen);
+}
+
+#[test]
+fn a_multi_choice_answer_joins_its_picks_and_is_chosen() {
+    let item = answer_item(
+        "tu1",
+        &weather_questions(),
+        &json!({"Rain or sun?": ["Rain", "Sun"]}),
+    )
+    .unwrap();
+    let rows = answer_rows(&item);
+    assert_eq!(rows[0].answer, "Rain, Sun");
+    assert!(rows[0].chosen, "every part is one of the question's labels");
+}
+
+#[test]
+fn a_typed_answer_is_answered_not_chosen() {
+    let item = answer_item("tu1", &weather_questions(), &json!({"Rain or sun?": "Snow"})).unwrap();
+    assert!(!answer_rows(&item)[0].chosen);
+}
+
+#[test]
+fn unanswered_questions_are_skipped_in_the_questions_order() {
+    let questions = json!([
+        {"question": "First?", "options": [{"label": "A"}]},
+        {"question": "Second?", "options": [{"label": "B"}]},
+    ]);
+    let item = answer_item("tu1", &questions, &json!({"Second?": "B"})).unwrap();
+    let rows = answer_rows(&item);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].question, "Second?");
+    assert!(rows[0].chosen);
+}
+
+#[test]
+fn an_answer_with_no_answered_question_makes_no_item() {
+    assert_eq!(
+        answer_item("tu1", &weather_questions(), &json!({"Rain or sun?": ""})),
+        None
+    );
+    assert_eq!(answer_item("tu1", &Value::Array(Vec::new()), &json!({})), None);
+}
+
+#[test]
+fn a_post_tool_use_question_makes_one_answer_item() {
+    let event = event_from_hook(
+        "PostToolUse",
+        &json!({
+            "tool_name": "AskUserQuestion",
+            "tool_use_id": "tu1",
+            "tool_response": {
+                "questions": weather_questions(),
+                "answers": {"Rain or sun?": "Rain"}
+            }
+        }),
+    )
+    .expect("a question's end is an event");
+    let conversation = fold(Conversation::default(), &event);
+    let answers: Vec<&Item> = conversation.items.iter().filter(|item| matches!(item, Item::Answer { .. })).collect();
+    assert_eq!(answers.len(), 1, "{:?}", conversation.items);
+    assert_eq!(answers[0].id(), "answer-tu1");
+    assert_eq!(answer_rows(answers[0])[0].answer, "Rain");
+}
+
+#[test]
+fn a_transcript_question_result_makes_one_answer_item() {
+    let line = json!({
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [{"type": "tool_result", "tool_use_id": "tu1", "content": "answered"}]
+        },
+        "toolUseResult": {
+            "questions": weather_questions(),
+            "answers": {"Rain or sun?": "Rain"}
+        }
+    });
+    let loaded = items_from_transcript(&line.to_string());
+    let answers: Vec<&Item> = loaded.items.iter().filter(|item| matches!(item, Item::Answer { .. })).collect();
+    assert_eq!(answers.len(), 1, "{:?}", loaded.items);
+    assert_eq!(answers[0].id(), "answer-tu1");
+}
+
+#[test]
+fn the_card_and_then_the_hook_leave_one_answer_item() {
+    let item = answer_item("tu1", &weather_questions(), &json!({"Rain or sun?": "Rain"})).unwrap();
+    let mut conversation = Conversation::default();
+    conversation.push_item(item);
+    let event = event_from_hook(
+        "PostToolUse",
+        &json!({
+            "tool_name": "AskUserQuestion",
+            "tool_use_id": "tu1",
+            "tool_response": {
+                "questions": weather_questions(),
+                "answers": {"Rain or sun?": "Rain"}
+            }
+        }),
+    )
+    .unwrap();
+    let conversation = fold(conversation, &event);
+    let answers: Vec<&Item> = conversation.items.iter().filter(|item| matches!(item, Item::Answer { .. })).collect();
+    assert_eq!(answers.len(), 1, "{:?}", conversation.items);
+}

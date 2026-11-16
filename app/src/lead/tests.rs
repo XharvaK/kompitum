@@ -1434,6 +1434,46 @@ fn a_lead_that_has_not_started_reveals_after_ten_seconds() {
     );
 }
 
+/// A menu card stands in for an automatic reveal; a reveal by hand, login or startup is unchanged.
+#[test]
+fn a_menu_card_stands_in_for_an_automatic_reveal() {
+    let mut session = Session::default();
+    assert!(!terminal_shown(&session, 0), "a hidden terminal is never shown");
+    session.conversation.terminal = TerminalVis::Shown;
+    session.conversation.reveal = Some(Reveal::Manual);
+    assert!(terminal_shown(&session, 0), "a reveal by hand is unchanged");
+    session.menu = Some(menu::ScreenMenu {
+        title: "Select model".into(),
+        body: Vec::new(),
+        rows: vec![menu::MenuRow {
+            label: "Haiku 5.5".into(),
+            detail: String::new(),
+            current: true,
+        }],
+        pointer: 0,
+        notes: Vec::new(),
+        actions: vec![menu::MenuAction {
+            key: "enter".into(),
+            label: String::new(),
+        }],
+    });
+    assert!(
+        terminal_shown(&session, 0),
+        "a menu never hides a reveal by hand"
+    );
+    session.conversation.reveal = Some(Reveal::Login);
+    assert!(terminal_shown(&session, 0), "a login reveal is unchanged");
+    session.conversation.reveal = Some(Reveal::Startup);
+    assert!(terminal_shown(&session, 0), "a startup reveal is unchanged");
+    session.conversation.reveal = Some(Reveal::Auto);
+    assert!(!terminal_shown(&session, 0), "a card stands in for an automatic reveal");
+    session.menu = None;
+    assert!(terminal_shown(&session, 0), "no card and no wait: shown");
+    session.menu_wait_until_ms = Some(2_000);
+    assert!(!terminal_shown(&session, 1_999), "the wait gives a card time");
+    assert!(terminal_shown(&session, 2_000), "the wait ends at its time");
+}
+
 /// A blocked core status reveals after three seconds in a row, unless the app already holds an ask
 /// for that terminal.
 #[test]

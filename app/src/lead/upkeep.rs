@@ -218,6 +218,10 @@ pub const MODE_PRESSES: usize = 6;
 pub const MODE_WAIT_MS: u64 = 300;
 /// How long after its SessionStart the lead's first screen is given to draw its mode line.
 pub const START_MODE_WAIT_MS: u64 = 1500;
+/// How long an automatic reveal gives a menu card to appear before it shows the terminal.
+pub const MENU_WAIT_MS: u64 = 1000;
+/// How long a `lead.menu` step gives Claude Code to move its pointer.
+pub const MENU_STEP_MS: u64 = 120;
 
 /// What a mode switch read and whether it reached its target.
 #[derive(Clone, Debug, Default, PartialEq)]

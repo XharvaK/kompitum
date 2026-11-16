@@ -124,6 +124,30 @@ pub enum Item {
         id: String,
         text: String,
     },
+    Answer {
+        id: String,
+        rows: Vec<AnswerRow>,
+    },
+}
+
+/// One answered question in the conversation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AnswerRow {
+    pub question: String,
+    pub answer: String,
+    pub chosen: bool,
+}
+
+impl Item {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Owner { id, .. }
+            | Self::Assistant { id, .. }
+            | Self::Tool { id, .. }
+            | Self::Notice { id, .. }
+            | Self::Answer { id, .. } => id,
+        }
+    }
 }
 
 fn is_false(value: &bool) -> bool {
@@ -194,6 +218,11 @@ pub enum Event {
         kind: String,
     },
     Elicitation,
+    Answer {
+        id: String,
+        questions: Value,
+        answers: Value,
+    },
     History {
         items: Vec<Item>,
     },
@@ -234,6 +263,12 @@ impl Conversation {
 
     pub(crate) fn touched(&mut self) {
         self.version += 1;
+    }
+
+    /// Adds an item, replacing the one with its id when it is there already.
+    pub(crate) fn push_item(&mut self, item: Item) {
+        push_item(&mut self.items, item);
+        self.touched();
     }
 
     pub(crate) fn hide(&mut self) {
@@ -283,9 +318,55 @@ impl Conversation {
     }
 }
 
+/// Adds an item, replacing the one with its id when it is there already.
+fn push_item(items: &mut Vec<Item>, item: Item) {
+    if let Some(existing) = items.iter_mut().find(|have| have.id() == item.id()) {
+        *existing = item;
+    } else {
+        items.push(item);
+    }
+}
+
+/// One answered question, from AskUserQuestion's questions and answers; None when none was answered.
+pub fn answer_item(id: &str, questions: &Value, answers: &Value) -> Option<Item> {
+    let mut rows = Vec::new();
+    for question in questions.as_array().into_iter().flatten() {
+        let Some(text) = question.get("question").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(value) = answers.get(text) else {
+            continue;
+        };
+        let answer = match value {
+            Value::String(answer) => answer.clone(),
+            Value::Array(parts) => parts.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "),
+            _ => continue,
+        };
+        if answer.is_empty() {
+            continue;
+        }
+        let labels: Vec<&str> = question
+            .get("options")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|option| option.get("label").and_then(Value::as_str))
+            .collect();
+        let chosen = answer.split(", ").all(|part| labels.contains(&part));
+        rows.push(AnswerRow {
+            question: text.to_owned(),
+            answer,
+            chosen,
+        });
+    }
+    (!rows.is_empty()).then(|| Item::Answer {
+        id: format!("answer-{id}"),
+        rows,
+    })
+}
+
 /// A turn ended: every row still running ends the way an interrupted tool does.
-fn end_running_tools(conversation: &mut Conversation) -> bool {
-    end_running_items(&mut conversation.items)
+fn end_running_tools(conversation: &mut Conversation) -> bool {    end_running_items(&mut conversation.items)
 }
 
 /// A prompt after a tool call with no result means that call stopped.
@@ -357,6 +438,15 @@ pub fn fold(mut conversation: Conversation, event: &Event) -> Conversation {
                 conversation.show(Reveal::Auto, Some(strings::text("lead.needs-input")));
             }
         }
+        Event::Answer {
+            id,
+            questions,
+            answers,
+        } => {
+            if let Some(item) = answer_item(id, questions, answers) {
+                conversation.push_item(item);
+            }
+        }
         Event::History { items } => {
             conversation.items = items.clone();
             conversation.messages.clear();
@@ -409,7 +499,22 @@ pub fn event_from_hook(event: &str, input: &Value) -> Option<Event> {
         "PostToolUse" => {
             let name = string_field(input, "tool_name");
             if name == "AskUserQuestion" {
-                return None;
+                let response = input.get("tool_response");
+                let questions = response
+                    .and_then(|response| response.get("questions"))
+                    .cloned()
+                    .or_else(|| input.pointer("/tool_input/questions").cloned())
+                    .unwrap_or(Value::Null);
+                let answers = response
+                    .and_then(|response| response.get("answers"))
+                    .cloned()
+                    .or_else(|| input.pointer("/tool_input/answers").cloned())
+                    .unwrap_or(Value::Null);
+                return Some(Event::Answer {
+                    id: tool_id(input),
+                    questions,
+                    answers,
+                });
             }
             Some(Event::PostToolUse {
                 id: tool_id(input),
@@ -1370,6 +1475,33 @@ fn apply_user(
             flush_owner(items, next, &mut texts);
         }
         _ => {}
+    }
+    answer_from_tool_result(items, value);
+}
+
+/// A transcript's user line carrying a question's answers becomes the conversation's answer item.
+fn answer_from_tool_result(items: &mut Vec<Item>, value: &Value) {
+    let Some(result) = value
+        .get("toolUseResult")
+        .or_else(|| value.get("tool_use_result"))
+    else {
+        return;
+    };
+    let Some(questions) = result.get("questions").filter(|questions| questions.is_array()) else {
+        return;
+    };
+    let Some(answers) = result.get("answers").filter(|answers| answers.is_object()) else {
+        return;
+    };
+    let id = message_content(value)
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|part| part.get("type").and_then(Value::as_str) == Some("tool_result"))
+        .and_then(|part| part.get("tool_use_id").and_then(Value::as_str))
+        .unwrap_or("");
+    if let Some(item) = answer_item(id, questions, answers) {
+        push_item(items, item);
     }
 }
 
