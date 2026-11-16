@@ -88,6 +88,8 @@ impl AppWindow {
             "dictation": crate::dictation::available(platform),
             // GPUI changes the window's material live, where the Sidebar glass row is shown.
             "glass_live": cfg!(windows),
+            // Windows' transparency effects: off, glass draws solid, and the row says so.
+            "transparency": crate::settings::system_transparency(),
         })
     }
 

@@ -466,6 +466,8 @@ export function window(): {
   dictation: boolean;
   /** The window's material changes live; otherwise Settings says it applies at the next start. */
   glass_live: boolean;
+  /** The system's transparency effects are on; while they're off, glass draws solid. */
+  transparency: boolean;
 };
 
 /** For a floating mod: where it sits now. `vertical` on the left/right edges, horizontal on
@@ -491,8 +493,9 @@ export function theme(): Record<string, string>;
  *  whether it's light. */
 export function themes(): { name: string; light: boolean; colors: Record<string, string> }[];
 
-/** The font families on this machine, by name. */
-export function fonts(): string[];
+/** The font families on this machine, by name. `{ monospace: true }`: only the fixed-width ones,
+ *  which a terminal's grid can draw (every font until they're measured, just after the start). */
+export function fonts(options?: { monospace?: boolean }): string[];
 
 /** The interface's text for a key (`<area>.<name>`, lowercase with `-`), in the person's
  *  language. `vars` fills the `{name}` places with strings or numbers; a place with no value

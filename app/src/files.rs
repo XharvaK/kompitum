@@ -1016,12 +1016,10 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// Drives a future to its end on this thread (the tests have no executor).
+    /// Drives a future to its end on this thread (the tests have no executor), as long as a
+    /// watcher event may take on a loaded machine (`CHANGE_WAIT`).
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
-        block_on_until(
-            f,
-            std::time::Instant::now() + std::time::Duration::from_secs(10),
-        )
+        block_on_until(f, std::time::Instant::now() + CHANGE_WAIT)
     }
 
     fn block_on_until<F: std::future::Future>(f: F, deadline: std::time::Instant) -> F::Output {

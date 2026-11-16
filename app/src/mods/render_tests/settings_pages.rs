@@ -1458,6 +1458,29 @@ fn fonts_are_read_once_per_page_opening(cx: &mut TestAppContext) {
     );
 }
 
+/// The terminal's font list holds only fixed-width fonts, which its grid can draw; the
+/// interface's list holds every font.
+#[gpui::test]
+fn the_terminal_font_list_is_fixed_width_only(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = appearance_values(json!({}));
+    values.insert("fonts".into(), json!(["Proportional", "Fixed"]));
+    values.insert("monoFonts".into(), json!(["Fixed"]));
+    let tree = describe_settled(
+        cx,
+        &staged,
+        "frame/settings",
+        values,
+        Some("this.advancedOpen = { appearance: true }; this.fontMenus = { font: { open: true }, ui_font: { open: true } };"),
+    )
+    .unwrap();
+    assert!(tree.contains("st-f-font-Fixed"), "{tree}");
+    assert!(!tree.contains("st-f-font-Proportional"), "the terminal list has no proportional font: {tree}");
+    assert!(tree.contains("st-f-ui_font-Proportional"), "the interface list has every font: {tree}");
+    assert!(tree.contains("st-f-ui_font-Fixed"), "{tree}");
+}
+
 /// Picking a theme runs app.theme with its name.
 #[gpui::test]
 fn picking_a_theme_runs_app_theme(cx: &mut TestAppContext) {
@@ -1603,6 +1626,20 @@ fn appearance_offers_sidebar_glass_on_windows_only(cx: &mut TestAppContext) {
             assert!(theme < glass && glass < motion, "the row's place: {tree}");
         }
     }
+}
+
+/// With Windows' transparency effects off, glass draws solid whatever is picked: the row says so.
+#[gpui::test]
+fn sidebar_glass_says_when_windows_transparency_is_off(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let mut values = glass_values("windows", true);
+    values.get_mut("window").unwrap()["transparency"] = json!(false);
+    let tree = describe_settled(cx, &staged, "frame/settings", values, None).unwrap();
+    assert!(tree.contains("Transparency effects are off in Windows"), "{tree}");
+    assert!(tree.contains("st-glass"), "the choice stays, for when they're on: {tree}");
+    let tree = describe_settled(cx, &staged, "frame/settings", glass_values("windows", true), None).unwrap();
+    assert!(!tree.contains("Transparency effects are off"), "unknown or on, the row says nothing more: {tree}");
 }
 
 /// The row's list is Off, Blur, Mica and Mica Alt; picking one writes settings.json.

@@ -4430,27 +4430,28 @@ impl AppWindow {
 
     /// A composer sits under its lead's terminal, as tall as its text, and grows to hold a card while its lead asks.
     fn fit_composers(&mut self) {
+        let now = model::now_ms();
         for tab in self.model.spaces.iter_mut().flat_map(|s| s.tabs.iter_mut()) {
-            let composers: Vec<(String, f32, bool)> = tab
+            let composers: Vec<(String, Option<Span>)> = tab
                 .root
                 .panes()
                 .into_iter()
                 .filter_map(|node| match node.content() {
                     Some(Content::Mod { name, props }) if name == "composer" => {
                         let terminal = props.get("terminal").and_then(Value::as_str)?;
-                        let asking = self.lead_sessions.get(terminal).and_then(|s| s.ask.as_ref()).map(|ask| ask.kind);
-                        let shown = self
-                            .lead_sessions
-                            .get(terminal)
-                            .is_some_and(|s| s.conversation.terminal == crate::lead::TerminalVis::Shown);
-                        Some((node.id.clone(), composer_height(asking, self.composer_px.get(terminal).copied()), shown))
+                        let size = composer_size(
+                            self.lead_sessions.get(terminal),
+                            self.composer_px.get(terminal).copied(),
+                            now,
+                        );
+                        Some((node.id.clone(), size))
                     }
                     _ => None,
                 })
                 .collect();
-            for (id, px, shown) in composers {
+            for (id, size) in composers {
                 if let Some(node) = tab.root.find_mut(&id) {
-                    node.size = if shown { Some(Span::Px { px }) } else { None };
+                    node.size = size;
                 }
             }
         }
@@ -11202,6 +11203,17 @@ fn composer_height(asking: Option<crate::lead::AskKind>, wanted: Option<f32>) ->
     }
 }
 
+/// The composer pane's size: a strip of `composer_height` while its lead's terminal shows beside it,
+/// the whole tab otherwise. It follows `terminal_shown`, so a menu card standing in for the
+/// terminal gets the room the terminal would have had.
+fn composer_size(session: Option<&crate::lead::Session>, wanted: Option<f32>, now_ms: u64) -> Option<Span> {
+    let session = session?;
+    if !crate::lead::terminal_shown(session, now_ms) {
+        return None;
+    }
+    Some(Span::Px { px: composer_height(session.ask.as_ref().map(|ask| ask.kind), wanted) })
+}
+
 /// `kom` first in the argv of a tab on this computer (`machine: ""`) is the core the app runs: a new
 /// terminal's PATH can lead to another one.
 fn local_core(argv: Option<Vec<String>>, machine: Option<&str>, core: &std::path::Path) -> Option<Vec<String>> {
@@ -15474,6 +15486,35 @@ export default class Probe extends View {
             assert!(!crate::lead::terminal_shown(session, now), "the menu card stands in");
             assert_eq!(session.shown_applied, Some(false), "the pane follows the card");
         });
+    }
+
+    /// The composer is a strip beside its lead's terminal only while that terminal shows: a menu card
+    /// stands in for the terminal, so the composer then takes the tab and the card has room.
+    #[test]
+    fn a_menu_card_gets_the_whole_composer() {
+        use super::{Span, composer_size};
+        use crate::lead::{Reveal, menu};
+        let mut session = crate::lead::Session::default();
+        session.conversation.show(Reveal::Auto, Some("Claude is showing a menu.".into()));
+        session.menu = Some(menu::ScreenMenu {
+            title: "Accessing workspace:".into(),
+            body: Vec::new(),
+            rows: vec![
+                menu::MenuRow { label: "No, exit".into(), detail: String::new(), current: false },
+                menu::MenuRow { label: "Yes, I trust this folder".into(), detail: String::new(), current: false },
+            ],
+            pointer: 0,
+            notes: Vec::new(),
+            actions: vec![menu::MenuAction { key: "enter".into(), label: String::new() }],
+        });
+        assert_eq!(composer_size(Some(&session), Some(120.0), 0), None, "the card has the whole tab");
+        session.menu = None;
+        assert_eq!(
+            composer_size(Some(&session), Some(120.0), 0),
+            Some(Span::Px { px: 120.0 }),
+            "with no card, the terminal shows and the composer is a strip"
+        );
+        assert_eq!(composer_size(None, Some(120.0), 0), None, "no lead, no strip");
     }
 
     /// The Owner's denial ends the ask's running tool row with "Denied".

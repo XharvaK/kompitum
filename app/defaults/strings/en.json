@@ -957,6 +957,7 @@
   "settings.forgotten": "Forgotten · {count}",
   "settings.general": "General",
   "settings.glass-about": "Lets the desktop show through the sidebar.",
+  "settings.glass-about-off": "Lets the desktop show through the sidebar. Transparency effects are off in Windows, so it stays solid until you turn them on (Personalization › Colors).",
   "settings.glass-about-restart": "Lets the desktop show through the sidebar. Applies when Kompitum starts again.",
   "settings.heading-lead": "Lead",
   "settings.heading-machines": "Machines",

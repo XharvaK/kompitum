@@ -94,6 +94,10 @@ fn system_version() -> String {
 /// again when the home brings new ones.
 static FONTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+/// The fixed-width ones among `FONTS` (`fonts({ monospace: true })`), measured off the UI thread;
+/// None until that is done.
+static MONO_FONTS: std::sync::Mutex<Option<Vec<String>>> = std::sync::Mutex::new(None);
+
 pub fn note_fonts(cx: &gpui::App) {
     // Names starting with "." are the system's private UI fonts (macOS).
     let mut names: Vec<String> = cx
@@ -104,7 +108,35 @@ pub fn note_fonts(cx: &gpui::App) {
         .collect();
     names.sort_by_key(|n| n.to_lowercase());
     names.dedup();
-    *FONTS.lock().unwrap() = names;
+    *FONTS.lock().unwrap() = names.clone();
+    let text = cx.text_system().clone();
+    cx.background_executor()
+        .spawn(async move {
+            let mono = names.into_iter().filter(|name| is_monospace(&text, name)).collect();
+            *MONO_FONTS.lock().unwrap() = Some(mono);
+        })
+        .detach();
+}
+
+/// A font whose narrow and wide letters advance alike: one a terminal's grid can draw.
+fn is_monospace(text: &gpui::TextSystem, name: &str) -> bool {
+    let id = text.resolve_font(&gpui::font(name.to_owned()));
+    let size = gpui::px(16.0);
+    let width = |ch| text.advance(id, size, ch).ok().map(|advance| f32::from(advance.width));
+    match (width('i'), width('W'), width('m')) {
+        (Some(i), Some(w), Some(m)) => i > 0.0 && (i - w).abs() < 0.5 && (i - m).abs() < 0.5,
+        _ => false,
+    }
+}
+
+/// `fonts()`: every font, or with `{ monospace: true }` only the fixed-width ones (every font
+/// until they are measured).
+fn fonts_call(a: &HostArguments) -> Value {
+    let monospace = a.get(0).map(from_host).is_some_and(|options| options["monospace"] == json!(true));
+    if monospace && let Some(mono) = MONO_FONTS.lock().unwrap().clone() {
+        return json!(mono);
+    }
+    json!(*FONTS.lock().unwrap())
 }
 
 /// The app's home: `$KOMPITUM_APP_HOME` (tests, experiments), else
@@ -1540,7 +1572,7 @@ fn build_module(name: &str, inst: &Instance, state: ModuleState) -> HostModule {
         .function("home", |_| Ok(home().to_string_lossy().into_owned().into()))
         .function("appHome", |_| Ok(app_dir().to_string_lossy().into_owned().into()))
         .function("text", text_call)
-        .function("fonts", |_| Ok(to_host(&json!(*FONTS.lock().unwrap()))))
+        .function("fonts", |a| Ok(to_host(&fonts_call(a))))
         .function("updates", |_| Ok(to_host(&crate::update::status())))
         .function("presentUpdateNotes", |a| {
             crate::update_notes::presented(&strings(a.get(0)));

@@ -230,6 +230,14 @@ function themeDropdown(view, t) {
   });
 }
 
+// What the glass row says: with Windows' transparency effects off the sidebar stays solid
+// whatever is picked, so the row says why.
+function glassAbout() {
+  const w = window();
+  if (w?.transparency === false) return text("settings.glass-about-off");
+  return w?.glass_live ? text("settings.glass-about") : text("settings.glass-about-restart");
+}
+
 // Sidebar glass: the window material behind the sidebar (Windows; settings.json's `glass`).
 function glassDropdown(view, t) {
   view.glassMenu ??= {};
@@ -258,23 +266,25 @@ function fontMenu(view, which) {
   return (view.fontMenus[which] ??= {});
 }
 
-// The machine's fonts, read once per page opening: the two lists share it.
-function fontNames(view) {
+// The machine's fonts, read once per page opening. The terminal's list holds only fixed-width
+// ones: a proportional font breaks the terminal's grid.
+function fontNames(view, which) {
+  if (which === "font") return (view.monoFontNames ??= fonts({ monospace: true }));
   return (view.fontNames ??= fonts());
 }
 
-function fontChoices(view, def) {
+function fontChoices(view, def, which) {
   view.fontChoices ??= {};
-  return (view.fontChoices[def] ??= [
+  return (view.fontChoices[which] ??= [
     { value: "", label: def, detail: text("settings.kompitum-default"), font: def },
-    ...fontNames(view).map((name) => ({ value: name, label: name, font: name })),
+    ...fontNames(view, which).map((name) => ({ value: name, label: name, font: name })),
   ]);
 }
 
 function fontDropdown(view, t, cx, which, def) {
   const saved = view.person?.[which] ?? "";
-  const names = fontNames(view);
-  const items = [...fontChoices(view, def)];
+  const names = fontNames(view, which);
+  const items = [...fontChoices(view, def, which)];
   if (saved && !names.includes(saved)) items.splice(1, 0, { value: saved, label: saved, font: saved });
   return dropdown(t, `st-f-${which}`, {
     items,
@@ -334,7 +344,7 @@ export function appearancePage(view, t, cx) {
         view.row(
           t,
           text("settings.sidebar-glass"),
-          window()?.glass_live ? text("settings.glass-about") : text("settings.glass-about-restart"),
+          glassAbout(),
           glassDropdown(view, t),
           "glass",
         ),

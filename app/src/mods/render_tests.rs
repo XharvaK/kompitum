@@ -209,6 +209,7 @@ fn module_with_lead(
     let import_file = values.remove("importFile");
     let system_info = values.remove("system");
     let fonts_after = values.remove("fontsAfter");
+    let mono_fonts = values.remove("monoFonts");
     let settings_after = values.remove("settingsAfter");
     let conversation_items = values.remove("conversation").unwrap_or(json!([]));
     // A test can say what `lead()` answers once `lead.answer` runs, so a card
@@ -221,11 +222,17 @@ fn module_with_lead(
         if name == "person" || (name == "lead" && lead.is_some()) {
             continue;
         }
-        if name == "fonts" && fonts_after.is_some() {
+        // `fonts({ monospace: true })` answers `monoFonts` (default: the same list) and doesn't count
+        // as a read of the whole list.
+        if name == "fonts" {
             let first = value.clone();
             let after = fonts_after.clone().unwrap_or_else(|| value.clone());
+            let mono = mono_fonts.clone().unwrap_or_else(|| value.clone());
             let reads = Rc::new(Cell::new(0usize));
-            module = module.function("fonts", move |_| {
+            module = module.function("fonts", move |a| {
+                if a.get(0).map(crate::mods::from_host).is_some_and(|o| o["monospace"] == json!(true)) {
+                    return Ok(to_host(&mono));
+                }
                 let at = reads.get();
                 reads.set(at + 1);
                 Ok(to_host(if at == 0 { &first } else { &after }))

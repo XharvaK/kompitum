@@ -372,15 +372,28 @@ fn json_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+/// `#rrggbb`, or `#rrggbbaa` for a colour that isn't opaque: a translucent token such as a dark
+/// theme's 7% white border must not reach scripts as solid white.
 fn hex(color: gpui::Hsla) -> String {
     let c = gpui::Rgba::from(color);
     let b = |v: f32| (v.clamp(0., 1.) * 255.).round() as u8;
-    format!("#{:02x}{:02x}{:02x}", b(c.r), b(c.g), b(c.b))
+    match b(c.a) {
+        255 => format!("#{:02x}{:02x}{:02x}", b(c.r), b(c.g), b(c.b)),
+        a => format!("#{:02x}{:02x}{:02x}{a:02x}", b(c.r), b(c.g), b(c.b)),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_translucent_colour_keeps_its_alpha() {
+        let border = gpui::Rgba::try_from("#ffffff12").unwrap();
+        assert_eq!(hex(border.into()), "#ffffff12");
+        let solid = gpui::Rgba::try_from("#7c86f5").unwrap();
+        assert_eq!(hex(solid.into()), "#7c86f5");
+    }
 
     #[test]
     fn unchanged_theme_snapshot_reuses_its_serialized_storage() {
