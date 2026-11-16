@@ -117,6 +117,77 @@ fn enter_after_the_menu_cards_wait_presses_the_highlighted_row(cx: &mut TestAppC
     );
 }
 
+/// A double click on a row picks it at once.
+#[gpui::test]
+fn a_double_click_picks_that_menu_row(cx: &mut TestAppContext) {
+    let mut values = composer_menu_values(menu_value());
+    values.insert("lead".into(), lead_with_menu(menu_value()));
+    let effects = super::composer::composer_live_run_after_clicks(
+        cx,
+        values,
+        "this.menuSince = 1;",
+        &["double:composer-menu-row-2"],
+    );
+    assert!(
+        effects.iter().any(|args| {
+            args.first() == Some(&json!("lead.menu"))
+                && args.get(1)
+                    == Some(&json!({"terminal": "t1", "key": "enter", "row": 2, "label": "More models"}))
+        }),
+        "a double click picks the row: {effects:?}"
+    );
+}
+
+/// The card's buttons press their own key: a row, then "Use this session only"; and Cancel on its own.
+#[gpui::test]
+fn the_menu_cards_buttons_press_their_keys(cx: &mut TestAppContext) {
+    let menu_values = || {
+        let mut values = composer_menu_values(menu_value());
+        values.insert("lead".into(), lead_with_menu(menu_value()));
+        values
+    };
+    let session = super::composer::composer_live_run_after_clicks(
+        cx,
+        menu_values(),
+        "this.menuSince = 1;",
+        &["composer-menu-row-0", "composer-menu-s"],
+    );
+    assert!(
+        session.iter().any(|args| {
+            args.first() == Some(&json!("lead.menu"))
+                && args.get(1)
+                    == Some(&json!({"terminal": "t1", "key": "s", "row": 0, "label": "Default (recommended)"}))
+        }),
+        "the s button presses s on the clicked row: {session:?}"
+    );
+    let cancel = super::composer::composer_live_run_after_clicks(
+        cx,
+        menu_values(),
+        "this.menuSince = 1;",
+        &["composer-menu-esc"],
+    );
+    assert!(
+        cancel.iter().any(|args| {
+            args.first() == Some(&json!("lead.menu")) && args.get(1) == Some(&json!({"terminal": "t1", "key": "esc"}))
+        }),
+        "Cancel presses Esc: {cancel:?}"
+    );
+}
+
+/// Under a conversation the whole card is drawn: its rows are not squeezed out from above its buttons.
+#[gpui::test]
+fn the_menu_card_keeps_its_rows_above_its_buttons(cx: &mut TestAppContext) {
+    let tree = super::composer::composer_live_bounds(
+        cx,
+        composer_menu_values(menu_value()),
+        "this.menuSince = 1;",
+        &["composer-menu-row-2", "composer-menu-enter", "composer-card"],
+    );
+    let [row, enter, card] = [tree[0], tree[1], tree[2]];
+    assert!(row.bottom() <= enter.top(), "the last row sits above the buttons: {tree:?}");
+    assert!(card.top() <= row.top() && enter.bottom() <= card.bottom(), "the card holds both: {tree:?}");
+}
+
 /// A digit highlights that row, then Enter picks it.
 #[gpui::test]
 fn a_digit_then_enter_picks_that_menu_row(cx: &mut TestAppContext) {

@@ -174,7 +174,10 @@ fn mod_file_counts(rest: std::path::Components) -> bool {
 
 /// Folders mods watch (`watchFolder`): one OS watcher each, shared by every
 /// mod waiting on it. Bounded invalidations collect even while nobody waits.
+/// Each watcher has its own id: a released watcher's thread may finish one more batch, and the
+/// id keeps that batch (and its giving up) away from the next watcher on the same folder.
 struct Folder {
+    id: u64,
     _watcher: std::sync::mpsc::Sender<()>,
     waiters: Vec<async_channel::Sender<Vec<String>>>,
     pending: HashSet<String>,
@@ -182,6 +185,26 @@ struct Folder {
 
 static FOLDERS: OnceLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Folder>>> =
     OnceLock::new();
+/// The next watcher's id; 0 is never given out.
+static NEXT_FOLDER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn new_folder(root: &Path) -> Result<Folder, String> {
+    let id = NEXT_FOLDER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(Folder {
+        id,
+        _watcher: start_folder(root, id)?,
+        waiters: Vec::new(),
+        pending: HashSet::new(),
+    })
+}
+
+/// Drops the folder's watcher, if it is still the one with this id.
+fn forget(root: &Path, id: u64) {
+    let mut all = folders();
+    if all.get(root).is_some_and(|folder| folder.id == id) {
+        all.remove(root);
+    }
+}
 /// Changes are batched this long (an editor's save is several events).
 const BATCH: std::time::Duration = std::time::Duration::from_millis(150);
 /// At most this many folders watched for mods at once.
@@ -233,14 +256,7 @@ pub async fn next_change(path: String) -> Result<Vec<String>, String> {
             if all.len() >= MAX_FOLDERS {
                 return Err(format!("already watching {MAX_FOLDERS} folders"));
             }
-            all.insert(
-                root.clone(),
-                Folder {
-                    _watcher: start_folder(&root)?,
-                    waiters: Vec::new(),
-                    pending: HashSet::new(),
-                },
-            );
+            all.insert(root.clone(), new_folder(&root)?);
         }
         let f = all.get_mut(&root).unwrap();
         if !f.pending.is_empty() {
@@ -432,7 +448,7 @@ fn collect_event(
     refresh
 }
 
-fn start_folder(root: &Path) -> Result<std::sync::mpsc::Sender<()>, String> {
+fn start_folder(root: &Path, id: u64) -> Result<std::sync::mpsc::Sender<()>, String> {
     let mut directories = watch_directories(root).inspect_err(|e| tracing::warn!("{e}"))?;
     let (tx, events) = std::sync::mpsc::sync_channel(1024);
     let overflow = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -511,7 +527,7 @@ fn start_folder(root: &Path) -> Result<std::sync::mpsc::Sender<()>, String> {
                                     "cannot watch {}: {e}; live folder updates unavailable, use periodic refresh",
                                     path.display()
                                 );
-                                folders().remove(&root);
+                                forget(&root, id);
                                 break 'watching;
                             }
                         }
@@ -520,8 +536,7 @@ fn start_folder(root: &Path) -> Result<std::sync::mpsc::Sender<()>, String> {
                     Err(e) => {
                         tracing::warn!("{e}");
                         // Do not leave a partial recursive watch pretending to be live.
-                        let mut all = folders();
-                        all.remove(&root);
+                        forget(&root, id);
                         break;
                     }
                 }
@@ -529,7 +544,7 @@ fn start_folder(root: &Path) -> Result<std::sync::mpsc::Sender<()>, String> {
             if pending.is_empty() {
                 continue;
             }
-            if !deliver_pending(&root, pending) {
+            if !deliver_pending(&root, id, pending) {
                 break;
             }
         }
@@ -537,9 +552,11 @@ fn start_folder(root: &Path) -> Result<std::sync::mpsc::Sender<()>, String> {
     Ok(stop)
 }
 
-fn deliver_pending(root: &Path, pending: HashSet<String>) -> bool {
+/// Hands a batch to the folder's waiters, or keeps it for the next one. False when the folder is
+/// gone or now has another watcher: then the calling thread is done.
+fn deliver_pending(root: &Path, id: u64, pending: HashSet<String>) -> bool {
     let mut all = folders();
-    let Some(f) = all.get_mut(root) else {
+    let Some(f) = all.get_mut(root).filter(|f| f.id == id) else {
         return false;
     };
     add_pending(&mut f.pending, root, pending.into_iter().map(PathBuf::from));
@@ -746,11 +763,7 @@ mod tests {
     fn install_watch(root: &Path) {
         let root = root.canonicalize().unwrap();
         let mut all = folders();
-        all.entry(root.clone()).or_insert_with(|| Folder {
-            _watcher: start_folder(&root).unwrap(),
-            waiters: Vec::new(),
-            pending: HashSet::new(),
-        });
+        all.entry(root.clone()).or_insert_with(|| new_folder(&root).unwrap());
     }
 
     /// How long a test waits for the watcher's event. A loaded machine (a build beside the suite)
@@ -863,11 +876,13 @@ mod tests {
     fn abandoned_waiters_do_not_leave_an_unbounded_queue() {
         let root = test_repo("overflow");
         install_watch(&root);
+        let id = folders().get(&root).unwrap().id;
         // Inject worker batches: native backends may coalesce real writes, so a
         // filesystem flood cannot deterministically exercise queue overflow.
         for i in 0..6000 {
             assert!(deliver_pending(
                 &root,
+                id,
                 HashSet::from([root
                     .join(format!("file-{i}"))
                     .to_string_lossy()
@@ -1094,6 +1109,29 @@ mod tests {
             !folders().contains_key(&root),
             "a folder nobody waits on is dropped, and its thread with it"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A released watcher's thread can still finish the batch it was collecting. That batch is
+    /// nobody's: landing in the folder's next watcher, it would end that watcher's wait with
+    /// stale paths, and the release after it would lose the change the wait was for.
+    #[test]
+    fn a_released_watchers_late_batch_does_not_reach_the_next_watcher() {
+        let dir = test_repo("successor");
+        let root = dir.canonicalize().unwrap();
+        let next = new_folder(&root).unwrap();
+        let id = next.id;
+        folders().insert(root.clone(), next);
+        let late = HashSet::from([root.join("old").to_string_lossy().into_owned()]);
+        // Ids start at 1, so 0 stands for the released watcher.
+        assert!(!deliver_pending(&root, 0, late.clone()), "the old thread is told to stop");
+        assert!(folders().get(&root).unwrap().pending.is_empty(), "its batch lands nowhere");
+        forget(&root, 0);
+        assert!(folders().contains_key(&root), "nor can it drop the next watcher");
+        assert!(deliver_pending(&root, id, late));
+        assert!(!folders().get(&root).unwrap().pending.is_empty());
+        forget(&root, id);
+        assert!(!folders().contains_key(&root));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

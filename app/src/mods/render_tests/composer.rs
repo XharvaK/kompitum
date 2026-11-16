@@ -393,7 +393,41 @@ fn with_lead_state(mut values: BTreeMap<String, Value>, state: &str) -> BTreeMap
     values
 }
 
-fn composer_live_run_after_clicks(
+/// Where each id is laid out in the live composer, in order: an id that is not laid out fails the test.
+pub(super) fn composer_live_bounds(
+    cx: &mut TestAppContext,
+    values: BTreeMap<String, Value>,
+    setup: &str,
+    ids: &[&'static str],
+) -> Vec<gpui::Bounds<gpui::Pixels>> {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let calls = Rc::new(RefCell::new(Calls::default()));
+    let policy = Policy::new()
+        .with_storage_path(staged.0.join("store-chat-view.json"))
+        .with_capabilities(Capabilities::new().storage(true).read_roots([staged.0.clone()]))
+        .with_host_module(module(values, calls.clone()))
+        .unwrap();
+    gpui_shell::policy::set_default(policy);
+    let runtime = ShellRuntime::new_isolated().unwrap();
+    let root = staged.wrapper("mods/composer", setup);
+    let window = cx.add_window(|window, cx| Mounted(runtime.try_load(&root, window, cx).unwrap()));
+    let mut visual = VisualTestContext::from_window(*window.deref(), cx);
+    visual.run_until_parked();
+    visual.update(|window, cx| window.draw(cx).clear(cx));
+    visual.run_until_parked();
+    let bounds = ids
+        .iter()
+        .map(|id| visual.debug_bounds(id).unwrap_or_else(|| panic!("{id} is laid out")))
+        .collect();
+    drop(visual);
+    cx.run_until_parked();
+    window.update(cx, |_, window, _| window.remove_window()).ok();
+    cx.run_until_parked();
+    bounds
+}
+
+pub(super) fn composer_live_run_after_clicks(
     cx: &mut TestAppContext,
     values: BTreeMap<String, Value>,
     setup: &str,
@@ -416,14 +450,30 @@ fn composer_live_run_after_clicks(
     visual.run_until_parked();
     visual.update(|window, cx| window.draw(cx).clear(cx));
     visual.run_until_parked();
-    for id in clicks {
+    // An id written "double:<id>" is a double click on that element.
+    for click in clicks {
+        let (id, count) = match click.strip_prefix("double:") {
+            Some(id) => (id, 2),
+            None => (*click, 1),
+        };
         let at = visual
             .debug_bounds(id)
             .unwrap_or_else(|| panic!("{id} is laid out"))
             .center();
         visual.simulate_mouse_move(at, None, Modifiers::default());
-        visual.simulate_mouse_down(at, MouseButton::Left, Modifiers::default());
-        visual.simulate_mouse_up(at, MouseButton::Left, Modifiers::default());
+        visual.simulate_event(gpui::MouseDownEvent {
+            button: MouseButton::Left,
+            position: at,
+            modifiers: Modifiers::default(),
+            click_count: count,
+            first_mouse: false,
+        });
+        visual.simulate_event(gpui::MouseUpEvent {
+            button: MouseButton::Left,
+            position: at,
+            modifiers: Modifiers::default(),
+            click_count: count,
+        });
         visual.run_until_parked();
         visual.update(|window, cx| window.draw(cx).clear(cx));
         visual.run_until_parked();

@@ -587,16 +587,24 @@ export default {
 
   // The menu Claude shows in its terminal, drawn where an ask card goes. Its rows are a single choice list;
   // the buttons are the menu's own actions, with the fixed link out to the terminal.
-  menuCard(t, cx) {
+  // The card's words and rows scroll inside it; its buttons stay at its foot, always in view.
+  // Under a conversation the words and rows take at most 420 px, as the ask cards' do: the frame there has no set
+  // height, so a part that may shrink would be squeezed to nothing. Alone in the tab, the card fills the room there.
+  menuCard(t, cx, panel) {
     const menu = this.menu;
     const mono = settings()?.font_family ?? "Google Sans Code";
     return v_flex().id("composer-card").w_full().gap(8).p(10).rounded(8).border_1().border_color(t.input).bg(t.surface)
-      .child(div().text_size(13).text_color(t.muted).child(text("composer.menu-eyebrow")))
-      .child(div().text_size(15).font_medium().text_color(t.foreground).child(String(menu?.title ?? "")))
-      .children((menu?.body ?? []).map((block) => this.menuBlock(t, block, mono, 14)))
-      .children((menu?.rows ?? []).map((row, index) => this.menuRow(t, row, index, cx)))
-      .children((menu?.notes ?? []).map((block) => this.menuBlock(t, block, mono, 13)))
-      .child(this.menuButtons(t, cx));
+      .when(!panel, (card) => card.flex_1().min_h(0))
+      .child(v_flex().id("composer-asks").w_full().gap(8)
+        .when(panel, (asks) => asks.max_h(420))
+        .when(!panel, (asks) => asks.flex_shrink(1).min_h(0))
+        .overflow_y_scrollbar()
+        .child(div().text_size(13).text_color(t.muted).child(text("composer.menu-eyebrow")))
+        .child(div().text_size(15).font_medium().text_color(t.foreground).child(String(menu?.title ?? "")))
+        .children((menu?.body ?? []).map((block) => this.menuBlock(t, block, mono, 14)))
+        .children((menu?.rows ?? []).map((row, index) => this.menuRow(t, row, index, cx)))
+        .children((menu?.notes ?? []).map((block) => this.menuBlock(t, block, mono, 13))))
+      .child(div().flex_none().child(this.menuButtons(t, cx)));
   },
 
   menuBlock(t, block, mono, size) {
@@ -630,7 +638,7 @@ export default {
       .on_click((event, cx) => {
         if (this.menuBusy) return;
         this.menuAt = index;
-        if (event?.click_count >= 2) this.menuAction(this.menuActionFor("enter"), cx);
+        if (event?.click_count >= 2) this.menuAction("enter", cx);
         else cx.notify();
       })
       .child(div().w(18).flex_none().text_size(14).text_color(t.muted).child(index < 9 ? `${index + 1}.` : ""))
@@ -650,7 +658,7 @@ export default {
       buttons.child(this.cardButton(
         "composer-menu-enter",
         enter.label || text("composer.menu-choose"),
-        (_e, cx) => this.menuAction(enter, cx),
+        (_e, cx) => this.menuAction(enter.key, cx),
         t,
         { filled: true },
       ));
@@ -659,7 +667,7 @@ export default {
       buttons.child(this.cardButton(
         `composer-menu-${action.key}`,
         String(action.label ?? ""),
-        (_e, cx) => this.menuAction(action, cx),
+        (_e, cx) => this.menuAction(action.key, cx),
         t,
       ));
     }
@@ -667,7 +675,7 @@ export default {
       buttons.child(this.cardButton(
         "composer-menu-esc",
         String(esc.label ?? ""),
-        (_e, cx) => this.menuAction(esc, cx),
+        (_e, cx) => this.menuAction(esc.key, cx),
         t,
       ));
     }
