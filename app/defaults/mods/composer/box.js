@@ -122,7 +122,7 @@ export default {
       .when(this.pulsing(), (el) => el.loop("opacity", { from: 0.45, to: 1, period: 1200 }));
   },
 
-  // Whether the lead started working less than PULSE_MS ago. A pulse says work began; it never runs on (UD: loops
+  // Whether the lead started working less than PULSE_MS ago. A pulse says work began; it never runs on (Norma: loops
   // stop), and the word carries the state after it.
   pulsing() {
     return this.state === "working" && this.workingSince > 0 && Date.now() - this.workingSince < PULSE_MS;
@@ -275,7 +275,7 @@ export default {
       .accessibility_label(sendHint)
       .when(canSend, (el) => el.bg(t.accent_fill).cursor_pointer().on_click((_e, cx) => this.send(cx))
         .child(div().id("composer-send-state").absolute().inset_0().rounded_full().hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))))
-      // Nothing to send: an outline and a dim arrow, with no hover or press (UD's disabled state).
+      // Nothing to send: an outline and a dim arrow, with no hover or press (Norma's disabled state).
       .when(!canSend, (el) => el.border_1().border_color(t.input))
       .child(svg("mods/composer/arrow-up.svg").size(16).text_color(canSend ? t.accent_foreground : t.dim));
     const plus = h_flex()
@@ -497,7 +497,7 @@ export default {
       .relative()
       .text_size(14)
       .font_medium();
-    // No model picked yet: the fill goes and an outline keeps the shape (UD's disabled state).
+    // No model picked yet: the fill goes and an outline keeps the shape (Norma's disabled state).
     const button = picked
       ? start.bg(t.accent_fill).text_color(t.accent_foreground).cursor_pointer().keep_focus(true).on_click((_e, cx) => this.startFirstPick(cx))
         .child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover)).active((s) => s.bg(t.selected))).child(text("composer.start-the-lead"))

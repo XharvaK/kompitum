@@ -555,7 +555,7 @@ export default {
       .rounded(7)
       .text_size(13)
       .font_medium();
-    // Not every question answered: the fill goes and an outline keeps the shape (UD's disabled state).
+    // Not every question answered: the fill goes and an outline keeps the shape (Norma's disabled state).
     if (!enabled) return button.border_1().border_color(t.input).text_color(t.dim).child(text("composer.send-answers"));
     return button
       .relative()

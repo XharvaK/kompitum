@@ -357,7 +357,7 @@ export default class Welcome extends View {
       .when(enabled, (el) =>
         el.relative().cursor_pointer().bg(t.accent_fill).text_color(t.accent_foreground).on_click(onClick).child(div().absolute().inset_0().rounded(8).hover((s) => s.bg(t.hover).text_color(t.foreground)).active((s) => s.bg(t.selected))),
       )
-      // Not ready yet: the fill goes and an outline keeps the shape (UD's disabled state).
+      // Not ready yet: the fill goes and an outline keeps the shape (Norma's disabled state).
       .when(!enabled, (el) => el.border_1().border_color(t.input).text_color(t.dim))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(label);

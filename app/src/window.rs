@@ -793,7 +793,7 @@ pub(crate) fn sweepable(expires: Option<Instant>, now: Instant) -> bool {
 }
 
 /// How a toast or a corner popup comes in: from the bell's side, `ARRIVE_RISE` px higher, fading in, on a spring
-/// with no overshoot that settles in 320 ms (UD's `smooth`). With reduced motion on, it is simply there.
+/// with no overshoot that settles in 320 ms (Norma's `smooth`). With reduced motion on, it is simply there.
 const ARRIVE: Duration = Duration::from_millis(320);
 const ARRIVE_RISE: f32 = 8.0;
 

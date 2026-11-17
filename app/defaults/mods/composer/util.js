@@ -7,7 +7,7 @@ export const CARD_WAIT_MS = 600;
 
 // From this many tokens in the lead's context, the box offers "Compact first" for the Owner's next message.
 export const COMPACT_FIRST_TOKENS = 222000;
-// How long a pulse may run before it stops and the word or glyph carries the state alone (UD's pulseLimit).
+// How long a pulse may run before it stops and the word or glyph carries the state alone (Norma's pulseLimit).
 export const PULSE_MS = 3000;
 
 // A tool summary split on its backticks: the even pieces are words, the odd ones are code. Empty pieces are dropped.

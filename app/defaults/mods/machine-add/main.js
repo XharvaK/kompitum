@@ -396,7 +396,7 @@ export default class MachineAdd extends View {
               .relative()
               .text_size(13)
               .font_medium()
-              // Nothing typed: the fill goes and an outline keeps the shape (UD's disabled state).
+              // Nothing typed: the fill goes and an outline keeps the shape (Norma's disabled state).
               .when(!typed, (el) => el.border_1().border_color(t.input).text_color(t.dim))
               .when(Boolean(typed), (el) => el.bg(t.accent_fill).text_color(t.accent_foreground).cursor_pointer()
                 .on_click((_e, cx) => this.add(this.typed, cx))

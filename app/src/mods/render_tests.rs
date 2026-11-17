@@ -1569,7 +1569,7 @@ fn send_answers_waits_for_every_question(cx: &mut TestAppContext) {
         !button.contains(accent_fill),
         "not every question is answered: {button}"
     );
-    // Disabled, the UD way: the fill goes and an outline in the edge color keeps the shape.
+    // Disabled, the Norma way: the fill goes and an outline in the edge color keeps the shape.
     assert!(
         button.contains(".border_1") && button.contains(edge) && !button.contains(".bg["),
         "it is drawn disabled: {button}"
