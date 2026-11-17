@@ -114,7 +114,7 @@ export default class Tabs extends View {
       .when(w?.buttons, el => el.child(button("minimize", w.platform === "windows" ? svg("mods/tabs/win-min.svg").size(16) : "−", () => run("window.minimize"), text("tabs.minimize")))
         .child(button("maximize", w.platform === "windows" ? svg(`mods/tabs/${w.maximized ? "win-restore" : "win-max"}.svg`).size(16) : "□", () => run("window.maximize"), w.maximized ? text("tabs.restore") : text("tabs.maximize")))
         .child(button("close-window", w.platform === "windows" ? svg("mods/tabs/win-close.svg").size(16) : svg("mods/pane/close.svg").size(13), () => run("window.close"), text("tabs.close-window"))
-          // Windows draws its own close button red on hover, and so does ours there (UD-FAM-001).
+          // Windows draws its own close button red on hover, and so does ours there (NRM-FAM-001).
           .when(w.platform === "windows", (el) => el.hover((s) => s.bg("#C42B1C").text_color("#FFFFFF")).active((s) => s.bg("#C42B1CE6").text_color("#FFFFFF")))));
   }
 }

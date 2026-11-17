@@ -3041,7 +3041,7 @@ fn apply_loops<'a>(behavior: &'a Behavior, refinement: &mut StyleRefinement, win
         return None;
     }
     // KOMPITUM: with reduced motion on, loops leave the element as drawn and frames rest on the first, with no
-    // wake to keep redrawing (Universal Design UD-MOT-005).
+    // wake to keep redrawing (Norma NRM-MOT-005).
     if cx.reduce_motion() {
         return behavior.frames.as_ref().map(|(_, list)| (0, list.as_slice()));
     }
