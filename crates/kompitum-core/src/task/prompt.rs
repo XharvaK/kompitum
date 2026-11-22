@@ -7,6 +7,7 @@ use crate::task::checks::{ChecksFile, Workshop, glob_match};
 use crate::task::git;
 use crate::task::types::{Asked, Task};
 use crate::task::worker::Worker;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// A turn's prompt, and what is worth saying about how it was built.
@@ -14,6 +15,19 @@ use std::time::Duration;
 pub struct TurnPrompt {
     pub text: Vec<u8>,
     pub warnings: Vec<String>,
+}
+
+/// Where a turn's prompt file lives: its task folder and turn number.
+pub fn prompt_path(folder: &Path, n: u32) -> PathBuf {
+    folder.join(format!("turn-{n}.prompt.md"))
+}
+
+/// This turn's prompt file as the worker sees it, when the core's state is known: forward slashes.
+fn this_turn_prompt_file(task: &Task) -> Option<String> {
+    let paths = crate::paths::Paths::from_env().ok()?;
+    let n = u32::try_from(task.turns.len()).unwrap_or(u32::MAX - 1).saturating_add(1);
+    let path = prompt_path(&crate::task::task_folder(&paths.state, &task.name), n);
+    Some(path.display().to_string().replace('\\', "/"))
 }
 
 const FOLLOWUP: &str = "\n\n---\n\n# What is asked now\n\nAn earlier turn of this task has ended, and its changes are in \
@@ -130,6 +144,7 @@ pub async fn turn_prompt(
         rules,
         agents,
         shared: task.shared,
+        prompt_file: this_turn_prompt_file(task),
     });
     let mut text = note.unwrap_or_default().to_vec();
     text.extend_from_slice(brief.trim_end().as_bytes());

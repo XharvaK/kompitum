@@ -132,6 +132,11 @@ const BASH_DENY: [&str; 9] = [
     "*auth.json*",
 ];
 
+/// The context a worker compacts at: the Owner's 444K, the same window as Claude's auto-compaction (2026-11-23).
+const COMPACT_AT: u64 = 444_000;
+/// The context window of the DeepSeek routes, which `buffer` is measured from.
+const ROUTE_WINDOW: u64 = 1_000_000;
+
 /// `worker_config`: OpenCode's permission map, so a tool that would read a
 /// secret or commit is not a tool this worker has at all. Denied by
 /// permission, never by asking: a worker routes around a tool that fails, but
@@ -161,7 +166,12 @@ fn opencode_config(web: bool) -> String {
             permission.insert(tool.into(), serde_json::json!("deny"));
         }
     }
-    serde_json::json!({"permission": permission}).to_string()
+    let compaction = serde_json::json!({
+        "auto": true,
+        "buffer": ROUTE_WINDOW - COMPACT_AT,
+        "keep": {"tokens": 40_000},
+    });
+    serde_json::json!({"permission": permission, "compaction": compaction}).to_string()
 }
 
 /// `CC_DENY`: Command Code's own spellings of the same refusals.
@@ -448,6 +458,22 @@ mod tests {
         assert_eq!(back, b"mine");
         assert!(!settings_marker(&folder, 1, "kept").exists(), "the kept copy is gone");
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn opencode_compacts_at_444k_and_keeps_its_permission_map() {
+        let config: serde_json::Value = serde_json::from_str(&opencode_config(false)).unwrap();
+        assert_eq!(config["compaction"]["auto"], serde_json::json!(true));
+        assert_eq!(config["compaction"]["buffer"], serde_json::json!(556_000));
+        assert_eq!(config["compaction"]["keep"]["tokens"], serde_json::json!(40_000));
+        let permission = &config["permission"];
+        assert_eq!(permission["read"]["*"], "allow");
+        assert_eq!(permission["read"]["*.env"], "deny");
+        assert_eq!(permission["bash"]["*"], "allow");
+        assert_eq!(permission["bash"]["git push*"], "deny");
+        assert_eq!(permission["edit"]["*.env"], "deny");
+        assert_eq!(permission["skill"], "deny");
+        assert_eq!(permission["webfetch"], "deny");
     }
 
     fn vars(pairs: &[(&str, &str)]) -> impl Iterator<Item = (String, String)> {
