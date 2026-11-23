@@ -25,6 +25,8 @@ pub(super) enum TaskCmd {
     Accept(AcceptArgs),
     /// Send a finished task back with a follow-up brief, or answer an asking one; its checks run again.
     Redo(RedoArgs),
+    /// End a rate wait now: the same worker runs its turn again at once.
+    Retry(NameArg),
     /// Remove what old tasks left; their ledger rows stay.
     Sweep(SweepArgs),
     /// Where a run's tokens went: context per step, compactions and what filled it.
@@ -197,6 +199,9 @@ pub(super) struct AcceptArgs {
     /// Put the changes in the working tree and make no commit.
     #[arg(long)]
     pub no_commit: bool,
+    /// Record a task whose work was brought in by hand as accepted, applying and committing nothing.
+    #[arg(long)]
+    pub recorded: bool,
     /// Accept a task that failed, timed out or was cancelled, or whose last checks failed.
     #[arg(long)]
     pub accept_unfinished: bool,
@@ -289,18 +294,45 @@ fn state_text(task: &Value) -> String {
     }
 }
 
+/// A column's value: untouched when it fits, else its start, "…" and its end, counted in characters.
+fn cut(value: &str, width: usize) -> String {
+    let chars: Vec<char> = value.chars().collect();
+    if chars.len() <= width {
+        return value.to_string();
+    }
+    let head = (width - 1) / 2;
+    let tail = width - 1 - head;
+    let mut cut: String = chars[..head].iter().collect();
+    cut.push('…');
+    cut.extend(&chars[chars.len() - tail..]);
+    cut
+}
+
 /// One task's row in `kom task ls`: name, who started it, state and what it cost.
 fn task_row(task: &Value) -> String {
     format!(
         "{:<16} {:<8} {:<9} {:<14} {:>4} {:>8} {:>9} {:>6}",
-        task["task"].as_str().unwrap_or("?"),
+        cut(task["task"].as_str().unwrap_or("?"), 16),
         crate::task::table::by_word(task["by"].as_str()),
         state_text(task),
-        task["worker"].as_str().unwrap_or("-"),
+        cut(task["worker"].as_str().unwrap_or("-"), 14),
         task["turns"].as_u64().unwrap_or(0),
         human_seconds(task["seconds"].as_f64().unwrap_or(0.0)),
         human_cost(task["cost_usd"].as_f64().unwrap_or(0.0)),
         task["usage"]["steps"].as_u64().unwrap_or(0),
+    )
+}
+
+/// One changed file's line in `task show`: its mark, its name and its lines, and a word when it
+/// was changed outside the task's scope.
+fn changed_line(file: &Value) -> String {
+    let mark = if file["in_scope"] == true { " " } else { "!" };
+    let outside = if file["in_scope"] == true { "" } else { "  (outside scope)" };
+    format!(
+        " {mark} {} +{} -{}{outside}",
+        file["path"].as_str().unwrap_or("?"),
+        file["added"].as_u64().unwrap_or(0),
+        file["removed"].as_u64().unwrap_or(0)
     )
 }
 
@@ -468,13 +500,8 @@ pub(super) fn task(
                     human.push_str("\nchanged:");
                 }
                 for file in changed {
-                    let mark = if file["in_scope"] == true { " " } else { "!" };
-                    human.push_str(&format!(
-                        "\n {mark} {} +{} -{}",
-                        file["path"].as_str().unwrap_or("?"),
-                        file["added"].as_u64().unwrap_or(0),
-                        file["removed"].as_u64().unwrap_or(0)
-                    ));
+                    human.push('\n');
+                    human.push_str(&changed_line(file));
                 }
             }
             let text = line["text"].as_str().unwrap_or_default();
@@ -522,14 +549,16 @@ pub(super) fn task(
                 "task.accept",
                 json!({
                     "task": a.task, "part": a.part, "review": a.review, "message": a.message, "no_commit": a.no_commit,
+                    "recorded": a.recorded,
                     "accept_unfinished": a.accept_unfinished, "accept_scope_violation": a.accept_scope_violation,
                     "by": by(), "owner_said": a.owner_said,
                 }),
             )?;
             let files = r["files"].as_array().map_or(0, Vec::len);
-            let mut human = match r["commit"].as_str() {
-                Some(commit) => format!("{} accepted: {files} files in {commit}", a.task),
-                None => format!("{} accepted: {files} files left uncommitted", a.task),
+            let mut human = match (a.recorded, r["commit"].as_str()) {
+                (true, _) => format!("{} accepted: {files} files recorded", a.task),
+                (false, Some(commit)) => format!("{} accepted: {files} files in {commit}", a.task),
+                (false, None) => format!("{} accepted: {files} files left uncommitted", a.task),
             };
             if let Some(note) = r["note"].as_str() {
                 human.push_str(&format!("\n{note}"));
@@ -555,6 +584,14 @@ pub(super) fn task(
             Some(out) => out,
             None => return Ok(None),
         },
+        TaskCmd::Retry(a) => {
+            let r = call("task.retry", json!({"task": a.task}))?;
+            let mut human = format!("{} {} on {}", a.task, state(&r), r["worker"].as_str().unwrap_or("?"));
+            if let Some(next) = r["next"].as_str() {
+                human.push_str(&format!("\nnext: {next}"));
+            }
+            Out { json: r, human }
+        }
         TaskCmd::Sweep(a) => {
             let r = call("task.sweep", json!({"days": a.days, "dry_run": a.dry_run}))?;
             let names = |key: &str| -> Vec<String> {
@@ -866,6 +903,53 @@ mod tests {
              opencode Go    $0.39      $1.96      $3.10\n\
              opencode free  $0.00      $0.00      $0.00"
         );
+    }
+
+    #[test]
+    fn a_long_name_is_cut_in_the_middle_and_keeps_the_columns_after_it() {
+        let row = |name: &str| {
+            task_row(&json!({
+                "task": name, "by": "manager", "state": "done", "worker": "opencode Go", "turns": 1,
+                "seconds": 65.0, "cost_usd": 0.25, "usage": {"steps": 3}
+            }))
+        };
+        let long = row("task-name-that-is-thirty-chars");
+        let head: String = long.chars().take(16).collect();
+        assert_eq!(head, "task-na…ty-chars", "{long}");
+        let tail: String = long.chars().skip(17).collect();
+        let short_tail: String = row("fix-1").chars().skip(17).collect();
+        assert_eq!(tail, short_tail, "the columns after the name stay put: {long}");
+    }
+
+    #[test]
+    fn a_name_of_sixteen_or_fewer_is_untouched() {
+        let row = |name: &str| {
+            task_row(&json!({
+                "task": name, "by": "manager", "state": "done", "worker": "opencode Go", "turns": 1,
+                "seconds": 65.0, "cost_usd": 0.25, "usage": {"steps": 3}
+            }))
+        };
+        assert!(row("sixteen-chars-ab").starts_with("sixteen-chars-ab "), "{}", row("sixteen-chars-ab"));
+        assert!(row("fix-1").starts_with("fix-1            "), "{}", row("fix-1"));
+    }
+
+    #[test]
+    fn a_non_ascii_name_is_cut_on_a_character_boundary() {
+        let name = "şarkışarkışarkışarkışarkı";
+        let row = task_row(&json!({
+            "task": name, "by": "manager", "state": "done", "worker": "opencode Go", "turns": 1,
+            "seconds": 65.0, "cost_usd": 0.25, "usage": {"steps": 3}
+        }));
+        let head: String = row.chars().take(16).collect();
+        assert_eq!(head, "şarkışa…rkışarkı", "{row}");
+    }
+
+    #[test]
+    fn an_out_of_scope_files_line_ends_with_its_words() {
+        let line = changed_line(&json!({"path": "outside.txt", "added": 1, "removed": 2, "in_scope": false}));
+        assert_eq!(line, " ! outside.txt +1 -2  (outside scope)", "{line}");
+        let inside = changed_line(&json!({"path": "src/a.rs", "added": 1, "removed": 2, "in_scope": true}));
+        assert_eq!(inside, "   src/a.rs +1 -2", "an in-scope file keeps its plain line: {inside}");
     }
 
     #[test]

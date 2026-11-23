@@ -671,6 +671,7 @@ Commands:
   review   The whole review of a task in one read: checks, scope, warns, Gaps, report and the hunks they point at
   accept   Bring a finished task's changes into its repository and commit only those files
   redo     Send a finished task back with a follow-up brief, or answer an asking one; its checks run again
+  retry    End a rate wait now: the same worker runs its turn again at once
   sweep    Remove what old tasks left; their ledger rows stay
   stats    Where a run's tokens went: context per step, compactions and what filled it
   help     Print this message or the help of the given subcommand(s)
@@ -696,6 +697,7 @@ Options:
       --review <REVIEW>         What the review decided, kept for the ledger
   -m, --message <MESSAGE>       The commit message (default: the review, else a line naming the task)
       --no-commit               Put the changes in the working tree and make no commit
+      --recorded                Record a task whose work was brought in by hand as accepted, applying and committing nothing
       --accept-unfinished       Accept a task that failed, timed out or was cancelled, or whose last checks failed
       --accept-scope-violation  Accept files changed outside the task's scope
       --owner-said <TEXT>       The Owner's words that let a manager accept; kept in the record and the ledger row
@@ -763,6 +765,21 @@ Options:
       --brief <FILE>  The follow-up's or answer's file, or - for stdin
       --json          JSON output even in a terminal
   -h, --help          Print help
+```
+
+## kom task retry
+
+```text
+End a rate wait now: the same worker runs its turn again at once
+
+Usage: kom task retry [OPTIONS] <TASK>
+
+Arguments:
+  <TASK>  The task's name
+
+Options:
+      --json  JSON output even in a terminal
+  -h, --help  Print help
 ```
 
 ## kom task review

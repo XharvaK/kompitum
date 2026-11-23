@@ -185,6 +185,24 @@ pub struct TaskCancelResult {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct TaskRetryParams {
+    /// The task's name.
+    pub task: String,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct TaskRetryResult {
+    /// The task's name.
+    pub task: String,
+    /// Its state right after the pump looked at it.
+    pub state: TaskState,
+    /// The label of the worker that runs the turn.
+    pub worker: String,
+    /// The command that waits for it.
+    pub next: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct TaskDiscardParams {
     /// The task's name.
     pub task: String,
@@ -307,6 +325,8 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         owner_said: None,
         warnings,
         waiting: Some("waiting for the pump".into()),
+        rate_refusals: 0,
+        rate_wait_until_ms: None,
         turns: Vec::new(),
         ending: None,
         error: None,
@@ -453,6 +473,17 @@ pub(super) async fn task_wait(core: Ctx<'_>, p: TaskWaitParams) -> Result<TaskWa
 pub(super) async fn task_cancel(core: Ctx<'_>, p: TaskParams) -> Result<TaskCancelResult, RpcError> {
     let (state, survivors) = crate::task::cancel(core.core, &p.task, p.by.as_deref(), p.yes).await?;
     Ok(TaskCancelResult { task: p.task, state, survivors })
+}
+
+pub(super) async fn task_retry(core: Ctx<'_>, p: TaskRetryParams) -> Result<TaskRetryResult, RpcError> {
+    let task = crate::task::retry(core.core, &p.task).await?;
+    let worker = crate::task::worker::label_of(&workers::all(&core.tasks.workers()), &task.worker);
+    Ok(TaskRetryResult {
+        task: task.name.clone(),
+        state: task.state,
+        worker,
+        next: format!("kom task wait {}", task.name),
+    })
 }
 
 pub(super) async fn task_discard(core: Ctx<'_>, p: TaskDiscardParams) -> Result<TaskDiscardResult, RpcError> {

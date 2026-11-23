@@ -29,8 +29,23 @@ use task::*;
 use update::*;
 use vault::*;
 
+/// `0.1.18 (878cb44)` when the build found a commit, the plain version otherwise.
+fn version_text(version: &str, commit: &str) -> String {
+    if commit.is_empty() { version.to_string() } else { format!("{version} ({commit})") }
+}
+
+/// The version clap prints, built once.
+fn version() -> &'static str {
+    static TEXT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TEXT.get_or_init(|| version_text(env!("CARGO_PKG_VERSION"), env!("KOM_COMMIT")))
+}
+
 #[derive(Parser)]
-#[command(name = "kom", version, about = "kompitum-core: a terminal runtime for coding agents")]
+#[command(
+    name = "kom",
+    version = version(),
+    about = "kompitum-core: a terminal runtime for coding agents"
+)]
 struct Cli {
     /// JSON output even in a terminal.
     #[arg(long, global = true)]
@@ -408,6 +423,7 @@ fn as_a_worker(cmd: Option<&Cmd>) -> Result<(), RpcError> {
             | TaskCmd::Discard(_)
             | TaskCmd::Accept(_)
             | TaskCmd::Redo(_)
+            | TaskCmd::Retry(_)
             | TaskCmd::Sweep(_) => deny(),
         },
         // `kom workers` with no setting looks; any setting changes the chain.
@@ -1043,6 +1059,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("task review", "task.review"),
     ("task accept", "task.accept"),
     ("task redo", "task.redo"),
+    ("task retry", "task.retry"),
     ("task sweep", "task.sweep"),
     ("task stats", "task.stats"),
     ("ledger", "ledger.show"),
@@ -1216,6 +1233,17 @@ mod tests {
             describe_wait(&interrupted),
             "a message from t1 (already in your input)\nt1 still running: working, turn 2 (wait again to keep waiting)"
         );
+    }
+
+    #[test]
+    fn the_version_names_the_commit_when_the_build_has_one() {
+        let text = version_text("0.1.18", "878cb44");
+        assert!(regex::Regex::new(r"^0\.1\.18 \(\w{7,}\)$").unwrap().is_match(&text), "{text}");
+    }
+
+    #[test]
+    fn the_version_is_plain_without_a_commit() {
+        assert_eq!(version_text("0.1.18", ""), "0.1.18");
     }
 
     #[test]

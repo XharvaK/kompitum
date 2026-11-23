@@ -2175,7 +2175,7 @@
           },
           "followup_role": {
             "default": null,
-            "description": "What the next follow-up is: qa or redo.",
+            "description": "What the next follow-up is: qa, redo or report.",
             "type": [
               "string",
               "null"
@@ -2245,6 +2245,23 @@
             "description": "What its worker asked at the end of its turn, when it is asking.",
             "type": [
               "string",
+              "null"
+            ]
+          },
+          "rate_refusals": {
+            "default": 0,
+            "description": "Rate refusals in this task so far: the first two wait on the same worker.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rate_wait_until_ms": {
+            "default": null,
+            "description": "When a rate wait ends and the same worker tries the turn again.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
               "null"
             ]
           },
@@ -2776,6 +2793,33 @@
           "task",
           "state",
           "turn",
+          "next"
+        ],
+        "type": "object"
+      },
+      "TaskRetryResult": {
+        "properties": {
+          "next": {
+            "description": "The command that waits for it.",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/TaskState",
+            "description": "Its state right after the pump looked at it."
+          },
+          "task": {
+            "description": "The task's name.",
+            "type": "string"
+          },
+          "worker": {
+            "description": "The label of the worker that runs the turn.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task",
+          "state",
+          "worker",
           "next"
         ],
         "type": "object"
@@ -7275,6 +7319,16 @@
           }
         },
         {
+          "description": "Record a task whose work was brought in by hand as accepted, applying and committing nothing.",
+          "name": "recorded",
+          "required": false,
+          "schema": {
+            "default": false,
+            "description": "Record a task whose work was brought in by hand as accepted, applying and committing nothing.",
+            "type": "boolean"
+          }
+        },
+        {
           "description": "What the review decided, kept for the ledger.",
           "name": "review",
           "required": false,
@@ -7389,6 +7443,44 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/TaskRedoResult"
+        }
+      }
+    },
+    {
+      "description": "End a rate wait now: the task runs its turn at once on the worker that was rate limited. Refused when the task is not waiting on a rate limit.",
+      "errors": [
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        }
+      ],
+      "name": "task.retry",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": true,
+          "schema": {
+            "description": "The task's name.",
+            "type": "string"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskRetryResult"
         }
       }
     },

@@ -177,6 +177,9 @@ methods! { Ctx<'_>;
     "task.redo" => task_redo, TaskRedoParams => TaskRedoResult,
         "Send a finished task back with a follow-up brief: the same worker goes on in its session while it can, any other starts fresh with a hand-off note. The checks run again when it ends.",
         errors ["invalid_params", "not_found", "running", "finished", "no_worktree", "unavailable"];
+    "task.retry" => task_retry, TaskRetryParams => TaskRetryResult,
+        "End a rate wait now: the task runs its turn at once on the worker that was rate limited. Refused when the task is not waiting on a rate limit.",
+        errors ["not_found", "invalid_params"];
     "task.sweep" => task_sweep, TaskSweepParams => TaskSweepResult,
         "Remove what old tasks left: an accepted or discarded task's folder and record, and a failed, timed-out or cancelled task nobody came for. Ledger rows stay. The core also does this by itself once a day.",
         errors ["invalid_params", "unavailable"];

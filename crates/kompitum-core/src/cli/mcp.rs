@@ -23,6 +23,7 @@ const TOOLS: &[(&str, &str)] = &[
     ("task_review", "task review"),
     ("task_accept", "task accept"),
     ("task_redo", "task redo"),
+    ("task_retry", "task retry"),
     ("task_cancel", "task cancel"),
     ("task_discard", "task discard"),
     ("task_stats", "task stats"),
