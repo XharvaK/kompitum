@@ -141,6 +141,10 @@ const BASH_DENY: [&str; 14] = [
 const COMPACT_AT: u64 = 444_000;
 /// The context window of the DeepSeek routes, which `buffer` is measured from.
 const ROUTE_WINDOW: u64 = 1_000_000;
+/// How long one model request may take before opencode cuts it (2026-11-23). OpenCode 2.2.7 sets no limit on a
+/// whole request, and its 15-minute limit between streamed chunks let a request that sent no content run for 62
+/// minutes in a batch's subagent, out of the idle cut's sight. The slowest healthy step in that batch took 196 s.
+const REQUEST_TIMEOUT_MS: u64 = 600_000;
 
 /// `worker_config`: OpenCode's permission map, so a tool that would read a
 /// secret or commit is not a tool this worker has at all. Denied by
@@ -184,6 +188,10 @@ fn opencode_config(web: bool, has_parts: bool, route: &str) -> String {
         // that agent to the coordinator's own route. Its built-in permissions deny
         // `subagent`, so a subagent cannot start another.
         config["agents"] = serde_json::json!({"general": {"model": route}});
+    }
+    // The route's provider is the part before its first `/`: `opencode-go`, or `opencode` for the free route.
+    if let Some((provider, _)) = route.split_once('/') {
+        config["provider"] = serde_json::json!({provider: {"options": {"timeout": REQUEST_TIMEOUT_MS}}});
     }
     config.to_string()
 }
@@ -539,6 +547,18 @@ mod tests {
         }
         assert_eq!(config["compaction"]["auto"], serde_json::json!(true), "compaction is still there");
         assert_eq!(config["agents"]["general"]["model"], route);
+    }
+
+    #[test]
+    fn a_model_request_is_cut_after_ten_minutes_on_the_routes_provider() {
+        for (route, provider) in
+            [("opencode-go/deepseek-v4.1-flash#max", "opencode-go"), ("opencode/deepseek/x#max", "opencode")]
+        {
+            let config: serde_json::Value = serde_json::from_str(&opencode_config(false, false, route)).unwrap();
+            assert_eq!(config["provider"][provider]["options"]["timeout"], serde_json::json!(600_000), "{route}");
+        }
+        let bare: serde_json::Value = serde_json::from_str(&opencode_config(false, false, "")).unwrap();
+        assert!(bare.get("provider").is_none(), "no route, no provider block");
     }
 
     fn vars(pairs: &[(&str, &str)]) -> impl Iterator<Item = (String, String)> {

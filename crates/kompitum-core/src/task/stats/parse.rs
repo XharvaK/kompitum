@@ -58,12 +58,10 @@ fn child_of(name: &str, state: Option<&serde_json::Map<String, Value>>) -> Optio
     if name != "subagent" {
         return None;
     }
-    let id = state
-        .and_then(|state| state.get("metadata"))
-        .and_then(Value::as_object)
-        .and_then(|metadata| metadata.get("sessionID"))
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())?;
+    // A subagent that runs in the background (opencode 2.2.7) nests its id one level deeper.
+    let metadata = state.and_then(|state| state.get("metadata")).and_then(Value::as_object)?;
+    let nested = metadata.get("metadata").and_then(Value::as_object).and_then(|inner| inner.get("sessionID"));
+    let id = metadata.get("sessionID").or(nested).and_then(Value::as_str).filter(|id| !id.is_empty())?;
     Some(id.to_string())
 }
 
@@ -419,6 +417,16 @@ mod tests {
         assert_eq!(parsed.calls[0].len(), 1, "the repeated part is one tool");
         assert_eq!(parsed.calls[0][0].target.as_deref(), Some("a.rs"));
         assert_eq!(parsed.children, [child]);
+    }
+
+    #[test]
+    fn a_background_subagent_names_its_session_one_level_down() {
+        let child = "ses_background";
+        let subagent = json!({"part": {"type": "tool", "tool": "subagent", "state": {"status": "completed",
+            "input": {}, "metadata": {"metadata": {"sessionID": child, "status": "running"}}}}})
+        .to_string();
+        let finish = json!({"part": {"type": "step-finish", "tokens": {"input": 1}}}).to_string();
+        assert_eq!(parse_opencode(vec![subagent, finish]).children, [child]);
     }
 
     #[test]
