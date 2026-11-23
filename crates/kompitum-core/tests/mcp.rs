@@ -150,6 +150,7 @@ fn tools_list_is_built_from_kom() {
         "task_redo",
         "task_cancel",
         "task_discard",
+        "task_stats",
         "workers",
         "ledger",
         "status",

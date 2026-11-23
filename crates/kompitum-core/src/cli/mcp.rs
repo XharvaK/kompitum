@@ -25,6 +25,7 @@ const TOOLS: &[(&str, &str)] = &[
     ("task_redo", "task redo"),
     ("task_cancel", "task cancel"),
     ("task_discard", "task discard"),
+    ("task_stats", "task stats"),
     ("workers", "workers"),
     ("ledger", "ledger"),
     ("status", "status"),

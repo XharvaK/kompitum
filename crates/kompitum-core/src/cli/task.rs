@@ -27,6 +27,8 @@ pub(super) enum TaskCmd {
     Redo(RedoArgs),
     /// Remove what old tasks left; their ledger rows stay.
     Sweep(SweepArgs),
+    /// Where a run's tokens went: context per step, compactions and what filled it.
+    Stats(StatsArgs),
 }
 
 #[derive(clap::Args)]
@@ -214,6 +216,21 @@ pub(super) struct SweepArgs {
     /// Say what would go, and remove nothing.
     #[arg(long)]
     pub dry_run: bool,
+}
+
+#[derive(clap::Args)]
+pub(super) struct StatsArgs {
+    /// The task's name.
+    pub task: Option<String>,
+    /// An opencode session to read instead of a task.
+    #[arg(long, value_name = "SESSION")]
+    pub opencode: Option<String>,
+    /// A Command Code session id or the path to its transcript.
+    #[arg(long, value_name = "SESSION")]
+    pub commandcode: Option<String>,
+    /// The folder to run opencode session export in, or to resolve a transcript path (default: where kom runs).
+    #[arg(long = "in", value_name = "FOLDER")]
+    pub folder: Option<String>,
 }
 
 #[derive(clap::Args)]
@@ -473,6 +490,10 @@ pub(super) fn task(
             }
             Out { json: r, human }
         }
+        TaskCmd::Stats(a) => match stats(a, asked, &call)? {
+            Some(out) => out,
+            None => return Ok(None),
+        },
         TaskCmd::Sweep(a) => {
             let r = call("task.sweep", json!({"days": a.days, "dry_run": a.dry_run}))?;
             let names = |key: &str| -> Vec<String> {
@@ -500,6 +521,22 @@ pub(super) fn task(
             Out { human: lines.join("\n"), json: r }
         }
     }))
+}
+
+pub(super) fn stats(
+    a: StatsArgs,
+    asked: bool,
+    call: impl Fn(&str, Value) -> Result<Value, RpcError>,
+) -> Result<Option<Out>, RpcError> {
+    let r = call(
+        "task.stats",
+        json!({"task": a.task, "opencode": a.opencode, "commandcode": a.commandcode, "folder": from_here(a.folder)}),
+    )?;
+    if !asked {
+        println!("{}", r["table"].as_str().unwrap_or_default());
+        return Ok(None);
+    }
+    Ok(Some(Out { json: r, human: String::new() }))
 }
 
 pub(super) fn ledger(

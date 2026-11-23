@@ -180,6 +180,9 @@ methods! { Ctx<'_>;
     "task.sweep" => task_sweep, TaskSweepParams => TaskSweepResult,
         "Remove what old tasks left: an accepted or discarded task's folder and record, and a failed, timed-out or cancelled task nobody came for. Ledger rows stay. The core also does this by itself once a day.",
         errors ["invalid_params", "unavailable"];
+    "task.stats" => task_stats, TaskStatsParams => TaskStatsResult,
+        "What a worker run resent, step by step: context per step, compactions, which tools put the most into the context and what that cost, and subagent sessions. For a task, or any opencode or Command Code session.",
+        errors ["invalid_params", "not_found", "unavailable"];
     "ledger.show" => ledger_show, LedgerParams => LedgerResult,
         "The ledger: one row per accepted or discarded task, with its turns, what they cost and the review. With `task`, also the orchestrator's own requests for it.",
         errors ["unavailable"];

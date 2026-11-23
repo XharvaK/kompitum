@@ -672,6 +672,7 @@ Commands:
   accept   Bring a finished task's changes into its repository and commit only those files
   redo     Send a finished task back with a follow-up brief, or answer an asking one; its checks run again
   sweep    Remove what old tasks left; their ledger rows stay
+  stats    Where a run's tokens went: context per step, compactions and what filled it
   help     Print this message or the help of the given subcommand(s)
 
 Options:
@@ -819,6 +820,24 @@ Options:
       --qa-rounds <N>      How many times failed checks go back to the worker, 0 to 3 (default: the repository's, else 1)
       --web                Let the worker use the web
   -h, --help               Print help
+```
+
+## kom task stats
+
+```text
+Where a run's tokens went: context per step, compactions and what filled it
+
+Usage: kom task stats [OPTIONS] [TASK]
+
+Arguments:
+  [TASK]  The task's name
+
+Options:
+      --json                   JSON output even in a terminal
+      --opencode <SESSION>     An opencode session to read instead of a task
+      --commandcode <SESSION>  A Command Code session id or the path to its transcript
+      --in <FOLDER>            The folder to run opencode session export in, or to resolve a transcript path (default: where kom runs)
+  -h, --help                   Print help
 ```
 
 ## kom task sweep

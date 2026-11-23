@@ -21,6 +21,7 @@ pub mod quota;
 pub mod review;
 pub mod runner;
 pub mod setup;
+pub mod stats;
 pub mod sweep;
 pub mod table;
 pub mod types;

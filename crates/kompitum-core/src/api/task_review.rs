@@ -1,7 +1,8 @@
-//! `task.review`, `task.accept`, `task.redo`, `task.sweep` and `ledger.show`: their params
-//! and results, and handlers that only call `crate::task`.
+//! `task.review`, `task.accept`, `task.redo`, `task.sweep`, `task.stats` and `ledger.show`:
+//! their params and results, and handlers that only call `crate::task`.
 
 use super::*;
+use crate::task::stats::{SessionStats, StatsTotals};
 use crate::task::types::{LedgerRow, ParentUsage, TaskState, Usage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -127,6 +128,44 @@ pub struct TaskSweepResult {
 }
 
 #[derive(Deserialize, JsonSchema)]
+pub struct TaskStatsParams {
+    /// The task's name.
+    #[serde(default)]
+    pub task: Option<String>,
+    /// An opencode session to read instead of a task.
+    #[serde(default)]
+    pub opencode: Option<String>,
+    /// A Command Code session id or the path to its transcript.
+    #[serde(default)]
+    pub commandcode: Option<String>,
+    /// The folder to run `opencode session export` in, or to resolve a transcript path (default: where kom runs).
+    #[serde(default)]
+    pub folder: Option<String>,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub struct TaskStatsResult {
+    /// The task's name or the session id.
+    pub subject: String,
+    /// One entry per turn or session, then the subagent sessions.
+    pub sessions: Vec<SessionStats>,
+    /// What every entry adds up to.
+    pub totals: StatsTotals,
+    /// The brief's jobs: lines that start `## Job ` or `### Job `; one when none.
+    pub jobs: Option<u64>,
+    /// Additions plus deletions in the task's patch; null when unknown.
+    pub changed_lines: Option<u64>,
+    /// Resent tokens per job; null when there are none.
+    pub resent_per_job: Option<u64>,
+    /// Resent tokens per changed line; null when there are none or unknown.
+    pub resent_per_changed_line: Option<u64>,
+    /// Words for each file or export that could not be read.
+    pub problems: Vec<String>,
+    /// The numbers as a Markdown table.
+    pub table: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
 pub struct LedgerParams {
     /// Only this task's row, with the orchestrator's own usage for it.
     #[serde(default)]
@@ -164,6 +203,10 @@ pub(super) async fn task_redo(core: Ctx<'_>, p: TaskRedoParams) -> Result<TaskRe
 
 pub(super) async fn task_sweep(core: Ctx<'_>, p: TaskSweepParams) -> Result<TaskSweepResult, RpcError> {
     crate::task::sweep::sweep(core.core, p).await
+}
+
+pub(super) async fn task_stats(core: Ctx<'_>, p: TaskStatsParams) -> Result<TaskStatsResult, RpcError> {
+    crate::task::stats::stats(core.core, p).await
 }
 
 pub(super) async fn ledger_show(core: Ctx<'_>, p: LedgerParams) -> Result<LedgerResult, RpcError> {

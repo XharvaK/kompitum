@@ -402,7 +402,7 @@ fn as_a_worker(cmd: Option<&Cmd>) -> Result<(), RpcError> {
             ServerCmd::Start | ServerCmd::Stop | ServerCmd::Restart => deny(),
         },
         Some(Cmd::Task { action }) => match action {
-            TaskCmd::Ls(_) | TaskCmd::Show(_) | TaskCmd::Wait(_) | TaskCmd::Review(_) => Ok(()),
+            TaskCmd::Ls(_) | TaskCmd::Show(_) | TaskCmd::Wait(_) | TaskCmd::Review(_) | TaskCmd::Stats(_) => Ok(()),
             TaskCmd::Start(_)
             | TaskCmd::Cancel(_)
             | TaskCmd::Discard(_)
@@ -1044,6 +1044,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("task accept", "task.accept"),
     ("task redo", "task.redo"),
     ("task sweep", "task.sweep"),
+    ("task stats", "task.stats"),
     ("ledger", "ledger.show"),
     ("workers", "workers.show"),
     ("workers", "workers.set"),

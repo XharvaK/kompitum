@@ -165,6 +165,7 @@ kom task accept fix-docs --review "clean; one typo fixed by hand"
 - Worker output is evidence, not truth: read the review before you accept.
   `kom task redo <t> --brief -` sends it back; `kom task discard <t> --review X`
   drops it. `kom ledger` shows what each run cost.
+  `kom task stats <task>` shows where a run's tokens went: context per step, compactions, the tools that filled the context and what that cost; `--opencode <session>` does the same for any opencode session, and `--commandcode <session or transcript>` for a Command Code one.
 - `KOMPITUM_AGENT` names the caller (`opus`, `manager`); unset means the Owner.
   Every task records who started it. Manager accepts only with the Owner's
   words: `kom task accept <t> --owner-said "<what they said>"`, kept in the

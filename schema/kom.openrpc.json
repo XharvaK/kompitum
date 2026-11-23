@@ -779,6 +779,66 @@
         ],
         "type": "object"
       },
+      "KindStats": {
+        "properties": {
+          "cost": {
+            "description": "Growth times the steps it stayed in the context.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "growth": {
+            "description": "Tokens this kind added; a small drop is negative.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "kind": {
+            "description": "The tool's name, or start, compaction or reply.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "growth",
+          "cost"
+        ],
+        "type": "object"
+      },
+      "LargestStats": {
+        "description": "One of the steps that added most to the context.",
+        "properties": {
+          "cost": {
+            "description": "Growth times the steps it stayed in the context.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "growth": {
+            "description": "Tokens the step added.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "step": {
+            "description": "The step whose context grew, counted from zero.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tools": {
+            "description": "The tools called in the step before it, each with its target.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "step",
+          "tools",
+          "growth",
+          "cost"
+        ],
+        "type": "object"
+      },
       "LedgerResult": {
         "properties": {
           "parent": {
@@ -1577,6 +1637,112 @@
         ],
         "type": "object"
       },
+      "SessionStats": {
+        "properties": {
+          "cache_share": {
+            "description": "Cache reads as a share of input plus cache reads; zero when both are zero.",
+            "format": "double",
+            "type": "number"
+          },
+          "compactions": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "depth": {
+            "description": "Zero for a turn or the session asked for, then one per subagent level.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "kinds": {
+            "description": "What filled the context, sorted by cost descending.",
+            "items": {
+              "$ref": "#/components/schemas/KindStats"
+            },
+            "type": "array"
+          },
+          "label": {
+            "description": "What this entry is: `turn 1 (go)`, `subagent ses_…` or `session ses_…`.",
+            "type": "string"
+          },
+          "largest": {
+            "description": "The ten steps that added most to the context, largest first.",
+            "items": {
+              "$ref": "#/components/schemas/LargestStats"
+            },
+            "type": "array"
+          },
+          "median": {
+            "description": "The middle context, sorted; zero without per-step numbers.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "note": {
+            "description": "Anything this entry could not read, in words.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "output": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "p90": {
+            "description": "The ninth decile of the contexts; zero without per-step numbers.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "peak": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasoning": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resent": {
+            "description": "The sum of every step's context.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "uncached": {
+            "description": "The sum of input tokens not served from the cache.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label",
+          "depth",
+          "steps",
+          "resent",
+          "uncached",
+          "cache_share",
+          "output",
+          "reasoning",
+          "median",
+          "p90",
+          "peak",
+          "compactions",
+          "kinds",
+          "largest"
+        ],
+        "type": "object"
+      },
       "Side": {
         "description": "Which side of a diff a line is on. `+` is what the worker added.",
         "enum": [
@@ -1620,6 +1786,62 @@
           "five_hours",
           "week",
           "month"
+        ],
+        "type": "object"
+      },
+      "StatsTotals": {
+        "properties": {
+          "cache_share": {
+            "description": "Cache reads as a share of input plus cache reads.",
+            "format": "double",
+            "type": "number"
+          },
+          "compactions": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "output": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "peak": {
+            "description": "The largest context of all the sessions.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reasoning": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "resent": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "steps": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "uncached": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "steps",
+          "resent",
+          "uncached",
+          "cache_share",
+          "output",
+          "reasoning",
+          "compactions",
+          "peak"
         ],
         "type": "object"
       },
@@ -2534,6 +2756,80 @@
           "accepted"
         ],
         "type": "string"
+      },
+      "TaskStatsResult": {
+        "properties": {
+          "changed_lines": {
+            "description": "Additions plus deletions in the task's patch; null when unknown.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "jobs": {
+            "description": "The brief's jobs: lines that start `## Job ` or `### Job `; one when none.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "problems": {
+            "description": "Words for each file or export that could not be read.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "resent_per_changed_line": {
+            "description": "Resent tokens per changed line; null when there are none or unknown.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "resent_per_job": {
+            "description": "Resent tokens per job; null when there are none.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sessions": {
+            "description": "One entry per turn or session, then the subagent sessions.",
+            "items": {
+              "$ref": "#/components/schemas/SessionStats"
+            },
+            "type": "array"
+          },
+          "subject": {
+            "description": "The task's name or the session id.",
+            "type": "string"
+          },
+          "table": {
+            "description": "The numbers as a Markdown table.",
+            "type": "string"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/StatsTotals",
+            "description": "What every entry adds up to."
+          }
+        },
+        "required": [
+          "subject",
+          "sessions",
+          "totals",
+          "problems",
+          "table"
+        ],
+        "type": "object"
       },
       "TaskSweepResult": {
         "properties": {
@@ -6954,6 +7250,94 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/TaskSweepResult"
+        }
+      }
+    },
+    {
+      "description": "What a worker run resent, step by step: context per step, compactions, which tools put the most into the context and what that cost, and subagent sessions. For a task, or any opencode or Command Code session.",
+      "errors": [
+        {
+          "code": -32602,
+          "data": {
+            "kind": "invalid_params"
+          },
+          "message": "invalid_params"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "not_found"
+          },
+          "message": "not_found"
+        },
+        {
+          "code": -32000,
+          "data": {
+            "kind": "unavailable"
+          },
+          "message": "unavailable"
+        }
+      ],
+      "name": "task.stats",
+      "paramStructure": "by-name",
+      "params": [
+        {
+          "description": "A Command Code session id or the path to its transcript.",
+          "name": "commandcode",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "A Command Code session id or the path to its transcript.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The folder to run `opencode session export` in, or to resolve a transcript path (default: where kom runs).",
+          "name": "folder",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The folder to run `opencode session export` in, or to resolve a transcript path (default: where kom runs).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "An opencode session to read instead of a task.",
+          "name": "opencode",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "An opencode session to read instead of a task.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "The task's name.",
+          "name": "task",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "The task's name.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/TaskStatsResult"
         }
       }
     },

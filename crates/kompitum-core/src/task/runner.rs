@@ -73,7 +73,7 @@ fn now_ms() -> u64 {
 /// The environment a worker gets: the core's launcher leftovers gone, and the
 /// turn's own folder first on PATH. The worker's CLI and the route check both
 /// go through this.
-fn prepare_child(cmd: &mut Command, path_first: Option<&Path>) {
+pub(crate) fn prepare_child(cmd: &mut Command, path_first: Option<&Path>) {
     for key in crate::task::setup::to_remove(crate::platform::utf8_vars()) {
         cmd.env_remove(key);
     }
