@@ -14,30 +14,34 @@ pub mod decide;
 pub mod git;
 pub mod handoff;
 pub mod ledger;
+pub mod names;
 pub mod opencode;
 pub mod parent_usage;
 pub mod parts;
 pub mod prompt;
 pub mod quota;
+pub mod rate_wait;
 pub mod review;
 pub mod runner;
 pub mod setup;
 pub mod stats;
 pub mod sweep;
 pub mod table;
+mod turn_end;
+mod turn_start;
 pub mod types;
 pub mod updates;
 pub mod worker;
 pub mod workers;
 pub mod workshop;
 
-use crate::api::{Label, RunParams};
 use crate::rpc::RpcError;
 use crate::runtime::{Core, now_ms};
 use crate::task::decide::{Step, TerminalNow};
-use crate::task::opencode::RouteCheck;
-use crate::task::types::{Beat, ChangedFile, Ending, Task, TaskLine, TaskState, Turn};
-use crate::task::worker::{Cli, TurnOutcome, Worker};
+use crate::task::turn_end::{fail_start, finish_turn, finish_with_error};
+use crate::task::turn_start::start_task;
+use crate::task::types::{Beat, Ending, Task, TaskLine, TaskState, Turn};
+use crate::task::worker::{Cli, Worker};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -152,8 +156,10 @@ impl Store {
         self.tasks.lock().unwrap_or_else(|p| p.into_inner()).values().cloned().collect()
     }
 
+    /// Whether `name` holds a record that may not be reused. A discarded record
+    /// is not taken: `create` moves it aside first.
     pub fn contains(&self, name: &str) -> bool {
-        self.tasks.lock().unwrap_or_else(|p| p.into_inner()).contains_key(name)
+        self.snapshot(name).is_some_and(|task| task.state != TaskState::Discarded)
     }
 }
 
@@ -455,6 +461,10 @@ async fn pump_queued(core: &Arc<Core>, task: Task, pass: &Pass<'_>, checks: &Ver
     if stopping(core) {
         return;
     }
+    // A rate wait leaves the task, and its waiting sentence, alone until its time.
+    if task.rate_wait_until_ms.is_some_and(|until| now_ms() < until) {
+        return;
+    }
     let others: Vec<&Task> = pass.tasks.iter().filter(|other| other.name != task.name).collect();
     match decide::may_start(&task, &others, pass.config.cap()) {
         Err(waiting) => {
@@ -479,6 +489,8 @@ async fn pump_queued(core: &Arc<Core>, task: Task, pass: &Pass<'_>, checks: &Ver
                 Some(last) if followup.is_file() => workers::stay_with(chain, &last.worker),
                 _ => chain,
             };
+            // A rate wait's next turn goes back to the worker that was refused.
+            let chain = if task.rate_wait_until_ms.is_some() { workers::stay_with(chain, &task.worker) } else { chain };
             let worker = match workers::pick(&chain, &file, installed, now, crate::platform::utc_offset_minutes()) {
                 Ok(worker) => worker,
                 Err(words) if workers::may_come_back(&chain, &file, now) => {
@@ -522,7 +534,12 @@ async fn pump_queued(core: &Arc<Core>, task: Task, pass: &Pass<'_>, checks: &Ver
                 return;
             }
             match start_task(core, &task, worker, &prefix).await {
-                Ok(()) => *core.tasks.last_start_ms.lock().unwrap_or_else(|p| p.into_inner()) = Some(now_ms()),
+                Ok(()) => {
+                    *core.tasks.last_start_ms.lock().unwrap_or_else(|p| p.into_inner()) = Some(now_ms());
+                    if task.rate_wait_until_ms.is_some() {
+                        update(core, &task.name, |task| task.rate_wait_until_ms = None);
+                    }
+                }
                 Err(error) => fail_start(core, &task, error).await,
             }
         }
@@ -565,560 +582,9 @@ async fn sweep_survivors(token: Option<String>) -> u32 {
     crate::sweep::members(&tokens).len() as u32
 }
 
-/// The last bytes of a turn's stderr, which is where a CLI puts its limits.
-fn read_tail(path: &Path, max: usize) -> String {
-    let Ok(bytes) = std::fs::read(path) else { return String::new() };
-    let start = bytes.len().saturating_sub(max);
-    String::from_utf8_lossy(&bytes[start..]).into_owned()
-}
-
-/// What a blocked read's panic said, in words.
-fn panic_words(error: tokio::task::JoinError) -> String {
-    if error.is_cancelled() {
-        return "the read was cancelled".into();
-    }
-    let payload = error.into_panic();
-    if let Some(text) = payload.downcast_ref::<&str>() {
-        (*text).to_string()
-    } else if let Some(text) = payload.downcast_ref::<String>() {
-        text.clone()
-    } else {
-        "the read stopped unexpectedly".into()
-    }
-}
-
-fn unreadable_turn(error: tokio::task::JoinError) -> String {
-    format!("the core could not read this turn's output: {}", panic_words(error))
-}
-
-/// The turn ended: read what it wrote, judge it, keep the diff and the result.
-async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&TerminalNow>) {
-    if stopping(core) {
-        return;
-    }
-    let Some(mut task) = core.tasks.snapshot(name) else { return };
-    let Some(index) = task.turns.iter().position(|turn| turn.n == n) else { return };
-    let folder = task_folder(&core.paths.state, name);
-    let key = task.turns[index].worker.clone();
-    let worker_file = core.tasks.workers();
-    let all_workers = workers::all(&worker_file);
-    let worker = workers::find(&worker_file, &key)
-        .unwrap_or_else(|_| worker::builtin().into_iter().find(|worker| worker.key == "go").expect("go is built in"));
-    let cli = task.turns[index].cli_or_lookup(&all_workers);
-    let path = folder.join(format!("turn-{n}.jsonl"));
-    let err_path = folder.join(format!("turn-{n}.err"));
-    let route_path = folder.join(format!("turn-{n}.route.json"));
-    let config = crate::config::load(&core.paths.config).unwrap_or_default();
-    let children_folder = folder.clone();
-    let earlier: Vec<(Option<String>, f64, crate::task::types::Usage)> = task.turns[..index]
-        .iter()
-        .map(|turn| (turn.session.clone(), turn.usage.cost_usd, turn.usage.clone()))
-        .collect();
-    let resumes = task.turns[index].resumes.clone();
-    let read = tokio::task::spawn_blocking(move || {
-        let mut outcome = match std::fs::read(&path) {
-            Ok(bytes) => TurnOutcome::from_bytes(cli, &bytes),
-            Err(_) => TurnOutcome::default(),
-        };
-        if cli == Cli::Codex && resumes.is_some() && outcome.session == resumes {
-            // Codex reports the thread's whole total, so only what this turn
-            // added since the earlier turns on that thread counts.
-            let mut prior = crate::task::types::Usage::default();
-            for (session, _, usage) in &earlier {
-                if session.as_deref() == outcome.session.as_deref() {
-                    prior.add(usage);
-                }
-            }
-            outcome.usage = crate::task::codex::since_earlier(&outcome.usage, &prior);
-        }
-        let mut warning = None;
-        if cli == Cli::CommandCode {
-            match outcome.session.as_deref().and_then(crate::task::commandcode::session_cost) {
-                Some(cost) => {
-                    // The transcript holds every turn of a resumed session, so only
-                    // what this turn added since the earlier ones counts.
-                    let same: f64 = earlier
-                        .iter()
-                        .filter(|(session, _, _)| session.as_deref() == outcome.session.as_deref())
-                        .map(|(_, cost, _)| *cost)
-                        .sum();
-                    outcome.usage.cost_usd = crate::task::checking::turn_cost(cost, same);
-                }
-                None => {
-                    if let Some(session) = outcome.session.clone() {
-                        warning = Some(format!(
-                            "Command Code's transcript for session {session} was not found, so this turn's cost is unknown"
-                        ));
-                    }
-                }
-            }
-        }
-        let route = std::fs::read(&route_path).ok().and_then(|bytes| serde_json::from_slice::<RouteCheck>(&bytes).ok());
-        let (children, child_warnings) = if cli == Cli::Opencode {
-            crate::task::stats::children_usage(&config, &children_folder, &path)
-        } else {
-            (Vec::new(), Vec::new())
-        };
-        (outcome, warning, route, read_tail(&err_path, 8 * 1024), children, child_warnings)
-    })
-    .await;
-    let (outcome, warning, route, stderr_tail, children, child_warnings) = match read {
-        Ok(read) => read,
-        Err(error) => {
-            // A panic here is the core's failure to read, never the worker's
-            // turn being empty: keep the turn's file and say what happened.
-            finish_with_error(core, &task, &unreadable_turn(error));
-            return;
-        }
-    };
-    let code = terminal.and_then(|terminal| terminal.exit_code).or_else(|| read_exit(&core.paths.state, name, n));
-    let ended = now_ms();
-    let offset = crate::platform::utc_offset_minutes();
-    {
-        let turn = &mut task.turns[index];
-        turn.session = outcome.session.clone();
-        turn.text = outcome.text.clone();
-        let mut usage = outcome.usage.clone();
-        for child in &children {
-            usage.add(&child.usage);
-        }
-        turn.usage = usage;
-        turn.children = children;
-        turn.exit_code = code;
-        turn.ended_ms = Some(ended);
-    }
-    task.warnings.extend(child_warnings);
-    if let Some(warning) = warning {
-        task.warnings.push(warning);
-    }
-    let end =
-        decide::turn_end(&task, &all_workers, terminal, code, &outcome, route.as_ref(), &stderr_tail, ended, offset);
-    let (done_state, question) = decide::after_turn(end.state, &outcome.text);
-    task.turns[index].refused = end.refusal.as_ref().map(|refusal| refusal.window.clone());
-    let mut error = end.error;
-    if let Some(refusal) = &end.refusal {
-        let before = core.tasks.workers();
-        let mut file = before.clone();
-        let current = file.blocks.get(&key).cloned();
-        let new = workers::after_refusal(current.as_ref(), refusal, Some(&task.name), ended);
-        if let Some(block) = &new {
-            file.blocks.insert(key.clone(), block.clone());
-        }
-        let block = new.or_else(|| file.blocks.get(&key).filter(|block| block.until_ms > ended).cloned());
-        if let Some(block) = block {
-            error = Some(format!(
-                "QUOTA EXHAUSTED: {}",
-                workers::sentence(&worker::label_of(&all_workers, &key), &block, ended, offset)
-            ));
-        }
-        if file != before {
-            if let Err(e) = save_workers(&core.paths.state, &file) {
-                task.warnings.push(format!("cannot save workers.json: {e}"));
-            }
-            *core.tasks.workers.lock().unwrap_or_else(|p| p.into_inner()) = file;
-        }
-    }
-    let refused_words = error.clone().unwrap_or_default();
-    if end.state == TaskState::Done {
-        if let Some(words) = decide::route_unchecked(route.as_ref()) {
-            task.warnings.push(words);
-        }
-        let before = core.tasks.workers();
-        let mut file = before.clone();
-        workers::after_good_turn(&mut file, &key);
-        if file != before {
-            if let Err(e) = save_workers(&core.paths.state, &file) {
-                task.warnings.push(format!("cannot save workers.json: {e}"));
-            }
-            *core.tasks.workers.lock().unwrap_or_else(|p| p.into_inner()) = file;
-        }
-    }
-    // Before the diff, so what the turn was given never counts as a change.
-    if let Some(worktree) = task.worktree.as_deref()
-        && let Err(words) = setup::after_turn(&folder, worktree, worker, n)
-    {
-        task.warnings.push(words);
-    }
-    let before_changed = task.changed.clone();
-    let changed = match task.worktree.as_deref() {
-        Some(worktree) if task.shared => match workshop::changed(worktree, &task.scope).await {
-            Ok((mine, others)) => {
-                let held: Vec<Vec<String>> = core
-                    .tasks
-                    .all()
-                    .into_iter()
-                    .filter(|other| other.name != task.name && other.repo == task.repo && workshop::holds(other))
-                    .map(|other| other.scope)
-                    .collect();
-                let scopes: Vec<&[String]> = held.iter().map(Vec::as_slice).collect();
-                let stray = workshop::strays(&others, &scopes);
-                if !stray.is_empty() {
-                    let text =
-                        format!("files changed in the workshop outside every task's scope: {}", stray.join(", "));
-                    if !task.warnings.contains(&text) {
-                        task.warnings.push(text);
-                    }
-                }
-                mine
-            }
-            Err(e) => {
-                task.warnings.push(format!("cannot read the changed files: {}", e.message));
-                Vec::new()
-            }
-        },
-        Some(worktree) => match git::changed_files(worktree, &task.base, &task.scope).await {
-            Ok(changed) => changed,
-            Err(e) => {
-                task.warnings.push(format!("cannot read the changed files: {}", e.message));
-                Vec::new()
-            }
-        },
-        None => Vec::new(),
-    };
-    let new_changed = changed.iter().filter(|file| !before_changed.iter().any(|old| old.path == file.path)).count();
-    let died = end.refusal.is_none() && handoff::died_at_start(&task, terminal, code, &outcome, ended);
-    let mut restarting = false;
-    if end.refusal.is_some() {
-        if let Some(words) = handoff::stopped_at_turn_limit(task.turns.len(), &refused_words) {
-            error = Some(words);
-        } else {
-            restarting = true;
-            let usage = &task.turns[index].usage;
-            if handoff::did_nothing(usage.steps, new_changed) {
-                if let Err(words) = carry_turn_file(&folder, n, "note") {
-                    task.warnings.push(words);
-                }
-            } else {
-                let from = worker::label_of(&all_workers, &key);
-                let stopped = handoff::stopped_words(
-                    task.turns[index].refused.as_deref().unwrap_or_default(),
-                    usage.steps,
-                    usage.cost_usd,
-                );
-                if let Err(words) = handoff_note(&task, &folder, n, &changed, &outcome, &from, &stopped).await {
-                    task.warnings.push(words);
-                }
-            }
-        }
-    } else if died {
-        task.turns[index].died_at_start = true;
-        restarting = true;
-        let line = handoff::first_line(&stderr_tail);
-        let label = worker::label_of(&all_workers, &key);
-        let warning = if line.is_empty() {
-            format!("{label} died at its start, so it was started again")
-        } else {
-            format!("{label} died at its start, so it was started again: {line}")
-        };
-        task.warnings.push(warning);
-        if let Err(words) = carry_turn_file(&folder, n, "note") {
-            task.warnings.push(words);
-        }
-    }
-    // A follow-up stays asked until a turn has really taken it.
-    if restarting && let Err(words) = carry_turn_file(&folder, n, "followup") {
-        task.warnings.push(words);
-    }
-    task.state = if restarting { TaskState::Queued } else { done_state };
-    task.question = if task.state == TaskState::Asking { question } else { None };
-    task.error = if restarting { None } else { error };
-    task.waiting = if restarting {
-        if end.refusal.is_some() {
-            Some(format!("handing off: {refused_words}"))
-        } else {
-            Some("starting again: it died at its start".into())
-        }
-    } else {
-        None
-    };
-    task.changed = changed;
-    task.ended_ms = if restarting || end.state == TaskState::Done { None } else { Some(ended) };
-    save(&core.paths.state, &task);
-    if !restarting && end.state != TaskState::Done {
-        write_result(&core.paths.state, &task, &all_workers);
-    }
-    replace(core, task);
-    core.changed.notify_waiters();
-}
-
-/// A turn that didn't take what it was given carries it into the next turn.
-fn carry_turn_file(folder: &Path, n: u32, kind: &str) -> Result<(), String> {
-    let from = folder.join(format!("turn-{n}.{kind}.md"));
-    if !from.is_file() {
-        return Ok(());
-    }
-    let to = folder.join(format!("turn-{}.{kind}.md", n.saturating_add(1)));
-    std::fs::copy(&from, &to).map(|_| ()).map_err(|e| format!("cannot copy {}: {e}", from.display()))
-}
-
-/// The hand-off note for the turn after this one, with each changed file's size
-/// read off the disk away from the core's thread.
-async fn handoff_note(
-    task: &Task,
-    folder: &Path,
-    n: u32,
-    changed: &[ChangedFile],
-    outcome: &TurnOutcome,
-    from: &str,
-    stopped: &str,
-) -> Result<(), String> {
-    let files = changed.to_vec();
-    let worktree = task.worktree.clone();
-    let changes = tokio::task::spawn_blocking(move || {
-        let root = worktree.as_deref().map(Path::new);
-        let base = worktree.as_deref().unwrap_or_default();
-        files
-            .into_iter()
-            .map(|file| handoff::FileChange {
-                bytes: root.and_then(|root| std::fs::metadata(root.join(&file.path)).ok()).map(|meta| meta.len()),
-                path: handoff::relative(&file.path, base),
-                added: file.added,
-                removed: file.removed,
-            })
-            .collect::<Vec<_>>()
-    })
-    .await
-    .unwrap_or_default();
-    let worktree = task.worktree.as_deref().unwrap_or_default();
-    let read: Vec<String> = outcome.files_read.iter().map(|path| handoff::relative(path, worktree)).collect();
-    let text = handoff::note(from, stopped, &changes, &read, &outcome.reasoning_tail, &outcome.text);
-    let path = folder.join(format!("turn-{}.note.md", n.saturating_add(1)));
-    crate::paths::write_atomic(&path, text.as_bytes()).map_err(|e| format!("cannot write {}: {e}", path.display()))
-}
-
-fn finish_with_error(core: &Arc<Core>, task: &Task, message: &str) {
-    if stopping(core) {
-        return;
-    }
-    let mut task = task.clone();
-    task.state = TaskState::Failed;
-    task.error = Some(message.into());
-    task.ended_ms = Some(now_ms());
-    save(&core.paths.state, &task);
-    write_result(&core.paths.state, &task, &worker_list(core));
-    replace(core, task);
-    core.changed.notify_waiters();
-}
-
-async fn fail_start(core: &Arc<Core>, task: &Task, error: RpcError) {
-    if stopping(core) {
-        return;
-    }
-    let mut task = core.tasks.snapshot(&task.name).unwrap_or_else(|| task.clone());
-    // A later turn's failed start keeps the first worker's work.
-    if task.turns.is_empty() && task.shared {
-        // The workshop stays; a task holds nothing in it before its first turn.
-        task.worktree = None;
-    } else if task.turns.is_empty()
-        && let Some(worktree) = task.worktree.clone()
-    {
-        let removal = git::remove_worktree(&task.repo, Some(&worktree), Some(&task.task_branch)).await;
-        if removal.removed {
-            task.worktree = None;
-        }
-        if !removal.left.is_empty() {
-            task.warnings.push(format!("the failed start left {}", removal.left.join(", ")));
-        }
-    }
-    task.state = TaskState::Failed;
-    task.error = Some(error.message);
-    task.waiting = None;
-    task.ended_ms = Some(now_ms());
-    save(&core.paths.state, &task);
-    write_result(&core.paths.state, &task, &worker_list(core));
-    replace(core, task);
-    core.changed.notify_waiters();
-}
-
 /// The number the next turn gets.
 fn next_turn(task: &Task) -> u32 {
     u32::try_from(task.turns.len()).unwrap_or(u32::MAX - 1).saturating_add(1)
-}
-
-/// A turn's note or follow-up, when it has one.
-fn read_turn_file(folder: &Path, n: u32, kind: &str) -> Result<Option<Vec<u8>>, RpcError> {
-    let path = folder.join(format!("turn-{n}.{kind}.md"));
-    match std::fs::read(&path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(unavailable(format!("cannot read {}: {e}", path.display()))),
-    }
-}
-
-async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker, prefix: &[String]) -> Result<(), RpcError> {
-    let mut task = task.clone();
-    let n = next_turn(&task);
-    let all_workers = worker_list(core);
-    let folder = task_folder(&core.paths.state, &task.name);
-    std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
-    let brief = std::fs::read_to_string(folder.join("brief.md"))
-        .map_err(|e| unavailable(format!("cannot read the task's brief: {e}")))?;
-    let mut note = read_turn_file(&folder, n, "note")?;
-    let followup = read_turn_file(&folder, n, "followup")?;
-    // A follow-up continues the session when the same worker is here to take it.
-    let resume = prompt::resume_session(&task, &worker, followup.is_some());
-    let mut warnings = Vec::new();
-    // One that can't gets the story the way a hand-off does.
-    if note.is_none()
-        && followup.is_some()
-        && resume.is_none()
-        && let Some(last) = task.turns.last()
-    {
-        let stopped = match last.refused.as_deref() {
-            Some(window) => handoff::stopped_words(window, last.usage.steps, last.usage.cost_usd),
-            None => "finished its turn".to_string(),
-        };
-        let outcome = TurnOutcome { text: last.text.clone(), ..Default::default() };
-        let from = worker::label_of(&all_workers, &last.worker);
-        if let Err(words) = handoff_note(&task, &folder, last.n, &task.changed, &outcome, &from, &stopped).await {
-            warnings.push(words);
-        }
-        note = read_turn_file(&folder, n, "note")?;
-    }
-    let built = prompt::turn_prompt(&task, &brief, note.as_deref(), followup.as_deref(), resume.is_some()).await?;
-    warnings.extend(built.warnings);
-    let prompt_path = prompt::prompt_path(&folder, n);
-    crate::paths::write_atomic(&prompt_path, &built.text)
-        .map_err(|e| unavailable(format!("cannot write {}: {e}", prompt_path.display())))?;
-    if task.shared {
-        let path = workshop::path(&core.paths.state, &task.repo).display().to_string();
-        // Only a task of this repository that is mid-turn in the workshop keeps it where it is.
-        let quiet = !core.tasks.all().iter().any(|other| {
-            other.name != task.name
-                && other.repo == task.repo
-                && other.shared
-                && matches!(other.state, TaskState::Running | TaskState::Checking)
-        });
-        if let Some(words) = workshop::enter(&task.repo, &path, quiet).await? {
-            update(core, &task.name, |stored| {
-                if !stored.warnings.contains(&words) {
-                    stored.warnings.push(words.clone());
-                }
-            });
-            if !task.warnings.contains(&words) {
-                task.warnings.push(words);
-            }
-        }
-        if task.worktree.is_none() {
-            update(core, &task.name, |stored| stored.worktree = Some(path.clone()));
-            task.worktree = Some(path);
-        }
-    } else if task.worktree.is_none() {
-        let worktree = worktree_path(&core.paths.state, &task.name).display().to_string();
-        git::add_worktree(&task.repo, &worktree, &task.task_branch, &task.base).await?;
-        update(core, &task.name, |task| task.worktree = Some(worktree.clone()));
-        task.worktree = Some(worktree);
-    }
-    let Some(worktree) = task.worktree.clone() else {
-        return Err(unavailable("the task has no worktree".into()));
-    };
-    let prepared = setup::prepare(core, &task, &worker, &worktree, n).await?;
-    let command =
-        worker::turn_command(&worker, prefix, &task.name, &prompt_path.display().to_string(), resume.as_deref());
-    let exe = std::env::current_exe().map_err(|e| unavailable(format!("cannot find this kom: {e}")))?;
-    let mut argv = vec![
-        exe.display().to_string(),
-        "run-logged".into(),
-        "--dir".into(),
-        folder.display().to_string(),
-        "--task".into(),
-        task.name.clone(),
-        "--turn".into(),
-        n.to_string(),
-        "--worker".into(),
-        worker.key().into(),
-        "--cli".into(),
-        worker.cli.key().into(),
-    ];
-    if let Some(stdin) = &command.stdin {
-        argv.push("--stdin".into());
-        argv.push(stdin.clone());
-    }
-    if worker.cli == Cli::Opencode {
-        argv.push("--route".into());
-        argv.push(worker.route().into());
-        if let Some(prefix_len) = command.prefix_len {
-            argv.push("--prefix-len".into());
-            argv.push(prefix_len.to_string());
-        }
-    }
-    if let Some(first) = &prepared.path_first {
-        argv.push("--path-first".into());
-        argv.push(first.clone());
-    }
-    argv.push("--".into());
-    argv.extend(command.argv);
-    let mut env = command.env;
-    env.extend(prepared.env);
-    let params = RunParams {
-        argv,
-        cwd: Some(worktree.clone()),
-        name: Some(task.name.clone()),
-        labels: vec![Label("task".into(), task.name.clone()), Label("worker".into(), worker.key().into())],
-        contain: true,
-        no_parent: true,
-        no_notify: true,
-        outlive_parent: true,
-        env,
-        ..Default::default()
-    };
-    let started = match crate::api::start_terminal(core, params, None).await {
-        Ok(started) => started,
-        Err(error) => {
-            // No turn will end to do this.
-            if let Err(words) = setup::after_turn(&folder, &worktree, worker.clone(), n) {
-                update(core, &task.name, |task| task.warnings.push(words));
-            }
-            return Err(error);
-        }
-    };
-    let now = now_ms();
-    let sentence = task.turns.last().and_then(|turn| {
-        let window = turn.refused.as_deref()?;
-        Some(handoff::sentence(
-            &worker::label_of(&all_workers, &turn.worker),
-            &handoff::stopped_words(window, turn.usage.steps, turn.usage.cost_usd),
-            worker.label(),
-            task.changed.len(),
-            note.is_some(),
-        ))
-    });
-    let role = if followup.is_some() {
-        task.followup_role.clone().unwrap_or_else(|| "redo".into())
-    } else {
-        "worker".to_string()
-    };
-    let turn = Turn {
-        n,
-        worker: worker.key().into(),
-        cli: Some(worker.cli),
-        terminal: Some(started.address.clone()),
-        scope_token: started.scope,
-        started_ms: now,
-        resumes: resume,
-        role,
-        path_first: prepared.path_first.clone(),
-        ..Default::default()
-    };
-    update(core, &task.name, |task| {
-        task.state = TaskState::Running;
-        if task.started_ms.is_none() {
-            task.started_ms = Some(now);
-        }
-        task.waiting = None;
-        task.worker = worker.key().into();
-        if let Some(sentence) = sentence {
-            task.handoffs.push(sentence);
-        }
-        for warning in prepared.warnings.iter().chain(&warnings) {
-            if !task.warnings.contains(warning) {
-                task.warnings.push(warning.clone());
-            }
-        }
-        task.turns.push(turn);
-    });
-    core.changed.notify_waiters();
-    Ok(())
 }
 
 fn unavailable(message: String) -> RpcError {
@@ -1133,7 +599,7 @@ pub fn name_taken(name: &str) -> RpcError {
     RpcError::new(
         "name_taken",
         format!("{name:?} is already a task or a live terminal here"),
-        "pick another name; a task keeps its record, discarded or not",
+        "pick another name; an accepted or unfinished task keeps its name",
     )
 }
 
@@ -1148,6 +614,7 @@ pub async fn create(core: &Arc<Core>, task: Task, brief: &str) -> Result<(), Rpc
     {
         return Err(name_taken(&task.name));
     }
+    names::move_aside(core, &task.name)?;
     let folder = task_folder(&core.paths.state, &task.name);
     std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
     crate::paths::write_atomic(&folder.join("brief.md"), brief.as_bytes())
@@ -1214,6 +681,26 @@ pub async fn cancel(core: &Arc<Core>, name: &str, by: Option<&str>, yes: bool) -
             Err(RpcError::new("finished", format!("{name} has already ended: {}", other.word()), "see `kom task show`"))
         }
     }
+}
+
+/// End a rate wait now: the worker that was refused runs its turn again at once.
+pub async fn retry(core: &Arc<Core>, name: &str) -> Result<Task, RpcError> {
+    let serial = core.tasks.lock.lock().await;
+    if stopping(core) {
+        return Err(unavailable("the core is stopping".into()));
+    }
+    let Some(mut task) = core.tasks.snapshot(name) else { return Err(not_found(name)) };
+    if task.state != TaskState::Queued || task.rate_wait_until_ms.is_none() {
+        return Err(RpcError::new("invalid_params", format!("{name} isn't waiting to retry"), "see `kom task show`"));
+    }
+    // The wait is served, so the next rate refusal counts as the next one.
+    task.rate_wait_until_ms = Some(now_ms());
+    save(&core.paths.state, &task);
+    replace(core, task);
+    core.changed.notify_waiters();
+    drop(serial);
+    pump(core.clone()).await;
+    core.tasks.snapshot(name).ok_or_else(|| not_found(name))
 }
 
 /// Remove a finished task's worktree and branch, keeping its folder and record.
@@ -1323,7 +810,7 @@ mod tests {
             Err(error) => error,
             Ok(_) => panic!("the read was expected to panic"),
         };
-        let words = unreadable_turn(error);
+        let words = super::turn_end::unreadable_turn(error);
         assert_eq!(words, "the core could not read this turn's output: the record vanished mid-read");
         assert!(
             !words.contains("worker produced no final text"),
