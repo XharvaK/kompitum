@@ -143,8 +143,8 @@ terminal with no window, a worker (Command Code, then opencode Go, then Claude
 Haiku; see `kom workers`) and a record. You design and decide; the
 worker edits to your brief; you review and accept.
 
-A batch is one task with parts: `kom task start --plan <file>`. One coordinator
-session hands each part to a subagent, the checks run once, and each part is
+A batch is one task with parts: `kom task start <name> --brief <shared context> --plan <file>`.
+One coordinator session hands each part to a subagent, the checks run once, and each part is
 accepted or discarded on its own (`kom task accept <task> --part <name> -m <message>`).
 
 ```sh

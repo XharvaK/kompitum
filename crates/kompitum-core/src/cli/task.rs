@@ -35,9 +35,12 @@ pub(super) enum TaskCmd {
 pub(super) struct StartArgs {
     /// The task's name (1-32 of a-z 0-9 - _ ., starting with a letter or digit).
     pub name: String,
-    /// The brief's file, or - for stdin. A JSON plan is read as a batch plan (`--plan <file>`).
-    #[arg(long, value_name = "FILE", required = true, visible_alias = "plan")]
+    /// The brief's file, or - for stdin. With `--plan`, the context every part shares.
+    #[arg(long, value_name = "FILE")]
     pub brief: String,
+    /// A batch's plan: JSON `{"parts": [{"name", "brief" (a file, relative to the plan), "scope", "require"}]}`.
+    #[arg(long, value_name = "FILE")]
+    pub plan: Option<String>,
     /// The folder in the repository (default: where kom runs).
     #[arg(long = "in", value_name = "FOLDER")]
     pub folder: Option<String>,
@@ -337,12 +340,6 @@ struct PlanFile {
     parts: Vec<PlanPart>,
 }
 
-/// What `--brief`/`--plan` named: one task's brief text, or a batch's parts.
-enum StartInput {
-    Brief(String),
-    Plan(Vec<Value>),
-}
-
 /// A plan's parts with each brief file read; a relative path is relative to the plan.
 fn plan_parts(plan: PlanFile, base: &std::path::Path) -> Result<Vec<Value>, RpcError> {
     let mut parts = Vec::new();
@@ -355,24 +352,15 @@ fn plan_parts(plan: PlanFile, base: &std::path::Path) -> Result<Vec<Value>, RpcE
     Ok(parts)
 }
 
-/// `--plan` shares `--brief`'s argument, so the file's content decides: JSON with `parts` is a plan.
-fn read_start(path: &str) -> Result<StartInput, RpcError> {
-    let (text, base) = if path == "-" {
-        (read_brief(path)?, std::env::current_dir().unwrap_or_default())
-    } else {
-        let text = std::fs::read_to_string(path).map_err(|e| {
-            RpcError::new("usage", format!("cannot read {path}: {e}"), "give a brief file, or - for stdin")
-        })?;
-        let base = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new("")).to_path_buf();
-        (text, base)
-    };
-    if !text.trim_start().starts_with('{') {
-        return Ok(StartInput::Brief(text));
-    }
+/// A plan file's parts, each with its brief file read.
+fn read_plan(path: &str) -> Result<Vec<Value>, RpcError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| RpcError::new("usage", format!("cannot read {path}: {e}"), "give a plan file"))?;
     let plan: PlanFile = serde_json::from_str(&text).map_err(|e| {
         RpcError::new("usage", format!("{path} is not a plan: {e}"), "a plan is JSON with a parts list")
     })?;
-    Ok(StartInput::Plan(plan_parts(plan, &base)?))
+    let base = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new(""));
+    plan_parts(plan, base)
 }
 
 /// `asked`: `--json` itself. The review and the ledger print Markdown even when piped, since
@@ -385,9 +373,10 @@ pub(super) fn task(
 ) -> Result<Option<Out>, RpcError> {
     Ok(Some(match action {
         TaskCmd::Start(a) => {
-            let (brief, parts) = match read_start(&a.brief)? {
-                StartInput::Brief(brief) => (brief, Vec::new()),
-                StartInput::Plan(parts) => ("The parts below are this batch's work.".to_string(), parts),
+            let brief = read_brief(&a.brief)?;
+            let parts = match &a.plan {
+                Some(plan) => read_plan(plan)?,
+                None => Vec::new(),
             };
             let folder = from_here(a.folder);
             let r = call(

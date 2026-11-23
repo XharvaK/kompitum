@@ -808,8 +808,9 @@ Arguments:
   <NAME>  The task's name (1-32 of a-z 0-9 - _ ., starting with a letter or digit)
 
 Options:
-      --brief <FILE>       The brief's file, or - for stdin. A JSON plan is read as a batch plan (`--plan <file>`) [alias: --plan]
+      --brief <FILE>       The brief's file, or - for stdin. With `--plan`, the context every part shares
       --json               JSON output even in a terminal
+      --plan <FILE>        A batch's plan: JSON `{"parts": [{"name", "brief" (a file, relative to the plan), "scope", "require"}]}`
       --in <FOLDER>        The folder in the repository (default: where kom runs)
       --scope <GLOB>       Paths the task may change (repeatable); none means the whole repository
       --worker <WORKER>    Which worker: auto (the order), free, or a worker key. Default: what kom workers shows

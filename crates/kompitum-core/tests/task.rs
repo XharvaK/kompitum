@@ -201,10 +201,9 @@ impl Session {
             "--in".into(),
             repo.display().to_string(),
         ];
-        if let Some(text) = brief {
-            args.push("--brief".into());
-            args.push(self.brief(&format!("{name}-shared"), text));
-        }
+        let shared = brief.unwrap_or("The parts below are this batch's work.");
+        args.push("--brief".into());
+        args.push(self.brief(&format!("{name}-shared"), shared));
         args.extend(extra.iter().map(|arg| arg.to_string()));
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         self.json(&args)
