@@ -2,7 +2,12 @@
 # zip like a release's: PATH set, running terminals kept.
 $ErrorActionPreference = "Stop"
 Set-Location "$PSScriptRoot\.."
-cargo build --release --locked
+$config = Join-Path $env:LOCALAPPDATA "kompitum-core\.cargo\config.toml"
+if (Test-Path $config) {
+    cargo --config $config build --release --locked
+} else {
+    cargo build --release --locked
+}
 if ($LASTEXITCODE) { exit $LASTEXITCODE }
 & "$PSScriptRoot\fetch-conpty.ps1" -Dest target\release
 $tmp = Join-Path ([IO.Path]::GetTempPath()) "kom-local-$PID"
