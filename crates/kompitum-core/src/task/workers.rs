@@ -239,7 +239,10 @@ pub fn pick(
     {
         return Err(format!("QUOTA EXHAUSTED: {}", sentence(chain[0].label(), block, now_ms, offset_min)));
     }
-    Err(format!("ALL WORKERS OUT: {}", reasons.join(" ")))
+    Err(format!(
+        "ALL WORKERS OUT: {} Until then, the lead can run it as its own subagent (Claude Haiku at high effort).",
+        reasons.join(" ")
+    ))
 }
 
 /// Whether a worker of this chain is out only until a time: a stranded task
@@ -503,7 +506,7 @@ mod tests {
         let none = |_worker: &Worker| false;
         assert_eq!(
             pick(&chain(&empty), &empty, none, now, 0),
-            Err("ALL WORKERS OUT: Command Code is not installed. opencode Go is not installed. Claude Haiku is not installed.".into())
+            Err("ALL WORKERS OUT: Command Code is not installed. opencode Go is not installed. Claude Haiku is not installed. Until then, the lead can run it as its own subagent (Claude Haiku at high effort).".into())
         );
         let cc_only = workers_file(&[("cc", block(Source::Named, "weekly", now + 3_600_000))]);
         let mut pinned = cc_only.clone();

@@ -156,6 +156,49 @@ fn the_start_warns_of_a_long_brief_a_phrase_and_no_check() {
 }
 
 #[test]
+fn the_start_warns_of_an_ignored_path_the_brief_names() {
+    let s = Session::new();
+    let repo = s.repo();
+    std::fs::write(repo.join(".gitignore"), ".kompitum/\n").unwrap();
+    std::fs::create_dir_all(repo.join(".kompitum").join("briefs")).unwrap();
+    std::fs::write(repo.join(".kompitum").join("briefs").join("x.md"), "the detail\n").unwrap();
+    let script = s.script("ignored", json!([go_good(None)]));
+    s.config(&script, "");
+    let started = s.start(
+        "ignored-1",
+        "read `.kompitum/briefs/x.md` first",
+        &repo,
+        &["--worker", "go", "--test", "cargo --version"],
+    );
+    let warnings = started["warnings"].to_string();
+    let word = "the brief names .kompitum/briefs/x.md, which git ignores, so the worktree won't have it: put what it needs in the brief";
+    assert!(warnings.contains(word), "{started}");
+    let (exit, rows, summary) = s.wait(&["ignored-1"], &["--timeout", "60"]);
+    assert_eq!(exit, 0, "{rows:?} {summary}");
+}
+
+#[test]
+fn the_start_says_nothing_of_a_tracked_path_the_brief_names() {
+    let s = Session::new();
+    let repo = s.repo();
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    std::fs::write(repo.join("src").join("main.rs"), "fn main() {}\n").unwrap();
+    git(&repo, &["add", "src/main.rs"]);
+    git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "main"]);
+    std::fs::write(repo.join(".gitignore"), "src/\n").unwrap();
+    git(&repo, &["add", ".gitignore"]);
+    git(&repo, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "ignore"]);
+    let script = s.script("tracked", json!([go_good(None)]));
+    s.config(&script, "");
+    let started =
+        s.start("tracked-1", "read `src/main.rs` first", &repo, &["--worker", "go", "--test", "cargo --version"]);
+    let warnings = started["warnings"].to_string();
+    assert!(!warnings.contains("git ignores"), "{started}");
+    let (exit, rows, summary) = s.wait(&["tracked-1"], &["--timeout", "60"]);
+    assert_eq!(exit, 0, "{rows:?} {summary}");
+}
+
+#[test]
 fn the_start_warns_of_a_stale_rule() {
     let s = Session::new();
     let repo = s.repo();

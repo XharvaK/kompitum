@@ -66,6 +66,8 @@ kom read --lines 100 review          # screen plus history; waits return status 
 kom interrupt review                # stop its current turn, not the process
 ```
 
+From Git Bash, set `MSYS_NO_PATHCONV=1` before a text that starts with `/`, or Git Bash turns `/compact` into a path.
+
 In human-readable output, `ls` shows the `where` label or the current folder;
 `get` shows the full current folder. Both fall back to the launch folder when
 it is unknown. JSON keeps `cwd` as the launch folder; `get` also includes the
@@ -169,6 +171,7 @@ kom task accept fix-docs --review "clean; one typo fixed by hand"
 - Worker output is evidence, not truth: read the review before you accept.
   `kom task redo <t> --brief -` sends it back; `kom task discard <t> --review X`
   drops it. `kom ledger` shows what each run cost.
+- A rate limit waits on the same worker for a minute, then three, then hands the turn on; `kom task retry <t>` ends the wait now.
   `kom task stats <task>` shows where a run's tokens went: context per step, compactions, the tools that filled the context and what that cost; `--opencode <session>` does the same for any opencode session, and `--commandcode <session or transcript>` for a Command Code one.
 - `KOMPITUM_AGENT` names the caller (`opus`, `manager`); unset means the Owner.
   Every task records who started it. Manager accepts only with the Owner's

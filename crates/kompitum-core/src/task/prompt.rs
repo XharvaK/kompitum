@@ -163,6 +163,52 @@ pub async fn turn_prompt(
     Ok(TurnPrompt { text, warnings })
 }
 
+/// The path-like tokens a brief names: relative, forward slashes, no globs or URLs.
+fn named_paths(brief: &str) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    let split =
+        |ch: char| ch.is_whitespace() || matches!(ch, '`' | '"' | '\'' | '(' | ')' | '[' | ']' | '<' | '>' | ',' | ';');
+    for token in brief.split(split) {
+        let path = token.trim_end_matches(['.', ':', '!']);
+        if !path.contains('/')
+            || path.starts_with('/')
+            || path.starts_with('-')
+            || path.contains(':')
+            || path.split('/').any(|part| part == "..")
+            || path.chars().any(|ch| matches!(ch, '*' | '?' | '{' | '}' | '\\' | '$' | '='))
+        {
+            continue;
+        }
+        if !paths.iter().any(|named| named.as_str() == path) {
+            paths.push(path.to_string());
+        }
+    }
+    paths
+}
+
+/// The paths the brief names that exist in the checkout but git ignores: the worktree won't have them.
+async fn ignored_paths(repo: &str, brief: &str) -> Vec<String> {
+    let paths = named_paths(brief);
+    let existing: Vec<&str> =
+        paths.iter().filter(|path| Path::new(repo).join(path).exists()).map(String::as_str).collect();
+    if existing.is_empty() {
+        return Vec::new();
+    }
+    let mut args = vec!["check-ignore", "--"];
+    args.extend(existing.iter().copied());
+    let Ok(out) = git::git_raw(repo, &args).await else { return Vec::new() };
+    let ignored = String::from_utf8_lossy(&out.stdout);
+    existing
+        .into_iter()
+        .filter(|path| ignored.lines().any(|line| line == *path))
+        .map(|path| {
+            format!(
+                "the brief names {path}, which git ignores, so the worktree won't have it: put what it needs in the brief"
+            )
+        })
+        .collect()
+}
+
 /// What is worth saying before a worker starts, and the committed checks' one-at-a-time rule.
 /// These warn and never refuse.
 pub async fn start_warnings(
@@ -189,6 +235,7 @@ pub async fn start_warnings(
         || !spec.forbid.is_empty()
         || !spec.require.is_empty();
     warnings.extend(brief::start_warnings(brief, &spec.require, has_any_check));
+    warnings.extend(ignored_paths(repo, brief).await);
     let Some(rules) = base_text(repo, base, ".kompitum/rules.md", &mut warnings).await else {
         return (warnings, one_at_a_time, workshop);
     };
