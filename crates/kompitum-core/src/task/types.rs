@@ -208,6 +208,12 @@ pub struct Task {
     pub warnings: Vec<String>,
     /// Why it is still queued, in words.
     pub waiting: Option<String>,
+    /// Rate refusals in this task so far: the first two wait on the same worker.
+    #[serde(default)]
+    pub rate_refusals: u32,
+    /// When a rate wait ends and the same worker tries the turn again.
+    #[serde(default)]
+    pub rate_wait_until_ms: Option<u64>,
     pub turns: Vec<Turn>,
     /// Why the loop is ending the current turn.
     pub ending: Option<Ending>,
@@ -234,7 +240,7 @@ pub struct Task {
     pub check: Option<CheckRun>,
     /// How many times the checks have sent this work back.
     pub qa_used: u32,
-    /// What the next follow-up is: qa or redo.
+    /// What the next follow-up is: qa, redo or report.
     pub followup_role: Option<String>,
     pub created_ms: u64,
     pub started_ms: Option<u64>,
