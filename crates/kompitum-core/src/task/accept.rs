@@ -228,8 +228,17 @@ pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptR
     if p.part.is_some() && task.parts.is_empty() {
         return Err(RpcError::invalid_params(format!("{} has no parts: accept it without a part", task.name)));
     }
+    if p.recorded && p.no_commit {
+        return Err(RpcError::invalid_params("--recorded applies nothing, so --no-commit has no meaning"));
+    }
     if !task.parts.is_empty() {
+        if p.recorded {
+            return record_parts(core, p, task, worktree).await;
+        }
         return accept_parts(core, p, task, worktree).await;
+    }
+    if p.recorded {
+        return record(core, task, worktree).await;
     }
     let (files, bytes) = taken(&task, &worktree).await?;
     if files.is_empty() || bytes.is_empty() {
@@ -264,6 +273,51 @@ pub async fn accept(core: &Arc<Core>, p: TaskAcceptParams) -> Result<TaskAcceptR
     Ok(TaskAcceptResult { task: name, state, commit, files, patch, removed, left, note: None })
 }
 
+/// Writes the patch where git reads it and the review keeps it.
+async fn write_patch(path: &Path, bytes: &[u8]) -> Result<(), RpcError> {
+    let label = path.display().to_string();
+    let path = path.to_path_buf();
+    let bytes = bytes.to_vec();
+    let written = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        crate::paths::write_atomic(&path, &bytes)
+    })
+    .await;
+    match written {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(super::unavailable(format!("cannot write {label}: {e}"))),
+        Err(e) => Err(super::unavailable(format!("cannot write {label}: {e}"))),
+    }
+}
+
+/// The patch's files that have changes in the repository, as `git status` names them.
+async fn dirty_files(repo: &str, files: &[String]) -> Result<Vec<String>, RpcError> {
+    let mut args = vec!["status", "--porcelain", "--"];
+    args.extend(files.iter().map(String::as_str));
+    let status = git::git(repo, &args).await?;
+    Ok(String::from_utf8_lossy(&status.stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.get(3..).unwrap_or(line).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect())
+}
+
+/// Refuses when one of the patch's files has uncommitted changes in the repository.
+async fn clean_or_refuse(task: &Task, files: &[String]) -> Result<(), RpcError> {
+    let dirty = dirty_files(&task.repo, files).await?;
+    if dirty.is_empty() {
+        return Ok(());
+    }
+    Err(RpcError::new(
+        "files_dirty",
+        format!("these files already have changes in {}: {}", task.repo, dirty.join(", ")),
+        "commit or stash them, then accept again",
+    ))
+}
+
 /// Writes the patch beside the task, applies it to the repository and commits the files.
 /// `part` names the part in a failed add or commit; `apply_path` is where git reads it.
 async fn bring_in(
@@ -275,38 +329,10 @@ async fn bring_in(
     no_commit: bool,
     part: Option<&str>,
 ) -> Result<Option<String>, RpcError> {
-    let path = apply_path.to_path_buf();
-    let bytes = bytes.to_vec();
-    let written = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        crate::paths::write_atomic(&path, &bytes)
-    })
-    .await;
-    match written {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(super::unavailable(format!("cannot write {}: {e}", apply_path.display()))),
-        Err(e) => return Err(super::unavailable(format!("cannot write {}: {e}", apply_path.display()))),
-    }
+    write_patch(apply_path, bytes).await?;
     let patch = apply_path.display().to_string();
     if !no_commit {
-        let mut args: Vec<&str> = vec!["status", "--porcelain", "--"];
-        args.extend(files.iter().map(String::as_str));
-        let status = git::git(&task.repo, &args).await?;
-        let dirty: Vec<String> = String::from_utf8_lossy(&status.stdout)
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| line.get(3..).unwrap_or(line).trim().to_string())
-            .filter(|line| !line.is_empty())
-            .collect();
-        if !dirty.is_empty() {
-            return Err(RpcError::new(
-                "files_dirty",
-                format!("these files already have changes in {}: {}", task.repo, dirty.join(", ")),
-                "commit or stash them, then accept again",
-            ));
-        }
+        clean_or_refuse(task, files).await?;
     }
     if let Err(error) = git::git(&task.repo, &["apply", "--check", "--whitespace=nowarn", &patch]).await {
         // With no commit, a rollback would lose the Owner's edits: try three-way only when the
@@ -434,6 +460,31 @@ async fn append_patch(path: &Path, bytes: &[u8]) -> Result<(), RpcError> {
     }
 }
 
+/// The parts an accept takes: the one named, or every open one in order.
+fn wanted_parts(task: &Task, single: Option<&str>) -> Result<Vec<usize>, RpcError> {
+    let open: Vec<usize> =
+        (0..task.parts.len()).filter(|index| parts::state(task, *index) == PartState::Open).collect();
+    match single {
+        Some(name) => {
+            let index = parts::find(&task.parts, name)
+                .ok_or_else(|| RpcError::invalid_params(format!("{} has no part {name:?}", task.name)))?;
+            let state = parts::state(task, index);
+            if state != PartState::Open {
+                return Err(RpcError::new(
+                    "finished",
+                    format!("{}'s part {name} is already {}", task.name, state.word()),
+                    "see `kom task review`",
+                ));
+            }
+            Ok(vec![index])
+        }
+        None if open.is_empty() => {
+            Err(RpcError::new("finished", format!("{} has no open part", task.name), "see `kom task review`"))
+        }
+        None => Ok(open),
+    }
+}
+
 /// Accepts one part, or every open part in order, one commit each; the last one settles the task.
 async fn accept_parts(
     core: &Arc<Core>,
@@ -448,27 +499,7 @@ async fn accept_parts(
     if single.is_some() && p.message.as_deref().is_none_or(|text| text.trim().is_empty()) {
         return Err(RpcError::invalid_params("accepting one part needs a message: pass message, or accept every part"));
     }
-    let open: Vec<usize> =
-        (0..task.parts.len()).filter(|index| parts::state(&task, *index) == PartState::Open).collect();
-    let wanted: Vec<usize> = match single.as_deref() {
-        Some(name) => {
-            let index = parts::find(&task.parts, name)
-                .ok_or_else(|| RpcError::invalid_params(format!("{} has no part {name:?}", task.name)))?;
-            let state = parts::state(&task, index);
-            if state != PartState::Open {
-                return Err(RpcError::new(
-                    "finished",
-                    format!("{}'s part {name} is already {}", task.name, state.word()),
-                    "see `kom task review`",
-                ));
-            }
-            vec![index]
-        }
-        None if open.is_empty() => {
-            return Err(RpcError::new("finished", format!("{} has no open part", task.name), "see `kom task review`"));
-        }
-        None => open,
-    };
+    let wanted = wanted_parts(&task, single.as_deref())?;
     let base_message = p
         .message
         .as_deref()
@@ -549,6 +580,130 @@ async fn accept_parts(
         task: name,
         state,
         commit,
+        files: files_all,
+        patch: patch_path.display().to_string(),
+        removed,
+        left,
+        note: (!notes.is_empty()).then(|| notes.join("; ")),
+    })
+}
+
+/// Records a task whose work was brought in by hand: accepted with no apply and no commit, once
+/// every file its patch changes is committed in the repository.
+async fn record(core: &Arc<Core>, mut task: Task, worktree: String) -> Result<TaskAcceptResult, RpcError> {
+    let (files, bytes) = taken(&task, &worktree).await?;
+    if files.is_empty() || bytes.is_empty() {
+        return Err(no_changes(&task.name));
+    }
+    clean_or_refuse(&task, &files).await?;
+    let patch_path = core.paths.state.join("patches").join(format!("{}.patch", task.name));
+    write_patch(&patch_path, &bytes).await?;
+    let before = if task.shared { Some(workshop::head(&task.repo).await?) } else { None };
+    task.state = TaskState::Accepted;
+    if let Err(words) = crate::task::ledger::record(&core.paths.state, &task, "accepted", now_ms()) {
+        task.warnings.push(words);
+    }
+    let (removed, left) = match before {
+        Some(before) => settle_files(&mut task, &worktree, &files, &before, None).await,
+        None => {
+            let removal = git::remove_worktree(&task.repo, task.worktree.as_deref(), Some(&task.task_branch)).await;
+            if removal.removed {
+                task.worktree = None;
+            }
+            (removal.removed, removal.left)
+        }
+    };
+    let name = task.name.clone();
+    let state = task.state;
+    super::save(&core.paths.state, &task);
+    super::write_result(&core.paths.state, &task, &super::worker_list(core));
+    super::replace(core, task);
+    core.changed.notify_waiters();
+    Ok(TaskAcceptResult {
+        task: name,
+        state,
+        commit: None,
+        files,
+        patch: patch_path.display().to_string(),
+        removed,
+        left,
+        note: None,
+    })
+}
+
+/// Records the parts whose work was brought in by hand, one open part or every open part; the
+/// last one settles the task.
+async fn record_parts(
+    core: &Arc<Core>,
+    p: TaskAcceptParams,
+    mut task: Task,
+    worktree: String,
+) -> Result<TaskAcceptResult, RpcError> {
+    let wanted = wanted_parts(&task, p.part.as_deref())?;
+    let patch_path = core.paths.state.join("patches").join(format!("{}.patch", task.name));
+    let mut files_all: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    for index in wanted {
+        let part = task.parts[index].name.clone();
+        let all = taken(&task, &worktree).await?.0;
+        let (groups, _) = parts::group(&task.parts, &task.scope, &all);
+        let files = groups[index].clone();
+        if files.is_empty() {
+            notes.push(format!("part {part} has no changes: accepted with no commit"));
+            parts::set_state(&mut task, index, PartState::Accepted);
+            super::save(&core.paths.state, &task);
+            super::replace(core, task.clone());
+            core.changed.notify_waiters();
+            continue;
+        }
+        let (files, bytes) = taken_some(&task, &worktree, Some(&files)).await?;
+        clean_or_refuse(&task, &files).await?;
+        append_patch(&patch_path, &bytes).await?;
+        files_all.extend(files);
+        parts::set_state(&mut task, index, PartState::Accepted);
+        super::save(&core.paths.state, &task);
+        super::replace(core, task.clone());
+        core.changed.notify_waiters();
+    }
+    let name = task.name.clone();
+    if parts::open_count(&task) > 0 {
+        super::write_result(&core.paths.state, &task, &super::worker_list(core));
+        return Ok(TaskAcceptResult {
+            task: name,
+            state: task.state,
+            commit: None,
+            files: files_all,
+            patch: patch_path.display().to_string(),
+            removed: false,
+            left: Vec::new(),
+            note: (!notes.is_empty()).then(|| notes.join("; ")),
+        });
+    }
+    let before = if task.shared { Some(workshop::head(&task.repo).await?) } else { None };
+    let settle_list = if task.shared { taken(&task, &worktree).await?.0 } else { files_all.clone() };
+    task.state = TaskState::Accepted;
+    if let Err(words) = crate::task::ledger::record(&core.paths.state, &task, "accepted", now_ms()) {
+        task.warnings.push(words);
+    }
+    let (removed, left) = match before {
+        Some(before) => settle_files(&mut task, &worktree, &settle_list, &before, None).await,
+        None => {
+            let removal = git::remove_worktree(&task.repo, task.worktree.as_deref(), Some(&task.task_branch)).await;
+            if removal.removed {
+                task.worktree = None;
+            }
+            (removal.removed, removal.left)
+        }
+    };
+    let state = task.state;
+    super::save(&core.paths.state, &task);
+    super::write_result(&core.paths.state, &task, &super::worker_list(core));
+    super::replace(core, task);
+    core.changed.notify_waiters();
+    Ok(TaskAcceptResult {
+        task: name,
+        state,
+        commit: None,
         files: files_all,
         patch: patch_path.display().to_string(),
         removed,

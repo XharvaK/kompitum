@@ -52,6 +52,9 @@ pub struct TaskAcceptParams {
     /// Put the changes in the working tree and make no commit.
     #[serde(default)]
     pub no_commit: bool,
+    /// Record a task whose work was brought in by hand as accepted, applying and committing nothing.
+    #[serde(default)]
+    pub recorded: bool,
     /// Accept a task that failed, timed out or was cancelled, or whose last checks failed.
     #[serde(default)]
     pub accept_unfinished: bool,
