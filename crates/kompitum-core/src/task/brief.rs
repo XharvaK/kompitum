@@ -287,7 +287,7 @@ fn agents_notes(text: &str) -> String {
 fn after_compaction(path: Option<&str>) -> String {
     match path {
         Some(path) => format!(
-            "- **After a compaction.** If your conversation was compacted or your earlier tool results are gone, read your brief again from `{path}` before you go on.\n"
+            "- **After a compaction.** If your conversation was compacted, read your brief again from `{path}` before you go on.\n"
         ),
         None => String::new(),
     }
