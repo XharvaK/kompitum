@@ -14,16 +14,24 @@ use std::time::{Duration, Instant};
 mod checks;
 #[path = "task/environment.rs"]
 mod environment;
+#[path = "task/failed_turn.rs"]
+mod failed_turn;
 #[path = "task/handoff.rs"]
 mod handoff;
 #[path = "task/ledger.rs"]
 mod ledger;
 #[path = "task/manager.rs"]
 mod manager;
+#[path = "task/names.rs"]
+mod names;
 #[path = "task/parts.rs"]
 mod parts;
 #[path = "task/prompt.rs"]
 mod prompt;
+#[path = "task/rate.rs"]
+mod rate;
+#[path = "task/recorded.rs"]
+mod recorded;
 #[path = "task/review.rs"]
 mod review;
 #[path = "task/workers.rs"]
