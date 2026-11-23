@@ -194,11 +194,16 @@ const CC_DENY: [&str; 15] = [
 ];
 
 /// `cc_settings`'s JSON, as Command Code reads its per-workspace deny rules.
+///
+/// Command Code 1.88.5 has no compaction threshold to set: it summarizes at 90% of the model's window either way.
+/// `fast` is the nearest to `COMPACT_AT`: past half the window (500K on the DeepSeek routes) it keeps only the last
+/// 20 tool calls, past 80% the last 10.
 fn cc_settings() -> Vec<u8> {
     let settings = serde_json::json!({
         "tasteLearning": false,
         "attribution": {"commit": ""},
         "permissions": {"deny": CC_DENY},
+        "compactMode": "fast",
     });
     serde_json::to_vec_pretty(&settings).unwrap_or_default()
 }
@@ -458,6 +463,14 @@ mod tests {
         assert_eq!(back, b"mine");
         assert!(!settings_marker(&folder, 1, "kept").exists(), "the kept copy is gone");
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn command_code_prunes_old_tool_calls_and_keeps_its_deny_rules() {
+        let settings: serde_json::Value = serde_json::from_slice(&cc_settings()).unwrap();
+        assert_eq!(settings["compactMode"], "fast");
+        assert_eq!(settings["tasteLearning"], false);
+        assert!(settings["permissions"]["deny"].as_array().is_some_and(|deny| !deny.is_empty()));
     }
 
     #[test]
