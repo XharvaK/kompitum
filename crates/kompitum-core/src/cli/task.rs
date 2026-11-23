@@ -35,8 +35,8 @@ pub(super) enum TaskCmd {
 pub(super) struct StartArgs {
     /// The task's name (1-32 of a-z 0-9 - _ ., starting with a letter or digit).
     pub name: String,
-    /// The brief's file, or - for stdin.
-    #[arg(long, value_name = "FILE")]
+    /// The brief's file, or - for stdin. A JSON plan is read as a batch plan (`--plan <file>`).
+    #[arg(long, value_name = "FILE", required = true, visible_alias = "plan")]
     pub brief: String,
     /// The folder in the repository (default: where kom runs).
     #[arg(long = "in", value_name = "FOLDER")]
@@ -155,6 +155,9 @@ pub(super) struct WorkersArgs {
 pub(super) struct DiscardArgs {
     /// The task's name.
     pub task: String,
+    /// Discard only this part, keeping the task and the other parts.
+    #[arg(long, value_name = "NAME")]
+    pub part: Option<String>,
     /// What the review decided, kept with the record.
     #[arg(long)]
     pub review: Option<String>,
@@ -179,11 +182,14 @@ pub(super) struct ReviewArgs {
 pub(super) struct AcceptArgs {
     /// The task's name.
     pub task: String,
+    /// Accept only this part, committing only its files and keeping its worktree.
+    #[arg(long, value_name = "NAME")]
+    pub part: Option<String>,
     /// What the review decided, kept for the ledger.
     #[arg(long)]
     pub review: Option<String>,
     /// The commit message (default: the review, else a line naming the task).
-    #[arg(long)]
+    #[arg(long, short = 'm')]
     pub message: Option<String>,
     /// Put the changes in the working tree and make no commit.
     #[arg(long)]
@@ -315,6 +321,60 @@ fn read_brief(path: &str) -> Result<String, RpcError> {
         .map_err(|e| RpcError::new("usage", format!("cannot read {path}: {e}"), "give a brief file, or - for stdin"))
 }
 
+/// A part as the plan file writes it: its brief is a path, not its text.
+#[derive(serde::Deserialize)]
+struct PlanPart {
+    name: String,
+    brief: String,
+    #[serde(default)]
+    scope: Vec<String>,
+    #[serde(default)]
+    require: Vec<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct PlanFile {
+    parts: Vec<PlanPart>,
+}
+
+/// What `--brief`/`--plan` named: one task's brief text, or a batch's parts.
+enum StartInput {
+    Brief(String),
+    Plan(Vec<Value>),
+}
+
+/// A plan's parts with each brief file read; a relative path is relative to the plan.
+fn plan_parts(plan: PlanFile, base: &std::path::Path) -> Result<Vec<Value>, RpcError> {
+    let mut parts = Vec::new();
+    for part in plan.parts {
+        let file = std::path::Path::new(&part.brief);
+        let file = if file.is_relative() { base.join(file) } else { file.to_path_buf() };
+        let brief = read_brief(&file.display().to_string())?;
+        parts.push(json!({"name": part.name, "brief": brief, "scope": part.scope, "require": part.require}));
+    }
+    Ok(parts)
+}
+
+/// `--plan` shares `--brief`'s argument, so the file's content decides: JSON with `parts` is a plan.
+fn read_start(path: &str) -> Result<StartInput, RpcError> {
+    let (text, base) = if path == "-" {
+        (read_brief(path)?, std::env::current_dir().unwrap_or_default())
+    } else {
+        let text = std::fs::read_to_string(path).map_err(|e| {
+            RpcError::new("usage", format!("cannot read {path}: {e}"), "give a brief file, or - for stdin")
+        })?;
+        let base = std::path::Path::new(path).parent().unwrap_or_else(|| std::path::Path::new("")).to_path_buf();
+        (text, base)
+    };
+    if !text.trim_start().starts_with('{') {
+        return Ok(StartInput::Brief(text));
+    }
+    let plan: PlanFile = serde_json::from_str(&text).map_err(|e| {
+        RpcError::new("usage", format!("{path} is not a plan: {e}"), "a plan is JSON with a parts list")
+    })?;
+    Ok(StartInput::Plan(plan_parts(plan, &base)?))
+}
+
 /// `asked`: `--json` itself. The review and the ledger print Markdown even when piped, since
 /// what reads them is a caller's context.
 pub(super) fn task(
@@ -325,12 +385,15 @@ pub(super) fn task(
 ) -> Result<Option<Out>, RpcError> {
     Ok(Some(match action {
         TaskCmd::Start(a) => {
-            let brief = read_brief(&a.brief)?;
+            let (brief, parts) = match read_start(&a.brief)? {
+                StartInput::Brief(brief) => (brief, Vec::new()),
+                StartInput::Plan(parts) => ("The parts below are this batch's work.".to_string(), parts),
+            };
             let folder = from_here(a.folder);
             let r = call(
                 "task.start",
                 json!({
-                    "task": a.name, "brief": brief, "folder": folder, "scope": a.scope,
+                    "task": a.name, "brief": brief, "folder": folder, "scope": a.scope, "parts": parts,
                     "worker": a.worker, "idle": a.idle, "timeout": a.timeout, "caller": caller(), "by": by(),
                     "test": a.test, "forbid": a.forbid, "require": a.require, "warn": a.warn,
                     "qa_rounds": a.qa_rounds, "web": a.web,
@@ -441,8 +504,14 @@ pub(super) fn task(
             Out { json: r, human }
         }
         TaskCmd::Discard(a) => {
-            let r = call("task.discard", json!({"task": a.task, "review": a.review, "by": by(), "yes": a.yes}))?;
+            let r = call(
+                "task.discard",
+                json!({"task": a.task, "part": a.part, "review": a.review, "by": by(), "yes": a.yes}),
+            )?;
             let mut human = format!("{} discarded", a.task);
+            if let Some(part) = &a.part {
+                human = format!("{} part {part} discarded", a.task);
+            }
             if r["removed"] != true {
                 human.push_str("; its worktree stayed");
             }
@@ -463,7 +532,7 @@ pub(super) fn task(
             let r = call(
                 "task.accept",
                 json!({
-                    "task": a.task, "review": a.review, "message": a.message, "no_commit": a.no_commit,
+                    "task": a.task, "part": a.part, "review": a.review, "message": a.message, "no_commit": a.no_commit,
                     "accept_unfinished": a.accept_unfinished, "accept_scope_violation": a.accept_scope_violation,
                     "by": by(), "owner_said": a.owner_said,
                 }),
@@ -473,6 +542,9 @@ pub(super) fn task(
                 Some(commit) => format!("{} accepted: {files} files in {commit}", a.task),
                 None => format!("{} accepted: {files} files left uncommitted", a.task),
             };
+            if let Some(note) = r["note"].as_str() {
+                human.push_str(&format!("\n{note}"));
+            }
             for left in r["left"].as_array().into_iter().flatten() {
                 human.push_str(&format!("\nleft: {}", left.as_str().unwrap_or_default()));
             }

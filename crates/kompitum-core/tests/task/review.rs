@@ -41,12 +41,6 @@ fn run_one(s: &Session, repo: &Path, name: &str, mut actions: Vec<Value>, extra:
     rows[0].clone()
 }
 
-fn accept(s: &Session, name: &str, extra: &[&str]) -> Value {
-    let mut args = vec!["task", "accept", name];
-    args.extend_from_slice(extra);
-    s.json(&args)
-}
-
 fn refused(s: &Session, args: &[&str]) -> Value {
     let (_, _, err) = s.out(args);
     serde_json::from_str(err.trim()).unwrap_or_else(|e| panic!("{args:?}: {e}: {err}"))
@@ -60,20 +54,6 @@ fn review_fn(s: &Session, name: &str, extra: &[&str]) -> Value {
 
 fn branch_of(s: &Session, name: &str) -> String {
     s.task(name)["task"]["branch"].as_str().unwrap().to_string()
-}
-
-fn worktree_of(s: &Session, name: &str) -> PathBuf {
-    PathBuf::from(s.task(name)["task"]["worktree"].as_str().unwrap())
-}
-
-fn one_hook(repo: &Path, name: &str, body: &str) {
-    let hook = repo.join(".git").join("hooks").join(name);
-    std::fs::write(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
 }
 
 #[test]

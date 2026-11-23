@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::task::TEXT_LIMIT;
+use crate::task::parts::{PartState, TaskPart};
 use crate::task::quota::Source;
 use crate::task::types::{Asked, Task, TaskLine, TaskState};
 use crate::task::updates::CliUpdate;
@@ -24,6 +25,9 @@ pub struct TaskStartParams {
     /// Paths the task may change; empty means the whole repository.
     #[serde(default)]
     pub scope: Vec<String>,
+    /// The batch's parts: one coordinator session hands each to a subagent. Empty: an ordinary task.
+    #[serde(default)]
+    pub parts: Vec<TaskPart>,
     /// The worker: auto, free, or a known worker key. With none, the mode `kom workers` shows.
     #[serde(default)]
     pub worker: Option<String>,
@@ -184,6 +188,9 @@ pub struct TaskCancelResult {
 pub struct TaskDiscardParams {
     /// The task's name.
     pub task: String,
+    /// Discard only this part, keeping the task and the other parts.
+    #[serde(default)]
+    pub part: Option<String>,
     /// What the review decided, kept with the record.
     #[serde(default)]
     pub review: Option<String>,
@@ -199,7 +206,7 @@ pub struct TaskDiscardParams {
 pub struct TaskDiscardResult {
     /// The task's name.
     pub task: String,
-    /// Its state now: discarded.
+    /// Its state now: discarded, or the task's when one part went.
     pub state: TaskState,
     /// Whether its worktree was removed.
     pub removed: bool,
@@ -220,6 +227,7 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
             crate::task::MAX_BRIEF
         )));
     }
+    crate::task::parts::check(&p.parts)?;
     if core.tasks.contains(&p.task)
         || core.lock().reg.terminals.values().any(|t| t.is_live() && t.name.as_deref() == Some(&p.task))
     {
@@ -255,13 +263,14 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         return Err(RpcError::invalid_params(format!("qa_rounds is 0 to {}", crate::task::checks::MAX_QA_ROUNDS)));
     }
     let dirty = crate::task::git::dirty_count(&repo).await?;
-    let asked =
-        Asked { test: p.test, forbid: p.forbid, require: p.require, warn: p.warn, qa_rounds: p.qa_rounds, web: p.web };
+    let scope = crate::task::parts::union_scope(&p.scope, &p.parts);
+    let require = crate::task::parts::union_require(&p.require, &p.parts);
+    let asked = Asked { test: p.test, forbid: p.forbid, require, warn: p.warn, qa_rounds: p.qa_rounds, web: p.web };
     let (start_warnings, one_at_a_time, workshop) =
-        crate::task::prompt::start_warnings(&repo, &base, &p.brief, &p.scope, &asked).await;
-    let shared = workshop.is_some() && !p.scope.is_empty();
+        crate::task::prompt::start_warnings(&repo, &base, &p.brief, &scope, &asked).await;
+    let shared = workshop.is_some() && !scope.is_empty();
     let globs = workshop.as_ref().map(|w| w.one_writer.as_slice()).unwrap_or(&[]);
-    let one_writer = shared && crate::task::workshop::needs_one_writer(&p.scope, globs);
+    let one_writer = shared && crate::task::workshop::needs_one_writer(&scope, globs);
     let mut warnings = if dirty > 0 {
         let place = if shared { "are not in the workshop" } else { "are not in the worktree" };
         vec![format!("{dirty} uncommitted files in {repo} {place}: commit first if the worker needs them")]
@@ -269,12 +278,13 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         Vec::new()
     };
     warnings.extend(start_warnings);
-    if workshop.is_some() && p.scope.is_empty() {
+    if workshop.is_some() && scope.is_empty() {
         warnings.push(
             "this repository shares a workshop, but a task with no scope gets a worktree of its own: give it a scope to work in the workshop"
                 .into(),
         );
     }
+    let part_states = vec![PartState::Open; p.parts.len()];
     let task = Task {
         name: p.task.clone(),
         seq: core.tasks.next_seq(),
@@ -284,7 +294,9 @@ pub(super) async fn task_start(core: Ctx<'_>, p: TaskStartParams) -> Result<Task
         base,
         task_branch: format!("task/{}", p.task),
         worktree: None,
-        scope: p.scope,
+        scope,
+        parts: p.parts,
+        part_states,
         worker: String::new(),
         chain: chain.iter().map(|worker| worker.key().to_string()).collect(),
         handoffs: Vec::new(),
@@ -444,7 +456,12 @@ pub(super) async fn task_cancel(core: Ctx<'_>, p: TaskParams) -> Result<TaskCanc
 }
 
 pub(super) async fn task_discard(core: Ctx<'_>, p: TaskDiscardParams) -> Result<TaskDiscardResult, RpcError> {
-    let (state, removed, left) = crate::task::discard(core.core, &p.task, p.review, p.by.as_deref(), p.yes).await?;
+    let (state, removed, left) = match p.part.as_deref() {
+        Some(part) => {
+            crate::task::accept::discard_part(core.core, &p.task, part, p.review, p.by.as_deref(), p.yes).await?
+        }
+        None => crate::task::discard(core.core, &p.task, p.review, p.by.as_deref(), p.yes).await?,
+    };
     Ok(TaskDiscardResult { task: p.task, state, removed, left })
 }
 

@@ -272,6 +272,29 @@
         },
         "type": "object"
       },
+      "ChildUsage": {
+        "description": "One subagent session a coordinator started, and what it used.",
+        "properties": {
+          "session": {
+            "default": "",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/Usage",
+            "default": {
+              "cache_read": 0,
+              "cache_write": 0,
+              "cost_usd": 0.0,
+              "input": 0,
+              "largest_request": 0,
+              "output": 0,
+              "reasoning": 0,
+              "steps": 0
+            }
+          }
+        },
+        "type": "object"
+      },
       "Children": {
         "enum": [
           "any",
@@ -1267,6 +1290,64 @@
         },
         "type": "object"
       },
+      "PartRequire": {
+        "description": "One require line as the review shows it.",
+        "properties": {
+          "entry": {
+            "description": "The glob::regex line.",
+            "type": "string"
+          },
+          "missing": {
+            "description": "The last checks found no matching line.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "entry",
+          "missing"
+        ],
+        "type": "object"
+      },
+      "PartReview": {
+        "description": "One part as the review shows it.",
+        "properties": {
+          "files": {
+            "description": "The changed files that belong to it, first part wins.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "type": "string"
+          },
+          "require": {
+            "items": {
+              "$ref": "#/components/schemas/PartRequire"
+            },
+            "type": "array"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PartState"
+          }
+        },
+        "required": [
+          "name",
+          "state",
+          "files",
+          "require"
+        ],
+        "type": "object"
+      },
+      "PartState": {
+        "description": "What became of one part.",
+        "enum": [
+          "open",
+          "accepted",
+          "discarded"
+        ],
+        "type": "string"
+      },
       "PutResult": {
         "properties": {
           "bytes": {
@@ -2136,6 +2217,22 @@
               "null"
             ]
           },
+          "part_states": {
+            "default": [],
+            "description": "Each part's state, in the same order as `parts`.",
+            "items": {
+              "$ref": "#/components/schemas/PartState"
+            },
+            "type": "array"
+          },
+          "parts": {
+            "default": [],
+            "description": "The batch's parts, each handed to a subagent by one coordinator; empty for an ordinary task.",
+            "items": {
+              "$ref": "#/components/schemas/TaskPart"
+            },
+            "type": "array"
+          },
           "qa_used": {
             "default": 0,
             "description": "How many times the checks have sent this work back.",
@@ -2274,6 +2371,13 @@
             },
             "type": "array"
           },
+          "note": {
+            "description": "What the accept did in its own words, like a part with no changes.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "patch": {
             "description": "The patch, kept until the sweep takes it.",
             "type": "string"
@@ -2340,7 +2444,7 @@
           },
           "state": {
             "$ref": "#/components/schemas/TaskState",
-            "description": "Its state now: discarded."
+            "description": "Its state now: discarded, or the task's when one part went."
           },
           "task": {
             "description": "The task's name.",
@@ -2558,6 +2662,40 @@
         ],
         "type": "object"
       },
+      "TaskPart": {
+        "description": "One part of a batch: its own brief, files and require lines.",
+        "properties": {
+          "brief": {
+            "description": "The part's whole brief text, at most 60000 characters.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The part's name, using the task-name rules.",
+            "type": "string"
+          },
+          "require": {
+            "default": [],
+            "description": "glob::regex lines, as the task's own.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "description": "Its paths, at least one.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "brief",
+          "scope"
+        ],
+        "type": "object"
+      },
       "TaskProgress": {
         "properties": {
           "cost_usd": {
@@ -2644,6 +2782,13 @@
       },
       "TaskReviewResult": {
         "properties": {
+          "parts": {
+            "description": "Each part's state, files and require results; empty for an ordinary task.",
+            "items": {
+              "$ref": "#/components/schemas/PartReview"
+            },
+            "type": "array"
+          },
           "patch_file": {
             "description": "Where the whole patch went, when it was asked for and did not fit.",
             "type": [
@@ -2672,7 +2817,8 @@
           "task",
           "state",
           "text",
-          "truncated"
+          "truncated",
+          "parts"
         ],
         "type": "object"
       },
@@ -3313,6 +3459,14 @@
       },
       "Turn": {
         "properties": {
+          "children": {
+            "default": [],
+            "description": "The subagent sessions this turn started, each with what it used.",
+            "items": {
+              "$ref": "#/components/schemas/ChildUsage"
+            },
+            "type": "array"
+          },
           "cli": {
             "anyOf": [
               {
@@ -6441,6 +6595,19 @@
           }
         },
         {
+          "description": "The batch's parts: one coordinator session hands each to a subagent. Empty: an ordinary task.",
+          "name": "parts",
+          "required": false,
+          "schema": {
+            "default": [],
+            "description": "The batch's parts: one coordinator session hands each to a subagent. Empty: an ordinary task.",
+            "items": {
+              "$ref": "#/components/schemas/TaskPart"
+            },
+            "type": "array"
+          }
+        },
+        {
           "description": "How many times failed checks go back to the worker, 0 to 3 (default: the repository's, else 1).",
           "name": "qa_rounds",
           "required": false,
@@ -6812,6 +6979,19 @@
           }
         },
         {
+          "description": "Discard only this part, keeping the task and the other parts.",
+          "name": "part",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Discard only this part, keeping the task and the other parts.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
           "description": "What the review decided, kept with the record.",
           "name": "review",
           "required": false,
@@ -7075,6 +7255,19 @@
           "schema": {
             "default": null,
             "description": "The Owner's words that let a manager accept; kept in the record and the ledger row.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        {
+          "description": "Accept only this part, committing only its files and keeping its worktree.",
+          "name": "part",
+          "required": false,
+          "schema": {
+            "default": null,
+            "description": "Accept only this part, committing only its files and keeping its worktree.",
             "type": [
               "string",
               "null"

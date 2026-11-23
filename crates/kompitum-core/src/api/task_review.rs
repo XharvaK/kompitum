@@ -2,6 +2,7 @@
 //! their params and results, and handlers that only call `crate::task`.
 
 use super::*;
+use crate::task::parts::PartReview;
 use crate::task::stats::{SessionStats, StatsTotals};
 use crate::task::types::{LedgerRow, ParentUsage, TaskState, Usage};
 use schemars::JsonSchema;
@@ -31,12 +32,17 @@ pub struct TaskReviewResult {
     pub patch_file: Option<String>,
     /// The review was cut at `max_bytes`.
     pub truncated: bool,
+    /// Each part's state, files and require results; empty for an ordinary task.
+    pub parts: Vec<PartReview>,
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct TaskAcceptParams {
     /// The task's name.
     pub task: String,
+    /// Accept only this part, committing only its files and keeping its worktree.
+    #[serde(default)]
+    pub part: Option<String>,
     /// What the review decided, kept for the ledger.
     #[serde(default)]
     pub review: Option<String>,
@@ -76,6 +82,8 @@ pub struct TaskAcceptResult {
     pub removed: bool,
     /// What could not be removed, in words.
     pub left: Vec<String>,
+    /// What the accept did in its own words, like a part with no changes.
+    pub note: Option<String>,
 }
 
 #[derive(Deserialize, JsonSchema)]

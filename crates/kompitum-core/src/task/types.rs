@@ -2,6 +2,7 @@
 //! Pure data: `task.rs` writes it and `decide.rs` judges it.
 
 use crate::task::checks::{CHECKS_PATH, Hit, WarnHit};
+use crate::task::parts::{PartState, TaskPart};
 use crate::task::worker::{Cli, Worker};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -96,6 +97,14 @@ impl Usage {
     }
 }
 
+/// One subagent session a coordinator started, and what it used.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
+#[serde(default)]
+pub struct ChildUsage {
+    pub session: String,
+    pub usage: Usage,
+}
+
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, Default, PartialEq)]
 #[serde(default)]
 pub struct ChangedFile {
@@ -140,6 +149,9 @@ pub struct Turn {
     /// The last report it wrote, whole; the wake cuts it.
     pub text: String,
     pub usage: Usage,
+    /// The subagent sessions this turn started, each with what it used.
+    #[serde(default)]
+    pub children: Vec<ChildUsage>,
     /// Processes carrying the scope token that outlived the kill.
     pub survivors: u32,
 }
@@ -170,6 +182,12 @@ pub struct Task {
     pub worktree: Option<String>,
     /// Empty: the whole repo.
     pub scope: Vec<String>,
+    /// The batch's parts, each handed to a subagent by one coordinator; empty for an ordinary task.
+    #[serde(default)]
+    pub parts: Vec<TaskPart>,
+    /// Each part's state, in the same order as `parts`.
+    #[serde(default)]
+    pub part_states: Vec<PartState>,
     /// The key of the current or last turn's worker, empty until one is picked.
     pub worker: String,
     /// The worker keys `task.start` fixed, in the order to try them.

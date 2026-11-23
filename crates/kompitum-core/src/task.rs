@@ -16,6 +16,7 @@ pub mod handoff;
 pub mod ledger;
 pub mod opencode;
 pub mod parent_usage;
+pub mod parts;
 pub mod prompt;
 pub mod quota;
 pub mod review;
@@ -607,6 +608,8 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
     let path = folder.join(format!("turn-{n}.jsonl"));
     let err_path = folder.join(format!("turn-{n}.err"));
     let route_path = folder.join(format!("turn-{n}.route.json"));
+    let config = crate::config::load(&core.paths.config).unwrap_or_default();
+    let children_folder = folder.clone();
     let earlier: Vec<(Option<String>, f64, crate::task::types::Usage)> = task.turns[..index]
         .iter()
         .map(|turn| (turn.session.clone(), turn.usage.cost_usd, turn.usage.clone()))
@@ -651,10 +654,15 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
             }
         }
         let route = std::fs::read(&route_path).ok().and_then(|bytes| serde_json::from_slice::<RouteCheck>(&bytes).ok());
-        (outcome, warning, route, read_tail(&err_path, 8 * 1024))
+        let (children, child_warnings) = if cli == Cli::Opencode {
+            crate::task::stats::children_usage(&config, &children_folder, &path)
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        (outcome, warning, route, read_tail(&err_path, 8 * 1024), children, child_warnings)
     })
     .await;
-    let (outcome, warning, route, stderr_tail) = match read {
+    let (outcome, warning, route, stderr_tail, children, child_warnings) = match read {
         Ok(read) => read,
         Err(error) => {
             // A panic here is the core's failure to read, never the worker's
@@ -670,10 +678,16 @@ async fn finish_turn(core: &Arc<Core>, name: &str, n: u32, terminal: Option<&Ter
         let turn = &mut task.turns[index];
         turn.session = outcome.session.clone();
         turn.text = outcome.text.clone();
-        turn.usage = outcome.usage.clone();
+        let mut usage = outcome.usage.clone();
+        for child in &children {
+            usage.add(&child.usage);
+        }
+        turn.usage = usage;
+        turn.children = children;
         turn.exit_code = code;
         turn.ended_ms = Some(ended);
     }
+    task.warnings.extend(child_warnings);
     if let Some(warning) = warning {
         task.warnings.push(warning);
     }
@@ -963,7 +977,7 @@ async fn start_task(core: &Arc<Core>, task: &Task, worker: Worker, prefix: &[Str
     }
     let built = prompt::turn_prompt(&task, &brief, note.as_deref(), followup.as_deref(), resume.is_some()).await?;
     warnings.extend(built.warnings);
-    let prompt_path = folder.join(format!("turn-{n}.prompt.md"));
+    let prompt_path = prompt::prompt_path(&folder, n);
     crate::paths::write_atomic(&prompt_path, &built.text)
         .map_err(|e| unavailable(format!("cannot write {}: {e}", prompt_path.display())))?;
     if task.shared {
@@ -1138,6 +1152,7 @@ pub async fn create(core: &Arc<Core>, task: Task, brief: &str) -> Result<(), Rpc
     std::fs::create_dir_all(&folder).map_err(|e| unavailable(format!("cannot make {}: {e}", folder.display())))?;
     crate::paths::write_atomic(&folder.join("brief.md"), brief.as_bytes())
         .map_err(|e| unavailable(format!("cannot write {}: {e}", folder.join("brief.md").display())))?;
+    crate::task::parts::write_briefs(&folder, &task.parts)?;
     save(&core.paths.state, &task);
     core.tasks.tasks.lock().unwrap_or_else(|p| p.into_inner()).insert(task.name.clone(), task);
     drop(serial);

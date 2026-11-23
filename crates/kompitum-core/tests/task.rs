@@ -20,6 +20,8 @@ mod handoff;
 mod ledger;
 #[path = "task/manager.rs"]
 mod manager;
+#[path = "task/parts.rs"]
+mod parts;
 #[path = "task/prompt.rs"]
 mod prompt;
 #[path = "task/review.rs"]
@@ -169,6 +171,45 @@ impl Session {
         self.json(&args)
     }
 
+    /// `kom task start --plan`: each part's brief sits beside the plan and is named relatively.
+    fn start_plan(
+        &self,
+        name: &str,
+        parts: &[(&str, &str, &[&str])],
+        brief: Option<&str>,
+        repo: &Path,
+        extra: &[&str],
+    ) -> Value {
+        let dir = self.root.join(format!("{name}.plan"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let entries: Vec<Value> = parts
+            .iter()
+            .map(|(part, text, scope)| {
+                let file = format!("{part}.md");
+                std::fs::write(dir.join(&file), text).unwrap();
+                json!({"name": part, "brief": file, "scope": scope})
+            })
+            .collect();
+        let plan = dir.join("plan.json");
+        std::fs::write(&plan, serde_json::to_vec(&json!({"parts": entries})).unwrap()).unwrap();
+        let mut args: Vec<String> = vec![
+            "task".into(),
+            "start".into(),
+            name.into(),
+            "--plan".into(),
+            plan.display().to_string(),
+            "--in".into(),
+            repo.display().to_string(),
+        ];
+        if let Some(text) = brief {
+            args.push("--brief".into());
+            args.push(self.brief(&format!("{name}-shared"), text));
+        }
+        args.extend(extra.iter().map(|arg| arg.to_string()));
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        self.json(&args)
+    }
+
     /// `kom task wait`, with the row for each task and the summary line.
     fn wait(&self, names: &[&str], extra: &[&str]) -> (i32, Vec<Value>, Value) {
         let mut args = vec!["task", "wait"];
@@ -230,6 +271,26 @@ fn wait_until(what: &str, mut ok: impl FnMut() -> bool) {
     while !ok() {
         assert!(start.elapsed() < Duration::from_secs(30), "timed out waiting: {what}");
         std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn accept(s: &Session, name: &str, extra: &[&str]) -> Value {
+    let mut args = vec!["task", "accept", name];
+    args.extend_from_slice(extra);
+    s.json(&args)
+}
+
+fn worktree_of(s: &Session, name: &str) -> PathBuf {
+    PathBuf::from(s.task(name)["task"]["worktree"].as_str().unwrap())
+}
+
+fn one_hook(repo: &Path, name: &str, body: &str) {
+    let hook = repo.join(".git").join("hooks").join(name);
+    std::fs::write(&hook, format!("#!/bin/sh\n{body}\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 }
 

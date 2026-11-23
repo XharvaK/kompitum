@@ -692,8 +692,9 @@ Arguments:
 
 Options:
       --json                    JSON output even in a terminal
+      --part <NAME>             Accept only this part, committing only its files and keeping its worktree
       --review <REVIEW>         What the review decided, kept for the ledger
-      --message <MESSAGE>       The commit message (default: the review, else a line naming the task)
+  -m, --message <MESSAGE>       The commit message (default: the review, else a line naming the task)
       --no-commit               Put the changes in the working tree and make no commit
       --accept-unfinished       Accept a task that failed, timed out or was cancelled, or whose last checks failed
       --accept-scope-violation  Accept files changed outside the task's scope
@@ -729,6 +730,7 @@ Arguments:
 
 Options:
       --json             JSON output even in a terminal
+      --part <NAME>      Discard only this part, keeping the task and the other parts
       --review <REVIEW>  What the review decided, kept with the record
       --yes              Discard a task another caller started
   -h, --help             Print help
@@ -806,7 +808,7 @@ Arguments:
   <NAME>  The task's name (1-32 of a-z 0-9 - _ ., starting with a letter or digit)
 
 Options:
-      --brief <FILE>       The brief's file, or - for stdin
+      --brief <FILE>       The brief's file, or - for stdin. A JSON plan is read as a batch plan (`--plan <file>`) [alias: --plan]
       --json               JSON output even in a terminal
       --in <FOLDER>        The folder in the repository (default: where kom runs)
       --scope <GLOB>       Paths the task may change (repeatable); none means the whole repository

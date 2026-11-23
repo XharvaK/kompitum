@@ -34,6 +34,7 @@ fn step_of(tokens: Option<&Value>) -> Step {
         output: whole(tokens.and_then(|tokens| tokens.get("output"))),
         reasoning: whole(tokens.and_then(|tokens| tokens.get("reasoning"))),
         cache_read,
+        cache_write,
     }
 }
 
@@ -80,7 +81,7 @@ fn note_parse_errors(out: &mut Parsed) {
 
 /// An OpenCode stream: one step-finish ends a step, and tool parts belong to
 /// the step that is open when they first complete.
-pub(super) fn parse_opencode(lines: impl IntoIterator<Item = String>) -> Parsed {
+pub(crate) fn parse_opencode(lines: impl IntoIterator<Item = String>) -> Parsed {
     let mut out = Parsed::default();
     let mut seen = BTreeSet::new();
     let mut open = Vec::new();
@@ -126,7 +127,7 @@ pub(super) fn parse_opencode(lines: impl IntoIterator<Item = String>) -> Parsed 
 }
 
 /// An OpenCode export: assistant messages with a `tokens` object are steps.
-pub(super) fn parse_export(text: &str) -> Result<Parsed, String> {
+pub(crate) fn parse_export(text: &str) -> Result<Parsed, String> {
     let value: Value = serde_json::from_str(text).map_err(|e| format!("export was not JSON: {e}"))?;
     let messages =
         value.get("messages").and_then(Value::as_array).ok_or_else(|| "export has no messages".to_string())?;
@@ -195,6 +196,7 @@ pub(super) fn parse_claude(lines: impl IntoIterator<Item = String>) -> Parsed {
                     .or_else(|| usage.and_then(|usage| usage.get("reasoning_tokens"))),
             ),
             cache_read,
+            cache_write,
         });
         out.calls.push(calls);
     }
@@ -237,6 +239,7 @@ pub(super) fn parse_commandcode(lines: impl IntoIterator<Item = String>) -> Pars
                     output: whole(usage.and_then(|usage| usage.get("outputTokens"))),
                     reasoning: whole(usage.and_then(|usage| usage.get("reasoningTokens"))),
                     cache_read,
+                    cache_write,
                 });
                 out.calls.push(std::mem::take(&mut open));
             }
@@ -321,6 +324,7 @@ pub(super) fn parse_commandcode_transcript(lines: impl IntoIterator<Item = Strin
             output: whole(usage.get("outputTokens")),
             reasoning: whole(usage.get("reasoningTokens")),
             cache_read,
+            cache_write,
         });
         out.calls.push(calls);
     }

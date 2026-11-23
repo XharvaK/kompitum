@@ -141,8 +141,9 @@ const ROUTE_WINDOW: u64 = 1_000_000;
 /// secret or commit is not a tool this worker has at all. Denied by
 /// permission, never by asking: a worker routes around a tool that fails, but
 /// cannot use one it doesn't have. The tools nobody calls are gone too; a task
-/// that asked for the web keeps its two.
-fn opencode_config(web: bool) -> String {
+/// that asked for the web keeps its two. A batch's coordinator may start
+/// subagents, and the default subagent agent runs on the task's own route.
+fn opencode_config(web: bool, has_parts: bool, route: &str) -> String {
     let mut read = serde_json::Map::new();
     read.insert("*".into(), serde_json::json!("allow"));
     for glob in SECRET_GLOBS.iter().chain(SECRET_DEEP.iter()) {
@@ -158,9 +159,10 @@ fn opencode_config(web: bool) -> String {
     permission.insert("read".into(), read.into());
     permission.insert("bash".into(), bash.into());
     permission.insert("edit".into(), edit);
-    for tool in ["skill", "subagent", "question", "execute"] {
+    for tool in ["skill", "question", "execute"] {
         permission.insert(tool.into(), serde_json::json!("deny"));
     }
+    permission.insert("subagent".into(), serde_json::json!(if has_parts { "allow" } else { "deny" }));
     if !web {
         for tool in ["webfetch", "websearch"] {
             permission.insert(tool.into(), serde_json::json!("deny"));
@@ -171,7 +173,14 @@ fn opencode_config(web: bool) -> String {
         "buffer": ROUTE_WINDOW - COMPACT_AT,
         "keep": {"tokens": 40_000},
     });
-    serde_json::json!({"permission": permission, "compaction": compaction}).to_string()
+    let mut config = serde_json::json!({"permission": permission, "compaction": compaction});
+    if has_parts {
+        // OpenCode 2.2.7 names its subagent tool's default agent `general`; this pins
+        // that agent to the coordinator's own route. Its built-in permissions deny
+        // `subagent`, so a subagent cannot start another.
+        config["agents"] = serde_json::json!({"general": {"model": route}});
+    }
+    config.to_string()
 }
 
 /// `CC_DENY`: Command Code's own spellings of the same refusals.
@@ -387,7 +396,10 @@ pub async fn prepare(
     // carries the committed one instead. Command Code's settings stay as they are: what it
     // carries is unmeasured until its credits return.
     if worker.cli == Cli::Opencode {
-        prepared.env.insert("OPENCODE_CONFIG_CONTENT".into(), opencode_config(task.asked.web));
+        prepared.env.insert(
+            "OPENCODE_CONFIG_CONTENT".into(),
+            opencode_config(task.asked.web, !task.parts.is_empty(), worker.route()),
+        );
         prepared.env.insert("OPENCODE_DISABLE_PROJECT_CONFIG".into(), "1".into());
     }
     if crate::platform::PYTHON_SHIMS {
@@ -466,7 +478,7 @@ mod tests {
 
     #[test]
     fn opencode_compacts_at_444k_and_keeps_its_permission_map() {
-        let config: serde_json::Value = serde_json::from_str(&opencode_config(false)).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&opencode_config(false, false, "")).unwrap();
         assert_eq!(config["compaction"]["auto"], serde_json::json!(true));
         assert_eq!(config["compaction"]["buffer"], serde_json::json!(556_000));
         assert_eq!(config["compaction"]["keep"]["tokens"], serde_json::json!(40_000));
@@ -477,7 +489,22 @@ mod tests {
         assert_eq!(permission["bash"]["git push*"], "deny");
         assert_eq!(permission["edit"]["*.env"], "deny");
         assert_eq!(permission["skill"], "deny");
+        assert_eq!(permission["subagent"], "deny");
         assert_eq!(permission["webfetch"], "deny");
+        assert!(config.get("agents").is_none(), "an ordinary task pins no subagent");
+    }
+
+    #[test]
+    fn a_batchs_coordinator_may_start_subagents_on_its_own_route() {
+        let route = "opencode-go/deepseek-v4.1-flash#max";
+        let config: serde_json::Value = serde_json::from_str(&opencode_config(false, true, route)).unwrap();
+        let permission = &config["permission"];
+        assert_eq!(permission["subagent"], "allow");
+        for tool in ["skill", "question", "execute"] {
+            assert_eq!(permission[tool], "deny", "{tool} stays denied");
+        }
+        assert_eq!(config["compaction"]["auto"], serde_json::json!(true), "compaction is still there");
+        assert_eq!(config["agents"]["general"]["model"], route);
     }
 
     fn vars(pairs: &[(&str, &str)]) -> impl Iterator<Item = (String, String)> {

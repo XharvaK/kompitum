@@ -4,6 +4,7 @@ use crate::api::{TaskReviewParams, TaskReviewResult};
 use crate::rpc::RpcError;
 use crate::runtime::{Core, now_ms};
 use crate::task::checks::{Side, Source, diff_path};
+use crate::task::parts::PartReview;
 use crate::task::types::{ChangedFile, CheckReport, Task, Usage, cut, gaps_and_report};
 use crate::task::worker;
 use std::collections::{BTreeMap, BTreeSet};
@@ -46,6 +47,8 @@ pub struct Rendered {
     pub text: String,
     pub patch_file: Option<String>,
     pub truncated: bool,
+    /// Each part's state, files and require results; empty for an ordinary task.
+    pub parts: Vec<PartReview>,
 }
 
 pub async fn review(core: &Arc<Core>, p: TaskReviewParams) -> Result<TaskReviewResult, RpcError> {
@@ -112,6 +115,7 @@ pub async fn review(core: &Arc<Core>, p: TaskReviewParams) -> Result<TaskReviewR
         text: rendered.text,
         patch_file: rendered.patch_file,
         truncated: rendered.truncated,
+        parts: rendered.parts,
     })
 }
 
@@ -164,6 +168,10 @@ pub fn render(input: &ReviewInput) -> Rendered {
     if !task.changed.is_empty() {
         fixed.push_str(&section("Scope", &scope_body(&task.scope, &task.changed)));
     }
+    let (part_reviews, shared_parts) = crate::task::parts::review(task);
+    if !task.parts.is_empty() {
+        fixed.push_str(&section("Parts", &parts_body(&part_reviews, &shared_parts)));
+    }
     if let Some(report) = report.filter(|report| !report.warn_hits.is_empty()) {
         fixed.push_str(&section("Warns", &warns_body(report)));
     }
@@ -210,10 +218,34 @@ pub fn render(input: &ReviewInput) -> Rendered {
     }
 
     if full_text.len() <= max_bytes {
-        return Rendered { text: full_text, patch_file, truncated: false };
+        return Rendered { text: full_text, patch_file, truncated: false, parts: part_reviews };
     }
     let text = truncate(&full_text, &fixed, &blocks, max_bytes);
-    Rendered { text, patch_file, truncated: true }
+    Rendered { text, patch_file, truncated: true, parts: part_reviews }
+}
+
+/// Each part's state and files, then the files only the task's own scope claims.
+fn parts_body(parts: &[PartReview], shared: &[String]) -> String {
+    let mut body = String::new();
+    for part in parts {
+        body.push_str(&format!("- **{}** ({})", part.name, part.state.word()));
+        if part.files.is_empty() {
+            body.push_str(": no changed files");
+        } else {
+            let files: Vec<String> = part.files.iter().map(|file| format!("`{file}`")).collect();
+            body.push_str(&format!(": {}", files.join(", ")));
+        }
+        for require in &part.require {
+            let word = if require.missing { "missing" } else { "found" };
+            body.push_str(&format!("; require `{}` {word}", require.entry));
+        }
+        body.push('\n');
+    }
+    if !shared.is_empty() {
+        let files: Vec<String> = shared.iter().map(|file| format!("`{file}`")).collect();
+        body.push_str(&format!("- **(shared)**: {}\n", files.join(", ")));
+    }
+    body
 }
 
 fn section(title: &str, body: &str) -> String {

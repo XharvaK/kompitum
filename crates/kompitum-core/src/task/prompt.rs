@@ -148,6 +148,13 @@ pub async fn turn_prompt(
     });
     let mut text = note.unwrap_or_default().to_vec();
     text.extend_from_slice(brief.trim_end().as_bytes());
+    if !task.parts.is_empty()
+        && let Ok(paths) = crate::paths::Paths::from_env()
+    {
+        let folder = crate::task::task_folder(&paths.state, &task.name);
+        text.extend_from_slice(b"\n\n");
+        text.extend_from_slice(crate::task::parts::coordinator_section(&folder, &task.parts).as_bytes());
+    }
     text.extend_from_slice(footer.as_bytes());
     if let Some(followup) = followup {
         text.extend_from_slice(FOLLOWUP.as_bytes());

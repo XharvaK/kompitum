@@ -51,7 +51,7 @@ fn read_turn(cli: Cli, path: &Path, usage: &Usage) -> (Numbers, Option<String>, 
     (numbers(&parsed.steps, &parsed.calls, &[]), parsed.note, parsed.children, Vec::new())
 }
 
-fn export_session(config: &Config, folder: &Path, session: &str) -> Result<String, String> {
+pub(crate) fn export_session(config: &Config, folder: &Path, session: &str) -> Result<String, String> {
     let prefix = worker::opencode_prefix(config).map_err(|e| e.message)?;
     let mut cmd = Command::new(&prefix[0]);
     cmd.args(&prefix[1..])

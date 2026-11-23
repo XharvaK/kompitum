@@ -6,14 +6,15 @@ mod read;
 pub use parse::project_folder;
 
 use crate::api::{TaskStatsParams, TaskStatsResult};
+use crate::config::Config;
 use crate::rpc::RpcError;
 use crate::runtime::Core;
-use crate::task::types::Usage;
+use crate::task::types::{ChildUsage, Usage};
 use read::{commandcode_result, session_result, task_result};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// What a CLI without per-step numbers says instead.
@@ -26,6 +27,7 @@ pub struct Step {
     pub output: u64,
     pub reasoning: u64,
     pub cache_read: u64,
+    pub cache_write: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -457,6 +459,45 @@ pub fn table(
     lines.join("\n")
 }
 
+/// One child session's steps as a `Usage`: its tokens, steps and largest request.
+pub fn usage_of_steps(steps: &[Step]) -> Usage {
+    let mut usage = Usage::default();
+    for step in steps {
+        usage.steps = usage.steps.saturating_add(1);
+        usage.input = usage.input.saturating_add(step.input);
+        usage.output = usage.output.saturating_add(step.output);
+        usage.reasoning = usage.reasoning.saturating_add(step.reasoning);
+        usage.cache_read = usage.cache_read.saturating_add(step.cache_read);
+        usage.cache_write = usage.cache_write.saturating_add(step.cache_write);
+        usage.largest_request = usage.largest_request.max(step.context);
+    }
+    usage
+}
+
+/// The child sessions an OpenCode turn's stream names, each with its exported usage.
+/// A child that can't be exported is a warning in words, never a silent skip.
+pub(crate) fn children_usage(config: &Config, folder: &Path, path: &Path) -> (Vec<ChildUsage>, Vec<String>) {
+    let Ok(bytes) = std::fs::read(path) else { return (Vec::new(), Vec::new()) };
+    let parsed = parse::parse_opencode(String::from_utf8_lossy(&bytes).lines().map(str::to_string));
+    let mut children: Vec<ChildUsage> = Vec::new();
+    let mut warnings = Vec::new();
+    for session in parsed.children {
+        if children.iter().any(|child| child.session == session) {
+            continue;
+        }
+        match read::export_session(config, folder, &session) {
+            Ok(text) => match parse::parse_export(&text) {
+                Ok(export) => children.push(ChildUsage { session, usage: usage_of_steps(&export.steps) }),
+                Err(e) => warnings
+                    .push(format!("subagent session {session} could not be read, so its usage is not counted: {e}")),
+            },
+            Err(e) => warnings
+                .push(format!("subagent session {session} could not be exported, so its usage is not counted: {e}")),
+        }
+    }
+    (children, warnings)
+}
+
 /// The kinds of every session added up, sorted by cost descending.
 pub fn total_kinds(sessions: &[SessionStats]) -> Vec<KindStats> {
     let mut kinds: BTreeMap<String, (i64, i64)> = BTreeMap::new();
@@ -563,6 +604,21 @@ mod tests {
             .iter()
             .find(|kind| kind.kind == name)
             .unwrap_or_else(|| panic!("no {name} in {:?}", numbers.kinds))
+    }
+
+    #[test]
+    fn a_childs_steps_sum_into_one_usage() {
+        let steps = vec![
+            Step { context: 10, input: 4, output: 2, reasoning: 1, cache_read: 3, cache_write: 3 },
+            Step { context: 20, input: 8, output: 5, reasoning: 2, cache_read: 6, cache_write: 6 },
+        ];
+        let usage = usage_of_steps(&steps);
+        assert_eq!(
+            (usage.steps, usage.input, usage.output, usage.reasoning, usage.cache_read, usage.cache_write),
+            (2, 12, 7, 3, 9, 9)
+        );
+        assert_eq!(usage.largest_request, 20, "the largest request, not the sum");
+        assert_eq!(usage_of_steps(&[]), Usage::default());
     }
 
     #[test]
