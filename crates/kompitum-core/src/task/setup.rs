@@ -120,13 +120,18 @@ async fn protected_git_dir(repo: &str) -> Result<String, RpcError> {
 const SECRET_GLOBS: [&str; 7] = ["*.env", "*.env.*", ".env", "*.pem", "*/.ssh/*", "*.ssh*", "*auth.json*"];
 const SECRET_DEEP: [&str; 5] = ["**/.env", "**/.env.*", "**/*.pem", "**/.ssh/**", "**/auth.json"];
 /// The shell commands a worker must not run: a commit or a push, and a secret in a shell line.
-const BASH_DENY: [&str; 9] = [
+const BASH_DENY: [&str; 14] = [
     "git push*",
     "*git push*",
     "git commit*",
     "*git commit*",
     "*git -c*commit*",
-    "*.env*",
+    ".env*",
+    "* .env*",
+    "*/.env*",
+    "*\\.env*",
+    "*\".env*",
+    "*'.env*",
     "*.pem*",
     "*.ssh*",
     "*auth.json*",
@@ -184,7 +189,7 @@ fn opencode_config(web: bool, has_parts: bool, route: &str) -> String {
 }
 
 /// `CC_DENY`: Command Code's own spellings of the same refusals.
-const CC_DENY: [&str; 15] = [
+const CC_DENY: [&str; 20] = [
     "Read(.env*)",
     "Read(*.env)",
     "Read(*.pem)",
@@ -194,7 +199,12 @@ const CC_DENY: [&str; 15] = [
     "Read(~/.local/share/opencode/**)",
     "Edit(.env*)",
     "Edit(*.pem)",
-    "Shell(*.env*)",
+    "Shell(.env*)",
+    "Shell(* .env*)",
+    "Shell(*/.env*)",
+    "Shell(*\\.env*)",
+    "Shell(*\".env*)",
+    "Shell(*'.env*)",
     "Shell(*.pem*)",
     "Shell(*.ssh*)",
     "Shell(*auth.json*)",
@@ -221,25 +231,48 @@ fn settings_marker(folder: &Path, n: u32, kind: &str) -> PathBuf {
     folder.join(format!("turn-{n}.settings-{kind}"))
 }
 
+/// Whether git tracks the workshop's settings file: the repository's own is put back after a shared turn.
+async fn settings_tracked(worktree: &str) -> bool {
+    super::git::git_raw(worktree, &["ls-files", "--error-unmatch", "--", ".commandcode/settings.local.json"])
+        .await
+        .is_ok_and(|out| out.status.success())
+}
+
 /// Command Code reads deny rules from `<worktree>/.commandcode/settings.local.json`.
 /// A file that was there keeps its bytes beside the turn; one this made leaves
-/// a marker, so `after_turn` knows how to put the worktree back.
-fn command_code_settings(folder: &Path, worktree: &str, n: u32) -> Result<(), RpcError> {
+/// a marker, so `after_turn` knows how to put the worktree back. A shared workshop
+/// keeps the rules for the next turn instead: no marker, and `.commandcode/.gitignore`
+/// hides them from git. Only the repository's own tracked file, whose bytes this
+/// turn's rules would replace, is kept and put back.
+async fn command_code_settings(folder: &Path, worktree: &str, n: u32, shared: bool) -> Result<(), RpcError> {
     let dir = Path::new(worktree).join(".commandcode");
     let path = dir.join("settings.local.json");
     std::fs::create_dir_all(&dir).map_err(|e| settings_failed(format!("cannot make {}: {e}", dir.display())))?;
-    if path.is_file() {
-        let kept = settings_marker(folder, n, "kept");
-        let bytes =
-            std::fs::read(&path).map_err(|e| settings_failed(format!("cannot read {}: {e}", path.display())))?;
-        std::fs::write(&kept, bytes).map_err(|e| {
-            settings_failed(format!("cannot keep {}'s bytes in {}: {e}", path.display(), kept.display()))
-        })?;
+    let settings = cc_settings();
+    let existing = if path.is_file() {
+        Some(std::fs::read(&path).map_err(|e| settings_failed(format!("cannot read {}: {e}", path.display())))?)
     } else {
-        let made = settings_marker(folder, n, "made");
-        std::fs::write(&made, b"").map_err(|e| settings_failed(format!("cannot write {}: {e}", made.display())))?;
+        None
+    };
+    let keep = !shared
+        || (existing.as_deref().is_some_and(|bytes| bytes != settings.as_slice()) && settings_tracked(worktree).await);
+    if keep {
+        if let Some(bytes) = existing {
+            let kept = settings_marker(folder, n, "kept");
+            std::fs::write(&kept, bytes).map_err(|e| {
+                settings_failed(format!("cannot keep {}'s bytes in {}: {e}", path.display(), kept.display()))
+            })?;
+        } else {
+            let made = settings_marker(folder, n, "made");
+            std::fs::write(&made, b"").map_err(|e| settings_failed(format!("cannot write {}: {e}", made.display())))?;
+        }
+        std::fs::write(&path, settings).map_err(|e| settings_failed(format!("cannot write {}: {e}", path.display())))
+    } else {
+        std::fs::write(&path, settings)
+            .map_err(|e| settings_failed(format!("cannot write {}: {e}", path.display())))?;
+        let ignore = dir.join(".gitignore");
+        std::fs::write(&ignore, b"*\n").map_err(|e| settings_failed(format!("cannot write {}: {e}", ignore.display())))
     }
-    std::fs::write(&path, cc_settings()).map_err(|e| settings_failed(format!("cannot write {}: {e}", path.display())))
 }
 
 fn settings_failed(message: String) -> RpcError {
@@ -413,7 +446,7 @@ pub async fn prepare(
     }
     let folder = crate::task::task_folder(&core.paths.state, &task.name);
     if worker.cli == Cli::CommandCode
-        && let Err(error) = command_code_settings(&folder, worktree, n)
+        && let Err(error) = command_code_settings(&folder, worktree, n, task.shared).await
     {
         // A start that fails leaves the worktree as it found it.
         let _ = after_turn(&folder, worktree, worker.clone(), n);
@@ -423,6 +456,7 @@ pub async fn prepare(
 }
 
 /// Puts back what `prepare` put in the worktree, however the turn ended and after a core restart too.
+/// A shared workshop's rules stay where `prepare` left them, because it writes no marker for them.
 pub fn after_turn(folder: &Path, worktree: &str, _worker: Worker, n: u32) -> Result<(), String> {
     let path = Path::new(worktree).join(".commandcode").join("settings.local.json");
     let kept = settings_marker(folder, n, "kept");
@@ -572,6 +606,151 @@ mod tests {
         assert_eq!(usable_python("garbage"), None);
         assert_eq!(usable_python(""), None);
         assert_eq!(usable_python(&format!("3.12.4 final {path}.gone")), None, "a path that is not a file");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// `*` matches any run of characters; everything else is literal.
+    fn matches(pattern: &str, text: &str) -> bool {
+        let parts: Vec<&str> = pattern.split('*').collect();
+        let Some((first, rest)) = parts.split_first() else { return true };
+        let Some(last) = rest.last() else { return pattern == text };
+        let Some(mut left) = text.strip_prefix(first) else { return false };
+        for part in &rest[..rest.len() - 1] {
+            let Some(at) = left.find(part) else { return false };
+            left = &left[at + part.len()..];
+        }
+        left.ends_with(last)
+    }
+
+    #[test]
+    fn the_env_refusals_leave_os_environ_alone_and_still_refuse_env_files() {
+        let code = [r#"python -c "import os; print(os.environ)""#, r#"node -e "process.env.X""#];
+        let files = ["cat .env", "cat ./.env", r"type C:\repo\.env", r#"cat ".env.local""#];
+        // Command Code wraps a shell glob in `Shell(...)`: the command is matched against what is inside.
+        let pattern =
+            |rule: &'static str| rule.strip_prefix("Shell(").and_then(|inner| inner.strip_suffix(')')).unwrap_or(rule);
+        for rules in [BASH_DENY.as_slice(), CC_DENY.as_slice()] {
+            let env: Vec<&str> = rules.iter().copied().filter(|rule| rule.contains(".env")).map(pattern).collect();
+            for rule in &env {
+                for command in code {
+                    assert!(!matches(rule, command), "{rule} must not refuse {command}");
+                }
+            }
+            for command in files {
+                assert!(env.iter().any(|rule| matches(rule, command)), "{command} is refused by {env:?}");
+            }
+        }
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kom-setup-test-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn cc() -> Worker {
+        crate::task::worker::builtin().into_iter().find(|worker| worker.key == "cc").unwrap()
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let mut command = std::process::Command::new("git");
+        command.current_dir(dir).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        crate::platform::no_console(&mut command);
+        let out = command.output().unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    #[tokio::test]
+    async fn a_shared_turn_leaves_command_codes_rules_in_the_workshop() {
+        let scratch = scratch("shared");
+        let folder = scratch.join("task");
+        let worktree = scratch.join("workshop");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        git(&worktree, &["init", "-q"]);
+        let at = worktree.display().to_string();
+
+        command_code_settings(&folder, &at, 1, true).await.unwrap();
+        after_turn(&folder, &at, cc(), 1).unwrap();
+
+        let dir = worktree.join(".commandcode");
+        assert_eq!(std::fs::read(dir.join("settings.local.json")).unwrap(), cc_settings());
+        assert_eq!(std::fs::read_to_string(dir.join(".gitignore")).unwrap(), "*\n");
+        assert_eq!(git(&worktree, &["status", "--porcelain"]), "", "git never sees the folder");
+        assert!(!settings_marker(&folder, 1, "kept").exists(), "no kept marker");
+        assert!(!settings_marker(&folder, 1, "made").exists(), "no made marker");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[tokio::test]
+    async fn two_shared_turns_leave_the_rules_after_their_own_after_turn() {
+        let scratch = scratch("two-shared");
+        let folder = scratch.join("task");
+        let worktree = scratch.join("workshop");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        let at = worktree.display().to_string();
+
+        command_code_settings(&folder, &at, 1, true).await.unwrap();
+        command_code_settings(&folder, &at, 2, true).await.unwrap();
+        after_turn(&folder, &at, cc(), 2).unwrap();
+        after_turn(&folder, &at, cc(), 1).unwrap();
+
+        let dir = worktree.join(".commandcode");
+        assert_eq!(std::fs::read(dir.join("settings.local.json")).unwrap(), cc_settings());
+        assert_eq!(std::fs::read_to_string(dir.join(".gitignore")).unwrap(), "*\n");
+        for n in [1, 2] {
+            assert!(!settings_marker(&folder, n, "kept").exists(), "no kept marker for turn {n}");
+            assert!(!settings_marker(&folder, n, "made").exists(), "no made marker for turn {n}");
+        }
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[tokio::test]
+    async fn a_task_with_its_own_worktree_gets_its_settings_back() {
+        let scratch = scratch("worktree");
+        let folder = scratch.join("task");
+        let worktree = scratch.join("worktree");
+        let dir = worktree.join(".commandcode");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.local.json"), b"{\"kept\": true}\n").unwrap();
+        let at = worktree.display().to_string();
+
+        command_code_settings(&folder, &at, 1, false).await.unwrap();
+        assert_eq!(std::fs::read(dir.join("settings.local.json")).unwrap(), cc_settings());
+        assert!(settings_marker(&folder, 1, "kept").is_file());
+        assert!(!dir.join(".gitignore").exists(), "a worktree gets no .gitignore");
+        after_turn(&folder, &at, cc(), 1).unwrap();
+
+        assert_eq!(std::fs::read(dir.join("settings.local.json")).unwrap(), b"{\"kept\": true}\n");
+        assert!(!settings_marker(&folder, 1, "kept").exists());
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[tokio::test]
+    async fn a_shared_turn_puts_back_the_tracked_settings_file_it_found() {
+        let scratch = scratch("tracked");
+        let folder = scratch.join("task");
+        let worktree = scratch.join("workshop");
+        let dir = worktree.join(".commandcode");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.local.json"), b"{\"mine\": true}\n").unwrap();
+        git(&worktree, &["init", "-q"]);
+        git(&worktree, &["add", ".commandcode/settings.local.json"]);
+        let at = worktree.display().to_string();
+
+        command_code_settings(&folder, &at, 1, true).await.unwrap();
+        assert_eq!(std::fs::read(dir.join("settings.local.json")).unwrap(), cc_settings());
+        assert!(settings_marker(&folder, 1, "kept").is_file(), "the tracked bytes are kept");
+        assert!(!dir.join(".gitignore").exists(), "a tracked folder gets no .gitignore");
+        after_turn(&folder, &at, cc(), 1).unwrap();
+
+        assert_eq!(std::fs::read(dir.join("settings.local.json")).unwrap(), b"{\"mine\": true}\n");
+        assert!(!settings_marker(&folder, 1, "kept").exists());
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
