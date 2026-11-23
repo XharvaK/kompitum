@@ -343,6 +343,18 @@ async fn finish(core: &Arc<Core>, mut task: Task, mut report: CheckReport, start
         && report.require_missing.is_empty()
         && !report.checks_file_changed
         && report.errors.is_empty();
+    // A failed turn's checks are a record, never a round: the task stays failed.
+    if task.error.is_some() {
+        task.state = TaskState::Failed;
+        task.ended_ms = Some(now_ms());
+        task.check = None;
+        task.checks.push(report);
+        super::save(&core.paths.state, &task);
+        super::write_result(&core.paths.state, &task, &super::worker_list(core));
+        super::replace(core, task);
+        core.changed.notify_waiters();
+        return;
+    }
     if after_checks(&report, task.qa_used, rounds) == AfterChecks::Round {
         if let Some(test) = report.test.as_mut().filter(|test| test.ok)
             && let Some(worktree) = task.worktree.as_deref()
@@ -351,7 +363,7 @@ async fn finish(core: &Arc<Core>, mut task: Task, mut report: CheckReport, start
         }
         let path = super::task_folder(&core.paths.state, &task.name)
             .join(format!("turn-{}.followup.md", super::next_turn(&task)));
-        let text = format!("{QA_PROMPT}{}", cut(&report.body(), QA_PROMPT_CHARS));
+        let text = round_text(&report);
         match crate::paths::write_atomic(&path, text.as_bytes()) {
             Ok(()) => {
                 task.qa_used += 1;
@@ -380,6 +392,24 @@ async fn finish(core: &Arc<Core>, mut task: Task, mut report: CheckReport, start
     super::write_result(&core.paths.state, &task, &super::worker_list(core));
     super::replace(core, task);
     core.changed.notify_waiters();
+}
+
+/// A round's words: the prompt, then the report, then the end of the failed test's
+/// output, all within `QA_PROMPT_CHARS`. A tail that does not fit loses its start.
+pub fn round_text(report: &CheckReport) -> String {
+    let mut text = cut(&report.body(), QA_PROMPT_CHARS);
+    let tail =
+        report.test.as_ref().filter(|test| !test.ok).map(|test| test.tail.trim()).filter(|tail| !tail.is_empty());
+    if let Some(tail) = tail {
+        let room = QA_PROMPT_CHARS.saturating_sub(text.chars().count() + 2);
+        if room > 0 {
+            let count = tail.chars().count();
+            let kept: String = if count <= room { tail.to_string() } else { tail.chars().skip(count - room).collect() };
+            text.push_str("\n\n");
+            text.push_str(&kept);
+        }
+    }
+    format!("{QA_PROMPT}{text}")
 }
 
 /// What comes after a finished report: the worker again, or the end.
@@ -659,6 +689,40 @@ mod tests {
         assert_eq!(after_checks(&missing, 0, 1), AfterChecks::Round);
         let changed = CheckReport { ok: false, checks_file_changed: true, ..Default::default() };
         assert_eq!(after_checks(&changed, 0, 1), AfterChecks::Round);
+    }
+
+    #[test]
+    fn a_qa_round_carries_the_failed_tests_tail() {
+        let report = CheckReport {
+            test: Some(TestRun {
+                ok: false,
+                failed: vec!["a_test".into()],
+                summary: vec!["FAILED (failures=1)".into()],
+                tail: "thread 'a_test' panicked at src/a.rs:1:\nassertion `left == right` failed\n".into(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let text = round_text(&report);
+        let failed = text.find("- failed: a_test").expect("the round carries the failed names");
+        let tail = text.find("assertion `left == right` failed").expect("the round carries the tail's lines");
+        assert!(failed < tail, "the tail comes after the summary: {text}");
+    }
+
+    #[test]
+    fn a_qa_round_keeps_the_end_of_a_tail_too_long() {
+        let mut tail = "the start of the log\n".to_string();
+        tail.push_str(&"x".repeat(QA_PROMPT_CHARS));
+        tail.push_str("\nassertion `left == right` failed");
+        let report =
+            CheckReport { test: Some(TestRun { ok: false, tail, ..Default::default() }), ..Default::default() };
+        let text = round_text(&report);
+        assert!(
+            text.chars().count() <= QA_PROMPT.chars().count() + QA_PROMPT_CHARS,
+            "the round stays inside the limit"
+        );
+        assert!(text.ends_with("assertion `left == right` failed"), "a tail that does not fit keeps its end: {text}");
+        assert!(!text.contains("the start of the log"), "the tail's start is cut: {text}");
     }
 
     #[test]

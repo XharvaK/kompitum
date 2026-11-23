@@ -1,7 +1,11 @@
 use super::*;
 
 fn diff(path: &str, number: u32, side: Side, text: &str) -> DiffLine {
-    DiffLine { path: path.into(), number, side, text: text.into() }
+    DiffLine { path: path.into(), number, side, text: text.into(), hunk: 0, crlf: false }
+}
+
+fn hunk_diff(path: &str, number: u32, side: Side, text: &str, hunk: u32) -> DiffLine {
+    DiffLine { hunk, ..diff(path, number, side, text) }
 }
 
 fn file(path: &str, text: &str) -> (String, String) {
@@ -39,12 +43,12 @@ deleted file mode 100644
     assert_eq!(
         parse_diff(text),
         [
-            diff("src/a.rs", 4, Side::Added, "one"),
-            diff("src/a.rs", 5, Side::Added, "two"),
-            diff("src/a.rs", 8, Side::Removed, "three"),
-            diff("tab\\tname.rs", 1, Side::Removed, "old"),
-            diff("tab\\tname.rs", 1, Side::Added, "new"),
-            diff("gone.rs", 1, Side::Removed, "bye"),
+            hunk_diff("src/a.rs", 4, Side::Added, "one", 1),
+            hunk_diff("src/a.rs", 5, Side::Added, "two", 1),
+            hunk_diff("src/a.rs", 8, Side::Removed, "three", 2),
+            hunk_diff("tab\\tname.rs", 1, Side::Removed, "old", 1),
+            hunk_diff("tab\\tname.rs", 1, Side::Added, "new", 1),
+            hunk_diff("gone.rs", 1, Side::Removed, "bye", 1),
         ],
         "a binary file and /dev/null say nothing; a quoted path keeps its escapes"
     );
@@ -57,7 +61,7 @@ fn a_garbled_diff_is_survived() {
 @@ -2 +2 @@ fn main()\n-old\n+héllo\n";
     assert_eq!(
         parse_diff(text),
-        [diff("y", 2, Side::Removed, "old"), diff("y", 2, Side::Added, "héllo")],
+        [hunk_diff("y", 2, Side::Removed, "old", 1), hunk_diff("y", 2, Side::Added, "héllo", 1)],
         "a garbled or overflowing hunk header places nothing, and the rest still reads"
     );
     assert!(parse_diff("").is_empty());
@@ -245,6 +249,48 @@ fn the_checks_file_parses_with_every_key() {
     assert_eq!(empty.qa_rounds, DEFAULT_QA_ROUNDS);
     assert!(!empty.second_reader);
     assert!(!empty.one_at_a_time);
+}
+
+#[test]
+fn a_file_whose_line_endings_switch_is_flagged() {
+    let text = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1,2 +1,2 @@\n-one\r\n-two\r\n+one\n+two\n";
+    let hits = warn_hits(&parse_diff(text), &builtin_warns(), |_| None);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].rule, "line-endings");
+    assert_eq!(hits[0].file, "a.txt");
+    assert_eq!(hits[0].text, "CRLF to LF");
+    assert_eq!(hits[0].source, Source::Builtin);
+    let back = "diff --git a/b.txt b/b.txt\n--- a/b.txt\n+++ b/b.txt\n@@ -1 +1 @@\n-old\n+old\r\n";
+    let hits = warn_hits(&parse_diff(back), &builtin_warns(), |_| None);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].text, "LF to CRLF");
+}
+
+#[test]
+fn a_hunk_that_only_reindents_is_flagged() {
+    let text = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1,2 +1,2 @@\n\
+                -\tlet x = 1;\n-\tlet y = 2;\n+    let x = 1;\n+    let y = 2;\n";
+    let hits = warn_hits(&parse_diff(text), &builtin_warns(), |_| None);
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    assert_eq!(hits[0].rule, "whitespace-only");
+    assert_eq!(hits[0].file, "a.rs");
+    assert_eq!(hits[0].line, 1);
+    assert_eq!(hits[0].side, Side::Added);
+}
+
+#[test]
+fn a_real_change_gets_no_line_ending_or_whitespace_warn() {
+    let text = "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-let x = 1;\n+let x = 2;\n";
+    let hits = warn_hits(&parse_diff(text), &builtin_warns(), |_| None);
+    assert!(hits.is_empty(), "{hits:?}");
+}
+
+#[test]
+fn a_key_the_core_does_not_read_is_a_warning_not_a_problem() {
+    let (file, problems) = parse_checks(r#"{"test_cmd": "cargo test", "build_folders": 3}"#);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(file.test_cmd.as_deref(), Some("cargo test"));
+    assert_eq!(file.warnings, [".kompitum/checks.json@HEAD: build_folders is not a key the core reads"]);
 }
 
 #[test]

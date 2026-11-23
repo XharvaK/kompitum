@@ -25,6 +25,21 @@ pub const MAX_FAILED: usize = 50;
 pub const UNLESS_SCAN_LINES: usize = 30;
 pub const TAIL_CHARS: usize = 3000;
 pub const SUMMARY_LIMIT: usize = 5;
+/// The top-level keys `parse_checks` reads; any other is said in a warning, never a problem.
+const KNOWN_KEYS: &[&str] = &[
+    "test_cmd",
+    "test_timeout_seconds",
+    "forbid",
+    "require",
+    "warn",
+    "reuse_test_for",
+    "qa_rounds",
+    "focused_cmd",
+    "focused_glob",
+    "second_reader",
+    "one_at_a_time",
+    "workshop",
+];
 
 /// `.kompitum/checks.json`, normalized: every key the loop reads, with its default.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -170,6 +185,11 @@ pub fn parse_checks(text: &str) -> (ChecksFile, Vec<String>) {
         }
         Some(_) => file.warnings.push(format!("{SOURCE_FILE}: workshop must be true, false or an object")),
     }
+    for key in spec.keys() {
+        if !KNOWN_KEYS.contains(&key.as_str()) {
+            file.warnings.push(format!("{SOURCE_FILE}: {key} is not a key the core reads"));
+        }
+    }
     (file, problems)
 }
 
@@ -235,6 +255,10 @@ pub struct DiffLine {
     pub number: u32,
     pub side: Side,
     pub text: String,
+    /// The hunk it came from, so a hunk's lines can be compared as one.
+    pub hunk: u32,
+    /// Its line ended CRLF rather than LF.
+    pub crlf: bool,
 }
 
 pub(crate) fn diff_path(value: &str, prefix: &str) -> Option<String> {
@@ -273,16 +297,23 @@ fn hunk_header(raw: &str) -> Option<(u32, u32)> {
 
 /// The added and the removed lines of `git diff -U0`: a hunk's header gives both
 /// the old and the new number to count from, so each line keeps its own side's.
+/// The line ending is kept apart from the text, since a switch is a warn of its own.
 pub fn parse_diff(text: &str) -> Vec<DiffLine> {
     let mut lines = Vec::new();
     let (mut old_path, mut new_path): (Option<String>, Option<String>) = (None, None);
     let mut in_hunk = false;
     let (mut old, mut new) = (0u32, 0u32);
-    for raw in text.lines() {
+    let mut hunk = 0u32;
+    for raw in text.split('\n') {
+        let (raw, crlf) = match raw.strip_suffix('\r') {
+            Some(raw) => (raw, true),
+            None => (raw, false),
+        };
         if raw.starts_with("diff --git ") {
             old_path = None;
             new_path = None;
             in_hunk = false;
+            hunk = 0;
             continue;
         }
         if !in_hunk {
@@ -299,6 +330,7 @@ pub fn parse_diff(text: &str) -> Vec<DiffLine> {
             in_hunk = true;
             old = from;
             new = to;
+            hunk = hunk.saturating_add(1);
             continue;
         }
         if !in_hunk {
@@ -306,12 +338,26 @@ pub fn parse_diff(text: &str) -> Vec<DiffLine> {
         }
         if let Some(text) = raw.strip_prefix('+') {
             if let Some(path) = &new_path {
-                lines.push(DiffLine { path: path.clone(), number: new, side: Side::Added, text: text.to_string() });
+                lines.push(DiffLine {
+                    path: path.clone(),
+                    number: new,
+                    side: Side::Added,
+                    text: text.to_string(),
+                    hunk,
+                    crlf,
+                });
             }
             new = new.saturating_add(1);
         } else if let Some(text) = raw.strip_prefix('-') {
             if let Some(path) = &old_path {
-                lines.push(DiffLine { path: path.clone(), number: old, side: Side::Removed, text: text.to_string() });
+                lines.push(DiffLine {
+                    path: path.clone(),
+                    number: old,
+                    side: Side::Removed,
+                    text: text.to_string(),
+                    hunk,
+                    crlf,
+                });
             }
             old = old.saturating_add(1);
         } else if raw.starts_with(' ') {
@@ -451,6 +497,11 @@ pub struct WarnSpec {
 /// The warn rule that catches either Windows flag that opens a console, written from
 /// parts: this repository's own forbid check refuses a plain mention of them here.
 const CONSOLE_FLAGS: &str = concat!("DETACHED", "_PROCESS|CREATE", "_NEW_CONSOLE");
+
+/// A built-in warn a line pattern can't see: a file's endings switched.
+pub const LINE_ENDINGS: &str = "line-endings";
+/// A built-in warn a line pattern can't see: a hunk changed only its whitespace.
+pub const WHITESPACE_ONLY: &str = "whitespace-only";
 
 /// The warn rules every repository gets, in `checks.py`'s words and these for Rust.
 pub const BUILTIN_WARNS: &[WarnSpec] = &[
@@ -666,6 +717,68 @@ where
                 source: rule.source,
             });
         }
+    }
+    if rules.iter().any(|rule| rule.source == Source::Builtin) {
+        hits.extend(structural_warns(lines));
+    }
+    hits
+}
+
+/// The built-in warns a per-line pattern can't express, each hunk and file looked at once.
+fn structural_warns(lines: &[DiffLine]) -> Vec<WarnHit> {
+    let mut hits = Vec::new();
+    let mut endings: Vec<(String, &'static str)> = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let path = &lines[index].path;
+        let hunk = lines[index].hunk;
+        let mut end = index + 1;
+        while end < lines.len() && &lines[end].path == path && lines[end].hunk == hunk {
+            end += 1;
+        }
+        let group = &lines[index..end];
+        let removed: Vec<&DiffLine> = group.iter().filter(|line| line.side == Side::Removed).collect();
+        let added: Vec<&DiffLine> = group.iter().filter(|line| line.side == Side::Added).collect();
+        if !removed.is_empty()
+            && removed.len() == added.len()
+            && removed.iter().zip(&added).all(|(old, new)| old.text.trim() == new.text.trim())
+            && removed.iter().zip(&added).any(|(old, new)| old.text != new.text)
+        {
+            let line = added[0];
+            hits.push(WarnHit {
+                rule: WHITESPACE_ONLY.to_string(),
+                side: Side::Added,
+                file: line.path.clone(),
+                line: line.number,
+                text: cut(line.text.trim(), 200),
+                source: Source::Builtin,
+            });
+        }
+        let direction = if removed.is_empty() || added.is_empty() {
+            None
+        } else if removed.iter().all(|line| line.crlf) && added.iter().all(|line| !line.crlf) {
+            Some("CRLF to LF")
+        } else if removed.iter().all(|line| !line.crlf) && added.iter().all(|line| line.crlf) {
+            Some("LF to CRLF")
+        } else {
+            None
+        };
+        if let Some(direction) = direction {
+            let file = &lines[index].path;
+            if !endings.iter().any(|(seen, seen_direction)| seen == file && *seen_direction == direction) {
+                endings.push((file.clone(), direction));
+                let line = added[0];
+                hits.push(WarnHit {
+                    rule: LINE_ENDINGS.to_string(),
+                    side: Side::Added,
+                    file: line.path.clone(),
+                    line: line.number,
+                    text: direction.to_string(),
+                    source: Source::Builtin,
+                });
+            }
+        }
+        index = end;
     }
     hits
 }
